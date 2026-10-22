@@ -153,6 +153,35 @@ def test_typed_default_color_is_marked_user_chosen(qtbot):
     assert s["color_is_automatic"] is False
 
 
+def test_typed_colour_survives_a_live_theme_flip(qtbot, monkeypatch):
+    """S3 + #405: while Settings is open a Windows Light/Dark flip makes the dialog pass the theme's
+    colour for an AUTOMATIC text colour. A typed hex is the user's choice: it must win, in the live
+    preview and on Save - while an untouched automatic colour still follows the theme."""
+    from netspeedtray.views.settings import dialog as D
+    dlg, main = _make(qtbot, dict(DEFAULTS, default_color="#FFFFFF", color_is_automatic=True))
+    monkeypatch.setattr(D, "shell_theme_text_color", lambda: "#000000")   # the theme flipped to light
+    assert dlg.get_settings()["default_color"] == "#000000"               # untouched: follows the theme
+    dlg.appearance_page.default_color_input.setText("#FF8800")
+    _flush(dlg)
+    s = dlg.get_settings()
+    assert (s["default_color"], s["color_is_automatic"]) == ("#FF8800", False)
+    assert main.config["default_color"] == "#FF8800" and main.config["color_is_automatic"] is False
+    dlg.save_button.click()
+    assert (main.saved[-1]["default_color"], main.saved[-1]["color_is_automatic"]) == ("#FF8800", False)
+
+
+def test_cancel_after_reset_all_follows_the_theme_for_an_automatic_colour(qtbot, monkeypatch):
+    """Cancel restores the pre-dialog config (S5); its automatic colour still takes the live theme
+    colour (#405), judged against that same pre-dialog config, not the reset one."""
+    from netspeedtray.views.settings import dialog as D
+    dlg, main = _make(qtbot, dict(DEFAULTS, default_color="#FFFFFF", color_is_automatic=True, font_size=8))
+    dlg.advanced_page.reset_all_btn.click()
+    _flush(dlg)
+    monkeypatch.setattr(D, "shell_theme_text_color", lambda: "#000000")
+    dlg.cancel_button.click()
+    assert main.config["font_size"] == 8 and main.config["default_color"] == "#000000"
+
+
 def test_loading_a_colour_does_not_mark_it_user_chosen(qtbot):
     dlg, _ = _make(qtbot, dict(DEFAULTS, default_color="#123456", color_is_automatic=True))
     assert dlg.get_settings()["color_is_automatic"] is True
