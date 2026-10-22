@@ -325,17 +325,75 @@ def test_the_real_usage_reset_clears_the_memory():
     assert payload[7] == ""                                            # the stored memory goes too
 
 
-def test_a_jump_the_writer_stamped_as_trusted_still_rekeys_on_the_rollover_evidence():
-    """L-b: a few days' jump inside a session is trusted by the history writer (it looks like sleep), so
-    its stamp is AHEAD after the correction. The odometer's own rollover out of the period is evidence
-    enough - no 6 h wait for the writer to re-accept the clock - and the early rollover is undone."""
-    s = _state(15, "2026-10-15", _Reader(stamp=int(time.time()) + 10 * 86400), lifetime=10.0, used=10)
+def test_a_jump_the_writer_stamped_as_trusted_rekeys_once_the_stamp_agrees():
+    """L-b, accepted cost (P1): a few days' jump inside a session is trusted by the history writer (it
+    looks like sleep), so its stamp is AHEAD after the correction. The stamp decides: the early rollover
+    waits until the writer re-accepts the clock, counting on meanwhile, and is then undone exactly."""
+    reader = _Reader(stamp=int(time.time()) + 10 * 86400)
+    s = _state(15, "2026-10-15", reader, lifetime=10.0, used=10)
     _poll(s, datetime(2026, 10, 21, 9), 1 * GB)
     _poll(s, datetime(2026, 11, 20, 9), 1 * GB)                       # crosses Nov 15: early rollover
     assert s._usage["period_key"] == "2026-11-15"
-    _poll(s, datetime(2026, 10, 21, 10), 1 * GB)                      # corrected
-    assert s._usage["period_key"] == "2026-10-15"
-    assert _read(s) == 13
+    _poll(s, datetime(2026, 10, 21, 10), 1 * GB)                      # corrected; the stamp is ahead
+    assert s._usage["period_key"] == "2026-11-15" and _read(s) == 2   # waits, keeps counting
+    reader.stamp = int(time.time())                                    # the writer re-accepted the clock
+    assert _read(s) == 13 and s._usage["period_key"] == "2026-10-15"   # 10 + three 1 GB polls
+
+
+class _RealClock:
+    """``time.time`` for the r8 scenarios (the writer's stamp and the wall clock move together)."""
+    def __init__(self, t):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+@pytest.mark.parametrize("restart", [True, False])
+def test_a_date_set_back_across_a_reset_day_never_merges_or_wipes_periods(restart):
+    """P1 / r8 + r8b: a legit rollover Sep 15 -> Oct 15 leaves a 'rollover' entry for Sep 15. With the
+    date then set back to Oct 9 (by hand, a VM restore) while the writer's stamp is real, that entry
+    overrode the stamp: the cap re-keyed backwards and showed both periods merged (30 -> 50 GB), and
+    after a restart and the correction the next rollover wiped the period (1.0 GB, should be 31)."""
+    real = datetime(2026, 10, 21, 12).timestamp()
+    clock = _RealClock(real - 7 * 86400)
+    reader = _Reader()
+    reader.clock_trusted_ts = lambda: int(stamp[0])
+    stamp = [clock.t]
+    with patch.object(wsmod.time, "time", clock):
+        s = _state(15, "2026-09-15", reader, lifetime=400.0, used=20)
+        _poll(s, datetime(2026, 10, 15, 9), 1 * GB)                   # legit rollover
+        for _ in range(29):
+            _poll(s, datetime(2026, 10, 18, 9), 1 * GB)
+        clock.t = stamp[0] = real
+        assert _read(s, date(2026, 10, 21)) == 30
+        clock.t = real - 12 * 86400                                    # date set back to Oct 9
+        assert _read(s, date(2026, 10, 9)) == 30                      # was 50: two periods merged
+        assert s._usage["period_key"] == "2026-10-15"
+        if restart:
+            s._usage_left = WidgetState._decode_left_periods(
+                WidgetState._encode_left_periods(WidgetState._usage_left_periods(s)))
+        clock.t = real + 60
+        _poll(s, datetime(2026, 10, 21, 12, 1), 1 * GB)
+        assert s._usage["period_key"] == "2026-10-15"
+        assert _read(s) == 31                                          # was 1.0 after a restart
+
+
+def test_a_memory_from_a_larger_total_is_dropped_on_load():
+    """Hardening: a memory taken on a total larger than the one loaded (a usage reset by a build that
+    did not clear it - 2.2 beta.3) never restores an anchor of a count that no longer exists."""
+    from netspeedtray.core.db.history_reader import UsageRecord
+    memory = WidgetState._encode_left_periods({
+        "2026-10-10": {"au": 0.0, "ad": 3 * GB, "cu": 0.0, "cd": 8 * GB, "mono": None, "why": "reset_day"},
+        "2026-09-15": {"au": 0.0, "ad": 1 * GB, "cu": 0.0, "cd": 2 * GB, "mono": None, "why": "rollover"}})
+    rec = UsageRecord((0.0, 6 * GB, 0.0, 0.0, "2026-10-15"), {}, memory)
+    s = _state(15, "2026-10-15")
+    s.history_reader = types.SimpleNamespace(load_usage=lambda: rec)
+    s._usage_loaded = False
+    assert WidgetState._try_load_usage(s)
+    assert list(s._usage_left) == ["2026-09-15"]                       # 8 GB > 6 GB: gone
+    s.config["data_cap_reset_day"] = 10
+    assert _read(s) == 6
 
 
 def test_the_memory_survives_a_restart():

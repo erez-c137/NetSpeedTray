@@ -472,6 +472,7 @@ class WidgetState(QObject):
                                "anchor_up": au, "anchor_down": ad, "period_key": str(row[4] or "")}
             self._usage_launch_snapshot = rec.snapshot
             self._usage_left = WidgetState._decode_left_periods(getattr(rec, "rekey_memory", None))
+            WidgetState._drop_stale_left_periods(self)
             self._usage_loaded = True
             return True
         except Exception as e:
@@ -589,6 +590,16 @@ class WidgetState(QObject):
         u["anchor_up"], u["anchor_down"] = back["au"], back["ad"]
         return True
 
+    def _drop_stale_left_periods(self) -> None:
+        """Forget remembered periods taken on a LARGER total than the current one: the total was reset
+        since (a usage reset by a build that did not clear this memory, or one undone elsewhere), so
+        their anchors belong to a count that no longer exists."""
+        u = self._usage
+        left = WidgetState._usage_left_periods(self)
+        for k in [k for k, v in left.items()
+                  if v["cu"] > u["cumulative_up"] or v["cd"] > u["cumulative_down"]]:
+            del left[k]
+
     @staticmethod
     def _encode_left_periods(left: Dict[str, Dict[str, Any]]) -> str:
         """The persistable part of the re-key memory as JSON ("" = none: the stored key is deleted)."""
@@ -617,19 +628,24 @@ class WidgetState(QObject):
         one a clock that ran ahead wrote. The same picture arises when the clock is BEHIND now (a dead
         CMOS battery, a VM snapshot restore, a date set back by hand) - re-keying then, and anchoring at
         the total when the clock is corrected, wiped the period's usage. Evidence: the history writer's
-        last trusted maintenance stamp (the clock is not behind it), or the odometer having rolled
-        forward out of exactly that period on this running total."""
+        last trusted maintenance stamp (the clock is not behind it); only when there is no stamp at
+        all, the odometer having rolled forward out of exactly that period on this running total."""
         stamp = None
         try:
             stamp = self.history_reader.clock_trusted_ts()
         except Exception:
             stamp = None
-        if stamp is not None and time.time() >= stamp - constants.data.retention.CLOCK_BEHIND_TOLERANCE_SEC:
-            return True
-        # The odometer rolled forward out of exactly this period on THIS total (in this session or a
-        # previous one): evidence enough, because a re-key that proves wrong is undone at the next
-        # rollover (see _maybe_reanchor). Covers a stamp the writer itself took on a clock that was
-        # ahead (a jump of a few days in a session is trusted as sleep / app-off time).
+        if stamp is not None:
+            # The stamp decides, both ways. A clock behind it is not evidence of anything - and a
+            # legit rollover always leaves the entry below, so falling back to it would re-key a date
+            # set back across a reset day, merging two periods (and later wiping one). Accepted cost:
+            # after a jump of a few days inside a session (which the writer trusts as sleep, so its
+            # stamp runs ahead) the re-key waits until the writer re-accepts the clock (~6 h); the
+            # odometer keeps counting meanwhile.
+            return time.time() >= stamp - constants.data.retention.CLOCK_BEHIND_TOLERANCE_SEC
+        # No stamp at all (a file the history writer has not maintained yet, a v7 file): the odometer
+        # having rolled forward out of exactly this period on THIS total is the evidence; a re-key it
+        # proves wrong is undone at the next rollover (see _maybe_reanchor).
         back = WidgetState._usage_left_periods(self).get(pk)
         u = self._usage
         return back is not None and back["why"] == "rollover" \
