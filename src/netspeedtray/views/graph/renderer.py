@@ -617,7 +617,7 @@ class GraphRenderer(QObject):
             if stat_type in ("cpu", "gpu") and hw_styles is not None:   # the Monitor's toggle layout
                 self._draw_hw_empty_message(self.ax_download, period_key, hw_styles, roles=(stat_type,))
             elif stat_type == "network":
-                self._draw_net_empty_message(period_key)
+                self._draw_net_empty_message(period_key, start_time, end_time, hw_styles)
             self.canvas.draw_idle()
             return None
 
@@ -647,7 +647,7 @@ class GraphRenderer(QObject):
             if not raw_data[:, 1:].any():
                 # Nothing but the reader's zero padding (an empty database / a range before the first
                 # sample): say so, rather than draw a flat 0 line that reads as "no traffic".
-                self._draw_net_empty_message(period_key)
+                self._draw_net_empty_message(period_key, start_time, end_time, hw_styles)
         elif stat_type in ("cpu", "gpu") and hw_styles is not None:
             # Monitor's "toggle" layout: a single CPU- or GPU-only line that must honor the same
             # display settings as combined/separate (per-role color, Smooth, fixed/auto y-axis). The
@@ -925,13 +925,27 @@ class GraphRenderer(QObject):
             for text in legend.get_texts():
                 text.set_color(self._current_text_color)
 
-    def _draw_net_empty_message(self, period_key) -> None:
-        """The centered note on a network graph with no stored history for the range. The live
-        Session view is still filling, so it says "Collecting data" there instead."""
+    def _draw_net_empty_message(self, period_key, start_time=None, end_time=None, hw_styles=None) -> None:
+        """The centered note on a network graph with no traffic for the range, saying WHY honestly:
+        the live Session view is still collecting; nothing recorded at all yet; the range ends before
+        the first record ("History starts <date>"); or history exists before it and this period simply
+        had none - the PC was off, idle or paused (the history keeps no all-zero rows), which is not
+        "not enough history". ``hw_styles["earliest"]`` (GraphHost) is the first stored record."""
+        earliest = (hw_styles or {}).get("earliest")
         if period_key == "TIMELINE_SESSION":
             text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
+        elif earliest is None:
+            text = getattr(self.i18n, "NET_GRAPH_NO_HISTORY_YET", "No history recorded yet.")
+        elif end_time is not None and earliest > end_time:
+            from netspeedtray.views.graph.time_axis import localized_strftime
+            lang = getattr(self.i18n, "language", None)
+            date = localized_strftime(earliest, "%b %d", lang, shape=False)
+            if end_time.year != earliest.year:
+                date = f"{date} {earliest.year}"
+            text = getattr(self.i18n, "NET_GRAPH_HISTORY_STARTS", "History starts {date}.").format(date=date)
         else:
-            text = getattr(self.i18n, "STATS_DETAIL_NO_DATA", "Not enough history for this period yet.")
+            text = getattr(self.i18n, "NET_GRAPH_NO_TRAFFIC",
+                           "No traffic recorded in this period.\nThe PC was off, idle or paused.")
         self._clear_net_empty_message()
         ax = self.ax_download
         self._net_empty_artist = ax.text(

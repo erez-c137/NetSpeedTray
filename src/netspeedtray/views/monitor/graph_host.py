@@ -415,7 +415,19 @@ class GraphHost(QObject):
                 "fixed_axis": bool(self.config.get("monitor_graph_fixed_axis", True)),
                 # Why each role's history isn't being recorded (None = it is), so an empty ranged view
                 # that will never fill says so instead of "Collecting data" forever.
-                "history_off": hardware_history_off_reasons(self.config)}
+                "history_off": hardware_history_off_reasons(self.config),
+                # The first stored record, so an empty range can say why it is empty (renderer).
+                "earliest": self._earliest_record()}
+
+    def _earliest_record(self):
+        """The first stored record (cached). Re-read only while there is none yet - a fresh install's
+        first rows arrive while the Monitor is open - so this is one UI-thread read in steady state."""
+        if self._cached_earliest_db is None:
+            try:
+                self._cached_earliest_db = self._main_widget.widget_state.get_earliest_data_timestamp()
+            except Exception:
+                self._cached_earliest_db = None
+        return self._cached_earliest_db
 
     def _time_range(self):
         from netspeedtray.views.graph.logic import GraphLogic
