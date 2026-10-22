@@ -661,6 +661,9 @@ class OverviewTab(QWidget):
             vram_reading = vu is not None and (vram_shared or float(vu) >= 0.05)
             self._tiles["vram"].set_label(self._tr("VRAM_SHARED_LABEL", "VRAM (shared)") if vram_shared
                                           else self._tr("MONITOR_TILE_VRAM", "VRAM"))
+            if vram_shared != getattr(self, "_vram_series_shared", vram_shared):
+                self._vram_series.clear()   # never mix shared-budget and dedicated percentages
+            self._vram_series_shared = vram_shared
             if vram_reading:
                 vpct = self._pct(vu, vt)
                 self._vram_series.append(vpct)
@@ -883,7 +886,9 @@ class OverviewTab(QWidget):
             return [{"key": "ram", "label": self._tr("MONITOR_TILE_RAM", "RAM"),
                      "unit": "%", "kind": "hw", "primary": True}]
         if metric == "vram":
-            return [{"key": "vram", "label": self._tr("MONITOR_TILE_VRAM", "VRAM"),
+            shared = bool(getattr(self._main_widget, "vram_is_shared", False))
+            return [{"key": "vram", "label": (self._tr("VRAM_SHARED_LABEL", "VRAM (shared)") if shared
+                                              else self._tr("MONITOR_TILE_VRAM", "VRAM")),
                      "unit": "%", "kind": "hw", "primary": True}]
         return []
 

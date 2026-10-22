@@ -141,5 +141,7 @@ def build_snapshot(widget: Any, now: Optional[float] = None) -> MetricsSnapshot:
                 fields["vram_used_bytes"] = used * _GIB
             if total is not None and total > 0:
                 fields["vram_total_bytes"] = total * _GIB
+            if getattr(widget, "vram_is_shared", False) is True:
+                fields["vram_kind"] = "shared"
 
     return MetricsSnapshot(**fields)

@@ -228,9 +228,12 @@ class UsageFlyout(QWidget):
                 continue
             if key == "vram" and hardware.get("vram_shared"):
                 # An integrated GPU's "VRAM" is shared system memory - say so here, where there is
-                # room (the taskbar keeps the short "VRAM").
+                # room (the taskbar keeps the short "VRAM"). update_hardware keeps it current.
                 label = self._tr("VRAM_SHARED_LABEL", "VRAM (shared)")
-            grid.addWidget(self._label(label, tokens.TYPE_BODY_STRONG, self._c["text_primary"]), row, 0)
+            row_label = self._label(label, tokens.TYPE_BODY_STRONG, self._c["text_primary"])
+            if key == "vram":
+                self._hw_values[("vram", "label")] = row_label
+            grid.addWidget(row_label, row, 0)
             cols = stat_cols if key in ("cpu", "gpu") else ["mem"]
             for i, col in enumerate(cols):
                 lbl = self._label("", tokens.TYPE_BODY, self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
@@ -296,6 +299,10 @@ class UsageFlyout(QWidget):
             else:
                 text = f"{helpers.format_decimal(used, self._i18n, 1)} {gb}"
             self._hw_values[(key, "mem")].setText(text)
+        if ("vram", "label") in self._hw_values and "vram" in hardware:
+            # The card can stay up across a poll that changes what the VRAM reading is.
+            self._hw_values[("vram", "label")].setText(
+                self._tr("VRAM_SHARED_LABEL", "VRAM (shared)") if hardware.get("vram_shared") else "VRAM")
         if ("identity", "text") in self._hw_values:
             self._hw_values[("identity", "text")].setText(str(hardware.get("identity") or dash))
 
