@@ -6,5 +6,5 @@ matplotlib
 numpy
 wmi; sys_platform == "win32"           # Windows-only (needs pywin32)
 fonttools>=4.61.0   # Explicitly added to enforce Security CVE fix
-pillow>=12.3.0      # Security: 13 CVEs fixed in 12.3.0 (see dependabot)
+pillow>=13.0.0      # Security: 56 Dependabot alerts (3 critical) fixed in 13.0.0
 python-bidi          # RTL (Hebrew) bidi reshaping for matplotlib graph labels (item 6)
