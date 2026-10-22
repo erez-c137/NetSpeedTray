@@ -2254,6 +2254,11 @@ class NetworkSpeedWidget(QWidget):
 
     def check_for_updates(self) -> None:
         """Manually trigger an update check (from menu)."""
+        from netspeedtray.core.update_checker import update_check_disabled_by_policy
+        if update_check_disabled_by_policy():
+            # The menu item is hidden under the policy (U1); a stale menu opened just before the
+            # policy landed must not wire the one-shot replies to a check that will never run.
+            return
         if self.update_checker:
             # update_available is already wired to _on_update_available at construction
             # (persistent, see __init__). Do NOT connect a second handler here: on a manual

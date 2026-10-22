@@ -21,6 +21,30 @@ RELEASES_URL = f"https://api.github.com/repos/{constants.app.GITHUB_OWNER}/{cons
 CHECK_INTERVAL_HOURS = 24
 
 
+def update_check_disabled_by_policy() -> bool:
+    """True when IT has turned update checks off: a nonzero REG_DWORD (or REG_QWORD)
+    ``DisableUpdateCheck`` under ``HKLM\\SOFTWARE\\Policies\\NetSpeedTray``, or the same under HKCU
+    (U1). Read-only. A missing key, another value type or any read error means "no policy" - the
+    policy can only ever switch checks OFF, so failing open here never contacts anything the user
+    has not already allowed. Cheap enough to call on every check and every menu open, so a policy
+    pushed while the app runs applies without a restart."""
+    try:
+        import winreg
+    except ImportError:  # not Windows
+        return False
+    key_path = constants.app.POLICY_REGISTRY_KEY
+    value_name = constants.app.POLICY_DISABLE_UPDATE_CHECK_VALUE
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ) as key:
+                value, value_type = winreg.QueryValueEx(key, value_name)
+        except OSError:
+            continue   # no key / no value / no access: this hive sets nothing
+        if value_type in (winreg.REG_DWORD, winreg.REG_QWORD) and int(value) != 0:
+            return True
+    return False
+
+
 # Pre-release stage ordering. An unrecognised stage sorts ABOVE these but still
 # below any final release, so an unexpected tag can never look newer than a real one.
 _PRERELEASE_STAGES = {"alpha": 0, "a": 0, "beta": 1, "b": 1, "rc": 2, "c": 2, "pre": 2}
@@ -176,6 +200,10 @@ class UpdateChecker(QObject):
 
     def should_check(self) -> bool:
         """Return True if enough time has passed since the last check."""
+        if update_check_disabled_by_policy():
+            logger.info("Update checks are disabled by policy (%s\\%s).",
+                        constants.app.POLICY_REGISTRY_KEY, constants.app.POLICY_DISABLE_UPDATE_CHECK_VALUE)
+            return False
         if not self.config.get("check_for_updates", True):
             return False
 
@@ -194,6 +222,12 @@ class UpdateChecker(QObject):
         """Start an async update check. Results arrive via signals."""
         if self._worker is not None and self._worker.isRunning():
             logger.debug("Update check already in progress, skipping.")
+            return
+        # The policy covers the manual check too (the per-user toggle does not): its point is that
+        # the machine never contacts GitHub and IT owns the version. The menu item is hidden as well
+        # (tray_manager); this is the backstop for any other caller.
+        if update_check_disabled_by_policy():
+            logger.info("Update check refused: disabled by policy.")
             return
 
         logger.info("Checking for updates...")

@@ -82,7 +82,23 @@ class GeneralPage(QWidget):
 
         self.check_for_updates = Win11Toggle(label_text="")
         self.check_for_updates.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.CHECK_FOR_UPDATES_LABEL, control=self.check_for_updates))
+        # IT's DisableUpdateCheck policy (U1) locks the toggle off and says why. The user's own
+        # choice is kept untouched underneath (see get_settings), so lifting the policy restores it.
+        from netspeedtray.core.update_checker import update_check_disabled_by_policy
+        self._updates_policy_locked = update_check_disabled_by_policy()
+        self._saved_check_for_updates = True
+        if self._updates_policy_locked:
+            # setEnabled alone won't dim our fixed-color toggle (HardwarePage._set_card_enabled);
+            # dim only the toggle, so the "managed" note under the title stays readable.
+            from PyQt6.QtWidgets import QGraphicsOpacityEffect
+            self.check_for_updates.setEnabled(False)
+            dim = QGraphicsOpacityEffect(self.check_for_updates)
+            dim.setOpacity(0.4)
+            self.check_for_updates.setGraphicsEffect(dim)
+        layout.addWidget(SettingCard(
+            self.i18n.CHECK_FOR_UPDATES_LABEL,
+            description=self.i18n.UPDATE_CHECK_POLICY_MANAGED if self._updates_policy_locked else "",
+            control=self.check_for_updates))
 
         # (Preferred Monitor moved to the Widget page's Behavior section, 2.2 IA pass: it decides which
         # taskbar the widget docks to, and its dependent "Float on a display without a taskbar" is there.)
@@ -163,7 +179,9 @@ class GeneralPage(QWidget):
         
         # Other toggles
         self.start_with_windows.setChecked(is_startup_enabled)
-        self.check_for_updates.setChecked(config.get("check_for_updates", True))
+        self._saved_check_for_updates = bool(config.get("check_for_updates", True))
+        self.check_for_updates.setChecked(
+            False if self._updates_policy_locked else self._saved_check_for_updates)
         # free_move / keep_visible_fullscreen / tray_offset_x are loaded by the Widget page now.
         # preferred_monitor is loaded by the Widget page now (2.2 IA pass).
 
@@ -191,7 +209,9 @@ class GeneralPage(QWidget):
             "language": self.language_combo.currentData(),
             "update_rate": update_rate_value,
             "start_with_windows": self.start_with_windows.isChecked(),
-            "check_for_updates": self.check_for_updates.isChecked(),
+            # Under the policy the toggle shows "off" but the user's own setting is written back as-is.
+            "check_for_updates": (self._saved_check_for_updates if self._updates_policy_locked
+                                  else self.check_for_updates.isChecked()),
             "double_click_action": self.double_click_action.currentData(),
             "middle_click_action": self.middle_click_action.currentData(),
             "pause_in_menu": self.pause_in_menu.isChecked(),

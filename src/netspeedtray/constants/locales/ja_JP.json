@@ -242,6 +242,8 @@
     "UPDATE_AVAILABLE_TITLE": "更新があります",
     "UPDATE_DOWNLOADING_TITLE": "更新をダウンロード中",
     "UPDATE_FALLBACK_MESSAGE": "アプリ内更新を完了できませんでした。代わりにダウンロードページを開きます。",
+    "UPDATE_SIGNATURE_FAILED_MESSAGE": "ダウンロードした更新が NetSpeedTray の発行元によって署名されていることを確認できなかったため、インストールしませんでした。現在のバージョンはそのままです。代わりにダウンロードページを開きます。",
+    "UPDATE_CHECK_POLICY_MANAGED": "組織によって管理されています",
     "UPDATE_PORTABLE_READY_TITLE": "更新のインストール準備完了",
     "UPDATE_PORTABLE_READY_MESSAGE": "NetSpeedTray {version} は、今開いたフォルダーに用意されています :\n{ready}\n\n更新を完了するには : NetSpeedTray を閉じ、更新フォルダーのすべてを現在のフォルダーにコピーします :\n{app_dir}\n(古いファイルの置換中). 設定は保持されます。",
     "UPDATE_NOT_APPLIED_MESSAGE": "NetSpeedTray could not replace its folder by itself, so you are still on the version you had.\nReason: {reason}",

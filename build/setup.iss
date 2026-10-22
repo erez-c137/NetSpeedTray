@@ -138,7 +138,8 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 ; held the Global\ mutex so every user's own launch exited quietly until a reboot; and in the in-app
 ; update path that token is elevated, so a momentarily missing Shell_TrayWnd (Explorer restarting)
 ; brought the app back as admin. Without a shell the app simply starts the next time the user
-; starts it or signs in (LaunchSilentViaShell logs which case applied).
+; starts it - or at sign-in, but only for a user who has run it before: the HKCU Run value is written
+; by the app on its first run, never by Setup (LaunchSilentViaShell logs which case applied; U9).
 Filename: "{win}\explorer.exe"; Parameters: """{app}\{#MyAppExeName}"""; Flags: nowait runasoriginaluser; Check: LaunchSilentViaShell
 
 [UninstallDelete]
@@ -296,11 +297,11 @@ begin
   if not WizardSilent() then
     Exit;
   if SetupRunsAsAnotherUser() then
-    Log('Silent install: Setup runs as ' + SetupAccount() + ', not as the user signed in to this session - not starting {#MyAppName} under that account; it starts at their next sign-in or from the Start menu.')
+    Log('Silent install: Setup runs as ' + SetupAccount() + ', not as the user signed in to this session - not starting {#MyAppName} under that account; the user starts it from the Start menu (at sign-in only if they have run it before and start with Windows is on).')
   else if InServiceContext() then
-    Log('Silent install: running as SYSTEM or in session 0 - not starting {#MyAppName}; each user starts it at their next sign-in or from the Start menu.')
+    Log('Silent install: running as SYSTEM or in session 0 - not starting {#MyAppName}. Each user starts it once from the Start menu; it starts at sign-in only after that first run (the app writes its own Run value), or already if they used it before.')
   else if not ShellIsRunning() then
-    Log('Silent install: no shell running - not starting {#MyAppName}; it starts at the next sign-in or from the Start menu.')
+    Log('Silent install: no shell running - not starting {#MyAppName}; start it from the Start menu (it starts at sign-in only if it has run before with start with Windows on).')
   else
   begin
     Result := True;
