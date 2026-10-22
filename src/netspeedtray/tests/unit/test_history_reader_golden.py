@@ -17,7 +17,7 @@ import math
 import random
 import sqlite3
 import types
-from dataclasses import astuple, is_dataclass
+from dataclasses import astuple, is_dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -280,14 +280,25 @@ def test_summarize_hardware_matches_legacy(ws, poll):
 @pytest.mark.parametrize("poll", [2.0])
 @pytest.mark.parametrize("direction", ["download", "upload"])
 def test_summarize_network_matches_legacy(ws, direction, poll):
-    nonempty = 0
+    """Identical for every single interface. The all-interfaces aggregate deliberately departs from the
+    legacy code in avg and count only: a minute / hour bucket is now its bytes / MAX(sample_count),
+    weighed by MAX(sample_count), instead of SUM(avg) weighed by SUM(sample_count), which overstated the
+    avg whenever two interfaces moved data in one bucket (test_history_multi_interface_average)."""
+    nonempty = changed = 0
     for start, end in _bounded_windows():
         for iface in IFACES_ALL:
             old = Legacy.summarize_network(ws, direction, start, end, iface, poll)
             new = ws.summarize_network(direction, start, end, iface, poll)
-            _same(new, old, f"summarize_network({direction},{start},{end},{iface},{poll})")
+            path = f"summarize_network({direction},{start},{end},{iface},{poll})"
+            if iface in (None, "all"):
+                _same(replace(new, avg=0.0, count=0), replace(old, avg=0.0, count=0), path)
+                assert new.count <= old.count, path
+                changed += new.count < old.count
+            else:
+                _same(new, old, path)
             nonempty += old.count > 0
     assert nonempty > 50
+    assert changed > 0   # the fixture's overlapping interfaces do reach the aggregate rollup path
 
 
 # --- 5. get_total_bandwidth_for_period (the data-cap / "data used" totals) ---------------------------

@@ -87,11 +87,13 @@ def make_history(now: datetime, seed: int = 3) -> History:
         scale = 10 if nic_i == 0 else 1
         for t in range(now_ts - 20 * 3600, now_ts - 5, 15):
             h.raw.append((t, nic, rng.randint(1, 500) * scale, rng.randint(1, 5000) * scale))
-        # v8-native minutes: bytes stored; avg = mean of the 20 sample rates.
+        # v8-native minutes: bytes stored; avg = mean of the 20 sample rates; sample_count = the 40
+        # measured SECONDS (schema_v8.NET_TIER_UNITS - what writer_v8 stores), so avg x count = bytes.
         m0 = (now_ts - 28 * 3600) // 60 * 60
         for t in range(m0, m0 + 3 * 3600, 60):
             ua, da = rng.randint(1, 400) * scale, rng.randint(1, 4000) * scale
-            h.minute.append((t, nic, float(ua), float(da), float(ua * 3), float(da * 3), NATIVE_SAMPLES,
+            h.minute.append((t, nic, float(ua), float(da), float(ua * 3), float(da * 3),
+                             NATIVE_SAMPLES * NATIVE_SAMPLE_SECONDS,
                              ua * NATIVE_SAMPLES * NATIVE_SAMPLE_SECONDS,
                              da * NATIVE_SAMPLES * NATIVE_SAMPLE_SECONDS))
         # migrated minutes: partly idle (count < 60), bytes unknown.

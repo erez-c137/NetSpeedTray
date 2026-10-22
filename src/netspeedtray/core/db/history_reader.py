@@ -281,6 +281,27 @@ def _hourly_rows(rows) -> Dict[int, float]:
     return {int(h): float(vw) / float(w) for h, vw, w in rows if h is not None and w}
 
 
+def _bucket_rate_sql(avg: str, bytes_: str, sc: str) -> Tuple[str, str]:
+    """(rate, weight) SQL aggregates for ONE network rollup bucket (GROUP BY its timestamp), across the
+    interfaces that have a row in it. ``avg`` / ``bytes_`` / ``sc`` are per-row expressions: the stored
+    mean rate, the bytes the row moved, and the seconds (samples) it stands for.
+
+    The bucket's rate is the bytes every interface moved over the bucket's span: SUM(bytes) / MAX(sc),
+    weighted by MAX(sc). NOT SUM(avg) weighted by SUM(sc): the per-interface rates do add up, but their
+    spans overlap in time, so SUM(avg) x SUM(sc) exceeds the bucket's real SUM(avg x sc) = bytes whenever
+    more than one interface moved data (Wi-Fi 1000 B/s + vEthernet 1 B/s over one minute weighed as
+    1001 B/s for 120 s), overstating every multi-interface "all" average. MAX(sc) is the longest
+    interface's span - the bucket's measured time, short of the true union only when the interfaces
+    were active in disjoint seconds, which reads that bucket high by the union / MAX ratio (about 3%
+    for a Wi-Fi active 90% of seconds beside a vEthernet active 30%,
+    test_history_multi_interface_average); the rollup tiers keep no per-second union. A single-row bucket (one interface selected, or only one moved
+    data) keeps its stored avg and sc exactly. (``* 1.0``: v8 bytes and sample_count are INTEGER, and
+    SQLite divides two integers as integers.)"""
+    rate = (f"CASE WHEN COUNT(*) = 1 THEN MAX({avg}) "
+            f"ELSE COALESCE(SUM({bytes_}) * 1.0 / NULLIF(MAX({sc}), 0), SUM({avg})) END")
+    return rate, f"MAX({sc})"
+
+
 class HistoryNotReadyError(sqlite3.OperationalError):
     """The history file cannot be opened for reading YET (the worker is still creating/migrating it -
     a v7 -> v8 upgrade on the first 2.2 launch) or at all this session. Reads issued in that window
@@ -652,15 +673,17 @@ class V7HistoryReader(_ReaderBase):
             avgs, maxes, counts = [], [], []
             covered_seconds = 0.0   # for coverage: count distinct TIME buckets x their duration, NOT
             #                         SUM(sample_count) - which, for an "all" aggregate, double-counts by
-            #                         NIC and inflates the evidence-admissibility figure past 100%.
+            #                         NIC and inflates the evidence-admissibility figure past 100%. The
+            #                         same double count is why a bucket's rate / weight come from
+            #                         _bucket_rate (bytes / MAX(sample_count)), not SUM(avg) / SUM(count).
             _, min_bound, hour_bound = self._bounds(self._SPEED_TIERS)
+            rate, weight = self._bucket_rate(col)
             for table, bucket_secs, (below_sql, below_params) in (
                     (constants.data.SPEED_TABLE_MINUTE, 60.0, min_bound),
                     (constants.data.SPEED_TABLE_HOUR, 3600.0, hour_bound)):
                 cur.execute(
-                    f"SELECT SUM({col}_avg), MAX(t.mx), SUM(sample_count) FROM "
-                    f"(SELECT timestamp, {col}_avg, {col}_max AS mx, sample_count FROM {table} "
-                    f" WHERE timestamp BETWEEN ? AND ?{below_sql}{wh}) t GROUP BY t.timestamp",
+                    f"SELECT {rate}, MAX({col}_max), {weight} FROM {table} "
+                    f"WHERE timestamp BETWEEN ? AND ?{below_sql}{wh} GROUP BY timestamp",
                     (st, et) + below_params + params_tail)
                 for r in cur.fetchall():
                     if r[0] is None:
@@ -682,10 +705,19 @@ class V7HistoryReader(_ReaderBase):
             if conn is not None:
                 self._end_snapshot(conn, began)
 
+    @staticmethod
+    def _bucket_rate(col: str) -> Tuple[str, str]:
+        """(rate, weight) of one minute/hour bucket across interfaces (``_bucket_rate_sql``). A v7
+        rollup's sample_count is its raw-row count, one per second at the default 1 s capture, so
+        avg x sample_count is SUM(the stored per-second rates) - the bytes, in the same unit."""
+        sc = "COALESCE(sample_count, 1)"
+        return _bucket_rate_sql(f"{col}_avg", f"{col}_avg * {sc}", sc)
+
     def network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,
                                interface_name: Optional[str] = None) -> Dict[int, float]:
         """summarize_network's samples and weights, per local clock-hour: raw rows weigh one sample;
-        beyond 24 h the bounded minute / hour rows weigh their sample_count."""
+        beyond 24 h each bounded minute / hour bucket is its bytes / MAX(sample_count), weighed by
+        that MAX(sample_count) (_bucket_rate)."""
         col = "download" if direction == "download" else "upload"
         st, et = int(start_time.timestamp()), int(end_time.timestamp())
         iface = None if interface_name in (None, "all") else interface_name
@@ -698,7 +730,8 @@ class V7HistoryReader(_ReaderBase):
             _, min_bound, hour_bound = self._bounds(self._SPEED_TIERS)
             for table, (below_sql, below_params) in ((constants.data.SPEED_TABLE_MINUTE, min_bound),
                                                      (constants.data.SPEED_TABLE_HOUR, hour_bound)):
-                parts.append(f"SELECT timestamp AS ts, SUM({col}_avg) AS v, COALESCE(SUM(sample_count), 1) AS w "
+                rate, weight = self._bucket_rate(col)
+                parts.append(f"SELECT timestamp AS ts, {rate} AS v, COALESCE({weight}, 1) AS w "
                              f"FROM {table} WHERE timestamp BETWEEN ? AND ?{below_sql}{wh} GROUP BY timestamp")
                 params += [st, et, *below_params, *tail]
         query = _HOURLY_PROFILE_SQL.format(union=" UNION ALL ".join(parts))
@@ -992,6 +1025,25 @@ class V8HistoryReader(_ReaderBase):
     _RAW_RATE = "n.{d}_bytes * 1000.0 / NULLIF(n.dt_ms, 0)"
     _METRIC = (f"h.metric_id IN (SELECT metric_id FROM {S8.METRICS} WHERE name = ? AND entity = '')")
 
+    @classmethod
+    def _tier_bytes(cls, d: str, k: int) -> str:
+        """Per-row bytes of a net rollup row (tier ``k``): the stored bytes, else the legacy estimate
+        (module comment above LEGACY_SAMPLE_SECONDS; schema_v8.NET_TIER_UNITS)."""
+        return (f"COALESCE(n.{d}_bytes, n.{d}_avg * MIN(n.sample_count, {cls._BUCKET_SECONDS[k]}) "
+                f"* {LEGACY_SAMPLE_SECONDS})")
+
+    @classmethod
+    def _bucket_rate(cls, d: str, k: int) -> Tuple[str, str]:
+        """(rate, weight) of one net rollup bucket across interfaces (``_bucket_rate_sql``): each row
+        contributes avg x MIN(sample_count, bucket) - its rate over its (capped) measured seconds -
+        NOT its stored bytes. writer_v8 rolls a FLAG_GAP raw row (an interval spanning standby) into
+        its minute: the row keeps the whole gap's bytes, its avg = bytes / the gap's seconds, and its
+        sample_count is capped at the bucket. Stored bytes / MAX(sample_count) would then bill hours
+        of bytes to one minute (500 MB over a 2 h gap -> 4 MB/s); the avg-based figure keeps that row
+        at its own average, as a one-row bucket reads. Stored bytes stay volume()'s (_tier_bytes)."""
+        sc = f"MIN(n.sample_count, {cls._BUCKET_SECONDS[k]})"
+        return _bucket_rate_sql(f"n.{d}_avg", f"n.{d}_avg * {sc}", "n.sample_count")
+
     # --- tier precedence by watermark --------------------------------------------------------------
 
     @staticmethod
@@ -1182,10 +1234,10 @@ class V8HistoryReader(_ReaderBase):
             avgs, maxes, counts = [], [], []
             covered_seconds = 0.0   # distinct time buckets x their duration (see V7HistoryReader)
             for k in (1, 2):
-                cur.execute(f"SELECT SUM(t.a), MAX(t.mx), SUM(t.sc) FROM "
-                            f"(SELECT n.ts AS ts, n.{d}_avg AS a, n.{d}_max AS mx, n.sample_count AS sc "
-                            f" FROM {self._NET[k]} n {self._IFACE_JOIN} "
-                            f" WHERE n.ts BETWEEN ? AND ?{bounds[k][0]}{iface_sql}) t GROUP BY t.ts",
+                rate, weight = self._bucket_rate(d, k)
+                cur.execute(f"SELECT {rate}, MAX(n.{d}_max), {weight} "
+                            f"FROM {self._NET[k]} n {self._IFACE_JOIN} "
+                            f"WHERE n.ts BETWEEN ? AND ?{bounds[k][0]}{iface_sql} GROUP BY n.ts",
                             (st, et) + bounds[k][1] + iface_p)
                 for r in cur.fetchall():
                     if r[0] is None:
@@ -1211,8 +1263,9 @@ class V8HistoryReader(_ReaderBase):
     def network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,
                                interface_name: Optional[str] = None) -> Dict[int, float]:
         """Exactly summarize_network's samples and weights (raw: measured seconds clipped to the window,
-        gap rows excluded; rollups: per-bucket avg weighted by sample_count, which is SECONDS on the
-        net tiers), grouped by local clock-hour - so the hours average back to the summary's avg."""
+        gap rows excluded; rollups: per-bucket bytes / seconds weighted by those seconds - _bucket_rate,
+        sample_count being SECONDS on the net tiers), grouped by local clock-hour - so the hours
+        average back to the summary's avg."""
         d = "down" if direction == "download" else "up"
         st, et = int(start_time.timestamp()), int(end_time.timestamp())
         iface_sql, iface_p = self._iface_filter(interface_name)
@@ -1224,7 +1277,8 @@ class V8HistoryReader(_ReaderBase):
                  f"{bounds[0][0]}{iface_sql} GROUP BY n.ts"]
         params: List[Any] = [st, st, et, *bounds[0][1], *iface_p]
         for k in (1, 2):
-            parts.append(f"SELECT n.ts AS ts, SUM(n.{d}_avg) AS v, COALESCE(SUM(n.sample_count), 1) AS w "
+            rate, weight = self._bucket_rate(d, k)
+            parts.append(f"SELECT n.ts AS ts, {rate} AS v, COALESCE({weight}, 1) AS w "
                          f"FROM {self._NET[k]} n {self._IFACE_JOIN} "
                          f"WHERE n.ts BETWEEN ? AND ?{bounds[k][0]}{iface_sql} GROUP BY n.ts")
             params += [st, et, *bounds[k][1], *iface_p]
@@ -1256,10 +1310,7 @@ class V8HistoryReader(_ReaderBase):
                 if k == 0:
                     cols = ("SUM(n.up_bytes), SUM(n.down_bytes), SUM(n.up_bytes), SUM(n.down_bytes), 0")
                 else:
-                    est = (f"n.{{d}}_avg * MIN(n.sample_count, {self._BUCKET_SECONDS[k]}) "
-                           f"* {LEGACY_SAMPLE_SECONDS}")
-                    cols = (f"SUM(COALESCE(n.up_bytes, {est.format(d='up')})), "
-                            f"SUM(COALESCE(n.down_bytes, {est.format(d='down')})), "
+                    cols = (f"SUM({self._tier_bytes('up', k)}), SUM({self._tier_bytes('down', k)}), "
                             "SUM(n.up_bytes), SUM(n.down_bytes), "
                             "SUM(n.up_bytes IS NULL OR n.down_bytes IS NULL)")
                 cur.execute(f"SELECT {cols} FROM {table} n {self._IFACE_JOIN} "
