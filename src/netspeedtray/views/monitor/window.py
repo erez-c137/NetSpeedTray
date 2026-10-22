@@ -42,6 +42,11 @@ class MonitorWindow(QWidget):
     def __init__(self, main_widget, config: Dict[str, Any], i18n, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        if parent is None:
+            # The owner drops its reference in closeEvent (window_closed); Qt must be the one that
+            # destroys the window, on the GUI thread - never Python's GC (utils/qt_lifetime).
+            from netspeedtray.utils.qt_lifetime import hand_to_qt
+            hand_to_qt(self)
         self._main_widget = main_widget
         self.config = config
         self.i18n = i18n

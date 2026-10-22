@@ -733,6 +733,10 @@ class NetworkSpeedWidget(QWidget):
         """Show a data-cap usage alert via the flyout (no system-tray icon needed)."""
         try:
             from netspeedtray.views.flyout import Flyout
+            from PyQt6 import sip
+            previous = getattr(self, "_usage_alert_flyout", None)
+            if previous is not None and not sip.isdeleted(previous):
+                previous.close()   # Qt-owned and self-deleting: replace it, never stack two
             self._usage_alert_flyout = Flyout(title, message, auto_dismiss_ms=auto_dismiss_ms)
             geo = self.frameGeometry()
             self._usage_alert_flyout.show_at(QPoint(geo.left(), geo.top()))
@@ -1213,6 +1217,10 @@ class NetworkSpeedWidget(QWidget):
         if card is not None:
             try:
                 card.hide()
+                # Qt deletes it on the GUI thread; dropped here, a Python-owned card could
+                # otherwise be destroyed by the cyclic GC on a worker thread (utils/qt_lifetime).
+                from netspeedtray.utils.qt_lifetime import hand_to_qt
+                hand_to_qt(card)
                 card.deleteLater()
             except Exception:
                 pass
