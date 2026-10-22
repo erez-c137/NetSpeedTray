@@ -409,6 +409,7 @@ class NetworkSpeedWidget(QWidget):
                 font_metrics=self.current_metrics
             )
             self.position_manager = PositionManager(window_state, parent=self)
+            self.position_manager.on_side_no_room = self._maybe_show_side_no_room_notice
             # Note: InputHandler is initialized in _init_ui_components() after tray_manager is created
             
             self.logger.debug("Managers initialized successfully.")
@@ -963,6 +964,33 @@ class NetworkSpeedWidget(QWidget):
     # _load_initial_config removed as it is now handled by ConfigController class
 
 
+    # Explorer re-lays the taskbar's buttons (with an animation) after the alignment flips; probing
+    # before that settles would measure the old layout.
+    _ALIGNMENT_SETTLE_MS = 1500
+
+    def _on_taskbar_alignment_changed(self) -> None:
+        """Center <-> Top icon alignment flipped live (rc.1 B3): re-decide the side-bar placement once
+        Explorer has moved its buttons, instead of only at the next restart."""
+        try:
+            timer = getattr(self, "_alignment_timer", None)
+            if timer is None:
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(self._redecide_side_placement)
+                self._alignment_timer = timer
+            timer.start(self._ALIGNMENT_SETTLE_MS)         # restarts: a burst of flips -> one re-decide
+        except Exception as e:
+            self.logger.debug("alignment change handling failed: %s", e)
+
+    def _redecide_side_placement(self) -> None:
+        pm = getattr(self, "position_manager", None)
+        if pm is None:
+            return
+        try:
+            pm.redecide_side_placement()
+        except Exception as e:
+            self.logger.debug("side-bar re-placement failed: %s", e)
+
     def _on_theme_changed(self) -> None:
         """Delegates theme change handling."""
         # An open card (pinned ones last for minutes) keeps the old theme's colours: close it; the
@@ -1046,6 +1074,7 @@ class NetworkSpeedWidget(QWidget):
             self.system_event_handler.taskbar_changed.connect(self.update_position)
             self._refresh_cached_layout_mode()
             self.system_event_handler.theme_changed.connect(self._on_theme_changed)
+            self.system_event_handler.taskbar_alignment_changed.connect(self._on_taskbar_alignment_changed)
             
             # Emergency-hide on unambiguous fullscreen - but honor the user's
             # "keep visible over fullscreen" choice (issue #107). Without this guard
@@ -2111,8 +2140,8 @@ class NetworkSpeedWidget(QWidget):
         self.position_manager.enforce_topmost_status()
 
     def reset_to_default_position(self) -> None:
-        """Right-click > Reset position: back to the automatic spot by the tray - clears the
-        free-move spot AND the docked drag offsets, then re-places."""
+        """Right-click > Reset position: back to the automatic spot by the tray (or the side bar's
+        chosen gap) - clears the free-move spot AND the docked drag offsets, then re-places."""
         self.logger.info("Resetting widget position to default.")
         self._hide_usage_hover_card()
         defaults = constants.config.defaults
@@ -2130,6 +2159,23 @@ class NetworkSpeedWidget(QWidget):
         return (cfg.get('position_x') is not None or cfg.get('position_y') is not None
                 or cfg.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X) != defaults.DEFAULT_TRAY_OFFSET_X
                 or cfg.get('tray_offset_y', defaults.DEFAULT_TRAY_OFFSET_Y) != defaults.DEFAULT_TRAY_OFFSET_Y)
+
+    def _maybe_show_side_no_room_notice(self) -> None:
+        """One-time heads-up (ever): a side taskbar's app buttons leave no free spot, so the widget sits
+        by the tray and may cover some of them - it can be dragged anywhere along the bar. Called by
+        PositionManager when its placement ends in "tray_no_room" (never while the user's own drag
+        is in force)."""
+        try:
+            if getattr(self, "_side_no_room_shown", False) or self.config.get("side_bar_no_room_notice_shown", False):
+                return
+            self._side_no_room_shown = True
+            self.update_config({"side_bar_no_room_notice_shown": True})
+            title = self.i18n.SIDE_BAR_NO_ROOM_TITLE
+            body = self.i18n.SIDE_BAR_NO_ROOM_BODY
+            # Deferred out of the reposition so the modal doesn't run inside it (like the #200 nudge).
+            QTimer.singleShot(0, lambda: QMessageBox.information(self, title, body))
+        except Exception as e:
+            self.logger.debug("side-bar no-room notice failed: %s", e)
 
 
     def apply_all_settings(self) -> None:

@@ -529,6 +529,8 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray recouvre le volet Widgets",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray se trouve au-dessus du volet Widgets/météo de Windows, dans votre barre des tâches. Vous pouvez le faire glisser où vous voulez : il mémorisera son emplacement. (Ce message ne s'affichera plus.)",
     "RESET_POSITION_MENU_ITEM": "Ré&initialiser la position",
+    "SIDE_BAR_NO_ROOM_TITLE": "Aucune place libre dans la barre des tâches",
+    "SIDE_BAR_NO_ROOM_BODY": "Les boutons des applications remplissent votre barre des tâches : NetSpeedTray se place donc à côté de la zone de notification et peut en masquer certains. Vous pouvez le faire glisser n'importe où le long de la barre des tâches : il mémorisera son emplacement. Pour annuler, faites un clic droit dessus et choisissez « Réinitialiser la position ». (Ce message ne s'affichera plus.)",
     "HOVER_CARD_PIN_HINT": "Cliquez sur le widget pour la garder ouverte",
     "INTEGRATIONS_GROUP": "Intégrations",
     "METRICS_ENDPOINT_LABEL": "Point de terminaison local des métriques",

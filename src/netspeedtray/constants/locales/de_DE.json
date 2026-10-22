@@ -529,6 +529,8 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray überdeckt das Widgets-Panel",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray liegt in Ihrer Taskleiste über den Windows-Widgets bzw. der Wetteranzeige. Sie können es an eine beliebige Stelle ziehen – die Position wird gemerkt. (Diese Meldung wird nicht mehr angezeigt.)",
     "RESET_POSITION_MENU_ITEM": "Position &zurücksetzen",
+    "SIDE_BAR_NO_ROOM_TITLE": "Kein freier Platz auf der Taskleiste",
+    "SIDE_BAR_NO_ROOM_BODY": "Die App-Schaltflächen füllen Ihre Taskleiste, daher sitzt NetSpeedTray neben dem Infobereich und kann einige davon verdecken. Sie können es an eine beliebige Stelle der Taskleiste ziehen – die Position wird gemerkt. Zum Rückgängigmachen mit der rechten Maustaste darauf klicken und „Position zurücksetzen“ wählen. (Diese Meldung wird nicht mehr angezeigt.)",
     "HOVER_CARD_PIN_HINT": "Auf das Widget klicken, damit die Karte offen bleibt",
     "INTEGRATIONS_GROUP": "Integrationen",
     "METRICS_ENDPOINT_LABEL": "Lokaler Metrik-Endpunkt",

@@ -40,6 +40,7 @@ Other locales (English, German, Spanish) are currently maintained by the project
 
 > 🆕 **Pending native review for 2.2 (hover card pin + Reset Position - see #364):** non-English values are AI-assisted.
 > - `RESET_POSITION_MENU_ITEM` - right-click menu item, shown once the widget has been dragged; it puts the widget back by the tray. Keep the `&` accelerator on a letter no other item of that menu uses.
+> - `SIDE_BAR_NO_ROOM_TITLE` / `SIDE_BAR_NO_ROOM_BODY` - a one-time message when a left/right taskbar is so full of app buttons that the widget has no free spot; the body quotes your `RESET_POSITION_MENU_ITEM` (without the `&`).
 > - `HOVER_CARD_PIN_HINT` - a small line at the bottom of the hover card: clicking the widget keeps the card open.
 
 > 🆕 **Pending native review for 2.2 (beta.4 polish, see #364):** non-English values are AI-assisted.

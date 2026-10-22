@@ -529,6 +529,8 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray prekriva ploščo s pripomočki",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray je na vaši opravilni vrstici postavljen čez ploščo s pripomočki/vremenom sistema Windows. Povlečete ga lahko kamor koli želite – zapomnil si bo mesto. (To sporočilo se ne bo več prikazalo.)",
     "RESET_POSITION_MENU_ITEM": "P&onastavi položaj",
+    "SIDE_BAR_NO_ROOM_TITLE": "V opravilni vrstici ni prostega mesta",
+    "SIDE_BAR_NO_ROOM_BODY": "Gumbi aplikacij zapolnjujejo opravilno vrstico, zato je NetSpeedTray ob sistemski vrstici in lahko prekrije nekatere od njih. Povlečete ga lahko kamor koli vzdolž opravilne vrstice – zapomnil si bo mesto. Če želite to razveljaviti, ga kliknite z desno tipko miške in izberite »Ponastavi položaj«. (To sporočilo se ne bo več prikazalo.)",
     "HOVER_CARD_PIN_HINT": "Kliknite gradnik, da ostane odprto",
     "INTEGRATIONS_GROUP": "Integracije",
     "METRICS_ENDPOINT_LABEL": "Lokalna končna točka metrik",

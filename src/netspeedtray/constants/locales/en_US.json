@@ -529,6 +529,8 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray overlaps the Widgets panel",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray is sitting over the Windows Widgets/weather panel on your taskbar. You can drag it anywhere you like - it'll remember the spot. (This message won't show again.)",
     "RESET_POSITION_MENU_ITEM": "Reset P&osition",
+    "SIDE_BAR_NO_ROOM_TITLE": "No free spot on the taskbar",
+    "SIDE_BAR_NO_ROOM_BODY": "Your taskbar's app buttons fill it, so NetSpeedTray sits next to the tray and may cover some of them. You can drag it anywhere along the taskbar - it'll remember the spot. To undo a drag, right-click it and choose Reset Position. (This message won't show again.)",
     "HOVER_CARD_PIN_HINT": "Click the widget to keep this open",
     "INTEGRATIONS_GROUP": "Integrations",
     "METRICS_ENDPOINT_LABEL": "Local metrics endpoint",

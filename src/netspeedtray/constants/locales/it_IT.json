@@ -529,6 +529,8 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray si sovrappone al pannello Widget",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray si trova sopra il pannello Widget/meteo di Windows nella barra delle applicazioni. Puoi trascinarlo dove preferisci: ricorderà la posizione. (Questo messaggio non verrà mostrato di nuovo.)",
     "RESET_POSITION_MENU_ITEM": "Ripristina p&osizione",
+    "SIDE_BAR_NO_ROOM_TITLE": "Nessuno spazio libero sulla barra delle applicazioni",
+    "SIDE_BAR_NO_ROOM_BODY": "I pulsanti delle app riempiono la barra delle applicazioni, quindi NetSpeedTray si trova accanto all'area di notifica e potrebbe coprirne alcuni. Puoi trascinarlo in qualsiasi punto della barra delle applicazioni: ricorderà la posizione. Per annullare, fai clic destro su di esso e scegli \"Ripristina posizione\". (Questo messaggio non verrà mostrato di nuovo.)",
     "HOVER_CARD_PIN_HINT": "Fai clic sul widget per tenerla aperta",
     "INTEGRATIONS_GROUP": "Integrazioni",
     "METRICS_ENDPOINT_LABEL": "Endpoint locale delle metriche",

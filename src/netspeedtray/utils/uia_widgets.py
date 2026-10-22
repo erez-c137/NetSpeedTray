@@ -177,3 +177,162 @@ def _probe(ole32, oleaut32, hwnd: int) -> Optional[Tuple[int, int, int, int]]:
             _release(p.value)
         if bstr:
             oleaut32.SysFreeString(bstr)
+
+
+# --- Side-taskbar layout: the app-button span + the Widgets button (one FindAll pass) -------------
+_IEL_CURRENT_AUTOMATION_ID = 29
+_IEL_CURRENT_CLASS_NAME = 30
+
+# What counts as "the apps": every pinned/running app button plus the shell buttons that sit in the
+# same group (Start, Search, Task View). Matched on STABLE class names / AutomationIds, never on Name
+# (localized, and it carries window titles). Probed on Win11 26200 (2026-10-21): StartButton,
+# SearchButton, then one Taskbar.TaskListButtonAutomationPeer per app; tray icons are SystemTray.*,
+# and our own widget shows up as a descendant too (it is an owned window of the taskbar).
+_APP_BUTTON_CLASSES = frozenset({"Taskbar.TaskListButtonAutomationPeer"})
+_APP_GROUP_IDS = frozenset({"StartButton", "SearchButton", "TaskViewButton"})
+_WIDGETS_ID = "WidgetsButton"
+# Every OTHER button on the bar counts as occupied too (rc.1 live test B4, 2026-10-22: the "..." app
+# overflow button and any shell button a future build adds were invisible to the placement, so the
+# widget could be parked on them). Recognised generically - "Button" in the class name or the
+# AutomationId - except the tray's own icons (SystemTray.*, they ARE the tray end) and our own Qt
+# windows (AutomationId "QApplication.<...>"), which a walk from the taskbar root also reaches.
+_TRAY_CLASS_PREFIX = "SystemTray."
+_QT_ID_PREFIX = "QApplication."
+
+
+def _is_other_bar_button(cls: str, aid: str) -> bool:
+    cls, aid = cls or "", aid or ""
+    if cls.startswith(_TRAY_CLASS_PREFIX) or aid.startswith(_QT_ID_PREFIX) or aid == "SystemTrayIcon":
+        return False
+    return "button" in cls.lower() or "button" in aid.lower()
+
+
+def taskbar_layout_from_elements(elements) -> Tuple[Optional[Tuple[int, int, int, int]],
+                                                    Optional[Tuple[int, int, int, int]]]:
+    """Pure: ``(apps_rect, widgets_rect)`` from ``(class_name, automation_id, (l, t, r, b))`` triples.
+
+    apps_rect is the union of the app group's buttons PLUS every other non-tray button on the bar (the
+    "..." overflow button, Copilot, ...); widgets_rect the WidgetsButton's own box, kept apart because
+    where it sits (above the apps, or beside the tray with "Top"/left alignment) decides the free
+    spans. Empty / zero-size elements (collapsed or off-screen buttons) are ignored. Either may be
+    None."""
+    apps = None
+    widgets = None
+    for cls, aid, rect in elements:
+        try:
+            left, top, right, bottom = (int(v) for v in rect)
+        except Exception:
+            continue
+        if right <= left or bottom <= top:
+            continue
+        if aid == _WIDGETS_ID:
+            if widgets is None:
+                widgets = (left, top, right, bottom)
+        elif cls in _APP_BUTTON_CLASSES or aid in _APP_GROUP_IDS or _is_other_bar_button(cls, aid):
+            if apps is None:
+                apps = (left, top, right, bottom)
+            else:
+                apps = (min(apps[0], left), min(apps[1], top), max(apps[2], right), max(apps[3], bottom))
+    return apps, widgets
+
+
+def _bstr(element: int, index: int) -> str:
+    out = ctypes.c_void_p()
+    _method(element, index, ctypes.POINTER(ctypes.c_void_p))(element, ctypes.byref(out))
+    if not out.value:
+        return ""
+    try:
+        return ctypes.wstring_at(out.value)
+    finally:
+        ctypes.windll.oleaut32.SysFreeString(ctypes.c_void_p(out.value))
+
+
+# The taskbar's XAML island host. Walking from it (not from Shell_TrayWnd) keeps the search inside
+# the taskbar's own buttons: our widget is an OWNED window of the taskbar, so a walk from the root
+# also descends into it - asking a Qt window for its UIA tree switches Qt accessibility on in our
+# own process for the rest of the session, and adds every widget element to the walk.
+_XAML_HOST_CLASS = "Windows.UI.Composition.DesktopWindowContentBridge"
+
+
+def _layout_root_hwnds(taskbar_hwnd: int):
+    """The HWNDs to search from, best first: the XAML island host, then the taskbar root."""
+    try:
+        import win32gui
+        host = win32gui.FindWindowEx(int(taskbar_hwnd), 0, _XAML_HOST_CLASS, None)
+    except Exception:
+        host = 0
+    return [h for h in (host, int(taskbar_hwnd)) if h]
+
+
+def query_taskbar_layout(taskbar_hwnd: int):
+    """``(apps_rect, widgets_rect)`` in physical px for the taskbar ``taskbar_hwnd`` (Shell_TrayWnd),
+    or None when UIA is unavailable. Blocking (cross-process); background thread only. Never raises.
+    Searches the XAML island first; the whole taskbar only if that finds no app buttons."""
+    ole32 = ctypes.oledll.ole32
+    initialized = False
+    try:
+        try:
+            ole32.CoInitializeEx(None, _COINIT_MULTITHREADED)
+            initialized = True
+        except OSError as e:
+            if getattr(e, "winerror", None) != _RPC_E_CHANGED_MODE:
+                raise
+        result = None
+        for root in _layout_root_hwnds(taskbar_hwnd):
+            result = _probe_layout(ole32, root)
+            if result is not None and result[0] is not None:
+                return result
+        return result
+    except Exception as e:  # noqa: BLE001 - fail-safe
+        logger.debug("Taskbar layout UIA probe failed: %s", e)
+        return None
+    finally:
+        if initialized:
+            try:
+                ctypes.windll.ole32.CoUninitialize()
+            except Exception:
+                pass
+
+
+def _probe_layout(ole32, hwnd: int):
+    uia = ctypes.c_void_p()
+    root = ctypes.c_void_p()
+    true_cond = ctypes.c_void_p()
+    kids = ctypes.c_void_p()
+    try:
+        clsid, iid = _GUID.parse(_CLSID_CUIAutomation), _GUID.parse(_IID_IUIAutomation)
+        ole32.CoCreateInstance(ctypes.byref(clsid), None, _CLSCTX_INPROC_SERVER, ctypes.byref(iid),
+                               ctypes.byref(uia))
+        _method(uia.value, _IUIA_ELEMENT_FROM_HANDLE, wintypes.HWND, ctypes.POINTER(ctypes.c_void_p))(
+            uia.value, hwnd, ctypes.byref(root))
+        if not root.value:
+            return None
+        _method(uia.value, _IUIA_CREATE_TRUE_CONDITION, ctypes.POINTER(ctypes.c_void_p))(
+            uia.value, ctypes.byref(true_cond))
+        _method(root.value, _IEL_FIND_ALL, ctypes.c_int, ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_void_p))(root.value, _TREE_SCOPE_DESCENDANTS,
+                                                 true_cond.value, ctypes.byref(kids))
+        if not kids.value:
+            return None
+        n = ctypes.c_int(0)
+        _method(kids.value, _IARR_LENGTH, ctypes.POINTER(ctypes.c_int))(kids.value, ctypes.byref(n))
+        get = _method(kids.value, _IARR_GET, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))
+        elements = []
+        for i in range(n.value):
+            kid = ctypes.c_void_p()
+            try:
+                get(kids.value, i, ctypes.byref(kid))
+                if not kid.value:
+                    continue
+                r = _rect(kid.value)
+                elements.append((_bstr(kid.value, _IEL_CURRENT_CLASS_NAME),
+                                 _bstr(kid.value, _IEL_CURRENT_AUTOMATION_ID),
+                                 (r.left, r.top, r.right, r.bottom)))
+            except Exception:
+                continue
+            finally:
+                _release(kid.value)
+        return taskbar_layout_from_elements(elements)
+    finally:
+        for p in (kids, true_cond, root, uia):
+            _release(p.value)
