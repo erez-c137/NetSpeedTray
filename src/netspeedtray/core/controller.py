@@ -268,6 +268,14 @@ class StatsController(QObject):
             if stats.get('vram_used') is not None:
                 v_total = stats.get('vram_total')
                 v_total_val = float(v_total) if v_total is not None else -1.0
+                # Set BEFORE the emit so the repaint it triggers already knows: an integrated GPU's
+                # "VRAM" is the shared system memory it uses (monitor_thread._poll_gpu_hybrid). The
+                # taskbar keeps its "VRAM" label; the hover card and the Monitor say "shared".
+                if self.view is not None:
+                    try:
+                        self.view.vram_is_shared = bool(stats.get('vram_is_shared', False))
+                    except Exception:
+                        pass
                 self.vram_info_updated.emit(stats['vram_used'], v_total_val)
 
         # Power history, OUTSIDE the CPU/GPU gate above (#323 review 3): with the PR's own

@@ -366,6 +366,7 @@
     "SHOW_MONITOR_MENU_ITEM": "모니터 표시",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
+    "VRAM_SHARED_LABEL": "VRAM (공유)",
     "MEMORY_HEADER": "메모리",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs}개 프로세스 · CPU {cpu}% · RAM {ram} {ram_unit} · 업데이트 {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "프로세스 읽는 중…",

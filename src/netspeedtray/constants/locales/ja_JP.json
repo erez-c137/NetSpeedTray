@@ -366,6 +366,7 @@
     "SHOW_MONITOR_MENU_ITEM": "モニターを表示",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
+    "VRAM_SHARED_LABEL": "VRAM (共有)",
     "MEMORY_HEADER": "メモリ",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} 個のプロセス · CPU {cpu}% · RAM {ram} {ram_unit} · 更新 {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "プロセスを読み取り中...",

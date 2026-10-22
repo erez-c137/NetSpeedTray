@@ -53,6 +53,10 @@ class _TeleTile(QFrame):
     def set_value(self, text: str) -> None:
         self._value.setText(text or "-")
 
+    def set_caption(self, text: str) -> None:
+        if self._caption.text() != text:
+            self._caption.setText(text)
+
 
 class TelemetryStrip(QWidget):
     """A left-aligned row of telemetry tiles, built from the enabled hardware sources."""
@@ -98,8 +102,12 @@ class TelemetryStrip(QWidget):
         self._update_mem(self._ram, getattr(w, "ram_used", None), getattr(w, "ram_total", None))
         # An iGPU reports 0.0 GB dedicated VRAM; hide the tile rather than show it, exactly as the
         # Overview tab already does. Passing None is what _update_mem treats as "no reading".
+        # An integrated GPU's shared-memory reading is real however small, and is captioned as such.
         _vu = getattr(w, "vram_used", None)
-        self._update_mem(self._vram, _vu if has_dedicated_vram(_vu) else None,
+        shared = bool(getattr(w, "vram_is_shared", False))
+        self._vram.set_caption(self._tr("VRAM_SHARED_LABEL", "VRAM (shared)") if shared
+                               else self._tr("MONITOR_TILE_VRAM", "VRAM"))
+        self._update_mem(self._vram, _vu if (shared or has_dedicated_vram(_vu)) else None,
                          getattr(w, "vram_total", None))
 
     def _set_tile_visible(self, tile, visible: bool) -> None:

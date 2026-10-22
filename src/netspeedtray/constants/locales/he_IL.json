@@ -366,6 +366,7 @@
     "SHOW_MONITOR_MENU_ITEM": "הצג מוניטור",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
+    "VRAM_SHARED_LABEL": "VRAM (משותף)",
     "MEMORY_HEADER": "זיכרון",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} תהליכים · CPU {cpu}% · RAM {ram} {ram_unit} · עודכן {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "קורא תהליכים…",

@@ -366,6 +366,7 @@
     "SHOW_MONITOR_MENU_ITEM": "监控面板",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
+    "VRAM_SHARED_LABEL": "VRAM（共享）",
     "MEMORY_HEADER": "内存",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} 个进程 · CPU {cpu}% · RAM {ram} {ram_unit} · 更新于 {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "正在读取进程…",

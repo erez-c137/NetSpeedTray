@@ -226,6 +226,10 @@ class UsageFlyout(QWidget):
         for key, label in self._HW_ROWS:
             if key not in hardware:
                 continue
+            if key == "vram" and hardware.get("vram_shared"):
+                # An integrated GPU's "VRAM" is shared system memory - say so here, where there is
+                # room (the taskbar keeps the short "VRAM").
+                label = self._tr("VRAM_SHARED_LABEL", "VRAM (shared)")
             grid.addWidget(self._label(label, tokens.TYPE_BODY_STRONG, self._c["text_primary"]), row, 0)
             cols = stat_cols if key in ("cpu", "gpu") else ["mem"]
             for i, col in enumerate(cols):
@@ -252,8 +256,8 @@ class UsageFlyout(QWidget):
 
     def update_hardware(self, hardware: Optional[dict]) -> None:
         """Refresh the hardware rows in place (the card stays up while the pointer rests on the widget).
-        Keys: cpu/gpu -> {usage, temp, power}; ram/vram -> (used_gb, total_gb); identity -> str. A
-        missing reading shows an em dash, never a made-up 0."""
+        Keys: cpu/gpu -> {usage, temp, power}; ram/vram -> (used_gb, total_gb); vram_shared -> True
+        when the VRAM is an integrated GPU's shared memory; identity -> str. A missing reading shows an em dash, never a made-up 0."""
         if not hardware or not self._hw_values:
             return
         dash = "—"

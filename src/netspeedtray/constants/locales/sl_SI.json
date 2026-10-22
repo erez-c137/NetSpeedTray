@@ -366,6 +366,7 @@
     "SHOW_MONITOR_MENU_ITEM": "Pokaži Monitor",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
+    "VRAM_SHARED_LABEL": "VRAM (skupni)",
     "MEMORY_HEADER": "Pomnilnik",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} procesov · CPU {cpu}% · RAM {ram} {ram_unit} · Posodobljeno {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "Branje procesov…",

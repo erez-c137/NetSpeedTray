@@ -366,6 +366,7 @@
     "SHOW_MONITOR_MENU_ITEM": "Pokaż Monitor",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
+    "VRAM_SHARED_LABEL": "VRAM (współdzielona)",
     "MEMORY_HEADER": "Pamięć",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} procesów · CPU {cpu}% · RAM {ram} {ram_unit} · Zaktualizowano {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "Odczytywanie procesów…",
