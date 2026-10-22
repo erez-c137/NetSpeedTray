@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional, Tuple
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QActionGroup
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy,
                              QToolButton, QMenu)
@@ -191,6 +191,8 @@ class NetworkHeader(QWidget):
         root.setContentsMargins(_m, 0, _m, 0)
         root.setSpacing(self._SPACING_WIDE)
         self._compact = False
+        self._check_full_w: Optional[int] = None   # cached measurement (see _full_check_width)
+        self._content_w = None                     # what _refit last fitted for
 
         self._down = self._stat_block(self._tr("DOWNLOAD_LABEL", "Download"), "↓", c)
         self._up = self._stat_block(self._tr("UPLOAD_LABEL", "Upload"), "↑", c)
@@ -276,29 +278,58 @@ class NetworkHeader(QWidget):
         super().showEvent(event)
         self._fit(self.width())
 
+    def changeEvent(self, event) -> None:
+        # A font / style / language change re-measures the full "Check connection" button.
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange, QEvent.Type.LanguageChange):
+            self._check_full_w = None
+            self._content_w = None
+            if self.isVisible():
+                self._fit(self.width())
+        super().changeEvent(event)
+
     def _refit(self) -> None:
-        """Content changed (totals / interface name): the room needed may have too."""
-        if self.isVisible():
-            self.layout().activate()
-            self._fit(self.width())
+        """Content changed (totals / interface name). Re-fit only if that changed the room the
+        content asks for - a totals tick that keeps the same width costs one comparison, not a
+        layout pass (review item 7)."""
+        if not self.isVisible():
+            return
+        content_w = (self._down[1].sizeHint().width(), self._up[1].sizeHint().width(),
+                     self._iface_btn.sizeHint().width(), self._timeline.sizeHint().width(),
+                     self._history_note.isVisible())
+        if content_w == self._content_w:
+            return
+        self._content_w = content_w
+        self.layout().activate()
+        self._fit(self.width())
+
+    def _full_check_width(self) -> int:
+        """The width "Check connection" asks for WITH its label - measured once (cached until a
+        font / style / language change) instead of building a throwaway button on every fit."""
+        if self._check_full_w is None:
+            if not self._compact:
+                self._check_btn.ensurePolished()   # its stylesheet padding is part of the width
+                self._check_full_w = self._check_btn.sizeHint().width()
+            else:
+                probe = QToolButton()
+                probe.setFont(self._check_btn.font())
+                probe.setStyleSheet(self._check_btn.styleSheet())
+                probe.setIcon(self._check_btn.icon())
+                probe.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+                probe.setText(self._tr("CHECK_CONN_ACTION", "Check connection"))
+                self._check_full_w = probe.sizeHint().width()
+                probe.deleteLater()
+        return self._check_full_w
 
     def _fit(self, width: int) -> None:
         """Below the width the full band needs, go compact: "Check connection" shows its icon only
         (the label moves to the tooltip / accessible name) and the totals sit closer, so at the
         Monitor's minimum width in every locale nothing overlaps or clips (M9)."""
         check_text = self._tr("CHECK_CONN_ACTION", "Check connection")
-        full_check = QToolButton()
-        full_check.setFont(self._check_btn.font())
-        full_check.setStyleSheet(self._check_btn.styleSheet())
-        full_check.setIcon(self._check_btn.icon())
-        full_check.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        full_check.setText(check_text)
         lay = self.layout()
         cur_min = lay.minimumSize().width()
         cur_check = self._check_btn.sizeHint().width()
         spacing_extra = (self._SPACING_WIDE - lay.spacing()) * max(0, lay.count() - 1)
-        full_needed = cur_min - cur_check + full_check.sizeHint().width() + spacing_extra
-        full_check.deleteLater()
+        full_needed = cur_min - cur_check + self._full_check_width() + spacing_extra
         compact = full_needed > width
         if compact == self._compact:
             return

@@ -257,6 +257,38 @@ def test_day_and_hour_buckets_start_on_local_boundaries():
     conn.close()
 
 
+def test_network_header_does_not_remeasure_on_every_totals_tick(q_app, monkeypatch):
+    """Review item 7: _fit built a throwaway QToolButton and re-laid out the band on every totals
+    update. The full-width measurement is cached, and a tick that doesn't change the content's
+    width doesn't re-fit at all."""
+    from PyQt6.QtWidgets import QApplication, QToolButton, QWidget
+    from netspeedtray.views.monitor.network import header as HM
+    host = MagicMock()
+    host.is_live = True
+    box = QWidget()
+    hdr = HM.NetworkHeader(I18nStrings("en_US"), parent=box, graph_host=host)
+    box.show()
+    hdr.resize(3000, constants.layout.MONITOR_HEADER_BAND_HEIGHT)
+    hdr.set_totals(1.0e9, 2.0e9, "TIMELINE_24_HOURS")
+    QApplication.processEvents()
+    made, fits = [], []
+    real_init = QToolButton.__init__
+    monkeypatch.setattr(HM, "QToolButton", type("Counting", (QToolButton,), {
+        "__init__": lambda self, *a, **k: (made.append(1), real_init(self, *a, **k))[1]}))
+    real_fit = hdr._fit
+    monkeypatch.setattr(hdr, "_fit", lambda w: (fits.append(w), real_fit(w))[1])
+    try:
+        for i in range(20):                      # same-width ticks: 1.1 GB, 1.2 GB, ...
+            hdr.set_totals(1.0e9 + i * 1e8, 2.0e9 + i * 1e8, "TIMELINE_24_HOURS")
+        hdr.resize(1200, constants.layout.MONITOR_HEADER_BAND_HEIGHT)   # a resize still fits
+        QApplication.processEvents()
+        assert made == []
+        assert len(fits) <= 3, fits
+    finally:
+        box.hide()
+        box.deleteLater()
+
+
 # --- M4: "All" then "Since boot" ---------------------------------------------------------------------
 
 def test_since_boot_after_all_uses_the_boot_time(monkeypatch):
