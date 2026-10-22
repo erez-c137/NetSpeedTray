@@ -49,6 +49,11 @@ class LayoutConstants:
     # It wraps to at most MAX_LINES inside the fixed band; anything longer ends in "…" (tooltip: all).
     MONITOR_HISTORY_NOTE_MIN_WIDTH: Final[int] = 160
     MONITOR_HISTORY_NOTE_MAX_WIDTH: Final[int] = 340
+    # Near the Monitor's 660 px minimum the note gives way instead of the controls: it narrows down to
+    # this floor (two clamped lines still read as a phrase), and below it hides - its text moves to the
+    # totals' tooltips. Holding 160 px there squeezed the timeline and Live pill to "Mu…" / "tempo r"
+    # in every locale (rc.2 S7).
+    MONITOR_HISTORY_NOTE_COMPACT_MIN_WIDTH: Final[int] = 96
     MONITOR_HISTORY_NOTE_MAX_LINES: Final[int] = 2
     MONITOR_BODY_MARGIN: Final[int] = 16
     # Gap between the right-cluster command-band controls (NIC / timeline / Live). Shared by every tab
