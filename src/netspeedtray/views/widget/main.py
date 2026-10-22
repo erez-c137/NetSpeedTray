@@ -2783,7 +2783,10 @@ class NetworkSpeedWidget(QWidget):
                     get_free_float_screen(self.config.get("preferred_monitor")) is not None:
                 self._cached_layout_mode = 'horizontal'
                 return
-            taskbar_info = get_taskbar_info()
+            # The widget's OWN taskbar (preferred monitor, #72) - the one it is sized and positioned
+            # against. A bare get_taskbar_info() read the primary's edge, wrong for a preferred bar
+            # on another edge (#229 design §3.7).
+            taskbar_info = get_taskbar_info(preferred_screen_name=self.config.get("preferred_monitor"))
             self._cached_layout_mode = self._layout_mode_for_edge(taskbar_info.get_edge_position())
         except Exception:
             pass  # Keep previous cached value
