@@ -3,6 +3,13 @@ import os
 
 block_cipher = None
 
+# version_info.txt is GENERATED (build.bat / build-exe-only.bat run create_version_info.py first) and
+# untracked since 2.2.0: the tracked copy went stale at 2.1.5 and every build dirtied the tree. A
+# hand-run PyInstaller without it gets this message instead of a bare file-not-found from EXE().
+if not os.path.isfile(os.path.join(SPECPATH, 'version_info.txt')):
+    raise SystemExit("[netspeedtray.spec] build/version_info.txt is missing - run build.bat, or "
+                     "'python create_version_info.py <version>' in build/ first.")
+
 # NO UPX, on purpose (2.2.0). UPX rewrites a PE file, which strips its Authenticode signature: the
 # 2.2.0-beta.3 zip shipped _socket.pyd, _sqlite3.pyd, sqlite3.dll, _ctypes.pyd, libffi-8.dll and the
 # rest of CPython's own extension modules UNSIGNED although the build Python's copies carry the

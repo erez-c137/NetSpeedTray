@@ -43,7 +43,7 @@ same commit. This describes **schema v8** (NetSpeedTray 2.2 and later). The desi
 | minute | `net_minute` | `hw_minute` | per minute | the last **30 days** | rolled into per-hour rows, originals deleted |
 | hour | `net_hour` | `hw_hour` | per hour | until your retention setting | deleted |
 
-Retention is **Settings → Advanced → Keep data**, default 365 days. "Keep everything" sets it to
+Retention is **Settings → Advanced → Keep history for**, default 365 days. "Keep everything" sets it to
 36,500 days, which is a hundred years and means in practice *never delete*. A *reduced* retention
 takes effect 48 hours after you set it (so an accidental change can be undone); an increase applies at
 once.
