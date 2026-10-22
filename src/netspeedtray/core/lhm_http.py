@@ -8,6 +8,7 @@ available, allowing callers to retain their existing WMI/native fallbacks.
 
 from __future__ import annotations
 
+import base64
 import http.client
 import json
 import logging
@@ -295,7 +296,9 @@ def parse_snapshot(data: Any) -> LhmSnapshot:
 
 
 class LhmHttpStatusError(ValueError):
-    """The port answered HTTP, but not with data.json (LHM auth on, wrong interface, another app)."""
+    """The port answered HTTP, but not with data.json (LHM auth on, wrong interface, another app).
+
+    The message is the status only - never a header, so a failure line cannot carry credentials."""
 
     def __init__(self, status: int) -> None:
         super().__init__(f"HTTP {status}")
@@ -362,6 +365,10 @@ class LhmHttpClient:
     """Small client with a per-poll cache and a quiet failure backoff.
 
     ``get_snapshot()`` never raises and never blocks longer than ``total_deadline`` seconds.
+
+    Optional HTTP Basic credentials (LHM's Options > Remote Web Server > Authentication) are sent only
+    when ``host`` is loopback (``constants.lhm.AUTH_ALLOWED_HOSTS``), and are never logged. ``status``
+    says what the last attempt found (``constants.lhm.STATUS_*``) for Settings > Hardware.
     """
 
     def __init__(
@@ -374,9 +381,13 @@ class LhmHttpClient:
         cache_seconds: float = constants.lhm.CACHE_SEC,
         failure_backoff_seconds: float = constants.lhm.FAILURE_BACKOFF_SEC,
         max_response_bytes: int = constants.lhm.MAX_RESPONSE_BYTES,
+        username: str = "",
+        password: str = "",
     ) -> None:
         self.host = host
         self.port = port
+        self._username = username or ""
+        self._password = password or ""
         self.path = path
         self.connect_timeout = connect_timeout
         self.total_deadline = total_deadline
@@ -387,21 +398,49 @@ class LhmHttpClient:
         self._cached: Optional[LhmSnapshot] = None
         self._retry_after = 0.0
         self._last_failure: Optional[str] = None
+        self.status: str = constants.lhm.STATUS_UNKNOWN
 
     @property
     def url(self) -> str:
         return f"http://{self.host}:{self.port}{self.path}"
 
+    @property
+    def has_credentials(self) -> bool:
+        return bool(self._username or self._password)
+
+    def configure(self, port: int, username: str = "", password: str = "") -> None:
+        """Apply Settings > Hardware's port and credentials. Call on the polling thread (run() does).
+
+        A change drops the cached reading and the backoff, so the next poll tries the new settings
+        at once. The failure-log dedupe is kept: retyping a wrong password logs nothing new."""
+        username, password = username or "", password or ""
+        if (port, username, password) == (self.port, self._username, self._password):
+            return
+        self.port = port
+        self._username, self._password = username, password
+        self._cached = None
+        self._retry_after = 0.0
+        self.status = constants.lhm.STATUS_UNKNOWN
+
     def reset_backoff(self) -> None:
         """Forget a remembered failure so the next call tries the endpoint again."""
         self._retry_after = 0.0
+
+    def _request_headers(self) -> dict:
+        headers = {"Accept": "application/json"}
+        # Loopback only: the password must never leave the machine (G2).
+        if self.has_credentials and self.host in constants.lhm.AUTH_ALLOWED_HOSTS:
+            # RFC 7617 with UTF-8; LHM (.NET HttpListener) compares the decoded name and password.
+            token = base64.b64encode(f"{self._username}:{self._password}".encode("utf-8"))
+            headers["Authorization"] = "Basic " + token.decode("ascii")
+        return headers
 
     def _fetch_json(self) -> Any:
         conn = _DeadlineHTTPConnection(
             self.host, self.port, self.connect_timeout,
             deadline=time.monotonic() + self.total_deadline)
         try:
-            conn.request("GET", self.path, headers={"Accept": "application/json"})
+            conn.request("GET", self.path, headers=self._request_headers())
             response = conn.getresponse()
             if response.status != 200:
                 raise LhmHttpStatusError(response.status)
@@ -431,20 +470,12 @@ class LhmHttpClient:
             # per metric on every poll.
             self._retry_after = now + self.failure_backoff_seconds
             self._cached = None
-            reason = f"{type(e).__name__}: {e}"
+            self.status = self._status_for(e)
+            # Port in the key: moving to another port that fails the same way is a new line in the log.
+            reason = f"{type(e).__name__}: {e} ({self.status}, port {self.port})"
             if reason != self._last_failure:
                 self._last_failure = reason
-                if isinstance(e, LhmHttpStatusError):
-                    # Something IS serving HTTP there and refusing us - worth a line in the support
-                    # log: LHM's web server with authentication on answers 401, and one bound to a
-                    # single LAN address answers 400 (http.sys) for 127.0.0.1.
-                    logger.info(
-                        "Hardware monitor: %s answered HTTP %d. If that is LibreHardwareMonitor, "
-                        "turn its web-server authentication off and let it listen on all interfaces "
-                        "(Options > Remote Web Server).", self.url, e.status)
-                else:
-                    logger.debug("LHM HTTP source unavailable at %s (%s); retrying in %.0f s.",
-                                 self.url, reason, self.failure_backoff_seconds)
+                self._log_failure(e, reason)
             return None
         if self._last_failure is not None or self._cached is None:
             # Once per transition to "available" - a line the support bundle should show.
@@ -453,4 +484,44 @@ class LhmHttpClient:
         self._cached = snapshot
         self._cached_at = now
         self._retry_after = 0.0
+        self.status = constants.lhm.STATUS_OK
         return snapshot
+
+    def _status_for(self, e: BaseException) -> str:
+        L = constants.lhm
+        if isinstance(e, LhmHttpStatusError):
+            if e.status == 401:
+                return L.STATUS_AUTH_FAILED if self.has_credentials else L.STATUS_AUTH_REQUIRED
+            return L.STATUS_OTHER
+        if isinstance(e, OSError):   # refused, unreachable, timed out, deadline: nothing answered
+            return L.STATUS_NOT_FOUND
+        return L.STATUS_OTHER        # bad JSON, not LHM's tree, a broken HTTP reply, too large
+
+    def _log_failure(self, e: BaseException, reason: str) -> None:
+        """One line per distinct failure. Something serving HTTP there and refusing us is worth an
+        INFO line in the support log; nothing listening stays at DEBUG. Never logs credentials -
+        not even the user name."""
+        L = constants.lhm
+        if self.status == L.STATUS_AUTH_REQUIRED:
+            logger.info(
+                "Hardware monitor: %s asks for a user name and password (HTTP 401). If that is "
+                "LibreHardwareMonitor with web-server authentication on, enter the same user name and "
+                "password in Settings > Hardware.", self.url)
+        elif self.status == L.STATUS_AUTH_FAILED:
+            # LHM 0.9.5/0.9.6 save the password's SHA-256 and hash it AGAIN when they start, so after
+            # every LHM restart the password the user chose stops working (fixed on LHM master).
+            logger.info(
+                "Hardware monitor: %s rejected the configured user name or password (HTTP 401). "
+                "LibreHardwareMonitor 0.9.6 and older change their stored password every time they "
+                "restart - set it again in LHM (Options > Remote Web Server > Authentication).",
+                self.url)
+        elif isinstance(e, LhmHttpStatusError):
+            # One bound to a single LAN address answers 400 (http.sys) for 127.0.0.1.
+            logger.info(
+                "Hardware monitor: %s answered HTTP %d. If that is LibreHardwareMonitor, check its "
+                "Remote Web Server port; up to v0.9.6 it must listen on all interfaces to answer "
+                "127.0.0.1 (do not open port %d in the firewall), and once a newer LHM offers "
+                "127.0.0.1, choose that.", self.url, e.status, self.port)
+        else:
+            logger.debug("LHM HTTP source unavailable at %s (%s); retrying in %.0f s.",
+                         self.url, reason, self.failure_backoff_seconds)

@@ -61,10 +61,13 @@ _CONFIG_KEYS_TO_STRIP: tuple = ()
 #     MANIFEST promises those names never ship verbatim: config values are redacted outright here,
 #     and log lines are pseudonymized by ObfuscatingFormatter's message-shape rules (v2.1.5 item 7).
 #   - latency_public_host is a user-chosen ping target (a public hostname/IP) - reveals network choices.
+#   - lhm_username / lhm_password_protected are the LibreHardwareMonitor web-server credentials (G2). The
+#     password is only ever a per-user DPAPI blob, useless off this account - but a credential never
+#     ships in any form. "<redacted>" still says that one is set (useful when triaging a 401).
 # We keep the diagnostic SHAPE (how many interfaces, that a host was set) but never the literal name.
 # IMPORTANT: any NEW config field that can hold a name/path/host/ID must be added here.
 _CONFIG_LIST_KEYS_TO_REDACT: tuple = ("selected_interfaces", "excluded_interfaces")
-_CONFIG_VALUE_KEYS_TO_REDACT: tuple = ("latency_public_host",)
+_CONFIG_VALUE_KEYS_TO_REDACT: tuple = ("latency_public_host", "lhm_username", "lhm_password_protected")
 
 
 def _sanitize_config(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -290,7 +293,8 @@ def build_support_bundle(
             "  system_info.txt   - App version, OS, monitor layout (no display names),\n"
             "                      whether the app runs as admin, its Windows compatibility\n"
             "                      flags, and its Task Manager startup state\n"
-            "  config.json       - Your settings (interface names and ping host redacted)\n"
+            "  config.json       - Your settings (interface names, ping host and the\n"
+            "                      LibreHardwareMonitor user name/password redacted)\n"
             "  logs/             - Log files, including the in-app updater's installer log,\n"
             "                      scrubbed for paths/usernames/IPs/MACs/GUIDs/hostnames\n"
             "\n"

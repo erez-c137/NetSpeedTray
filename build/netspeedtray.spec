@@ -33,6 +33,9 @@ my_hidden_imports = [
     'win32ts',
     'win32security',
     'win32com.shell.shell',
+    # Imported lazily by utils/secret_store.py (DPAPI for the LibreHardwareMonitor password). Without
+    # it a saved password silently never decrypts and LHM with authentication on answers 401.
+    'win32crypt',
     'matplotlib',
     'matplotlib.pyplot',
     'matplotlib.backends.backend_qtagg',
