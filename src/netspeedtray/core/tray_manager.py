@@ -44,6 +44,7 @@ class TrayIconManager(QObject):
         self.pause_action: Optional[QAction] = None
         self.pause_separator: Optional[QAction] = None
         self.reset_position_action: Optional[QAction] = None
+        self.update_action: Optional[QAction] = None
         # [(QAction, Segoe-Fluent-codepoint)] - icons are (re)tinted to the text color on each open.
         self._menu_icon_actions: list = []
 
@@ -120,6 +121,8 @@ class TrayIconManager(QObject):
 
             # --- Tier 4: App-level (least frequent) ---
             update_action = self.context_menu.addAction(self.i18n.CHECK_FOR_UPDATES_MENU_ITEM)
+            # Hidden while IT's DisableUpdateCheck policy is set (U1); refreshed on every open.
+            self.update_action = update_action
             if hasattr(self.widget, 'check_for_updates'):
                 update_action.triggered.connect(self.widget.check_for_updates)
 
@@ -217,6 +220,9 @@ class TrayIconManager(QObject):
                 self.reset_position_action.setVisible(show_reset)
             if self.pause_separator is not None:
                 self.pause_separator.setVisible(show_pause or show_reset)
+            if getattr(self, "update_action", None) is not None:
+                from netspeedtray.core.update_checker import update_check_disabled_by_policy
+                self.update_action.setVisible(not update_check_disabled_by_policy())
         except Exception as e:
             self.logger.error("Error refreshing dynamic menu items: %s", e, exc_info=True)
 

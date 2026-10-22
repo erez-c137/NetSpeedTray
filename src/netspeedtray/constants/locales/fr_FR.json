@@ -242,6 +242,8 @@
     "UPDATE_AVAILABLE_TITLE": "Mise à jour disponible",
     "UPDATE_DOWNLOADING_TITLE": "Téléchargement de la mise à jour",
     "UPDATE_FALLBACK_MESSAGE": "Impossible de terminer la mise à jour intégrée. Ouverture de la page de téléchargement à la place.",
+    "UPDATE_SIGNATURE_FAILED_MESSAGE": "Impossible de vérifier que la mise à jour téléchargée est signée par l'éditeur de NetSpeedTray : elle n'a pas été installée. Votre version actuelle est conservée. Ouverture de la page de téléchargement à la place.",
+    "UPDATE_CHECK_POLICY_MANAGED": "Géré par votre organisation",
     "UPDATE_PORTABLE_READY_TITLE": "Mise à jour prête à être installée",
     "UPDATE_PORTABLE_READY_MESSAGE": "NetSpeedTray {version} est prêt dans le dossier qui vient de s'ouvrir :\n{ready}\n\nPour finir la mise à jour : fermez NetSpeedTray, puis copiez tout le contenu de ce dossier dans votre dossier actuel :\n{app_dir}\n(en remplaçant les anciens fichiers). Vos paramètres sont conservés.",
     "UPDATE_NOT_APPLIED_MESSAGE": "NetSpeedTray could not replace its folder by itself, so you are still on the version you had.\nReason: {reason}",

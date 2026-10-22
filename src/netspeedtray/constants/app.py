@@ -25,6 +25,14 @@ class AppConstants:
     # use the guided (folder-copy) update flow instead of the Inno installer flow (#195). The installer
     # copy never contains it. NOTE: build.bat writes this literal name - keep the two in sync.
     PORTABLE_MARKER_FILENAME: Final[str] = "portable.marker"
+    # Machine policy (U1, rc.2): IT turns update checks off with a DWORD under the standard Policies
+    # key - where Group Policy, Intune (ADMX ingest / OMA-URI) or a plain `reg add` writes it. Nonzero
+    # = off: no automatic check, no "Check for Updates" menu item, the Settings toggle is locked.
+    # Read-only from the app (core/update_checker.update_check_disabled_by_policy): HKLM first, then
+    # HKCU (a user-scope GPO). Both live under Policies, which standard users cannot write. Documented
+    # in DEPLOYING.md - keep the two in sync.
+    POLICY_REGISTRY_KEY: Final[str] = r"SOFTWARE\Policies\NetSpeedTray"
+    POLICY_DISABLE_UPDATE_CHECK_VALUE: Final[str] = "DisableUpdateCheck"
     # Graceful-shutdown channel (core/shutdown_channel.py). The running app registers this window
     # message and quits through the same clean path as tray Exit when it arrives; the installer and
     # uninstaller post it from setup.iss's own [Code] before any taskkill (and `--shutdown` can, by
