@@ -230,12 +230,22 @@ class UsageOdometerConstants:
     # usage_counter row. A key/value row, not a column: no schema change, no migration.
     SNAPSHOT_METADATA_KEY: Final[str] = "usage_counter_snapshot"
     SNAPSHOT_FORMAT_VERSION: Final[int] = 1
+    # metadata-table key holding the odometer's re-key memory (periods it left and their anchors, JSON),
+    # written in the same transaction as the usage_counter row; deleted with it by a usage reset.
+    REKEY_MEMORY_METADATA_KEY: Final[str] = "usage_rekey_memory"
     # Two psutil.boot_time() readings belong to the same boot session when they agree within this.
     # On Windows boot_time() is wall-clock now minus uptime, so it jitters (~1 s, psutil #1007) and
     # follows wall-clock corrections; two different boots are always at least one whole session
     # apart. Erring wide only risks treating a sub-30 s session as "same boot", and the
     # counters-went-backwards guard still catches a reboot (its counters restart from zero).
     BOOT_TIME_TOLERANCE_SEC: Final[float] = 30.0
+    # A stored billing period starting more than this many days after today cannot be real: the clock
+    # ran ahead for a poll and advanced the forward-only period key (WidgetState._maybe_reanchor re-keys
+    # it). Small enough to catch any clock that crossed a reset day ahead; large enough that a clock a
+    # little slow at a boundary (time-zone change, NTP correction) never re-keys. Accepted cost: a clock
+    # ahead by less than this across a reset day rolls the period over up to that much early (the
+    # bytes of those hours count toward the new period); the period key then simply stays correct.
+    FUTURE_PERIOD_TOLERANCE_DAYS: Final[int] = 2
 
 
 class MetricsEndpointConstants:

@@ -188,6 +188,11 @@ class DatabaseWorker(QThread):
         self._app_version = str(app_version)
         self._is_physical = is_physical
         self._post_migration_maintenance = False
+        # After a migration: wall time from which one more roll-up pass merges the first v8 polls that
+        # landed in the folded minute (below the raw watermark, invisible to readers until rolled up).
+        # Armed by the first flush after the upgrade; None otherwise.
+        self._post_migration_followup_at: Optional[float] = None
+        self._post_migration_followup_armed = False
         self.migration_result: Optional[migrate_v8.MigrationResult] = None
         # Read-side contract for WidgetState, valid once ``ready`` is set: the schema the LIVE file can
         # be read as (8, 7 while a v8 upgrade is deferred, a newer one on a downgrade) or None when
@@ -1020,6 +1025,10 @@ class DatabaseWorker(QThread):
             else:
                 out = self._writer.run_maintenance()   # step-7 note 5: right after migrate()
                 self.logger.info("Post-upgrade maintenance: %s", {k: v for k, v in out.items() if "moved" in k})
+                # That pass ran before any v8 poll existed, so polls landing in the folded minute stay
+                # below the raw watermark - hidden - until a roll-up: the next hourly pass, up to an hour
+                # away. One extra pass once that minute is over and flushed (see _persist_v8) closes it.
+                self._post_migration_followup_armed = True
         self._writer.start_session()
         self.conn.execute("PRAGMA busy_timeout = 5000;")
         self._resume_pending_compaction()
@@ -1111,6 +1120,33 @@ class DatabaseWorker(QThread):
                 self.logger.debug("Dropped a malformed hardware sample: %s", e)
         if w.flush():
             self.database_updated.emit()
+            self._maybe_post_migration_followup()
+
+    # The follow-up pass waits this long after the first post-upgrade flush, and at least this long past
+    # the raw watermark: the folded minute is over and its last polls have been flushed (10 s tick).
+    _POST_MIGRATION_FOLLOWUP_DELAY_S = 70.0
+    _POST_MIGRATION_FOLLOWUP_WM_MARGIN_S = 20.0
+
+    def _maybe_post_migration_followup(self) -> None:
+        """After a v7 -> v8 upgrade: arm one roll-up pass at the first flush, run it on the first flush
+        at or after its time. Roll-ups only (``retention_days=None``): it needs no config and prunes
+        nothing; the clock guard applies as on every pass."""
+        if self._post_migration_followup_armed:
+            self._post_migration_followup_armed = False
+            wm = self._writer._meta_int(S8.WATERMARK_RAW_KEY) or 0
+            self._post_migration_followup_at = max(time.time() + self._POST_MIGRATION_FOLLOWUP_DELAY_S,
+                                                   wm + self._POST_MIGRATION_FOLLOWUP_WM_MARGIN_S)
+            return
+        due = self._post_migration_followup_at
+        if due is None or time.time() < due:
+            return
+        self._post_migration_followup_at = None
+        try:
+            out = self._writer.run_maintenance()
+            self.logger.info("Post-upgrade follow-up roll-up: %s", {k: v for k, v in out.items() if "moved" in k})
+            self.database_updated.emit()
+        except sqlite3.Error as e:
+            self.logger.warning("Post-upgrade follow-up roll-up failed (the hourly pass will do it): %s", e)
 
     def _set_poll_ms(self, poll_ms: Any) -> None:
         self._poll_ms = max(1, int(poll_ms))
@@ -1139,6 +1175,7 @@ class DatabaseWorker(QThread):
             return
         cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts = data[:6]
         snapshot_json = data[6] if len(data) > 6 else None
+        memory_json = data[7] if len(data) > 7 else None
         try:
             with explicit_txn(self.conn, self.logger) as cursor:
                 cursor.execute(
@@ -1162,6 +1199,13 @@ class DatabaseWorker(QThread):
                 elif snapshot_json is not None:
                     cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
                                    (constants.network.usage.SNAPSHOT_METADATA_KEY, snapshot_json))
+                # 8th element: the odometer's re-key memory; "" deletes it, None leaves it untouched.
+                if memory_json == "":
+                    cursor.execute("DELETE FROM metadata WHERE key = ?",
+                                   (constants.network.usage.REKEY_MEMORY_METADATA_KEY,))
+                elif memory_json is not None:
+                    cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                                   (constants.network.usage.REKEY_MEMORY_METADATA_KEY, memory_json))
         except sqlite3.Error as e:
             self.logger.error("Failed to persist usage counter: %s", e)
 
@@ -1183,7 +1227,7 @@ class DatabaseWorker(QThread):
                 retention = self._resolve_retention_days(cursor, config, _now)
                 row = cursor.execute("SELECT value FROM metadata WHERE key = 'last_maintenance_at'").fetchone()
                 prev_maintenance = int(row[0]) if row and str(row[0]).isdigit() else None
-            out = self._writer.run_maintenance(now_ts=now_ts, retention_days=retention)
+            out = self._writer.run_maintenance(now_ts=now_ts, retention_days=retention, mono=mono)
             with self._txn() as cursor:
                 cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_maintenance_at', ?)",
                                (str(now_ts),))

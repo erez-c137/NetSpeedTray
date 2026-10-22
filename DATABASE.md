@@ -118,7 +118,8 @@ display smoothing, a counter that went backwards counts 0, and one interval is c
 a driver glitch cannot add phantom gigabytes. A poll in which an adapter moved nothing is not written
 (the session record says the app was running). `flags`: `1` the counter went backwards in that
 interval, `2` a gap (the interval was far longer than the poll rate - standby, a stall; the bytes are
-real, a graph should not draw them as one spike), `4` resumed from sleep, `8` first sample.
+real, a graph should not draw them as one spike). `4` and `8` are reserved (meant for "resumed
+from sleep" and "first sample of a session"); nothing sets them yet, so a reader must not rely on them.
 
 ### `net_minute` / `net_hour` — the rollups
 
@@ -253,6 +254,21 @@ checkpoint plus removing a backup that was locked (`2` - only a `2` ever deletes
 record a completed v7 -> v8 upgrade and the backup it left; `backup_clock_continuous_since` arms
 backup age-out (see [Restoring a backup](#restoring-a-backup)). `usage_counter_snapshot` holds the NIC counters,
 by adapter name, that `usage_counter`'s total was counted up to (same-boot launch reconciliation).
+Three keys guard the live history against a wrong wall clock (maintenance rolls up and prunes by
+the clock): `clock_trusted_ts` is the time of the last maintenance pass on a clock found continuous
+with the one before it; `clock_continuous_since` is when the current run of such passes began
+(the prune waits 7 days after it); `clock_candidate` (`<first>,<last>` epoch seconds) is a clock
+that did not follow on - a jump, a large correction or a long time off - while passes confirm it:
+nothing is rolled up or pruned on it until it has held for 6 hours. Absent keys are normal on a
+file this build has not maintained yet.
+The first stamp a file gets (every file from a 2.2 beta, every fresh v7 -> v8 upgrade) starts
+`clock_continuous_since`, so its first retention prune runs 7 days later; roll-ups are not delayed.
+`usage_rekey_memory` (JSON) remembers, for the data-usage counter, the periods it left on a
+rollover or a reset-day change and their anchors, so a reset day changed back (or a clock
+correction) restores the exact count; it is written with `usage_counter` and deleted with it.
+After "Delete all history" with the usage kept, a reset-day change to a later start can
+over-count by the traffic between the old start and the delete until the next rollover:
+history no longer covers it, and the counter keeps no per-day record.
 Every key a 2.1 database had is carried over unchanged by the upgrade.
 
 `usage_counter_snapshot` is JSON, written in the same transaction as the `usage_counter` row:

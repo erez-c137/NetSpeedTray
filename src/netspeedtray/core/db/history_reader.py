@@ -64,6 +64,7 @@ class UsageRecord:
     counter snapshot, {} when there is none or it is unreadable."""
     counter_row: Optional[Tuple[Any, ...]]
     snapshot: Dict[str, Any] = field(default_factory=dict)
+    rekey_memory: Optional[str] = None      # the odometer's persisted re-key memory (raw JSON), if any
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,18 @@ class Coverage:
     not_running_seconds: int
     unknown_seconds: int
     sessions: Tuple[Tuple[int, int], ...]
+
+
+@dataclass(frozen=True)
+class MeteredScope:
+    """Which adapters a usage figure covers - the odometer's selection, as history can express it.
+
+    ``names``: exactly these adapters (``WidgetState.metered_scope`` resolves every mode to names with
+    the controller's classifier, exclusions and fallback rules). ``physical_only`` (names None): the
+    stored ``interfaces.is_physical`` flag, every adapter when none is flagged - a coarser stand-in used
+    only when the adapter names cannot be read."""
+    names: Optional[Tuple[str, ...]] = None
+    physical_only: bool = True
 
 
 class HistoryReader(ABC):
@@ -145,6 +158,29 @@ class HistoryReader(ABC):
                interface_name: Optional[str], poll_interval: float) -> VolumeResult:
         """``total_bandwidth`` with its provenance: how much is exact, and whether any of it was
         reconstructed from rates (D5 labelling)."""
+
+    def metered_volume(self, start_time: Optional[datetime], end_time: datetime,
+                       scope: Optional["MeteredScope"], poll_interval: float) -> VolumeResult:
+        """``volume`` over only the adapters the data-usage odometer meters (``scope``; None = every
+        adapter). The usage rows next to the cap ("Today", "This Period") must count what the cap
+        counts: summing every adapter double-counts a VPN / WSL / Hyper-V adapter whose bytes also
+        ride the real NIC. A backend without adapter metadata (v7) answers for every adapter."""
+        return self.volume(start_time, end_time, None, poll_interval)
+
+    def metered_volume_strict(self, start_time: Optional[datetime], end_time: datetime,
+                              scope: Optional["MeteredScope"]) -> Optional[VolumeResult]:
+        """``metered_volume`` for decisions that move the odometer: None when history cannot answer (a
+        failed read; a backend without adapter metadata) - ``metered_volume`` turns every error into
+        zeros, which a re-key would take for "nothing moved"."""
+        return None
+
+    def interface_names(self) -> Optional[List[str]]:
+        """Every adapter name history knows (for ``WidgetState.metered_scope``), or None."""
+        return None
+
+    def clock_trusted_ts(self) -> Optional[int]:
+        """The history writer's last maintenance pass on a trusted clock (epoch s), or None."""
+        return None
 
     @abstractmethod
     def coverage(self, start_time: datetime, end_time: datetime) -> Optional[Coverage]:
@@ -260,7 +296,14 @@ class _ReaderBase(HistoryReader):
             f"SELECT cumulative_up, cumulative_down, anchor_up, anchor_down, period_key "
             f"FROM {constants.data.USAGE_COUNTER_TABLE} WHERE id = 1")
         row = cur.fetchone()
-        return UsageRecord(tuple(row) if row else None, self._read_usage_snapshot(cur))
+        memory = None
+        try:
+            m = cur.execute("SELECT value FROM metadata WHERE key = ?",
+                            (constants.network.usage.REKEY_MEMORY_METADATA_KEY,)).fetchone()
+            memory = m[0] if m else None
+        except Exception as e:
+            self.logger.debug("No usage re-key memory readable: %s", e)
+        return UsageRecord(tuple(row) if row else None, self._read_usage_snapshot(cur), memory)
 
     def _read_usage_snapshot(self, cur: sqlite3.Cursor) -> Dict[str, Any]:
         """The previous session's counter snapshot (metadata row), or {} - never raises, so a
@@ -1121,9 +1164,19 @@ class V8HistoryReader(_ReaderBase):
                interface_name: Optional[str], poll_interval: float) -> VolumeResult:
         """``poll_interval`` is accepted for the interface and ignored: every v8 raw row carries the
         interval it was measured over (``dt_ms``), so the live poll rate has no say over stored bytes."""
+        iface_sql, iface_p = self._iface_filter(interface_name)
+        return self._volume(start_time, end_time, iface_sql, iface_p)
+
+    def _volume(self, start_time: Optional[datetime], end_time: datetime,
+                iface_sql: str, iface_p: tuple) -> VolumeResult:
+        return self._snapshot_call(
+            lambda cur: self._volume_run(cur, start_time, end_time, iface_sql, iface_p),
+            lambda: VolumeResult(0.0, 0.0, 0.0, 0.0, False))
+
+    def _volume_run(self, cur, start_time: Optional[datetime], end_time: datetime,
+                    iface_sql: str, iface_p: tuple) -> VolumeResult:
         st = int(start_time.timestamp()) if start_time else 0
         et = int(end_time.timestamp())
-        iface_sql, iface_p = self._iface_filter(interface_name)
         bounds = self._tier_bounds(self._NET, "n")
 
         def run(cur):
@@ -1149,7 +1202,50 @@ class V8HistoryReader(_ReaderBase):
                     recon += int(r[4] or 0)
             return VolumeResult(tot[0], tot[1], exact[0], exact[1], recon > 0)
 
-        return self._snapshot_call(run, lambda: VolumeResult(0.0, 0.0, 0.0, 0.0, False))
+        return run(cur)
+
+    def metered_volume(self, start_time: Optional[datetime], end_time: datetime,
+                       scope: Optional[MeteredScope], poll_interval: float) -> VolumeResult:
+        if scope is not None and scope.names is not None and not scope.names:
+            return VolumeResult(0.0, 0.0, 0.0, 0.0, False)   # nothing selected / no eligible adapter
+        return self._volume(start_time, end_time, *self._scope_filter(scope))
+
+    def metered_volume_strict(self, start_time: Optional[datetime], end_time: datetime,
+                              scope: Optional[MeteredScope]) -> Optional[VolumeResult]:
+        if scope is not None and scope.names is not None and not scope.names:
+            return VolumeResult(0.0, 0.0, 0.0, 0.0, False)
+        sql, params = self._scope_filter(scope)
+        conn, began = None, False
+        try:
+            conn = self._conn()
+            began = self._begin_snapshot(conn)
+            return self._volume_run(conn.cursor(), start_time, end_time, sql, params)
+        except Exception as e:
+            self._log_read_failure("v8 history read failed", e)
+            return None
+        finally:
+            if conn is not None:
+                self._end_snapshot(conn, began)
+
+    def interface_names(self) -> Optional[List[str]]:
+        try:
+            return [r[0] for r in self._conn().execute(f"SELECT name FROM {S8.INTERFACES}").fetchall()]
+        except sqlite3.Error as e:
+            self._log_read_failure("Error reading interface names", e)
+            return None
+
+    def clock_trusted_ts(self) -> Optional[int]:
+        row = self._conn().execute(f"SELECT value FROM {S8.METADATA} WHERE key = 'clock_trusted_ts'").fetchone()
+        return int(row[0]) if row and str(row[0]).isdigit() else None
+
+    def _scope_filter(self, scope: Optional[MeteredScope]) -> Tuple[str, tuple]:
+        if scope is None:
+            return "", ()
+        if scope.names is not None:
+            names = tuple(str(n) for n in scope.names)
+            return f" AND {self._IFACE_NAME} IN ({', '.join('?' * len(names))})", names
+        return (f" AND (COALESCE(i.is_physical, 1) = 1 OR NOT EXISTS "
+                f"(SELECT 1 FROM {S8.INTERFACES} WHERE is_physical = 1))", ())
 
     def total_bandwidth(self, start_time: Optional[datetime], end_time: datetime,
                         interface_name: Optional[str], poll_interval: float) -> Tuple[float, float]:
