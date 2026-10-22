@@ -23,11 +23,13 @@ user's Downloads for them to copy over their folder. Settings live in %APPDATA%,
 never touches them.
 
 Since 2.2.0 (U8) the extracted NetSpeedTray.exe must ALSO pass the installer's gate - WinVerifyTrust plus
-the SignPath publisher pin - before anything is staged. checksums.txt proves the ZIP is the one the
-release lists; the signature proves the release itself went through SignPath, which an attacker who
-could swap both files on the release could not fake. The `_internal/` DLLs/.pyd are upstream builds
-that stay unsigned (Foundation terms), so the checksum remains what vouches for them. Either gate
-failing refuses the update and leaves the current version in place.
+the SignPath publisher pin - before anything is staged. This is DEFENSE IN DEPTH against a swapped or
+unsigned exe, NOT proof against a swapped release: the signature covers the bootloader exe only. The
+`_internal/` payload (the upstream DLLs/.pyd, unsigned or signed by their own vendors, and
+base_library.zip, whose stdlib .pyc load at startup) is vouched for by checksums.txt alone, so someone
+able to replace both the ZIP and checksums.txt on the release could still alter a .pyd and keep the
+signed exe. Full coverage needs a signed manifest of every file (rc2 U8 follow-up). Either gate failing
+refuses the update and leaves the current version in place.
 """
 from __future__ import annotations
 
@@ -451,7 +453,9 @@ class _DownloadWorker(QObject):
         _safe_extract(self._dest, self._extract_dir or "")
         new_exe = _locate_portable_exe(self._extract_dir or "")
         # U8: the same Authenticode + SignPath-pin gate the installer passes, on the EXE that would
-        # run next (the hands-off swap launches it). It is still in this run's private temp dir
+        # run next (the hands-off swap launches it). Defense in depth against a swapped or unsigned
+        # exe only - `_internal/` is still covered by the checksum alone (module docstring). It is
+        # still in this run's private temp dir
         # (mkdtemp, see SecureUpdater.start), checked right before the move. Fail closed: nothing is
         # staged and the running version is untouched.
         result = verify_file(new_exe)

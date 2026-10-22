@@ -21,10 +21,14 @@ RELEASES_URL = f"https://api.github.com/repos/{constants.app.GITHUB_OWNER}/{cons
 CHECK_INTERVAL_HOURS = 24
 
 
+_POLICY_TYPE_WARNED: set = set()   # (hive, registry type) pairs already logged
+
+
 def update_check_disabled_by_policy() -> bool:
     """True when IT has turned update checks off: a nonzero REG_DWORD (or REG_QWORD)
     ``DisableUpdateCheck`` under ``HKLM\\SOFTWARE\\Policies\\NetSpeedTray``, or the same under HKCU
-    (U1). Read-only. A missing key, another value type or any read error means "no policy" - the
+    (U1). The two hives are OR-ed: either one set disables, and neither can re-enable what the other
+    disabled. Read-only. A missing key, another value type (logged) or any read error means "no policy" - the
     policy can only ever switch checks OFF, so failing open here never contacts anything the user
     has not already allowed. Cheap enough to call on every check and every menu open, so a policy
     pushed while the app runs applies without a restart."""
@@ -40,7 +44,17 @@ def update_check_disabled_by_policy() -> bool:
                 value, value_type = winreg.QueryValueEx(key, value_name)
         except OSError:
             continue   # no key / no value / no access: this hive sets nothing
-        if value_type in (winreg.REG_DWORD, winreg.REG_QWORD) and int(value) != 0:
+        if value_type not in (winreg.REG_DWORD, winreg.REG_QWORD):
+            # Most likely a REG_SZ "1" from a hand-written script: say so (once per hive and type -
+            # this runs on every menu open), or IT never learns why the policy "does nothing".
+            if (hive, value_type) in _POLICY_TYPE_WARNED:
+                continue
+            _POLICY_TYPE_WARNED.add((hive, value_type))
+            logger.warning("Ignoring the %s policy value under %s\\%s: it is registry type %s, not a "
+                           "REG_DWORD.", value_name,
+                           "HKLM" if hive == winreg.HKEY_LOCAL_MACHINE else "HKCU", key_path, value_type)
+            continue
+        if int(value) != 0:
             return True
     return False
 

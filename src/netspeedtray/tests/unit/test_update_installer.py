@@ -323,3 +323,38 @@ def test_try_hands_off_validation_refusal_records_nothing(q_app, tmp_path, monke
     assert handed_off is False
     popen.assert_not_called()
     assert not marker.exists()
+
+
+# ------------------------------------------------- every worker signal reaches the updater (U8 review)
+
+@pytest.mark.parametrize("portable", [True, False])
+def test_start_connects_every_worker_signal(q_app, tmp_path, monkeypatch, portable):
+    """A worker signal nobody listens to is a silent dead end: an `untrusted` that is emitted but not
+    connected leaves the progress dialog up forever and never tells the user (a mutation deleting
+    that connect kept every other updater test green). So every pyqtSignal the worker declares must
+    have a receiver once start() has wired it - including any signal added later."""
+    from PyQt6.QtCore import pyqtSignal
+
+    class _NoStartThread(ui.QThread):
+        def start(self, *a, **k):   # wire everything, run nothing
+            pass
+
+    monkeypatch.setattr(ui, "QThread", _NoStartThread)
+    monkeypatch.setattr(ui, "sweep_stale_update_dirs", lambda: None)
+    monkeypatch.setattr(ui.tempfile, "mkdtemp", lambda prefix="": str(tmp_path))
+    monkeypatch.setattr(ui, "_downloads_dir", lambda: str(tmp_path / "Downloads"))
+    up = ui.SecureUpdater(None, "https://example/Setup.exe", "https://example/release", SimpleNamespace(),
+                          portable=portable, portable_url="https://example/d/NetSpeedTray-Portable.zip",
+                          latest_version="9.9.9")
+    try:
+        up.start()
+        worker = up._worker
+        assert worker is not None
+        names = [n for n, v in vars(ui._DownloadWorker).items() if isinstance(v, pyqtSignal)]
+        assert "untrusted" in names and "failed" in names
+        unconnected = [n for n in names if worker.receivers(getattr(worker, n)) < 1]
+        assert unconnected == [], f"worker signals with no receiver: {unconnected}"
+    finally:
+        up._close_progress()
+        up._thread = None
+        up._worker = None

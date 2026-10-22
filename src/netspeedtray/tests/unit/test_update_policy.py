@@ -83,6 +83,26 @@ def test_anything_else_is_no_policy(policy, hklm):
     assert uc.update_check_disabled_by_policy() is False
 
 
+def test_a_wrong_type_is_ignored_with_a_warning_once(policy, caplog):
+    """REG_SZ "1" (a hand-written script) is not a policy - but IT must be told why it does nothing."""
+    import logging
+    uc._POLICY_TYPE_WARNED.clear()
+    policy(hklm={_NAME: ("1", winreg.REG_SZ)})
+    with caplog.at_level(logging.WARNING, logger=uc.logger.name):
+        assert uc.update_check_disabled_by_policy() is False
+        assert uc.update_check_disabled_by_policy() is False   # runs on every menu open
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and _NAME in r.getMessage()]
+    assert len(warnings) == 1 and "REG_DWORD" in warnings[0].getMessage()
+
+
+def test_hives_are_or_ed_hkcu_zero_cannot_re_enable(policy):
+    """Disable-only: HKCU 0 does not override HKLM 1 (nor the other way round)."""
+    policy(hklm={_NAME: (1, winreg.REG_DWORD)}, hkcu={_NAME: (0, winreg.REG_DWORD)})
+    assert uc.update_check_disabled_by_policy() is True
+    policy(hklm={_NAME: (0, winreg.REG_DWORD)}, hkcu={_NAME: (1, winreg.REG_DWORD)})
+    assert uc.update_check_disabled_by_policy() is True
+
+
 def test_a_read_error_is_no_policy(monkeypatch):
     def denied(*a, **k):
         raise PermissionError(5, "Access is denied")
@@ -154,9 +174,10 @@ def general_page(q_app):
     return _build
 
 
-def _labels(widget):
+def _shown_labels(widget):
+    """Texts of the labels that would be on screen (isHidden: the page itself is never shown)."""
     from PyQt6.QtWidgets import QLabel
-    return [lbl.text() for lbl in widget.findChildren(QLabel)]
+    return [lbl.text() for lbl in widget.findChildren(QLabel) if not lbl.isHidden()]
 
 
 def test_settings_toggle_is_locked_and_explained_under_policy(policy, general_page):
@@ -165,7 +186,8 @@ def test_settings_toggle_is_locked_and_explained_under_policy(policy, general_pa
     page.load_settings({"check_for_updates": True}, is_startup_enabled=False)
     assert not page.check_for_updates.isEnabled()
     assert not page.check_for_updates.isChecked(), "a locked toggle shows what actually happens: off"
-    assert "Managed by your organization" in _labels(page)
+    assert "Managed by your organization" in _shown_labels(page)
+    assert page.check_for_updates.checkbox.accessibleDescription() == "Managed by your organization"
     # The user's own choice is written back untouched, so lifting the policy restores it.
     assert page.get_settings()["check_for_updates"] is True
     page.load_settings({"check_for_updates": False}, is_startup_enabled=False)
@@ -178,4 +200,28 @@ def test_settings_toggle_is_normal_without_policy(policy, general_page):
     page.load_settings({"check_for_updates": True}, is_startup_enabled=False)
     assert page.check_for_updates.isEnabled()
     assert page.check_for_updates.isChecked()
-    assert "Managed by your organization" not in _labels(page)
+    assert "Managed by your organization" not in _shown_labels(page)
+    assert page.check_for_updates.checkbox.accessibleDescription() == ""
+
+
+def test_the_cached_page_follows_the_policy_on_every_load(policy, general_page):
+    """The Settings dialog is cached: load_settings (each re-open, Reset all) must re-read the
+    policy, so removing it unlocks the toggle - and adding it locks it - without a restart."""
+    policy(hklm={_NAME: (1, winreg.REG_DWORD)})
+    page = general_page()
+    page.load_settings({"check_for_updates": True}, is_startup_enabled=False)
+    assert not page.check_for_updates.isEnabled()
+
+    policy()                                                     # IT removes the policy
+    page.load_settings({"check_for_updates": True}, is_startup_enabled=False)
+    assert page.check_for_updates.isEnabled()
+    assert page.check_for_updates.isChecked(), "the user's own setting comes back"
+    assert page.check_for_updates.graphicsEffect() is None, "no longer dimmed"
+    assert "Managed by your organization" not in _shown_labels(page)
+    page.check_for_updates.setChecked(False)
+    assert page.get_settings()["check_for_updates"] is False, "and the toggle is live again"
+
+    policy(hklm={_NAME: (1, winreg.REG_DWORD)})                  # and pushes it again
+    page.load_settings({"check_for_updates": True}, is_startup_enabled=False)
+    assert not page.check_for_updates.isEnabled()
+    assert "Managed by your organization" in _shown_labels(page)
