@@ -11,7 +11,12 @@ class TestHardwareMonitoring:
     @pytest.fixture
     def monitor_thread(self, q_app):
         """Creates a thread instance for testing."""
-        return StatsMonitorThread(interval=0.1)
+        thread = StatsMonitorThread(interval=0.1)
+        # Keep legacy-source tests deterministic when a real LHM HTTP server
+        # happens to be running on the test machine.
+        thread._lhm_http = MagicMock()
+        thread._lhm_http.get_snapshot.return_value = None
+        return thread
 
     # ------------------------------------------------------------------
     # GPU hybrid polling
@@ -332,7 +337,7 @@ class TestHardwareMonitoring:
 
         assert monitor_thread._wmi_ohm is ohm_obj  # connected via the OHM fallback
         templates = " ".join(str(c.args[0]) for c in monitor_thread.logger.info.call_args_list if c.args)
-        assert "v0.9.4" not in templates, "must not cry wolf when a fallback namespace connects"
+        assert "Remote Web Server" not in templates, "must not cry wolf when a fallback namespace connects"
         assert monitor_thread._ohm_guidance_logged is False  # no guidance was needed
 
     def test_init_ohm_wmi_guidance_once_when_nothing_connects(self, monitor_thread):
@@ -348,7 +353,7 @@ class TestHardwareMonitoring:
 
         assert monitor_thread._wmi_ohm is None
         guidance = [c for c in monitor_thread.logger.info.call_args_list
-                    if c.args and "v0.9.4" in str(c.args[0])]
+                    if c.args and "Remote Web Server" in str(c.args[0])]
         assert len(guidance) == 1, "guidance must be logged exactly once across retries"
 
     # ------------------------------------------------------------------

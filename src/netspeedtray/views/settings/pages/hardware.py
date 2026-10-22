@@ -85,6 +85,12 @@ class HardwarePage(QWidget):
         temps_note.setStyleSheet(
             f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
         layout.addWidget(temps_note)
+        # LHM v0.9.5+ is read over its web server (#187), which is off until the user enables it.
+        self.lhm_web_server_hint = QLabel(
+            self.i18n.LHM_WEB_SERVER_HINT.format(port=constants.lhm.HTTP_PORT))
+        self.lhm_web_server_hint.setWordWrap(True)
+        self.lhm_web_server_hint.setStyleSheet(temps_note.styleSheet())
+        layout.addWidget(self.lhm_web_server_hint)
 
         # Throttle temperature (Statistics): flags time spent at/above this temp in the Stats-detail
         # sheet so thermal throttling is provable (0 = off). Only meaningful when temps are collected,

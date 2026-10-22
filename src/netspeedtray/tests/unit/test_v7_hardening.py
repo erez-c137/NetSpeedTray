@@ -79,7 +79,7 @@ def test_spike_reaches_the_db_unfiltered_while_the_display_is_filtered(real_stat
 
     name = "Ethernet"
     controller.recent_speeds[name] = deque([(2_000_000, 2_000_000)] * 10, maxlen=20)  # 2 MB/s baseline
-    t0 = time.monotonic()
+    t0 = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     w0 = time.time()
     controller.last_check_time = t0
     controller.last_interface_counters = {name: _NetIO(0, 0)}
@@ -114,9 +114,10 @@ def test_unfiltered_persist_still_honours_the_ceiling_and_the_noise_floor(real_s
     state, worker, config = real_state
     controller = StatsController(config=config, widget_state=state)
     controller.set_view(MagicMock())
-    t0, w0 = time.monotonic(), time.time()
+    t0, w0 = 1000.0, time.time()  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     first = {"Wi-Fi": _NetIO(0, 0), "idle": _NetIO(5, 5), "glitch": _NetIO(0, 0)}
-    controller._handle_network_counters(first, (t0, w0))                  # primes
+    with patch("time.monotonic", return_value=t0):
+        controller._handle_network_counters(first, (t0, w0))              # primes
     with patch("time.monotonic", return_value=t0 + 1.0):
         controller._handle_network_counters(
             {"Wi-Fi": _NetIO(100, 100), "idle": _NetIO(5, 5), "glitch": _NetIO(10 ** 15, 0)},

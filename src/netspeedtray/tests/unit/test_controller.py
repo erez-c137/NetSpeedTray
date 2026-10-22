@@ -53,7 +53,7 @@ def test_update_speeds_calculates_and_emits_correctly(controller_instance, mock_
     
     # Manually initialize the controller's internal state to simulate
     # that a "priming read" has already occurred. This is the key fix.
-    controller.last_check_time = time.monotonic()
+    controller.last_check_time = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_interface_counters = {
         "Wi-Fi": MockNetIO(bytes_sent=1000, bytes_recv=2000),
         "Ethernet": MockNetIO(bytes_sent=500, bytes_recv=800),
@@ -122,10 +122,12 @@ def test_update_speeds_handles_resume_from_sleep(controller_instance, mock_widge
 def test_odometer_counts_bytes_even_when_all_rates_exceed_ceiling(controller_instance, mock_widget_state):
     """#13: a counter jump whose RATE exceeds MAX_REASONABLE_SPEED_BPS is display-dropped (continue),
     but the REAL bytes must still reach the data-cap odometer (add_usage_bytes), not be lost with the
-    display. Previously the odometer feed was gated on the (now-empty) display data."""
+    display. Previously the odometer feed was gated on the (now-empty) display data. Since the display
+    rate is measured over the sampled span (PR #276 review), #13's late delivery no longer pushes it
+    over the ceiling at all; the bytes must reach the odometer either way."""
     controller = controller_instance
     controller.config["interface_mode"] = "all_physical"
-    controller.last_check_time = time.monotonic()
+    controller.last_check_time = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_interface_counters = {"Wi-Fi": MockNetIO(bytes_sent=0, bytes_recv=0)}
     controller.primary_interface = None
     controller.set_view(MagicMock())
@@ -135,12 +137,15 @@ def test_odometer_counts_bytes_even_when_all_rates_exceed_ceiling(controller_ins
     # test_odometer_accuracy.py.)
     controller._last_sample_time = (controller.last_check_time - 2.0, 10_000.0)
 
-    huge = 30 * 1024**3  # 30 GiB over a 1 s handling span -> ~30 GB/s, above the ceiling -> display-dropped
+    huge = 30 * 1024**3  # 30 GiB: ~30 GB/s over the 1 s handling span, ~10.7 GB/s over the 3 s sampled
     second = {"Wi-Fi": MockNetIO(bytes_sent=huge, bytes_recv=0)}
     with patch('time.monotonic', return_value=controller.last_check_time + 1.0):
         controller._handle_network_counters(second, sample_time=(controller.last_check_time + 1.0, 10_003.0))
 
-    mock_widget_state.add_speed_data.assert_not_called()       # over-ceiling rate -> dropped from display
+    # The display rate is measured over the SAMPLED span too (PR #276 review), so the late delivery
+    # no longer inflates it past the ceiling: ~10.7 GB/s over 3 s is shown, not dropped.
+    mock_widget_state.add_speed_data.assert_called_once()
+    assert mock_widget_state.add_speed_data.call_args.kwargs["aggregated_up"] == pytest.approx(huge / 3.0, rel=1e-6)
     mock_widget_state.add_usage_bytes.assert_called_once()     # ...but the real bytes WERE counted
     up_bytes, down_bytes = mock_widget_state.add_usage_bytes.call_args[0]
     assert up_bytes == huge and down_bytes == 0
@@ -157,7 +162,7 @@ def test_spike_filter_lets_sustained_ramp_through_after_one_poll(controller_inst
     view = MagicMock(); controller.set_view(view)
     name = "Ethernet"
     controller.recent_speeds[name] = deque([(2_000_000, 2_000_000)] * 10, maxlen=20)  # 2 MB/s baseline
-    t0 = time.monotonic()
+    t0 = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_check_time = t0
     controller.last_interface_counters = {name: MockNetIO(bytes_sent=0, bytes_recv=0)}
 
@@ -216,7 +221,7 @@ def test_update_speeds_handles_short_lag_spike(controller_instance, mock_widget_
     
     # --- Manually prime the controller state ---
     # This simulates the application having been running normally before the lag spike.
-    time_before_lag = time.monotonic()
+    time_before_lag = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_check_time = time_before_lag
     controller.last_interface_counters = { "Wi-Fi": MockNetIO(bytes_sent=1000, bytes_recv=2000) }
     
@@ -463,7 +468,7 @@ def _run_all_physical(mock_config, mock_widget_state, table, first, second):
     controller.primary_interface = None
     view = MagicMock()
     controller.set_view(view)
-    controller.last_check_time = time.monotonic()
+    controller.last_check_time = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_interface_counters = {n: MockNetIO(*v) for n, v in first.items()}
     with patch('time.monotonic', return_value=controller.last_check_time + 1.0):
         controller._handle_network_counters({n: MockNetIO(*v) for n, v in second.items()})
@@ -530,3 +535,24 @@ def test_current_primary_interface_resolves_in_any_mode(mock_config, mock_widget
         assert controller.current_primary_interface() == "Wi-Fi 3"
         assert controller.current_primary_interface() == "Wi-Fi 3"
     assert g.call_count == 1   # the 15 s cache applies
+
+
+@pytest.mark.parametrize("handling_gap", [0.63, 1.35], ids=["handled-early", "handled-late"])
+def test_rate_uses_the_sampling_span_not_the_handling_span(controller_instance, handling_gap):
+    """PR #276 review S1: a stall on the monitor thread between sampling the counters and emitting
+    them (an LHM connect attempt, a WMI query) moved the HANDLING time, and dividing by it showed one
+    tick ~35% high and the next ~25% low. The counters were sampled exactly 1 s apart, so the rate
+    is the bytes over 1 s, whenever the GUI thread gets to them."""
+    controller = controller_instance
+    controller.config["interface_mode"] = "all_physical"
+    controller.primary_interface = None
+    view = MagicMock(); controller.set_view(view)
+    t0 = 1000.0
+    with patch('time.monotonic', return_value=t0):
+        controller._handle_network_counters({"Ethernet": MockNetIO(0, 0)}, sample_time=(t0, 50_000.0))
+    with patch('time.monotonic', return_value=t0 + handling_gap):
+        controller._handle_network_counters({"Ethernet": MockNetIO(1_000_000, 2_000_000)},
+                                            sample_time=(t0 + 1.0, 50_001.0))
+    up_mbps, down_mbps = view.update_display_speeds.call_args[0][:2]
+    assert up_mbps == pytest.approx(8.0)      # 1 MB over 1 s of SAMPLING = 8 Mbps
+    assert down_mbps == pytest.approx(16.0)
