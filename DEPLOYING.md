@@ -7,7 +7,7 @@ For admins and power users installing NetSpeedTray on more than one PC. Everyday
 
 | Package | What it is |
 |---|---|
-| `NetSpeedTray-<version>-x64-Setup.exe` | Inno Setup installer. **Per-machine**: installs to `C:\Program Files\NetSpeedTray` by default and needs admin. 64-bit Windows only. |
+| `NetSpeedTray-<version>-x64-Setup.exe` | Inno Setup installer. **Per-machine**: installs to `C:\Program Files\NetSpeedTray` by default and needs admin. 64-bit Windows only; on Windows 11 on ARM it installs the x64 build, which runs under Windows' x64 emulation. |
 | `NetSpeedTray-Portable-<version>.zip` | The same app, no installer, no admin. Updates itself in its folder when it can; otherwise it saves the new version to Downloads for you to copy over. |
 | WinGet `erez-c137.NetSpeedTray` | Installs the Setup.exe above, so it asks for admin too. |
 | Microsoft Store `XP9MHWQZJPLQM8` | A Win32 listing that runs the same Setup.exe silently. |
@@ -79,7 +79,7 @@ The portable build uses the same `%APPDATA%\NetSpeedTray` folder.
 
 **Roaming profiles and FSLogix:** the history database lives in Roaming AppData and grows with the
 **Keep history for** setting (Settings → Advanced) and the number of adapters. As one data point, a real
-2.1 history of 80 MB converted to 18 MB in 2.2. If roaming size matters, set a shorter retention.
+2.1 history of 80 MB converted to 18 MB in 2.2. The 2.2 upgrade's backup of the old database sits beside it and also counts; it ages out with the same **Keep history for** setting, but never before 30 days. If roaming size matters, set a shorter retention.
 
 Read the database only read-only while the app runs. Schema, queries and how to restore a backup:
 [DATABASE.md](DATABASE.md).
@@ -96,9 +96,12 @@ Turning the app off in Task Manager's Startup tab also stops it.
 - **Checking:** when the app starts, at most once every 24 hours, it asks GitHub's API
   (`api.github.com`) for the latest release. Prereleases are never offered.
 - **Turning it off for everyone:** set the machine-wide policy value
-  `HKLM\SOFTWARE\Policies\NetSpeedTray DisableUpdateCheck` (DWORD `1`). The app then never checks on its
-  own, hides **Check for Updates** from its right-click menu, and shows the Settings toggle as managed
-  by your organization.
+  `HKLM\SOFTWARE\Policies\NetSpeedTray DisableUpdateCheck` (a DWORD; any nonzero value turns it on,
+  and a value of another type is ignored with a warning in the log). The app then never checks on its
+  own, refuses a manual check too, hides **Check for Updates** from its right-click menu, and shows the
+  Settings toggle as managed by your organization (the user's own setting is kept). The same value
+  under `HKCU\SOFTWARE\Policies\NetSpeedTray` is honored as well; the two are OR-ed, so either one
+  turns checks off.
 
   ```
   reg add "HKLM\SOFTWARE\Policies\NetSpeedTray" /v DisableUpdateCheck /t REG_DWORD /d 1 /f
@@ -110,10 +113,12 @@ Turning the app off in Task Manager's Startup tab also stops it.
   SignPath publisher and refuses anything that fails, then runs Setup silently. For a Setup.exe install
   that means a UAC prompt, so a standard user needs admin credentials to update.
 - **Portable updates are checked differently:** the portable zip is many files, not one signed
-  installer, so the app checks the zip's SHA-256 against the release's `checksums.txt` (both fetched
-  over HTTPS from the GitHub release) instead of an Authenticode signature. That makes it exactly as
-  trustworthy as downloading the zip from the release page yourself. If you need a signature check on
-  every update, use Setup.exe.
+  installer. The app checks the zip's SHA-256 against the release's `checksums.txt` (both fetched over
+  HTTPS from the GitHub release), then checks the Authenticode signature and the SignPath publisher of
+  the extracted `NetSpeedTray.exe` before anything is staged; if either check fails, nothing is staged,
+  the current version keeps running and the release page opens. The rest of the bundle (`_internal\`)
+  is vouched for by the checksum only - exactly as trustworthy as downloading the zip from the release
+  page yourself.
 - **Pinning a version:** turn the check off as above and deploy the version you want.
 
 ## Network activity
@@ -121,12 +126,13 @@ Turning the app off in Task Manager's Startup tab also stops it.
 | What | Destination | When | Default | Turn off |
 |---|---|---|---|---|
 | Update check | HTTPS to `api.github.com` | At start, at most once per 24 h, and from the right-click menu | On | Settings → General → Check for updates on startup, or the policy above |
+| Update download | HTTPS to `github.com` release assets (redirects to GitHub's download CDN), plus a certificate revocation check to the certificate authority | Only when a user clicks Download | - | The policy or the toggle above (no check, no offer) |
 | Latency check | ICMP echo to the default gateway | Four every 3 s (about 1.3/s), 12-byte payload `netspeedtray` | On | Settings → Network Interfaces → Connection latency |
 | Internet latency | ICMP echo to `1.1.1.1` (or the host you set) | Same rate, in addition | **Off** | Same card |
 | DNS lookup | Your normal DNS server | Once per burst (every 3 s), only if the internet host is a *name* | Off | Use an IP address |
 | Check connection | 20 pings, 200 ms apart, to the gateway (and the internet host if enabled or ticked) | Only when a user clicks it, even while the latency check is off | - | - |
-| Route lookup | UDP `connect()` to `8.8.8.8:80` / `2001:4860:4860::8888:80` - **no packet is sent**; it only asks Windows which adapter has the default route | When finding the main connection | On | - |
-| LibreHardwareMonitor | HTTP to `127.0.0.1:8085/data.json` (this PC only) | While temperature or power readings are on; retried every 30 s while LHM doesn't answer | - | Turn those readings off, or stop LHM's web server |
+| Route lookup | UDP `connect()` to `8.8.8.8:80` / `[2001:4860:4860::8888]:80` - **no packet is sent**; it only asks Windows which adapter has the default route | When finding the main connection | On | - |
+| LibreHardwareMonitor | HTTP to `127.0.0.1:8085/data.json` (this PC only) | While temperature or power readings are on, or the Monitor window is open; retried every 30 s while LHM doesn't answer | - | Stop LHM's web server (or don't run LHM) |
 | Metrics endpoint | **Listens** on `127.0.0.1` and `[::1]`, port 9184 | While turned on | **Off** | Settings → Advanced → Integrations |
 
 The latency check pings the first IPv4 default gateway Windows lists. While a VPN is connected that can
@@ -142,7 +148,7 @@ Off by default. Turn it on in **Settings → Advanced → Integrations → Local
 
 - It listens on `127.0.0.1` and `[::1]` only, never on all interfaces, and refuses any connection that
   isn't from this PC and any request whose Host header isn't a loopback name, so a web page can't read it.
-- It answers `GET /metrics` only. No authentication and no TLS (it never leaves the machine). It's rate
+- It answers `GET` and `HEAD` on `/metrics` only. No authentication and no TLS (it never leaves the machine). It's rate
   limited (5 requests a second, bursts of 10, at most 4 at once).
 - It carries download/upload rates (total and per monitored adapter), data usage, the data cap if set,
   latency and loss, the CPU/GPU/RAM/VRAM you already monitor, and the app version, as `netspeedtray_*`
