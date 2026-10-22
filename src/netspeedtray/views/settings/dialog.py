@@ -641,7 +641,11 @@ class SettingsDialog(QDialog):
         ``baseline`` is the config ``cfg``'s colour is compared with to tell "untouched" from "typed":
         the dialog's working config by default (after Reset all that is the factory set, not the
         pre-dialog config Cancel restores), ``original_config`` for the Cancel revert."""
-        if self._user_chose_default_color or not cfg.get("color_is_automatic", True):
+        # A colour picked in THIS session belongs to the session's settings - not to the pre-dialog
+        # config a Cancel restores: on that path (baseline given) the pick is being undone, so an
+        # automatic colour there still follows the theme (review item 2: pick, then Cancel, left a
+        # white-but-automatic text colour on a light taskbar).
+        if (self._user_chose_default_color and baseline is None) or not cfg.get("color_is_automatic", True):
             return cfg
         base = self.config if baseline is None else baseline
         opened_with = str(base.get("default_color", "") or "").upper()

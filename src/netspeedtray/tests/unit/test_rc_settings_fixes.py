@@ -182,6 +182,19 @@ def test_cancel_after_reset_all_follows_the_theme_for_an_automatic_colour(qtbot,
     assert main.config["font_size"] == 8 and main.config["default_color"] == "#000000"
 
 
+def test_pick_then_cancel_still_follows_the_theme(qtbot, monkeypatch):
+    """Review item 2: a colour picked in the session is undone by Cancel, so the restored automatic
+    colour follows the live theme - it used to stay white on a light taskbar."""
+    from netspeedtray.views.settings import dialog as D
+    dlg, main = _make(qtbot, dict(DEFAULTS, default_color="#FFFFFF", color_is_automatic=True))
+    monkeypatch.setattr(D, "shell_theme_text_color", lambda: "#000000")
+    dlg._user_chose_default_color = True          # what a pick in the colour dialog sets
+    dlg.appearance_page.set_color_input("default", "#123456")
+    _flush(dlg)
+    dlg.cancel_button.click()
+    assert (main.config["default_color"], main.config["color_is_automatic"]) == ("#000000", True)
+
+
 def test_loading_a_colour_does_not_mark_it_user_chosen(qtbot):
     dlg, _ = _make(qtbot, dict(DEFAULTS, default_color="#123456", color_is_automatic=True))
     assert dlg.get_settings()["color_is_automatic"] is True
