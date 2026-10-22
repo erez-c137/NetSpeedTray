@@ -309,6 +309,11 @@ class ConfigManager:
         self.config_path = Path(config_path or self.BASE_DIR / constants.config.defaults.CONFIG_FILENAME)
         self.logger = logging.getLogger("NetSpeedTray.Config")
         self._last_config: Optional[Dict[str, Any]] = None
+        # Set once persisting a load-time migration has failed (read-only/locked file): later
+        # loads in this session do not retry it, so the failure is logged once, not every load.
+        self._migration_persist_failed = False
+        # A failed pre-migration backup is logged once per session, not on every load.
+        self._backup_failure_logged = False
 
 
     def _migrate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -718,37 +723,52 @@ class ConfigManager:
     _BACKUP_VERSION_SAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]")
     _BACKUP_VERSION_MAX_LEN = 32
 
-    def _backup_config_if_version_differs(self, config: Any) -> None:
+    def _backup_config_if_version_differs(self, config: Dict[str, Any], *,
+                                          same_version: bool = False) -> bool:
         """
         Copy the on-disk config to `<name>.bak.v<loaded_version>` when the loaded
         config_version differs from the current schema version (v2.1.5 item 4).
 
-        Best-effort: a failed backup is logged and never blocks loading. The FIRST
-        copy per source version is kept and later loads leave it untouched (review
-        C2): a rolled-back build re-loads a differing version on every launch, and
-        by launch 2 the on-disk config is already the old-schema-mangled one - the
-        pristine copy is the whole point of the backup.
+        The FIRST copy per source version is kept and later loads leave it untouched (review
+        C2): a rolled-back build re-loads a differing version on every launch, and by launch 2
+        the on-disk config is already the old-schema-mangled one - the pristine copy is the
+        whole point of the backup.
+
+        `same_version=True` is for a field-level migration of a file already at this schema
+        (e.g. a 2.2 beta's `taskbar_height`): it is about to be rewritten too, so it gets its own
+        `<name>.bak.v<version>.fields` copy - a separate name, so it can never stand in for the
+        `.bak.v<version>` a later schema bump must take of the file as it is then.
+
+        Returns True when a backup exists afterwards - none was needed, one was already there,
+        or it was just copied - and False when it could not be made. A failure never blocks
+        loading; it only stops load() from writing the migration over the original.
         """
+        loaded_version = str(config.get("config_version", "1.0"))
+        if loaded_version == constants.config.defaults.CONFIG_SCHEMA_VERSION and not same_version:
+            return True
+        safe_version = self._BACKUP_VERSION_SAFE_CHARS.sub("_", loaded_version)
+        safe_version = safe_version[: self._BACKUP_VERSION_MAX_LEN] or "unknown"
+        suffix = ".fields" if same_version else ""
+        backup_path = self.config_path.with_name(
+            f"{self.config_path.name}.bak.v{safe_version}{suffix}")
         try:
-            if not isinstance(config, dict):
-                return
-            loaded_version = str(config.get("config_version", "1.0"))
-            if loaded_version == constants.config.defaults.CONFIG_SCHEMA_VERSION:
-                return
-            safe_version = self._BACKUP_VERSION_SAFE_CHARS.sub("_", loaded_version)
-            safe_version = safe_version[: self._BACKUP_VERSION_MAX_LEN] or "unknown"
-            backup_path = self.config_path.with_name(f"{self.config_path.name}.bak.v{safe_version}")
             if backup_path.exists():
                 self.logger.debug("Config backup %s already exists; keeping the pristine copy.",
                                   backup_path.name)
-                return
+                return True
             shutil.copy2(self.config_path, backup_path)
             self.logger.info(
                 "Backed up config written by schema version %s to %s before migrating.",
                 loaded_version, backup_path.name,
             )
+            return True
         except Exception:
-            self.logger.exception("Failed to back up config before migration; continuing with load.")
+            if not self._backup_failure_logged:
+                self._backup_failure_logged = True
+                self.logger.exception("Failed to back up config before migration; running on the "
+                                      "migrated settings in memory without saving them over the "
+                                      "original.")
+            return False
 
     def load(self) -> Dict[str, Any]:
         """Loads and validates the configuration from the file."""
@@ -758,14 +778,8 @@ class ConfigManager:
         try:
             with self.config_path.open("r", encoding="utf-8") as f:
                 config = json.load(f)
-        except json.JSONDecodeError:
-            self.logger.error("Configuration file is corrupt. Backing it up and using defaults.")
-            try:
-                corrupt_path = self.config_path.with_name(f"{self.config_path.name}.corrupt")
-                os.replace(self.config_path, corrupt_path)
-            except Exception:
-                self.logger.exception("Failed to back up corrupt config file.")
-            return self.reset_to_defaults()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            config = None   # not JSON, or not UTF-8 text: handled with the non-object case below
         except PermissionError as e:
             # The file exists but its ACL denies us read (#307/#308: a config left writable only
             # elevated). Raising here made startup show a fatal "must close" dialog. Start on
@@ -773,26 +787,90 @@ class ConfigManager:
             # allows the rename, and the user's settings survive for whoever CAN read them.
             self.logger.error("Configuration file is not readable (%s). Moving it aside and "
                               "starting with default settings.", e)
-            try:
-                os.replace(self.config_path,
-                           self.config_path.with_name(f"{self.config_path.name}.unreadable"))
-            except OSError:
-                self.logger.exception("Failed to move the unreadable config file aside.")
-            return self.reset_to_defaults()
+            return self._set_aside_and_use_defaults(".unreadable")
         except OSError as e:
             msg = f"OS error reading config file {self.config_path}: {e}"
             self.logger.critical(msg)
             raise ConfigError(msg) from e
 
+        if not isinstance(config, dict):
+            # Invalid JSON, invalid UTF-8, or valid JSON that is not an object (`[]`, `null`, a
+            # number): none of it is a config, and the migration below needs a dict.
+            self.logger.error("Configuration file is corrupt. Backing it up and using defaults.")
+            return self._set_aside_and_use_defaults(".corrupt")
+
         # Keep a pristine pre-migration copy whenever the file on disk was written
         # by a DIFFERENT schema version (older, newer after a rollback, or
         # unparseable). This is the only config backup that exists anywhere.
-        self._backup_config_if_version_differs(config)
+        backed_up = self._backup_config_if_version_differs(config)
 
         migrated_config = self._migrate_config(config)
         validated_config = self._validate_config(migrated_config)
         self._last_config = validated_config.copy()
+        self._persist_migration(config, migrated_config, validated_config, backed_up)
         return validated_config
+
+    def _set_aside_and_use_defaults(self, suffix: str) -> Dict[str, Any]:
+        """
+        Preserve a config load() cannot use as `<name><suffix>`, then start on factory defaults.
+
+        The normal path moves it aside and writes fresh defaults. If the move fails (a locked
+        file), the bytes are COPIED to that name instead and the defaults stay in memory: the
+        widget builds its own ConfigManager and saves within seconds of startup, so leaving the
+        only copy of the user's settings at the config path would let that save destroy it. If
+        the copy fails too, _write_atomic's guard refuses to overwrite the file.
+        """
+        aside = self.config_path.with_name(f"{self.config_path.name}{suffix}")
+        try:
+            os.replace(self.config_path, aside)
+        except OSError:
+            self.logger.exception("Failed to move the config file aside to %s; copying it there "
+                                  "and using defaults in memory.", aside.name)
+            try:
+                shutil.copy2(self.config_path, aside)
+            except OSError:
+                self.logger.exception("Failed to copy the config file to %s; it will not be "
+                                      "overwritten.", aside.name)
+            return self._defaults_in_memory()
+        return self.reset_to_defaults()
+
+    def _persist_migration(self, original: Dict[str, Any], migrated: Dict[str, Any],
+                           validated: Dict[str, Any], backed_up: bool) -> None:
+        """
+        Write a load-time migration back to disk, once.
+
+        Without this the file kept its old schema until the user happened to change a setting
+        (save() skips an unchanged config), so the migration - and its log lines - re-ran on every
+        launch. Only written when a pre-migration backup exists (`backed_up` from load(); a
+        same-version field migration takes its own `.fields` backup here): with no backup, the
+        rewrite would leave the user no copy of what was on disk. Only a migration that ended on
+        THIS build's schema version is persisted: a newer (rollback) or unparseable version is
+        left exactly as its writer left it. Never raises - a failed backup or a read-only or
+        locked file is logged once and the app runs on the in-memory config.
+        """
+        if migrated == original or self._migration_persist_failed:
+            return
+        if migrated.get("config_version") != constants.config.defaults.CONFIG_SCHEMA_VERSION:
+            return
+        if str(original.get("config_version", "1.0")) == constants.config.defaults.CONFIG_SCHEMA_VERSION:
+            backed_up = self._backup_config_if_version_differs(original, same_version=True)
+        if not backed_up:
+            self._migration_persist_failed = True   # logged by the backup; no retry this session
+            return
+        try:
+            self._write_atomic(validated)
+            self.logger.info("Saved the migrated configuration (schema %s) to %s.",
+                             constants.config.defaults.CONFIG_SCHEMA_VERSION, self.config_path.name)
+        except ConfigError as e:
+            self._migration_persist_failed = True
+            self.logger.warning("Could not save the migrated configuration (%s); running on the "
+                                "migrated settings in memory.", e)
+
+    def _defaults_in_memory(self) -> Dict[str, Any]:
+        """Factory defaults for this session WITHOUT writing them over the file on disk."""
+        defaults = constants.config.defaults.DEFAULT_CONFIG.copy()
+        self._last_config = defaults.copy()
+        return defaults
 
 
     def save(self, config: Dict[str, Any]) -> None:
@@ -814,6 +892,45 @@ class ConfigManager:
             self.logger.debug("Skipping save, configuration is unchanged.")
             return
 
+        self._write_atomic(validated_config)
+
+    def _unpreserved_unusable_file(self) -> Optional[str]:
+        """
+        Why the file at the config path must not be overwritten, or None when it may be.
+
+        A readable file that is not a JSON object and has no identical `.corrupt` copy beside it
+        is the only copy of whatever the user had: load() could neither move nor copy it aside.
+        Every ConfigManager checks this before writing, including ones that never loaded the file
+        (the widget builds its own). A file we cannot READ is not refused: a deny-write ACL can
+        block reads too, and replacing that file is exactly how a save heals it (#307).
+        """
+        try:
+            with open(self.config_path, "rb") as f:
+                raw = f.read()
+        except OSError:
+            return None
+        try:
+            if isinstance(json.loads(raw.decode("utf-8")), dict):
+                return None
+        except ValueError:      # JSONDecodeError and UnicodeDecodeError
+            pass
+        try:
+            if self.config_path.with_name(f"{self.config_path.name}.corrupt").read_bytes() == raw:
+                return None
+        except OSError:
+            pass
+        return "it is corrupt and no .corrupt copy of it exists"
+
+    def _write_atomic(self, validated_config: Dict[str, Any]) -> None:
+        """Write an already-validated config via temp file + os.replace. Raises ConfigError."""
+        reason = self._unpreserved_unusable_file()
+        if reason:
+            msg = f"Refusing to overwrite {self.config_path}: {reason}."
+            self.logger.error(msg)
+            raise ConfigError(msg)
+        known_keys = set(constants.config.defaults.VALIDATION_SCHEMA)
+        config_to_save = { key: value for key, value in validated_config.items()
+                           if value is not None or key not in known_keys }
         temp_path = None
         try:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)

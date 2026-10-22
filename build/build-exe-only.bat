@@ -8,9 +8,17 @@ set "ROOT_DIR=%CD%"
 popd
 
 :: --- Configuration ---
-echo Resolving Python from: "%ROOT_DIR%\.venv\Scripts\python.exe"
+:: NST_VENV overrides the virtualenv, e.g. a worktree building with the main checkout's .venv.
+:: Unset - CI and every normal local build - it is ROOT\.venv, exactly as before.
+:: Quotes are stripped, so NST_VENV="C:\path with spaces\.venv" works; then a trailing backslash.
+set "VENV_DIR=%ROOT_DIR%\.venv"
+if defined NST_VENV set "VENV_DIR=%NST_VENV:"=%"
+if "%VENV_DIR:~-1%"=="\" set "VENV_DIR=%VENV_DIR:~0,-1%"
+if defined NST_VENV (echo Using venv from NST_VENV: "%VENV_DIR%") else (echo Using venv: "%VENV_DIR%")
+if not exist "%VENV_DIR%\Scripts\python.exe" (echo ERROR: No python.exe in "%VENV_DIR%\Scripts" - create the venv or set NST_VENV & exit /b 1)
+echo Resolving Python from: "%VENV_DIR%\Scripts\python.exe"
 
-"%ROOT_DIR%\.venv\Scripts\python.exe" -c "import sys, os; sys.path.append(os.path.join(r'%ROOT_DIR%', 'src')); import netspeedtray; print(netspeedtray.__version__)" > "%BUILD_DIR%version.tmp"
+"%VENV_DIR%\Scripts\python.exe" -c "import sys, os; sys.path.append(os.path.join(r'%ROOT_DIR%', 'src')); import netspeedtray; print(netspeedtray.__version__)" > "%BUILD_DIR%version.tmp"
 
 if not exist "%BUILD_DIR%version.tmp" (
     echo.
@@ -54,8 +62,8 @@ set "start_time=%TIME%"
 if not exist "%CODENAME%" (echo ERROR: monitor.py missing & exit /b 1)
 if not exist "%ROOT_DIR%\assets\NetSpeedTray.ico" (echo ERROR: NetSpeedTray.ico missing & exit /b 1)
 if not exist "%BUILD_DIR%netspeedtray.spec" (echo ERROR: netspeedtray.spec missing & exit /b 1)
-call "%ROOT_DIR%\.venv\Scripts\activate.bat" 2>nul
-"%ROOT_DIR%\.venv\Scripts\python.exe" -c "import PyInstaller" >> "%LOG_FILE%" 2>&1
+call "%VENV_DIR%\Scripts\activate.bat" 2>nul
+"%VENV_DIR%\Scripts\python.exe" -c "import PyInstaller" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: PyInstaller not installed. Install with: python -m pip install -r dev-requirements.txt & exit /b 1)
 set "end_time=%TIME%"
 call :log_elapsed "Verifying dependencies" "%start_time%" "%end_time%"
@@ -66,7 +74,7 @@ echo Generating version info for v%VERSION%...
 echo Generating version info... >> "%LOG_FILE%"
 set "start_time=%TIME%"
 cd /d "%BUILD_DIR%"
-"%ROOT_DIR%\.venv\Scripts\python.exe" create_version_info.py "%VERSION%" >> "%LOG_FILE%" 2>&1
+"%VENV_DIR%\Scripts\python.exe" create_version_info.py "%VERSION%" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: Failed to generate version info & exit /b 1)
 set "end_time=%TIME%"
 call :log_elapsed "Generating version info" "%start_time%" "%end_time%"
@@ -81,7 +89,7 @@ set "start_time=%TIME%"
 :: this unset and gets the slim onedir folder instead. setlocal scopes this var.
 set "NST_ONEFILE=1"
 
-"%ROOT_DIR%\.venv\Scripts\python.exe" -m PyInstaller --noconfirm --distpath "%DIST_DIR%" netspeedtray.spec >> "%LOG_FILE%" 2>&1
+"%VENV_DIR%\Scripts\python.exe" -m PyInstaller --noconfirm --distpath "%DIST_DIR%" netspeedtray.spec >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: PyInstaller compilation failed. Check %LOG_FILE% for details & exit /b 1)
 if not exist "%DIST_DIR%\NetSpeedTray.exe" (echo ERROR: Executable not found after compilation & exit /b 1)
 set "end_time=%TIME%"

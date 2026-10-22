@@ -9,9 +9,17 @@ popd
 
 :: --- Configuration ---
 :: --- Configuration ---
-echo Resolving Python from: "%ROOT_DIR%\.venv\Scripts\python.exe"
+:: NST_VENV overrides the virtualenv, e.g. a worktree building with the main checkout's .venv.
+:: Unset - CI and every normal local build - it is ROOT\.venv, exactly as before.
+:: Quotes are stripped, so NST_VENV="C:\path with spaces\.venv" works; then a trailing backslash.
+set "VENV_DIR=%ROOT_DIR%\.venv"
+if defined NST_VENV set "VENV_DIR=%NST_VENV:"=%"
+if "%VENV_DIR:~-1%"=="\" set "VENV_DIR=%VENV_DIR:~0,-1%"
+if defined NST_VENV (echo Using venv from NST_VENV: "%VENV_DIR%") else (echo Using venv: "%VENV_DIR%")
+if not exist "%VENV_DIR%\Scripts\python.exe" (echo ERROR: No python.exe in "%VENV_DIR%\Scripts" - create the venv or set NST_VENV & exit /b 1)
+echo Resolving Python from: "%VENV_DIR%\Scripts\python.exe"
 
-"%ROOT_DIR%\.venv\Scripts\python.exe" -c "import sys, os; sys.path.append(os.path.join(r'%ROOT_DIR%', 'src')); import netspeedtray; print(netspeedtray.__version__)" > "%BUILD_DIR%version.tmp"
+"%VENV_DIR%\Scripts\python.exe" -c "import sys, os; sys.path.append(os.path.join(r'%ROOT_DIR%', 'src')); import netspeedtray; print(netspeedtray.__version__)" > "%BUILD_DIR%version.tmp"
 
 if not exist "%BUILD_DIR%version.tmp" (
     echo.
@@ -57,8 +65,8 @@ if not exist "%ROOT_DIR%\assets\NetSpeedTray.ico" (echo ERROR: NetSpeedTray.ico 
 if not exist "%BUILD_DIR%NetSpeedTray.spec" (echo ERROR: netspeedtray.spec missing & exit /b 1)
 if not exist "%BUILD_DIR%setup.iss" (echo ERROR: setup.iss missing & exit /b 1)
 if not exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (echo ERROR: Inno Setup 6 not installed & exit /b 1)
-call "%ROOT_DIR%\.venv\Scripts\activate.bat" 2>nul
-"%ROOT_DIR%\.venv\Scripts\python.exe" -c "import PyQt6, psutil, win32api, matplotlib, numpy, signal" >> "%LOG_FILE%" 2>&1
+call "%VENV_DIR%\Scripts\activate.bat" 2>nul
+"%VENV_DIR%\Scripts\python.exe" -c "import PyQt6, psutil, win32api, matplotlib, numpy, signal" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: Required Python packages missing & exit /b 1)
 set "end_time=%TIME%"
 call :log_elapsed "Verifying dependencies" "%start_time%" "%end_time%"
@@ -72,13 +80,13 @@ cd /d "%BUILD_DIR%"
 
 :: --- NEW: Generate the dynamic version_info.txt ---
 echo Generating version info for v%VERSION%...
-"%ROOT_DIR%\.venv\Scripts\python.exe" create_version_info.py "%VERSION%" >> "%LOG_FILE%" 2>&1
+"%VENV_DIR%\Scripts\python.exe" create_version_info.py "%VERSION%" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: Failed to generate version info & exit /b 1)
 
 :: Derive the numeric-only quad for ISCC's VersionInfoVersion, which rejects prerelease
 :: suffixes ("2.2.0-beta.1" -> "2.2.0.1001", final "2.2.0" -> "2.2.0.10000"). AppVersion keeps the
 :: display string.
-"%ROOT_DIR%\.venv\Scripts\python.exe" create_version_info.py "%VERSION%" --numeric > "%BUILD_DIR%version_numeric.tmp" 2>>"%LOG_FILE%"
+"%VENV_DIR%\Scripts\python.exe" create_version_info.py "%VERSION%" --numeric > "%BUILD_DIR%version_numeric.tmp" 2>>"%LOG_FILE%"
 if errorlevel 1 (echo ERROR: Failed to derive numeric version & exit /b 1)
 set /p VERSION_NUMERIC=<"%BUILD_DIR%version_numeric.tmp"
 del "%BUILD_DIR%version_numeric.tmp"
