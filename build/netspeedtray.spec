@@ -1,6 +1,39 @@
 # NetSpeedTray.spec
 import os
 
+
+def _remove_path_entries_shadowing_windows_icu():
+    """Keep foreign ICU DLLs out of PyInstaller's Qt dependency search.
+
+    Qt can import the Windows ICU forwarders by their unversioned names. A tool
+    such as Poppler may put incompatible DLLs with those names on PATH, which
+    PyInstaller then freezes into the app. QtCore fails to import on the target
+    machine ("The specified procedure could not be found"). Only exclude an
+    entry when System32 provides the same DLL, and never exclude System32 itself.
+    This affects the build process only, not the user's persistent PATH.
+    """
+    system32 = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32')
+    icu_names = tuple(
+        name for name in ('icuuc.dll', 'icuin.dll')
+        if os.path.isfile(os.path.join(system32, name))
+    )
+    if not icu_names:
+        return
+
+    kept = []
+    for entry in os.environ.get('PATH', '').split(os.pathsep):
+        candidate = entry.strip('"')
+        is_system32 = os.path.normcase(os.path.abspath(candidate)) == os.path.normcase(system32)
+        shadows_icu = any(os.path.isfile(os.path.join(candidate, name)) for name in icu_names)
+        if shadows_icu and not is_system32:
+            print(f'[netspeedtray.spec] Ignoring PATH entry with shadowing ICU DLLs: {entry}')
+            continue
+        kept.append(entry)
+    os.environ['PATH'] = os.pathsep.join(kept)
+
+
+_remove_path_entries_shadowing_windows_icu()
+
 block_cipher = None
 
 # NO UPX, on purpose (2.2.0). UPX rewrites a PE file, which strips its Authenticode signature: the
