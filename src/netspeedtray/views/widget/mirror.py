@@ -19,6 +19,15 @@ With the setting off nothing in this module is imported, constructed, connected 
 Mirrors are never the installer's shutdown target: they never call ``shutdown_channel.arm_window``
 and never override ``nativeEvent`` - one receiver per process, the main widget, as before.
 
+Known v1 limits (accepted):
+- No hover card and no drag on a mirror.
+- A mirror on a secondary SIDE taskbar does not get #406's side-bar watcher (W1-W4: re-placing as app
+  buttons come and go, the live alignment flip): its PositionManager is built with
+  side_watcher_enabled=False, so no hook thread exists per mirror. It keeps the static placement.
+- Fullscreen is judged from the FOREGROUND window, as for the main widget: a fullscreen app on a
+  monitor that is not in the foreground (a video left playing on monitor 2 while you work on 1)
+  leaves that monitor's mirror showing.
+
 Design: Docs/releases/v2.2/design-229-all-monitors.md.
 """
 from __future__ import annotations
@@ -57,7 +66,9 @@ class _MirrorConfig(collections.abc.MutableMapping):
     Pinned: ``preferred_monitor`` = this mirror's screen (so every ``get_taskbar_info(preferred)``
     inside the position and layout managers finds ITS taskbar), docked (no free move, no #188 float,
     no saved spot) and the default tray offsets (the main widget's drag offset is the main widget's).
-    Writes stay in the overlay: nothing a mirror does can reach the main config or the disk.
+    Only the pinned keys can be written (PositionManager.reset_to_default writes them); any other
+    write is dropped with a warning, so a stray write can neither reach the main config / the disk
+    nor hide a main-config value from the mirror for good.
     """
 
     def __init__(self, get_main_config: Callable[[], Any], screen_name: str) -> None:
@@ -72,28 +83,28 @@ class _MirrorConfig(collections.abc.MutableMapping):
             "tray_offset_x": defaults.DEFAULT_TRAY_OFFSET_X,
             "tray_offset_y": defaults.DEFAULT_TRAY_OFFSET_Y,
         }
-        self._local: Dict[str, Any] = {}
 
     def _main(self) -> Any:
         cfg = self._get_main()
         return cfg if cfg is not None else {}
 
     def __getitem__(self, key: str) -> Any:
-        if key in self._local:
-            return self._local[key]
         if key in self._pinned:
             return self._pinned[key]
         return self._main()[key]
 
     def __setitem__(self, key: str, value: Any) -> None:
-        self._local[key] = value
+        if key in self._pinned:
+            self._pinned[key] = value
+        else:
+            logger.warning("Mirror config: ignored a write to %r (only placement keys are writable).", key)
 
     def __delitem__(self, key: str) -> None:
-        del self._local[key]
+        raise TypeError("a mirror's config keys cannot be deleted (%r)" % (key,))
 
     def __iter__(self) -> Iterator[str]:
         seen = set()
-        for source in (self._local, self._pinned, self._main()):
+        for source in (self._pinned, self._main()):
             for key in source:
                 if key not in seen:
                     seen.add(key)
@@ -144,7 +155,7 @@ class MirrorWidget(QWidget):
         # screen loses its taskbar; the manager's tick does that job from the enumeration instead.
         self.position_manager = PositionManager(
             WindowState(config=self.config, widget=self, taskbar_info=taskbar_info),
-            parent=self, log_tag=self._tag)
+            parent=self, log_tag=self._tag, side_watcher_enabled=False)
         self.layout_manager.set_font(resize=True)   # sizes for ITS bar, ends in update_position()
         self._dock_sig_seen = dock_signature(taskbar_info)
         logger.info("Mirror created on %s (taskbar HWND %s).", self._tag, self.taskbar_hwnd)
@@ -333,8 +344,34 @@ class MirrorWidget(QWidget):
     # --- input: forwarded to the main widget (no drag, no hover card in v1) -------------------------
     def _run_click_action(self, key: str, default: str) -> None:
         handler = getattr(self._main, "input_handler", None)
-        if handler is not None:
-            handler._execute_click_action(self._main.config.get(key, default))
+        if handler is None:
+            return
+        action = self._main.config.get(key, default)
+        handler._execute_click_action(action)
+        self._bring_window_here(action)
+
+    def _bring_window_here(self, action: str) -> None:
+        """The Monitor / Settings window the action opened restores its saved spot - often on the
+        main widget's monitor. Opened from a mirror, centre it on THIS mirror's monitor instead (the
+        user is looking here). A maximized or full-screen window is left where it is."""
+        defaults = constants.config.defaults
+        attr = {defaults.CLICK_ACTION_OPEN_MONITOR: "monitor_window",
+                defaults.CLICK_ACTION_SETTINGS: "settings_dialog"}.get(action)
+        win = getattr(self._main, attr, None) if attr else None
+        screen = self.screen()
+        try:
+            if (win is None or screen is None or not win.isVisible()
+                    or win.isMaximized() or win.isFullScreen()):
+                return
+            frame = win.frameGeometry()
+            if QApplication.screenAt(frame.center()) is screen:
+                return
+            avail = screen.availableGeometry()
+            x = avail.left() + max(0, (avail.width() - frame.width()) // 2)
+            y = avail.top() + max(0, (avail.height() - frame.height()) // 2)
+            win.move(x, y)
+        except Exception as e:
+            self.logger.debug("[%s] moving the opened window failed: %s", self._tag, e)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.MiddleButton:
@@ -521,6 +558,11 @@ class MirrorManager(QObject):
         if mirror is None:
             return
         try:
+            # #406's side-bar watcher (a hook thread) must never outlive its mirror. Mirrors never
+            # attach it (side_watcher_enabled=False); stop it anyway, in case that ever changes.
+            pm = getattr(mirror, "position_manager", None)
+            if pm is not None and hasattr(pm, "stop_side_watcher"):
+                pm.stop_side_watcher()
             if not getattr(mirror, "dead", False):
                 # Unlink from the taskbar FIRST, so its teardown cannot destroy our window under Qt.
                 mirror.detach_owner()

@@ -2418,12 +2418,18 @@ class NetworkSpeedWidget(QWidget):
     def docked_taskbar(self) -> Optional[Tuple[int, Optional[str]]]:
         """(HWND, screen name) of the taskbar this widget is docked to - the one the mirrors leave
         alone; (0, None) while it free-floats on a taskbar-less display (#188); None when unknown
-        (a fallback taskbar at logon)."""
+        (a fallback taskbar at logon).
+
+        With Free Move the widget sits wherever it was dragged, so the screen is the one it is ON, not
+        the configured one: dragged onto monitor 2, monitor 2 gets no mirror and the primary does."""
         pm = getattr(self, "position_manager", None)
         if pm is None:
             return None
         if pm.is_free_float_active():
             return 0, None
+        if self.config.get("free_move", False):
+            screen = QApplication.screenAt(self.frameGeometry().center()) or self.screen()
+            return (0, screen.name()) if screen is not None else None
         info = pm._state.taskbar_info
         hwnd = int(info.hwnd) if info is not None and info.hwnd else 0
         return (hwnd, info.screen_name) if hwnd else None

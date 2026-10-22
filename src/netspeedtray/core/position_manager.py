@@ -777,13 +777,19 @@ class PositionManager(QObject):
     _logger: Any = logger
 
     def __init__(self, window_state: WindowState, parent: Optional[QObject] = None,
-                 log_tag: str = "", *, app_yield_enabled: bool = True) -> None:
+                 log_tag: str = "", side_watcher_enabled: bool = True, *,
+                 app_yield_enabled: bool = True) -> None:
         """``app_yield_enabled=False``: no #24 app-button yield (a paint-only mirror's manager, #434 -
         mirrors don't yield in v1; the yield then never probes and never hides anything)."""
         super().__init__(parent)
         self._state = window_state
         if log_tag:
             self._logger = _TaggedLogger(logger, {"tag": log_tag})
+        # The side-taskbar watcher (#406: a WinEvent hook thread + UIA probes that keep a native side
+        # bar's placement right as apps come and go) is for the MAIN widget only. A "Show on all
+        # taskbars" mirror (#229) passes False: one hook thread per mirror, re-created on every
+        # rebuild, is not worth it in v1 - a mirror on a secondary side bar keeps the static placement.
+        self._side_watcher_enabled: bool = bool(side_watcher_enabled)
         self._calculator = PositionCalculator()
         
         # Internal State

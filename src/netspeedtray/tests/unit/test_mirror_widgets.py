@@ -103,15 +103,30 @@ class TestOverlay:
         host.config = {"font_size": 14}
         assert cfg["font_size"] == 14
 
-    def test_writes_stay_in_the_overlay(self):
+    def test_only_pinned_keys_are_writable(self):
+        """A pinned write lands in the overlay (reset_to_default writes them); any other write is
+        dropped, so it can never reach the main config nor hide a main value for good (review L5)."""
         main = {"position_x": 7, "font_size": 9}
         cfg = _MirrorConfig(lambda: main, "D2")
         cfg["position_x"] = 1
         cfg["font_size"] = 30
         assert main == {"position_x": 7, "font_size": 9}
-        assert cfg["font_size"] == 30
-        del cfg["font_size"]
-        assert cfg["font_size"] == 9
+        assert cfg["position_x"] == 1
+        assert cfg["font_size"] == 9            # the stray write did not shadow the main value
+        main["font_size"] = 12
+        assert cfg["font_size"] == 12
+        with pytest.raises(TypeError):
+            del cfg["position_x"]
+
+    def test_reset_to_default_through_the_overlay_touches_only_pinned_keys(self):
+        from netspeedtray.core.position_manager import PositionManager, WindowState
+        main = {"tray_offset_x": -200, "position_x": 5, "font_size": 9}
+        cfg = _MirrorConfig(lambda: main, "D2")
+        pm = PositionManager(WindowState(config=cfg, widget=MagicMock()))
+        pm.update_position = lambda *a, **k: None
+        pm.ensure_topmost = lambda: None
+        pm.reset_to_default()
+        assert main == {"tray_offset_x": -200, "position_x": 5, "font_size": 9}
 
 
 # --- 2. reconcile ----------------------------------------------------------------------------------
@@ -605,3 +620,115 @@ class TestMenuAnchor:
         a = tray._calculate_menu_position()
         b = tray._calculate_menu_position(anchor=other)
         assert b.x() - a.x() == other.mapToGlobal(other.rect().center()).x() - main.mapToGlobal(main.rect().center()).x()
+
+
+# --- review follow-ups (#434) ------------------------------------------------------------------------
+
+class TestMainDockUnderFreeMove:
+    """L1: with Free Move the main widget occupies the monitor it was DRAGGED to, not the configured one."""
+
+    def _main(self, free_move):
+        pm = MagicMock()
+        pm.is_free_float_active.return_value = False
+        pm._state.taskbar_info = SimpleNamespace(hwnd=100, screen_name="PRIMARY")
+        w = MagicMock()
+        w.position_manager = pm
+        w.config = {"free_move": free_move, "preferred_monitor": None}
+        w.frameGeometry.return_value = QRect(2000, 1000, 100, 40)
+        w.screen.return_value = SimpleNamespace(name=lambda: "PRIMARY")
+        return w
+
+    def test_dragged_onto_monitor_2_mirrors_the_primary_not_monitor_2(self, monkeypatch):
+        monkeypatch.setattr(widget_main.QApplication, "screenAt",
+                            staticmethod(lambda p: SimpleNamespace(name=lambda: "B")))
+        dock = widget_main.NetworkSpeedWidget.docked_taskbar(self._main(True))
+        assert dock == (0, "B")
+        mgr, _ = _manager([_tb(100, "PRIMARY", True), _tb(200, "B")], main_dock=dock)
+        mgr.tick()
+        assert sorted(mgr.mirrors) == ["PRIMARY"]
+        mgr.shutdown()
+
+    def test_docked_widget_still_uses_its_taskbar(self):
+        assert widget_main.NetworkSpeedWidget.docked_taskbar(self._main(False)) == (100, "PRIMARY")
+
+
+class TestFallbackLogThrottle:
+    """L6: the 'preferred monitor fell back' line is throttled per preferred name, so the main widget
+    and each mirror (different preferred screens every tick) do not evict each other's key."""
+
+    def test_alternating_lookups_log_once_each(self, caplog):
+        import logging
+        from netspeedtray.utils import taskbar_utils as tbu
+        tbu._last_fallback_log_key = None
+        tb = SimpleNamespace(hwnd=1, screen_name="P", is_primary=True, screen_geometry=(0, 0, 1, 1),
+                             get_screen=lambda: None)
+        try:
+            with caplog.at_level(logging.INFO, logger="NetSpeedTray.TaskbarUtils"):
+                for _ in range(3):
+                    tbu._log_preferred_monitor_fallback("MAIN-PREF", [tb])
+                    tbu._log_preferred_monitor_fallback("MIRROR-B", [tb])
+            assert sum("did not match" in r.getMessage() for r in caplog.records) == 2
+        finally:
+            tbu._last_fallback_log_key = None
+
+
+class TestSideWatcherNeverPerMirror:
+    """M1: #406's SideBarWatcher (a hook thread) is the main widget's; a mirror's PositionManager has
+    it disabled, and destroying a mirror stops it if it is there at all."""
+
+    def test_mirror_position_manager_is_built_without_the_side_watcher(self, real_mirror):
+        assert real_mirror.mirror.position_manager._side_watcher_enabled is False
+
+    def test_main_position_manager_keeps_it(self):
+        from netspeedtray.core.position_manager import PositionManager, WindowState
+        assert PositionManager(WindowState(config={}, widget=MagicMock()))._side_watcher_enabled is True
+
+    def test_destroy_stops_a_side_watcher(self):
+        mgr, _ = _manager([_tb(100, "PRIMARY", True), _tb(200, "B")])
+        mgr.tick()
+        b = mgr.mirrors["B"]
+        b.position_manager = MagicMock()
+        mgr.shutdown()
+        b.position_manager.stop_side_watcher.assert_called_once()
+
+
+class TestOpenedWindowFollowsTheMirror:
+    """L3: the Monitor / Settings window a mirror's double-click opens is centred on the mirror's
+    screen when it restored onto another one; maximized windows and same-screen windows stay put."""
+
+    def _setup(self, monkeypatch, action, win_screen_is_mirror=False, maximized=False):
+        screen_m = SimpleNamespace(availableGeometry=lambda: QRect(1920, 0, 1920, 1040))
+        other = object()
+        win = MagicMock()
+        win.isVisible.return_value = True
+        win.isMaximized.return_value = maximized
+        win.isFullScreen.return_value = False
+        win.frameGeometry.return_value = QRect(100, 100, 800, 600)
+        monkeypatch.setattr(mirror_mod.QApplication, "screenAt",
+                            staticmethod(lambda p: screen_m if win_screen_is_mirror else other))
+        m = MagicMock()
+        m._main = SimpleNamespace(config={"double_click_action": action},
+                                  input_handler=MagicMock(), monitor_window=win, settings_dialog=win)
+        m.screen.return_value = screen_m
+        m._bring_window_here = lambda a: MirrorWidget._bring_window_here(m, a)
+        return m, win
+
+    def test_monitor_window_is_centred_on_the_mirrors_screen(self, monkeypatch):
+        d = constants.config.defaults
+        m, win = self._setup(monkeypatch, d.CLICK_ACTION_OPEN_MONITOR)
+        MirrorWidget._run_click_action(m, "double_click_action", d.DEFAULT_DOUBLE_CLICK_ACTION)
+        m._main.input_handler._execute_click_action.assert_called_once_with(d.CLICK_ACTION_OPEN_MONITOR)
+        win.move.assert_called_once_with(1920 + 560, 220)
+
+    def test_window_already_there_or_maximized_is_left_alone(self, monkeypatch):
+        d = constants.config.defaults
+        for kwargs in ({"win_screen_is_mirror": True}, {"maximized": True}):
+            m, win = self._setup(monkeypatch, d.CLICK_ACTION_SETTINGS, **kwargs)
+            MirrorWidget._run_click_action(m, "double_click_action", d.DEFAULT_DOUBLE_CLICK_ACTION)
+            win.move.assert_not_called()
+
+    def test_pause_action_moves_nothing(self, monkeypatch):
+        d = constants.config.defaults
+        m, win = self._setup(monkeypatch, d.CLICK_ACTION_PAUSE)
+        MirrorWidget._run_click_action(m, "double_click_action", d.DEFAULT_DOUBLE_CLICK_ACTION)
+        win.move.assert_not_called()
