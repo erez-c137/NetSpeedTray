@@ -520,3 +520,99 @@ def test_deferral_for_raised_band_logs_once(caplog):
                 m.reseat_above_taskbar()
     lines = [r for r in caplog.records if "Z-band 6" in r.getMessage()]
     assert len(lines) == 1
+
+
+# --- M1: quick repeated Task View. Every close is a REAL burial (the taskbar drops back to ---
+# band 1 with the widget under it); those re-seats are the shell's doing, not a fight.
+
+
+def _task_view_cycle(m, z, clock, bands, open_s=1.0, gap_s=2.0):
+    bands[TB] = bands[W] = 6                     # Win+Tab
+    for _ in range(int(open_s / 0.5)):
+        clock.t += 0.5
+        m.is_buried_behind_taskbar()
+    bands[TB] = bands[W] = 1                     # Esc: widget left under the taskbar
+    _bury(z)
+    clock.t += 0.28
+    if m.is_buried_behind_taskbar():
+        m.reseat_above_taskbar()
+    for _ in range(int(gap_s)):
+        clock.t += 1
+        m.is_buried_behind_taskbar()
+
+
+def test_quick_repeated_task_view_does_not_escalate_backoff():
+    """Live: 8 x (Win+Tab 1 s, Esc) ~3 s apart reached attempt 6 / a 16 s window, and the
+    widget stayed buried 11.8 s after the last Esc."""
+    bands = {TB: 1, W: 1}
+    with _env([W, TB], bands=bands) as (m, z, _w, clock):
+        for _ in range(8):
+            _task_view_cycle(m, z, clock, bands)
+            assert z.above(W, TB)                # every close recovered at once
+        assert m._reseat_attempts == 0 and not m._last_reseat_ts
+
+
+def test_band_return_reseat_is_free_even_mid_backoff():
+    bands = {TB: 1, W: 1}
+    with _env([TB, W], bands=bands) as (m, z, _w, clock):
+        m.reseat_above_taskbar()
+        m._reseat_attempts = 5                   # a fight escalated to a 16 s window
+        _task_view_cycle(m, z, clock, bands)
+        assert z.above(W, TB)
+        assert m._reseat_attempts == 5           # not charged
+
+
+def test_real_fight_without_band_change_still_escalates():
+    bands = {TB: 1, W: 1}
+    with _env([TB, W], bands=bands) as (m, z, _w, clock):
+        assert m.reseat_above_taskbar() is True
+        _bury(z)
+        clock.t += 0.3
+        assert m.is_buried_behind_taskbar() is True
+        assert m.reseat_above_taskbar() is False  # inside the 1 s window
+
+
+def test_band_return_grace_expires():
+    bands = {TB: 6, W: 6}
+    with _env([TB, W], bands=bands) as (m, z, _w, clock):
+        m._last_reseat_ts, m._reseat_attempts = clock.t, 5
+        m.is_buried_behind_taskbar()             # raised seen
+        bands[TB] = bands[W] = 1
+        clock.t += pm_mod._BAND_RETURN_GRACE_S + 1
+        assert m.is_buried_behind_taskbar() is True
+        assert m.reseat_above_taskbar() is False  # an old band return buys nothing
+
+
+# --- L1: only bands ABOVE 1 are "raised"; a taskbar that stays raised falls back ---------
+
+
+def test_band_zero_taskbar_is_still_checked_and_reseated():
+    with _env([TB, W], bands={TB: 0, W: 0}) as (m, z, *_):
+        assert m.is_buried_behind_taskbar() is True
+        assert m.reseat_above_taskbar() is True
+        assert z.above(W, TB)
+
+
+def test_taskbar_that_stays_raised_falls_back_to_checking(caplog):
+    with _env([TB, W], bands={TB: 6, W: 6}) as (m, z, _w, clock):
+        with caplog.at_level(logging.DEBUG, logger=pm_mod.logger.name):
+            for _ in range(int(pm_mod._BAND_RAISED_FALLBACK_S)):
+                clock.t += 1
+                assert m.is_buried_behind_taskbar() is False
+            clock.t += 2
+            assert m.is_buried_behind_taskbar() is True   # verifiable again
+            clock.t += 1
+            m.is_buried_behind_taskbar()
+    infos = [r for r in caplog.records if r.levelno == logging.INFO and "Z-band 6" in r.getMessage()]
+    assert len(infos) == 1
+
+
+def test_raised_stretch_with_a_gap_restarts_the_fallback_clock():
+    with _env([TB, W], bands={TB: 6, W: 6}) as (m, z, _w, clock):
+        for _ in range(40):
+            clock.t += 1
+            m.is_buried_behind_taskbar()
+        clock.t += pm_mod._ON_TOP_MAX_GAP_S + 1  # unobserved (hidden): not continuous
+        for _ in range(30):
+            clock.t += 1
+            assert m.is_buried_behind_taskbar() is False

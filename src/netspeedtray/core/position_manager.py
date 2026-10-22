@@ -105,13 +105,16 @@ def _window_band(hwnd: int) -> Optional[int]:
 # up there the GW_HWNDPREV walk from the taskbar no longer finds the widget, so the burial check
 # cannot tell burial from "moved with the taskbar" - it must not guess, re-seat or charge the
 # backoff; the band dropping back (a foreground / reorder event, or the 1 s tick) re-checks.
+# Only bands ABOVE the desktop band count as raised: a setup that keeps the taskbar in band 0
+# (or the API reporting it) must not switch recovery off.
 _ZBID_DESKTOP = 1
-
-
-def _taskbar_band_is_raised(tb: int) -> Optional[int]:
-    """The taskbar's band when it is KNOWN to be outside the normal band, else None."""
-    band = _window_band(tb)
-    return band if band is not None and band != _ZBID_DESKTOP else None
+# A taskbar that stays "raised" this long is not Start / Task View: it is a shell that keeps it
+# there. Log once and fall back to checking the Z-order as if the band were normal.
+_BAND_RAISED_FALLBACK_S = 60.0
+# Closing Start / Task View drops the taskbar back to band 1 with the widget UNDER it (~0.3 s
+# later on a live Win11 26200 probe). The first re-seat within this long of the last raised
+# observation is the shell's doing, not a fight: it is immediate and charges no backoff.
+_BAND_RETURN_GRACE_S = 3.0
 
 
 # Re-seat backoff, the safety net against a shell that re-buries the widget the instant it
@@ -562,6 +565,13 @@ class PositionManager(QObject):
         self._last_on_top_ts: float = 0.0   # last verified on-top check (gap detection)
         # (reason, backoff window) of the last DEBUG-logged deferral - one line per window.
         self._deferral_logged: Optional[tuple] = None
+        # Raised taskbar band (Start / Task View), see _taskbar_band_raised.
+        self._band_raised_since: Optional[float] = None
+        self._band_raised_last_ts: float = 0.0
+        self._band_fallback_logged: bool = False
+        # Last time the burial check saw the taskbar raised; a re-seat soon after it drops
+        # back is free (no backoff). 0.0 = no pending band return.
+        self._band_return_pending_ts: float = 0.0
         
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -924,6 +934,33 @@ class PositionManager(QObject):
         self._first_recovery_logged = False
         self._on_top_since = None
         self._deferral_logged = None
+        self._band_raised_since = None
+        self._band_raised_last_ts = 0.0
+        self._band_fallback_logged = False
+        self._band_return_pending_ts = 0.0
+
+    def _taskbar_band_raised(self, tb: int, now: float) -> Optional[int]:
+        """
+        The taskbar's band when it is known to be ABOVE the desktop band (Start / Task View
+        open), else None. A raised stretch that lasts over _BAND_RAISED_FALLBACK_S (observed
+        continuously, same gap rule as the on-top stretch) is a shell that keeps the taskbar
+        there: log once at INFO and report None, so the Z-order is checked as before.
+        """
+        band = _window_band(tb)
+        if band is None or band <= _ZBID_DESKTOP:
+            self._band_raised_since = None
+            self._band_fallback_logged = False
+            return None
+        if self._band_raised_since is None or now - self._band_raised_last_ts > _ON_TOP_MAX_GAP_S:
+            self._band_raised_since = now
+        self._band_raised_last_ts = now
+        if now - self._band_raised_since > _BAND_RAISED_FALLBACK_S:
+            if not self._band_fallback_logged:
+                logger.info("Taskbar has stayed in Z-band %s for over %.0fs - checking burial "
+                            "as if it were in the normal band.", band, _BAND_RAISED_FALLBACK_S)
+                self._band_fallback_logged = True
+            return None
+        return band
 
     def _docked_taskbar_hwnd(self, hwnd: int) -> int:
         """
@@ -985,9 +1022,11 @@ class PositionManager(QObject):
             if not tb:
                 self.note_on_top_unverified()
                 return False
-            raised = _taskbar_band_is_raised(tb)
+            raised = self._taskbar_band_raised(tb, time.monotonic())
             if raised is not None:
                 # Start / Task View is open: the Z-order walk cannot verify anything (PR #327 B1).
+                # Closing it buries the widget; that re-seat must not count as a fight (M1).
+                self._band_return_pending_ts = time.monotonic()
                 self.note_on_top_unverified()
                 self._log_deferral(
                     "tb-band", "Burial check deferred: the taskbar is in Z-band %s (Start / Task View).",
@@ -1048,8 +1087,11 @@ class PositionManager(QObject):
             if not hwnd or not win32gui.IsWindow(hwnd):
                 return False
             now = time.monotonic()
+            # The burial the shell leaves behind when Start / Task View closes: re-seat at once
+            # and charge nothing, or quick repeated Win+Tab escalates the backoff (M1).
+            band_return = bool(self._band_return_pending_ts) and                 now - self._band_return_pending_ts <= _BAND_RETURN_GRACE_S
             delay = self._reseat_delay()
-            if self._last_reseat_ts and (now - self._last_reseat_ts) < delay:
+            if not band_return and self._last_reseat_ts and (now - self._last_reseat_ts) < delay:
                 self._log_deferral("backoff", "Re-seat deferred: backoff (%.0fs window).", delay)
                 return False
             tb = self._docked_taskbar_hwnd(hwnd)
@@ -1060,7 +1102,7 @@ class PositionManager(QObject):
                 # following it down would put the widget under that window - leave it alone.
                 self._log_deferral("tb-not-topmost", "Re-seat deferred: the taskbar is not topmost.")
                 return False
-            raised = _taskbar_band_is_raised(tb)
+            raised = self._taskbar_band_raised(tb, now)
             if raised is not None:
                 self._log_deferral(
                     "tb-band", "Re-seat deferred: the taskbar is in Z-band %s (Start / Task View).", raised)
@@ -1085,6 +1127,12 @@ class PositionManager(QObject):
                     logger.debug("Re-seat raced a closing window (%s) - retrying on the next check.", e)
                     return False
                 raise
+            self._deferral_logged = None
+            if band_return:
+                self._band_return_pending_ts = 0.0   # consumed; the backoff is untouched
+                logger.debug("Widget re-seated above the taskbar after Start / Task View closed "
+                             "(no backoff charged).")
+                return True
             self._last_reseat_ts = now
             self._reseat_attempts = min(self._reseat_attempts + 1, _RESEAT_BACKOFF_EXP_CAP + 1)
             self._deferral_logged = None
