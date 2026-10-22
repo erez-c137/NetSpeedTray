@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray がウィジェット パネルに重なっています",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray がタスクバーの Windows ウィジェット (天気) パネルの上に表示されています。好きな場所へドラッグして移動でき、その位置は記憶されます。(このメッセージは次回以降表示されません。)",
     "RESET_POSITION_MENU_ITEM": "位置をリセット(&O)",
-    "HOVER_CARD_PIN_HINT": "クリックすると開いたままになります",
+    "HOVER_CARD_PIN_HINT": "ウィジェットをクリックすると開いたままになります",
     "INTEGRATIONS_GROUP": "連携",
     "METRICS_ENDPOINT_LABEL": "ローカル メトリック エンドポイント",
     "METRICS_ENDPOINT_SUB": "この PC 上の Prometheus や Grafana が、現在の速度とデータ使用量を読み取れるようにします。接続できるのはこの PC だけで、外部には何も送信されません。",

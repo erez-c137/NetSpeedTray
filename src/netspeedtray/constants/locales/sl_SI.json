@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray prekriva ploščo s pripomočki",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray je na vaši opravilni vrstici postavljen čez ploščo s pripomočki/vremenom sistema Windows. Povlečete ga lahko kamor koli želite – zapomnil si bo mesto. (To sporočilo se ne bo več prikazalo.)",
     "RESET_POSITION_MENU_ITEM": "P&onastavi položaj",
-    "HOVER_CARD_PIN_HINT": "Kliknite, da ostane odprto",
+    "HOVER_CARD_PIN_HINT": "Kliknite gradnik, da ostane odprto",
     "INTEGRATIONS_GROUP": "Integracije",
     "METRICS_ENDPOINT_LABEL": "Lokalna končna točka metrik",
     "METRICS_ENDPOINT_SUB": "Prometheusu ali Grafani na tem računalniku omogoča branje trenutnih hitrosti in porabe podatkov. Poveže se lahko le ta računalnik; nič se ne pošlje nikamor.",

@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray 遮挡了系统小组件",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 遮挡了任务栏上的小组件/天气。你可以拖动它到喜欢的位置，设置会自动保存。（此消息仅显示一次）",
     "RESET_POSITION_MENU_ITEM": "重置位置(&O)",
-    "HOVER_CARD_PIN_HINT": "单击以保持打开",
+    "HOVER_CARD_PIN_HINT": "单击小部件以保持打开",
     "//TRANSLATION_VERSION": "2.2.0-zh_CN-260921",
     "INTEGRATIONS_GROUP": "集成",
     "METRICS_ENDPOINT_LABEL": "本地指标端点",

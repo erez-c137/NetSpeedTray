@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray חופף ללוח הווידג'טים",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray יושב מעל לוח הווידג'טים/מזג האוויר של Windows בשורת המשימות שלך. אפשר לגרור אותו לכל מקום שתרצה - הוא יזכור את המיקום. (הודעה זו לא תוצג שוב.)",
     "RESET_POSITION_MENU_ITEM": "&איפוס מיקום",
-    "HOVER_CARD_PIN_HINT": "לחץ כדי להשאיר פתוח",
+    "HOVER_CARD_PIN_HINT": "לחץ על היישומון כדי להשאיר פתוח",
     "INTEGRATIONS_GROUP": "שילובים",
     "METRICS_ENDPOINT_LABEL": "נקודת קצה מקומית למדדים",
     "METRICS_ENDPOINT_SUB": "מאפשר ל-Prometheus או ל-Grafana במחשב הזה לקרוא מהירויות חיות ושימוש בנתונים. רק המחשב הזה יכול להתחבר; שום דבר לא נשלח לשום מקום.",

@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray Widget'lar panelinin üzerine geliyor",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray, görev çubuğundaki Windows Widget'ları/hava durumu panelinin üzerine geliyor. İstediğiniz yere sürükleyebilirsiniz; konumu hatırlanır. (Bu mesaj bir daha gösterilmeyecek.)",
     "RESET_POSITION_MENU_ITEM": "Konumu &sıfırla",
-    "HOVER_CARD_PIN_HINT": "Açık kalması için tıklayın",
+    "HOVER_CARD_PIN_HINT": "Açık kalması için widget'a tıklayın",
     "INTEGRATIONS_GROUP": "Entegrasyonlar",
     "METRICS_ENDPOINT_LABEL": "Yerel metrik uç noktası",
     "METRICS_ENDPOINT_SUB": "Bu bilgisayardaki Prometheus veya Grafana'nın anlık hızları ve veri kullanımını okumasını sağlar. Yalnızca bu bilgisayar bağlanabilir; hiçbir yere bir şey gönderilmez.",

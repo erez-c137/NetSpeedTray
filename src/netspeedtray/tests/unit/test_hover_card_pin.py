@@ -9,8 +9,8 @@ A single left click on the widget used to do nothing. Now:
 - the card never takes focus: it keeps WindowDoesNotAcceptFocus + WA_ShowWithoutActivating, and
   pinning only moves/resizes it. (The widget is a different matter: a click on it makes it the
   foreground window, as it always has - only its show is non-activating.);
-- a card opened by hover carries a "Click to keep this open" line while the gesture hint is still
-  teaching; pinning drops it.
+- a card opened by hover carries a "Click the widget to keep this open" line while the gesture hint
+  is still teaching; pinning drops it.
 
 Driven through the REAL InputHandler and the real NetworkSpeedWidget methods (bound to a light
 widget), never a launched app.
@@ -289,7 +289,7 @@ def test_the_widget_window_itself_still_shows_without_activating(q_app):
     assert widget.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
 
-# --- the "Click to keep this open" footer ---------------------------------------------------------
+# --- the "Click the widget to keep this open" footer ----------------------------------------------
 
 def _show_fake(**config):
     cfg = {"show_usage_on_hover": False, "show_hover_tips": True, **config}

@@ -234,7 +234,9 @@ class UsageFlyout(QWidget):
             body.addWidget(bar)
             self._cap_labels = (used_lbl, pct_lbl, bar, cap_txt, gb)
 
-        # --- Footer: "Click to keep this open" (a card opened by hover; dropped once pinned) ---
+        # --- Footer: "Click the widget to keep this open" (a card opened by hover; dropped once
+        # pinned). Word-wrapped at 300 px, like the other text rows: a long translation wraps, never
+        # clips (test_hover_card_pin_hint_text pins this). ---
         if pin_hint:
             self._pin_hint_lbl = self._label(pin_hint, tokens.TYPE_CAPTION, self._c["text_secondary"])
             self._pin_hint_lbl.setWordWrap(True)
@@ -564,10 +566,11 @@ class UsageFlyout(QWidget):
         return self._pinned
 
     def set_pinned(self, pinned: bool) -> None:
-        """The card was clicked to stay open: drop the "Click to keep this open" line, re-place the
-        (now shorter) card against the widget, and make it take clicks - an informational card passes
-        the pointer through (native WS_EX_TRANSPARENT), but a pinned one sits there for minutes, and a
-        click on it must not press a button or drop a caret in the app behind it. Clicking it closes it
+        """The widget was clicked to keep the card open: drop the "Click the widget to keep this open"
+        line, re-place the (now shorter) card against the widget, and make it take clicks - an
+        informational card passes the pointer through (native WS_EX_TRANSPARENT), but a pinned one
+        sits there for minutes, and a click on it must not press a button or drop a caret in the app
+        behind it. Clicking it (or the widget again) closes it
         (``dismiss_requested``). Moves, resizes and restyles only - never activates (WS_EX_NOACTIVATE /
         WindowDoesNotAcceptFocus / WA_ShowWithoutActivating stay)."""
         pinned = bool(pinned)

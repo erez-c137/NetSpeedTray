@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray overlapt het Widgets-paneel",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray staat over het Widgets-/weerpaneel van Windows op je taakbalk. Je kunt het overal naartoe slepen - de plek wordt onthouden. (Dit bericht verschijnt niet meer.)",
     "RESET_POSITION_MENU_ITEM": "P&ositie herstellen",
-    "HOVER_CARD_PIN_HINT": "Klik om dit open te houden",
+    "HOVER_CARD_PIN_HINT": "Klik op de widget om dit open te houden",
     "INTEGRATIONS_GROUP": "Integraties",
     "METRICS_ENDPOINT_LABEL": "Lokaal metrics-eindpunt",
     "METRICS_ENDPOINT_SUB": "Laat Prometheus of Grafana op deze pc live snelheden en datagebruik uitlezen. Alleen deze pc kan verbinden; er wordt niets verstuurd.",

@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray가 위젯 패널과 겹칩니다",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray가 작업 표시줄의 Windows 위젯/날씨 패널 위에 겹쳐 있습니다. 원하는 위치로 자유롭게 드래그할 수 있으며, 위치는 자동으로 기억됩니다. (이 메시지는 다시 표시되지 않습니다.)",
     "RESET_POSITION_MENU_ITEM": "위치 초기화(&O)",
-    "HOVER_CARD_PIN_HINT": "클릭하면 계속 열려 있습니다",
+    "HOVER_CARD_PIN_HINT": "위젯을 클릭하면 계속 열려 있습니다",
     "INTEGRATIONS_GROUP": "통합",
     "METRICS_ENDPOINT_LABEL": "로컬 메트릭 엔드포인트",
     "METRICS_ENDPOINT_SUB": "이 PC의 Prometheus 또는 Grafana가 실시간 속도와 데이터 사용량을 읽을 수 있습니다. 이 PC만 연결할 수 있으며 어디로도 전송되지 않습니다.",

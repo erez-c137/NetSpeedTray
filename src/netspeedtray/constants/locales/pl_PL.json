@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray zasłania panel Widżetów",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray nachodzi na panel Widżetów/pogody systemu Windows na pasku zadań. Możesz przeciągnąć go w dowolne miejsce – zapamięta tę pozycję. (Ten komunikat nie pojawi się ponownie.)",
     "RESET_POSITION_MENU_ITEM": "&Resetuj położenie",
-    "HOVER_CARD_PIN_HINT": "Kliknij, aby pozostało otwarte",
+    "HOVER_CARD_PIN_HINT": "Kliknij widżet, aby pozostało otwarte",
     "INTEGRATIONS_GROUP": "Integracje",
     "METRICS_ENDPOINT_LABEL": "Lokalny punkt końcowy metryk",
     "METRICS_ENDPOINT_SUB": "Pozwala Prometheusowi lub Grafanie na tym komputerze odczytywać bieżące prędkości i zużycie danych. Połączyć może się tylko ten komputer; nic nie jest nigdzie wysyłane.",
