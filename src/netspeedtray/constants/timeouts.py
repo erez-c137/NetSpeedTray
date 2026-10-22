@@ -47,6 +47,24 @@ class TimeoutConstants:
     # EVENT_OBJECT_REORDER / foreground changes arrive in a burst. The first change is checked
     # at once; the rest of a burst collapses into one check at the end of the window.
     ZORDER_RECHECK_MIN_INTERVAL_MS: Final[int] = 100
+    # Burial "fight window" (pasharm, PR #327 rc.1 report on Win10): only a burial found within
+    # this long of OUR last re-seat is the shell fighting back and is charged to the re-seat
+    # backoff. A real fight re-buries within a frame or two (~16-33 ms) and is checked at the
+    # latest at the coalescer's trailing edge (ZORDER_RECHECK_MIN_INTERVAL_MS after our re-seat);
+    # the rc.1 live fight probe re-buries on a 0.2 s poll. A user can't bury it that fast again:
+    # every maximize / restore buries the widget on Win10, and the shortest re-seat -> user burial
+    # gap in his runs was ~420 ms. Anything later is a fresh burial: re-seated at once, free.
+    BURIAL_FIGHT_WINDOW_MS: Final[int] = 250
+    # Fresh-burial rate cap (#424 review): something that re-buries the widget just OUTSIDE the
+    # fight window (260-400 ms after each re-seat), or a 1-frame fight seen only by the 1 s tick
+    # (no Z-order hook), would re-seat for free ~1-3x a second forever. More than
+    # BURIAL_FRESH_RATE_MAX fresh burials within BURIAL_FRESH_RATE_WINDOW_MS is not a person: the
+    # next one is charged as a fight, and stays so until the widget holds on top for the healthy
+    # stretch. pasharm's real Win10 maximize/restore pace: up to 10 burials in a 90 s run, bursts
+    # of 4 in ~1.7 s - a user would have to toggle every ~1.25 s for 15 s straight to reach it.
+    # A tick-only fight trips it after ~12 s, a 300 ms re-burier after ~4 s.
+    BURIAL_FRESH_RATE_MAX: Final[int] = 12
+    BURIAL_FRESH_RATE_WINDOW_MS: Final[int] = 15000
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
 

@@ -10,7 +10,8 @@ This module consolidates all widget positioning logic, including:
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple, List, Protocol, runtime_checkable, Dict, Any, TYPE_CHECKING
+from collections import deque
+from typing import Optional, Tuple, List, Protocol, runtime_checkable, Dict, Any, Deque, TYPE_CHECKING
 import math
 import time
 import ctypes
@@ -100,6 +101,14 @@ def _window_band(hwnd: int) -> Optional[int]:
     return None
 
 
+def _is_access_denied(exc: Exception) -> bool:
+    """True for a pywin32 error carrying ERROR_ACCESS_DENIED (winerror or the first arg)."""
+    code = getattr(exc, "winerror", None)
+    if code is None and getattr(exc, "args", None):
+        code = exc.args[0]
+    return code == _ERROR_ACCESS_DENIED
+
+
 # The taskbar's normal Z-band (ZBID_DESKTOP). Opening Start or Task View lifts the taskbar into a
 # higher band (6 on a live Win11 26200 probe) and the widget, owned by it, goes along. While it is
 # up there the GW_HWNDPREV walk from the taskbar no longer finds the widget, so the burial check
@@ -124,10 +133,21 @@ _BAND_RETURN_GRACE_S = 3.0
 # stayed on top for _RESEAT_HEALTHY_S. That is shorter than an ordinary gap between two user
 # actions that bury it (pasharm's Win10 repro buries it on every maximize/restore), so those
 # always recover at once, while a real fight still decays to one re-seat a minute.
+# Since rc.2 the backoff is charged only for a burial found within the fight window of our own
+# last re-seat (_BURIAL_FIGHT_WINDOW_S below): pasharm toggled maximize/restore faster than the
+# 10 s reset and the widget sat out 1/2/4 s windows. A later burial is fresh: immediate, free.
 _RESEAT_BACKOFF_BASE_S = 1.0
 _RESEAT_BACKOFF_MAX_S = 60.0
 _RESEAT_BACKOFF_EXP_CAP = 6
 _RESEAT_HEALTHY_S = 10.0
+# Only a burial found within this long of our own last re-seat is charged to the backoff (a
+# real fight re-buries within a frame or two); a later one is fresh - immediate and free. The
+# rationale lives with the constant (constants/timeouts.py, BURIAL_FIGHT_WINDOW_MS).
+_BURIAL_FIGHT_WINDOW_S = constants.timeouts.BURIAL_FIGHT_WINDOW_MS / 1000.0
+# ... unless fresh burials come faster than a person can cause them (rationale with the constants).
+_BURIAL_FRESH_RATE_MAX = constants.timeouts.BURIAL_FRESH_RATE_MAX
+_BURIAL_FRESH_RATE_WINDOW_S = constants.timeouts.BURIAL_FRESH_RATE_WINDOW_MS / 1000.0
+_ERROR_ACCESS_DENIED = 5
 # The on-top stretch must be OBSERVED: checks run at least once a second while the widget is
 # shown, so a longer gap between two verified on-top checks (the widget was hidden, or nothing
 # checked) restarts the stretch instead of counting the unobserved time as healthy.
@@ -587,6 +607,18 @@ class PositionManager(QObject):
         # Last time the burial check saw the taskbar raised; a re-seat soon after it drops
         # back is free (no backoff). 0.0 = no pending band return.
         self._band_return_pending_ts: float = 0.0
+        # Fight window (see _BURIAL_FIGHT_WINDOW_S): when we last actually re-seated (charged or
+        # free), and whether the current burial was classified as fresh - decided ONCE, on its
+        # first re-seat attempt, so a burial we sit out in a backoff window stays a fight.
+        # None = no burial classified since our last re-seat / the last verified on-top check.
+        self._last_acted_reseat_ts: float = 0.0
+        self._burial_fresh: Optional[bool] = None
+        # Times of the last free (fresh) re-seats, and the rate cap they can trip - which holds
+        # until the healthy on-top stretch (or an explorer restart) resets the backoff state.
+        self._fresh_reseat_times: Deque[float] = deque(maxlen=_BURIAL_FRESH_RATE_MAX)
+        self._fresh_rate_capped: bool = False
+        # One INFO line per burial episode when SetWindowPos refuses the neighbour (Win10).
+        self._access_denied_logged: bool = False
         # One INFO line per stretch of a not-ready tray rect (see _tray_rect_ready).
         self._tray_not_ready_logged: bool = False
         # Last good tray rect per (monitor, edge), as offsets from the taskbar's right/bottom.
@@ -1049,6 +1081,11 @@ class PositionManager(QObject):
         self._band_raised_last_ts = 0.0
         self._band_fallback_logged = False
         self._band_return_pending_ts = 0.0
+        self._last_acted_reseat_ts = 0.0
+        self._burial_fresh = None
+        self._fresh_reseat_times.clear()
+        self._fresh_rate_capped = False
+        self._access_denied_logged = False
 
     def _taskbar_band_raised(self, tb: int, now: float) -> Optional[int]:
         """
@@ -1148,6 +1185,7 @@ class PositionManager(QObject):
                 self.note_on_top_unverified()
                 return False
             if above:
+                self._burial_fresh = None   # any earlier burial is over (fight window)
                 now = time.monotonic()
                 if self._on_top_since is None or now - self._last_on_top_ts > _ON_TOP_MAX_GAP_S:
                     self._on_top_since = now
@@ -1189,7 +1227,10 @@ class PositionManager(QObject):
 
         Guards, in order (each one defers; the next event or the 1 s tick retries):
         backoff -> taskbar not topmost -> taskbar out of its normal Z-band -> widget in another
-        Z-band -> already seated.
+        Z-band -> already seated. The backoff applies only to a burial found within the fight
+        window of our last re-seat; a fresh burial and the Start / Task View band return skip
+        it and charge nothing. If SetWindowPos refuses the neighbour with
+        Access denied, see _reseat_after_access_denied.
 
         Returns True when the widget was actually re-seated.
         """
@@ -1201,8 +1242,28 @@ class PositionManager(QObject):
             # The burial the shell leaves behind when Start / Task View closes: re-seat at once
             # and charge nothing, or quick repeated Win+Tab escalates the backoff (M1).
             band_return = bool(self._band_return_pending_ts) and                 now - self._band_return_pending_ts <= _BAND_RETURN_GRACE_S
+            # Fight window: a burial first seen more than _BURIAL_FIGHT_WINDOW_S after our last
+            # re-seat is a fresh one (Win10 buries the widget on every maximize AND restore) -
+            # immediate and free, whatever window an earlier fight left behind. Classified once
+            # per burial: while we sit out a backoff we are not re-seating, so a later check of
+            # the SAME burial must stay a fight.
+            if self._burial_fresh is None:
+                fresh = bool(self._last_acted_reseat_ts) and \
+                    now - self._last_acted_reseat_ts > _BURIAL_FIGHT_WINDOW_S
+                times = self._fresh_reseat_times
+                if fresh and not self._fresh_rate_capped and len(times) == times.maxlen and \
+                        now - times[0] < _BURIAL_FRESH_RATE_WINDOW_S:
+                    # Faster than a person buries it: a periodic re-burier just outside the
+                    # fight window, or a fight only the 1 s tick sees. Charge it from here on.
+                    self._fresh_rate_capped = True
+                    logger.info("Widget buried %d times in %.0fs - treating further burials as a "
+                                "fight (backoff) until it stays on top.",
+                                len(times) + 1, now - times[0])
+                self._burial_fresh = fresh and not self._fresh_rate_capped
+            fresh = self._burial_fresh
             delay = self._reseat_delay()
-            if not band_return and self._last_reseat_ts and (now - self._last_reseat_ts) < delay:
+            if not (band_return or fresh) and self._last_reseat_ts and \
+                    (now - self._last_reseat_ts) < delay:
                 self._log_deferral("backoff", "Re-seat deferred: backoff (%.0fs window).", delay)
                 return False
             tb = self._docked_taskbar_hwnd(hwnd)
@@ -1226,6 +1287,7 @@ class PositionManager(QObject):
                 return False
             prev = int(win32gui.GetWindow(tb, _GW_HWNDPREV) or 0)
             if prev == hwnd:
+                self._burial_fresh = None
                 return False  # already directly above the taskbar
             insert_after = prev if prev else win32con.HWND_TOPMOST
             try:
@@ -1237,12 +1299,28 @@ class PositionManager(QObject):
                     # next Z-order event or tick retries against the new neighbour.
                     logger.debug("Re-seat raced a closing window (%s) - retrying on the next check.", e)
                     return False
-                raise
+                if not (prev and _is_access_denied(e)):
+                    raise
+                if not self._reseat_after_access_denied(hwnd, tb, prev, tb_band):
+                    return False   # not charged; the next check retries
+            self._last_acted_reseat_ts = now
+            self._burial_fresh = None
+            self._access_denied_logged = False
             self._deferral_logged = None
             if band_return:
                 self._band_return_pending_ts = 0.0   # consumed; the backoff is untouched
                 logger.debug("Widget re-seated above the taskbar after Start / Task View closed "
                              "(no backoff charged).")
+                return True
+            if fresh:
+                self._fresh_reseat_times.append(now)
+                if self._first_recovery_logged:
+                    logger.debug("Widget re-seated above the taskbar after a fresh burial "
+                                 "(no backoff charged).")
+                else:
+                    logger.info("Widget recovered from taskbar burial - re-seated directly above "
+                                "the taskbar.")
+                    self._first_recovery_logged = True
                 return True
             self._last_reseat_ts = now
             self._reseat_attempts = min(self._reseat_attempts + 1, _RESEAT_BACKOFF_EXP_CAP + 1)
@@ -1256,6 +1334,66 @@ class PositionManager(QObject):
         except Exception as e:
             logger.error("Failed to re-seat the widget above the taskbar: %s", e)
             return False
+
+    def _reseat_after_access_denied(self, hwnd: int, tb: int, prev: int,
+                                    tb_band: Optional[int]) -> bool:
+        """
+        SetWindowPos refused to insert the widget after `prev` with ERROR_ACCESS_DENIED
+        (pasharm, Win10: 4x in 1.6 s, nothing elevated open). The likely cause is that `prev`
+        - often a hidden explorer tooltip - sits in another Z-band than the taskbar (he saw
+        band 1 and band 16 tooltips right above it). Only reached after that failure, so the
+        normal re-seat path is unchanged.
+
+        Fallback: insert after the first window above the taskbar that is in the TASKBAR'S
+        band. Every same-band window that was above the taskbar (open menus, jump lists, the
+        #200 guarantee) stays above the widget; the windows skipped are in other bands, whose
+        order against a band-1 window the bands decide anyway. If no window above is in the
+        taskbar's band, HWND_TOPMOST puts the widget at the top of its own band - which, with
+        nothing of that band above the taskbar, is the same seat. When the bands are unknown
+        (no API, a call fails) or the walk runs out, it does not guess: nothing moves, nothing
+        is charged, the next check retries. One INFO line per burial episode names `prev`.
+
+        Returns True when the widget was re-seated.
+        """
+        target = None
+        if tb_band is not None:
+            cur = tb
+            for _ in range(_ZORDER_WALK_LIMIT):
+                cur = int(win32gui.GetWindow(cur, _GW_HWNDPREV) or 0)
+                if not cur:
+                    target = win32con.HWND_TOPMOST
+                    break
+                if cur == hwnd:
+                    continue
+                band = _window_band(cur)
+                if band is None:
+                    break
+                if band == tb_band:
+                    target = cur
+                    break
+        if target == prev:
+            target = None   # the refused window IS in the taskbar's band: nothing safer to try
+        outcome = "not retried (no safe neighbour)"
+        ok = False
+        if target is not None:
+            try:
+                win32gui.SetWindowPos(hwnd, target, 0, 0, 0, 0, _RESEAT_SWP_FLAGS)
+                ok = True
+                outcome = ("re-seated at the top of the taskbar's band"
+                           if target == win32con.HWND_TOPMOST
+                           else "re-seated after the first window in the taskbar's band")
+            except Exception as e2:
+                outcome = "fallback also failed (%s)" % (e2,)
+        if not self._access_denied_logged:
+            self._access_denied_logged = True
+            try:
+                prev_class = win32gui.GetClassName(prev)
+            except Exception:
+                prev_class = "?"
+            logger.info("Re-seat refused (Access denied) inserting after window class %r, "
+                        "Z-band %s (taskbar Z-band %s): %s.",
+                        prev_class, _window_band(prev), tb_band, outcome)
+        return ok
 
     def _log_deferral(self, reason: str, msg: str, *args) -> None:
         """DEBUG-log a deferred re-seat once per (reason, backoff window), not once per tick."""

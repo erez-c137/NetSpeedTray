@@ -286,16 +286,23 @@ def _bury(z):
 
 
 def test_backoff_first_immediate_then_doubling():
+    # Fight-window rule: the re-burial must be FOUND within BURIAL_FIGHT_WINDOW_MS of our
+    # re-seat to be charged (it used to be found 0.5 s / 1.5 s later here, which is now a fresh
+    # burial). The later checks of the same burial stay inside the backoff window.
     with _env([TB, W]) as (m, z, _w, clock):
         assert m.reseat_above_taskbar() is True        # first: immediate
         _bury(z)
-        clock.t += 0.5
-        assert m.reseat_above_taskbar() is False       # inside the 1 s window
+        clock.t += 0.1
+        assert m.reseat_above_taskbar() is False       # a fight: inside the 1 s window
+        clock.t += 0.4
+        assert m.reseat_above_taskbar() is False       # same burial, still inside
         clock.t += 0.6
         assert m.reseat_above_taskbar() is True        # 1.1 s later
         _bury(z)
-        clock.t += 1.5
+        clock.t += 0.1
         assert m.reseat_above_taskbar() is False       # 2 s window now
+        clock.t += 1.4
+        assert m.reseat_above_taskbar() is False
         clock.t += 0.6
         assert m.reseat_above_taskbar() is True
 
@@ -567,7 +574,7 @@ def test_real_fight_without_band_change_still_escalates():
     with _env([TB, W], bands=bands) as (m, z, _w, clock):
         assert m.reseat_above_taskbar() is True
         _bury(z)
-        clock.t += 0.3
+        clock.t += 0.1                            # within the fight window (was 0.3 s: now fresh)
         assert m.is_buried_behind_taskbar() is True
         assert m.reseat_above_taskbar() is False  # inside the 1 s window
 
@@ -616,3 +623,301 @@ def test_raised_stretch_with_a_gap_restarts_the_fallback_clock():
         for _ in range(30):
             clock.t += 1
             assert m.is_buried_behind_taskbar() is False
+
+
+# --- The fight window (pasharm, PR #327 rc.1 report): only a burial that lands within -------
+# BURIAL_FIGHT_WINDOW_MS of OUR re-seat is the shell fighting back. On Win10 every maximize AND
+# restore buries the widget; charging those grew the backoff 1 -> 2 -> 4 s and the widget
+# blinked out for 0.6-2.8 s. His shortest re-seat -> user-burial gap was ~420 ms.
+
+_FIGHT_S = pm_mod.constants.timeouts.BURIAL_FIGHT_WINDOW_MS / 1000.0
+
+
+def test_fight_window_constant_sits_between_the_coalescer_and_a_user_action():
+    """It must outlast the Z-order coalescer (a 1-frame re-burial is checked at its trailing
+    edge, ~100 ms after our re-seat) plus the rc.1 0.2 s live probe, and stay well under
+    pasharm's ~420 ms user gap."""
+    coalescer_s = pm_mod.constants.timeouts.ZORDER_RECHECK_MIN_INTERVAL_MS / 1000.0
+    assert coalescer_s + 0.05 < _FIGHT_S
+    assert 0.2 < _FIGHT_S < 0.42 - 0.1
+
+
+def test_pasharm_timeline_user_burials_after_the_fight_window_are_immediate_and_free():
+    """Re-seat, then the user buries it again at +420 ms, +650 ms and +2.5 s: each one is a fresh
+    burial - re-seated on its first check, no attempt charged, no backoff window waited out."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        assert m.reseat_above_taskbar() is True          # the first burial ever: attempt 1
+        assert m._reseat_attempts == 1
+        for gap in (0.42, 0.65, 2.5):
+            clock.t += gap
+            _bury(z)
+            assert m.is_buried_behind_taskbar() is True
+            assert m.reseat_above_taskbar() is True, gap  # immediate
+            assert z.above(W, TB)
+            assert m._reseat_attempts == 1, gap          # not charged
+
+
+def test_pasharm_maximize_restore_series_never_leaves_the_widget_buried():
+    """His debug log: re-seats ~0.5-2.5 s apart. Old rule: deferred 0.6 s, 2.5 s, 2.5 s.
+    New rule: every one recovers on the check that found it."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        m.reseat_above_taskbar()
+        for gap in (0.654, 0.616, 0.461, 2.548, 1.985, 2.503):
+            clock.t += gap
+            _bury(z)
+            assert m.is_buried_behind_taskbar() is True
+            assert m.reseat_above_taskbar() is True, gap
+
+
+def _run_fight(m, z, clock, rebury_after_s, check_every_s, duration_s):
+    """A shell that re-buries the widget `rebury_after_s` after every re-seat of ours; our
+    checks run every `check_every_s` (Z-order events / the 1 s tick). Returns re-seat times."""
+    reseats, pending_bury_at = [], clock.t
+    end = clock.t + duration_s
+    while clock.t < end:
+        if pending_bury_at is not None and clock.t >= pending_bury_at - 1e-9:
+            _bury(z)
+            pending_bury_at = None
+        if m.is_buried_behind_taskbar() and m.reseat_above_taskbar():
+            reseats.append(clock.t)
+            pending_bury_at = clock.t + rebury_after_s
+        clock.t = round(clock.t + check_every_s, 6)
+    return reseats
+
+
+def _gaps(start, reseats):
+    return [round(b - a, 1) for a, b in zip([start] + reseats, reseats)]
+
+
+def test_one_frame_fight_still_escalates_1_2_4_8_16():
+    """A real fight re-buries within a frame; our check sees it at the coalescer's trailing edge."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        start = clock.t
+        _bury(z)
+        reseats = _run_fight(m, z, clock, rebury_after_s=0.016, check_every_s=0.1, duration_s=40)
+        assert _gaps(start, reseats)[:6] == [0.0, 1.0, 2.0, 4.0, 8.0, 16.0], _gaps(start, reseats)
+
+
+def test_rc1_buryloop_probe_still_counts_as_a_fight():
+    """The rc.1 live probe re-buries on its next 0.2 s poll: ~200 ms after our re-seat. That is
+    inside the window, so the owner's Win11 live result (1/2/4/8/16 s) still holds."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        start = clock.t
+        _bury(z)
+        reseats = _run_fight(m, z, clock, rebury_after_s=0.2, check_every_s=0.2, duration_s=40)
+        assert _gaps(start, reseats)[:6] == [0.0, 1.0, 2.0, 4.0, 8.0, 16.0], _gaps(start, reseats)
+
+
+def test_every_50ms_fight_is_bounded():
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        reseats = _run_fight(m, z, clock, rebury_after_s=0.05, check_every_s=0.05, duration_s=300)
+        # 0, 1, 3, 7, 15, 31, 63, 123, 183, 243: decays to one re-seat a minute.
+        assert len(reseats) <= 10, len(reseats)
+        assert reseats[-1] - reseats[-2] >= pm_mod._RESEAT_BACKOFF_MAX_S - 0.1
+
+
+def test_burial_that_persists_through_a_backoff_window_stays_a_fight():
+    """While we wait out the backoff we are not re-seating, so every later check of the SAME
+    burial is far from our last re-seat - it must not be mistaken for a fresh one."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        assert m.reseat_above_taskbar() is True
+        clock.t += 0.1
+        _bury(z)                                         # the shell fights back at once
+        assert m.reseat_above_taskbar() is False         # charged: 1 s window
+        for _ in range(8):                               # same burial, checked at 0.2..0.9 s
+            clock.t += 0.1
+            assert m.is_buried_behind_taskbar() is True
+            assert m.reseat_above_taskbar() is False
+        clock.t += 0.15
+        assert m.reseat_above_taskbar() is True          # 1 s after the last re-seat
+        assert m._reseat_attempts == 2
+
+
+def test_fresh_burial_after_a_fight_went_quiet_is_not_blocked_by_its_backoff():
+    """A fight escalated to an 8 s window, then the widget came back on top (the shell let go).
+    A burial seconds later is a new one: immediate, not held for the rest of that window."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        m.reseat_above_taskbar()
+        m._reseat_attempts = 4                           # an 8 s window
+        clock.t += 0.1
+        _bury(z)
+        assert m.reseat_above_taskbar() is False         # the fight: deferred
+        z.order = [W, TB]                                # the shell put it back itself
+        clock.t += 0.9
+        assert m.is_buried_behind_taskbar() is False     # verified on top: that burial is over
+        clock.t += 1.0
+        _bury(z)                                         # the user maximizes a window
+        assert m.is_buried_behind_taskbar() is True
+        assert m.reseat_above_taskbar() is True          # 2 s into the 8 s window, still immediate
+        assert m._reseat_attempts == 4
+
+
+def test_fight_right_after_a_fresh_reseat_is_still_charged():
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        m.reseat_above_taskbar()
+        clock.t += 5
+        _bury(z)
+        assert m.reseat_above_taskbar() is True          # fresh, free
+        assert m._reseat_attempts == 1
+        clock.t += 0.1
+        _bury(z)                                         # ... and the shell fights it at once
+        assert m.reseat_above_taskbar() is True          # 5 s since the last CHARGED one: allowed
+        assert m._reseat_attempts == 2
+        clock.t += 0.1
+        _bury(z)
+        assert m.reseat_above_taskbar() is False         # now inside the 2 s window
+
+
+def test_slow_periodic_reburier_outside_the_fight_window_still_decays():
+    """#424 review: something that re-buries 260-400 ms after every re-seat is never inside the
+    fight window - 300-400 free re-seats in 120 s, ~3/s forever. The fresh-burial rate cap turns
+    it into a fight, which decays like any other."""
+    for rebury in (0.26, 0.3, 0.4):
+        with _env([TB, W]) as (m, z, _w, clock):
+            _bury(z)
+            reseats = _run_fight(m, z, clock, rebury_after_s=rebury, check_every_s=0.05,
+                                 duration_s=120)
+            assert len(reseats) <= 25, (rebury, len(reseats))
+            assert reseats[-1] - reseats[-2] >= 16 - 0.1, (rebury, _gaps(reseats[0], reseats))
+
+
+def test_one_frame_fight_seen_only_by_the_1s_tick_still_decays():
+    """No Z-order hook (it failed to attach, or our own process did the burying): every check is
+    ~1 s after our re-seat, so every burial looked fresh - 120 re-seats in 120 s, forever."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        reseats = _run_fight(m, z, clock, rebury_after_s=0.016, check_every_s=1.0, duration_s=120)
+        assert len(reseats) <= 25, len(reseats)
+        assert reseats[-1] - reseats[-2] >= 16 - 0.1, _gaps(reseats[0], reseats)
+
+
+def test_rate_capped_fight_stays_capped_until_the_widget_holds():
+    """Once capped, the next burials are charged until the widget stays on top for the healthy
+    stretch - then a user's burial is free again."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        _run_fight(m, z, clock, rebury_after_s=0.3, check_every_s=0.05, duration_s=30)
+        assert m._fresh_rate_capped
+        z.order = [W, TB]                                # the re-burier stopped
+        for _ in range(int(pm_mod._RESEAT_HEALTHY_S) + 2):
+            clock.t += 1
+            assert m.is_buried_behind_taskbar() is False
+        assert not m._fresh_rate_capped
+        _bury(z)
+        assert m.reseat_above_taskbar() is True
+        clock.t += 0.5
+        _bury(z)
+        assert m.reseat_above_taskbar() is True          # fresh and free again
+        assert m._reseat_attempts == 1
+
+
+def test_pasharm_pace_never_hits_the_rate_cap():
+    """His rc.1 runs: up to 10 burials in 90 s, bursts like 4 in 1.7 s (the debug log). A user
+    toggling maximize/restore every ~1.4 s for a whole cap window is still free."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        m.reseat_above_taskbar()
+        gaps = [0.654, 0.616, 0.461] + [9.0] * 9 + [1.4] * 10
+        for gap in gaps:
+            clock.t += gap
+            _bury(z)
+            assert m.is_buried_behind_taskbar() is True
+            assert m.reseat_above_taskbar() is True, gap
+            assert m._reseat_attempts == 1
+        assert not m._fresh_rate_capped
+
+
+def test_first_burial_ever_still_recovers_at_once():
+    """Win11 forced burial (rc.1 live: back in 2 ms) - nothing to compare against, immediate."""
+    with _env([TB, W]) as (m, z, *_):
+        _bury(z)
+        assert m.reseat_above_taskbar() is True
+        assert m._reseat_attempts == 1
+
+
+# --- Access denied (pasharm, Win10): SetWindowPos refused the insert-after window 4x in 1.6 s --
+# Hypothesis: the window above the taskbar (a hidden explorer tooltip) sits in another Z-band.
+
+class _AccessDenied(Exception):
+    def __init__(self):
+        super().__init__(5, "SetWindowPos", "Access is denied.")
+        self.winerror = 5
+
+
+TIP16 = 0x2002      # a hidden explorer tooltip in band 16, directly above the taskbar
+
+
+def _deny_after(z, win32, *refused):
+    def setpos(hwnd, after, *rest):
+        if after in refused:
+            z.set_calls.append((hwnd, after, "DENIED"))
+            raise _AccessDenied()
+        return z.SetWindowPos(hwnd, after, *rest)
+    win32.SetWindowPos.side_effect = setpos
+
+
+def test_access_denied_falls_back_to_the_first_window_in_the_taskbars_band(caplog):
+    """MENU (band 1) above a band-16 tooltip above the taskbar: inserting after the tooltip is
+    refused, so the widget goes in after MENU - still under the menu (#200), above the taskbar."""
+    bands = {MENU: 1, TIP16: 16, TB: 1, W: 1}
+    with _env([MENU, TIP16, TB, W], bands=bands) as (m, z, win32, _c):
+        z.CLASSES = {**z.CLASSES, TIP16: "tooltips_class32"}
+        _deny_after(z, win32, TIP16)
+        with caplog.at_level(logging.DEBUG, logger=pm_mod.logger.name):
+            assert m.reseat_above_taskbar() is True
+        assert z.above(MENU, W) and z.above(W, TB)
+        assert z.set_calls[-1][:2] == (W, MENU)
+        infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO
+                 and "denied" in r.getMessage().lower()]
+        assert len(infos) == 1 and "tooltips_class32" in infos[0] and "16" in infos[0], infos
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_access_denied_with_no_same_band_window_above_uses_topmost():
+    bands = {TIP16: 16, TB: 1, W: 1}
+    with _env([TIP16, TB, W], bands=bands) as (m, z, win32, _c):
+        _deny_after(z, win32, TIP16)
+        assert m.reseat_above_taskbar() is True
+        assert z.set_calls[-1][:2] == (W, win32con.HWND_TOPMOST)
+        assert z.above(W, TB)
+
+
+def test_access_denied_without_band_info_does_not_guess_and_logs_once(caplog):
+    """No band API: the fallback cannot tell which neighbour is safe, so it leaves the order
+    alone (no charge), logs the neighbour once for the episode and lets the next check retry."""
+    with _env([MENU, TIP, TB, W]) as (m, z, win32, clock):
+        _deny_after(z, win32, TIP)
+        with caplog.at_level(logging.DEBUG, logger=pm_mod.logger.name):
+            for _ in range(4):
+                clock.t += 0.4
+                assert m.reseat_above_taskbar() is False
+        assert m._reseat_attempts == 0 and not m._last_reseat_ts
+        infos = [r for r in caplog.records if r.levelno == logging.INFO
+                 and "denied" in r.getMessage().lower()]
+        assert len(infos) == 1 and "tooltips_class32" in infos[0].getMessage()
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        win32.SetWindowPos.side_effect = z.SetWindowPos   # the neighbour went away
+        assert m.reseat_above_taskbar() is True
+
+
+def test_access_denied_fallback_also_refused_is_not_charged():
+    bands = {MENU: 1, TIP16: 16, TB: 1, W: 1}
+    with _env([MENU, TIP16, TB, W], bands=bands) as (m, z, win32, _c):
+        _deny_after(z, win32, TIP16, MENU)
+        assert m.reseat_above_taskbar() is False
+        assert m._reseat_attempts == 0 and not m._last_reseat_ts
+        assert z.above(TB, W)
+
+
+def test_other_setwindowpos_errors_still_log_an_error(caplog):
+    with _env([MENU, TB, W]) as (m, z, win32, _c):
+        win32.SetWindowPos.side_effect = RuntimeError("boom")
+        with caplog.at_level(logging.DEBUG, logger=pm_mod.logger.name):
+            assert m.reseat_above_taskbar() is False
+        assert [r for r in caplog.records if r.levelno == logging.ERROR]
