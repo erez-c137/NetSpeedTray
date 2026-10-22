@@ -277,6 +277,45 @@ def test_unticking_an_unplugged_adapter_removes_it(qtbot):
     assert dlg.get_settings()["selected_interfaces"] == ["Wi-Fi"]
 
 
+def _visual_ltr(text: str, rtl: bool) -> str:
+    """The characters of ``text`` in visual left-to-right order as Qt lays them out (formatting
+    marks dropped) - the bidi result a QLabel / combo item paints."""
+    from PyQt6.QtGui import QFont, QTextLayout, QTextOption
+    lay = QTextLayout(text, QFont("Segoe UI", 12))
+    opt = QTextOption()
+    opt.setTextDirection(Qt.LayoutDirection.RightToLeft if rtl else Qt.LayoutDirection.LeftToRight)
+    lay.setTextOption(opt)
+    lay.beginLayout()
+    line = lay.createLine()
+    line.setLineWidth(2000)
+    lay.endLayout()
+    marks = "‎‏‪‫‬⁦⁧⁨⁩"
+    xs = [(min(line.cursorToX(i)[0], line.cursorToX(i + 1)[0]), ch) for i, ch in enumerate(text)
+          if ch not in marks]
+    return "".join(ch for _, ch in sorted(xs))
+
+
+def test_unplugged_monitor_name_reads_correctly_in_hebrew(qtbot):
+    """Review item 9: in he_IL '\\\\.\\DISPLAY2 (לא מחובר)' painted as '... 2DISPLAY\\.\\\\' - the
+    neutral '\\\\.' and the digit drifted out of the device name."""
+    name = "\\\\.\\DISPLAY2"
+    q_app = QApplication.instance()
+    q_app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    try:
+        cfg = dict(DEFAULTS, preferred_monitor=name)
+        main = _Main(cfg)
+        dlg = SettingsDialog(main_widget=main, config=cfg, version="2.2.0", i18n=I18nStrings("he_IL"),
+                             available_interfaces=["Ethernet"], is_startup_enabled=False)
+        qtbot.addWidget(dlg)
+        combo = dlg.widget_page.preferred_monitor_combo
+        text = combo.itemText(combo.findData(name))
+        visual = _visual_ltr(text, rtl=True)
+        assert name in visual, visual                                  # the name stays one LTR unit
+        assert visual.index(name) > visual.index(")")                  # read first, on the right
+    finally:
+        q_app.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+
+
 @pytest.mark.parametrize("lang", ["ru_RU", "de_DE", "ja_JP"])
 def test_monitor_names_are_translated(qtbot, lang):
     """S9: "Monitor {i}: WxH (primary)" was hard-coded English in every language."""

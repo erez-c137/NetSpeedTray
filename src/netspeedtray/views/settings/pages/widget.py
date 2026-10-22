@@ -12,7 +12,7 @@ Slider→Segmented and QListWidget upgrades are intentionally NOT done here - th
 """
 from typing import Dict, Any, Callable, List, Optional
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QWidget, QComboBox, QLabel
 
@@ -158,8 +158,16 @@ class WidgetPage(QWidget):
         # to the primary display while it is away (position_manager).
         saved = getattr(self, "_saved_monitor", None)
         if saved and self.preferred_monitor_combo.findData(saved) < 0:
-            self.preferred_monitor_combo.addItem(f"{saved} {self.i18n.SETTINGS_NOT_CONNECTED_TAG}",
-                                                 userData=saved)
+            # The device name ("\\.\DISPLAY2") is left-to-right text whose leading "\\." are
+            # direction-neutral: in Hebrew they jumped to the far end ("2DISPLAY\.\\"). An LTR
+            # embedding (LRE ... PDF) plus an LRM after it keeps it one left-to-right unit - its
+            # trailing digit included - in any UI direction (Qt's bidi, checked with QTextLayout).
+            # In a right-to-left UI a leading RLM makes the line itself RTL (Qt picks a label's
+            # direction from its first strong character, which would otherwise be the "D").
+            rtl = QGuiApplication.layoutDirection() == Qt.LayoutDirection.RightToLeft
+            self.preferred_monitor_combo.addItem(
+                f"{chr(0x200F) if rtl else ''}\u202a{saved}\u202c\u200e {self.i18n.SETTINGS_NOT_CONNECTED_TAG}",
+                userData=saved)
 
         # Restore previous selection if it still exists; otherwise fall back to "Primary (auto)".
         if previous_selection is not None:
