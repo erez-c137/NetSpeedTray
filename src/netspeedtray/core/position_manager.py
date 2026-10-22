@@ -783,9 +783,10 @@ class PositionManager(QObject):
         self._tray_not_ready_logged: bool = False
         # Last good tray rect per (monitor, edge), as offsets from the taskbar's right/bottom.
         self._last_good_tray: Dict[tuple, Tuple[int, int, int, int]] = {}
-        # Side-bar automatic placement (Phase B). Decided only at startup, on a dock change (edge /
-        # thickness / DPI / Small, or the widget's height) and on Reset position - never per app
-        # launch, so the widget doesn't jump as buttons come and go (#200 jitter). "Provisional" while
+        # Side-bar automatic placement (Phase B). Decided at startup, on a dock change (edge /
+        # thickness / DPI / Small, or the widget's height), on Reset position and on an icon-alignment
+        # flip; as buttons come and go it changes ONLY when they really reach the widget (the side-bar
+        # watcher's re-check, rc.2 W1) - never just because an app opened (#200 jitter). "Provisional" while
         # the UIA layout probe is still in flight: decided from the classic HWND rect, re-decided
         # once when the probe lands.
         self._side_placement: Optional[SidePlacement] = None
