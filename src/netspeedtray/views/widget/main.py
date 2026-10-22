@@ -1668,7 +1668,11 @@ class NetworkSpeedWidget(QWidget):
                 if key.upper() in stats:
                     stat: Dict[str, Any] = {"usage": usage}
                     if temps:
-                        stat["temp"] = temp
+                        stat["temp"] = temp   # Celsius; the card converts to temp_unit (rc.2 F8)
+                        from netspeedtray.utils.helpers import temperature_unit
+                        unit = temperature_unit(cfg)
+                        if unit != constants.hardware.temperature.CELSIUS:
+                            hw["temp_unit"] = unit   # absent = Celsius, the snapshot as before
                     if power:
                         stat["power"] = watts
                     hw[key] = stat

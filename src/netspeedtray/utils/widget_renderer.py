@@ -13,7 +13,8 @@ from dataclasses import dataclass, field
 
 from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
 from netspeedtray.utils.helpers import (has_dedicated_vram, format_speed, calculate_monotone_cubic_interpolation,
-                                        memory_label_width, effective_display_mode)
+                                        memory_label_width, effective_display_mode, format_temperature,
+                                        hw_suffix_reference, temperature_unit)
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
@@ -231,6 +232,8 @@ class RenderConfig:
     widget_display_order: List[str] = field(default_factory=lambda: ["network", "cpu", "gpu"])
     show_hardware_temps: bool = False
     show_hardware_power: bool = False
+    # "celsius" | "fahrenheit" - display only; every reading is Celsius (rc.2 F8).
+    temperature_unit: str = constants.config.defaults.DEFAULT_TEMPERATURE_UNIT
 
 
     @classmethod
@@ -328,7 +331,8 @@ class RenderConfig:
                 widget_display_mode=effective_display_mode(config),
                 widget_display_order=list(config.get('widget_display_order', ["network", "cpu", "gpu"])),
                 show_hardware_temps=bool(config.get('show_hardware_temps', False)),
-                show_hardware_power=bool(config.get('show_hardware_power', False))
+                show_hardware_power=bool(config.get('show_hardware_power', False)),
+                temperature_unit=temperature_unit(config),
             )
         except Exception as e:
             logger.error("Failed to create RenderConfig: %s", e)
@@ -1032,6 +1036,7 @@ class WidgetRenderer:
 
             show_temps = getattr(config, "show_hardware_temps", False)
             show_power = getattr(config, "show_hardware_power", False)
+            temp_unit = temperature_unit(config)
 
             style = getattr(config, 'hardware_label_style', constants.config.defaults.DEFAULT_HARDWARE_LABEL_STYLE)
             sp =self.metrics.horizontalAdvance(" ")
@@ -1058,19 +1063,12 @@ class WidgetRenderer:
                              else constants.renderer.MEMORY_LABEL_VRAM)
                 rows.append({'label': label, 'color': color_hex, 'total': total,
                              'pct': self._fmt_hw_percent(val),
-                             'suffix': self._build_hw_suffix(temp, power, show_temps, show_power),
+                             'suffix': self._build_hw_suffix(temp, power, show_temps, show_power, temp_unit),
                              'mem': mem_text, 'mem_label': mem_label if mem_text else ''})
 
             label_col = (max(self.metrics.horizontalAdvance(r['label']) for r in rows) + 4) if style == "text" else 14
             pct_col = self.metrics.horizontalAdvance("100%")   # the >3d percent is already a fixed 4-char field
-            if show_temps and show_power:
-                suffix_ref = "(99°C, 250.0W)"
-            elif show_power:
-                suffix_ref = "(250.0W)"
-            elif show_temps:
-                suffix_ref = "(99°C)"
-            else:
-                suffix_ref = ""
+            suffix_ref = hw_suffix_reference(show_temps, show_power, temp_unit)
             suffix_col = (sp + self.metrics.horizontalAdvance(suffix_ref)) if suffix_ref else 0
 
             any_mem = any(r['mem'] for r in rows)
@@ -1241,10 +1239,12 @@ class WidgetRenderer:
 
 
     def _build_hw_suffix(self, temp: Optional[float], power: Optional[float],
-                        show_temps: bool, show_power: bool) -> str:
+                        show_temps: bool, show_power: bool,
+                        unit: str = constants.config.defaults.DEFAULT_TEMPERATURE_UNIT) -> str:
         """Builds a parenthetical suffix string from available hardware extras.
 
-        Examples: "(43°C, 7.8W)", "(43°C)", "(7.8W)", "(N/A)", or "" if nothing enabled.
+        Examples: "(43°C, 7.8W)", "(109°F)", "(7.8W)", "(N/A)", or "" if nothing enabled.
+        ``temp`` is Celsius; ``unit`` is the display unit (rc.2 F8).
         """
         if not show_temps and not show_power:
             return ""
@@ -1261,7 +1261,7 @@ class WidgetRenderer:
                 # Round, don't truncate. int() floors, so 27.9 rendered as "27" on the taskbar
                 # while the Monitor window - which uses :.0f everywhere - said "28" for the same
                 # sample, and users reasonably read the disagreement as a bug (#237).
-                parts.append(f"{float(temp):.0f}°C")
+                parts.append(format_temperature(float(temp), unit))
                 has_any_data = True
             else:
                 parts.append(None)  # placeholder - will be replaced with N/A if nothing else has data

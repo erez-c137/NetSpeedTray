@@ -87,7 +87,20 @@ def hardware_collection_gates(config: Dict[str, Any], force: bool) -> Tuple[bool
             bool(config.get('monitor_gpu_enabled', False)) or force)
 
 
-def aggregate_gpu_engine_utilization(samples: Dict[Any, Any]) -> float:
+def memory_collection_gates(config: Dict[str, Any], force: bool) -> Tuple[bool, bool]:
+    """(collect_ram, collect_vram) for one poll. RAM/VRAM have their own switches, independent of
+    CPU/GPU utilization: gating them on the CPU/GPU switches alone meant a config with RAM (or VRAM)
+    on and CPU (or GPU) off collected no memory data at all (rc.2 G5). Settings greys the RAM/VRAM
+    toggles out while their host monitor is off, which only stops NEW such configs - existing ones
+    keep the switch on. Where the data is SHOWN is still each view's call (the taskbar paints RAM on
+    the CPU line), and recording keeps its own consent gate (controller.hardware_persist_allowed)."""
+    collect_cpu, collect_gpu = hardware_collection_gates(config, force)
+    return (collect_cpu or bool(config.get('monitor_ram_enabled', False)),
+            collect_gpu or bool(config.get('monitor_vram_enabled', False)))
+
+
+def aggregate_gpu_engine_utilization(samples: Dict[Any, Any],
+                                     luid: Optional[Tuple[int, int]] = None) -> float:
     """Busiest-engine GPU utilization from a `\\GPU Engine(*)\\Utilization Percentage` array.
 
     Each instance is ONE process on ONE engine (pid_..._luid_..._phys_N_eng_M_engtype_X), so the
@@ -101,6 +114,9 @@ def aggregate_gpu_engine_utilization(samples: Dict[Any, Any]) -> float:
     Unparseable instance names cannot be attributed to an engine, so each counts as its own engine
     (neither dropped nor summed into a parsed one). Non-numeric, bool, negative and non-finite
     values are skipped. The result is not clamped here; the caller clamps to [0, 100].
+
+    ``luid`` (the GPU picker, #236): only that adapter's engines count, and unparseable instances -
+    which cannot be attributed to any adapter - are dropped. None (Automatic) is the readout above.
     """
     engines: Dict[Any, float] = {}
     for instance, value in samples.items():
@@ -114,6 +130,10 @@ def aggregate_gpu_engine_utilization(samples: Dict[Any, Any]) -> float:
         if match:
             luid_high, luid_low, phys, eng = match.groups()
             key: Any = (int(luid_high, 16), int(luid_low, 16), int(phys), int(eng))
+            if luid is not None and key[:2] != tuple(luid):
+                continue
+        elif luid is not None:
+            continue
         else:
             key = ("unparsed", instance)
         engines[key] = engines.get(key, 0.0) + value
@@ -201,6 +221,10 @@ class StatsMonitorThread(QThread):
         self._nvidia_cache_temp: Optional[float] = None
         self._nvidia_cache_power: Optional[float] = None
         self._nvidia_cache_vram_total: Optional[float] = None
+        # Picked NVIDIA card (#236): (picked name, (temp, power, total_mib)) from its own line.
+        self._nvidia_pick_cache: Tuple[Optional[str], Tuple[Optional[float], Optional[float], Optional[float]]] = (
+            None, (None, None, None))
+        self._nvidia_pick_last_poll: float = 0.0
 
         # PDH Queries for GPU
         self._gpu_query: Optional[int] = None
@@ -212,6 +236,18 @@ class StatsMonitorThread(QThread):
         # Static DXGI adapter facts (gpu_adapters.enumerate_adapters), re-read on every query
         # (re)build; None = DXGI unavailable, which falls back to the usage latch below.
         self._gpu_adapters: Optional[List[gpu_adapters.AdapterInfo]] = None
+        # The set of adapter LUIDs PDH named when the cached DXGI list was last checked against it
+        # (rc.2 G4): an eGPU hot-plugged without a display change - or unplugged - shows up as a PDH
+        # instance whose LUID the cache lacks (or a cached GPU PDH no longer lists), and the list is
+        # re-read ONCE per such change (~0.3 ms), not on every poll. None = check on the next poll.
+        self._gpu_pdh_luids_checked: Optional[frozenset] = None
+        # An adapter set a fresh DXGI read did NOT resolve (PDH lags DXGI on a hot-plug, or names a
+        # LUID DXGI never lists): re-read at most every ADAPTER_RECHECK_SEC, ADAPTER_RECHECK_MAX times.
+        self._gpu_luids_pending: Optional[frozenset] = None
+        self._gpu_luids_retry_at: float = 0.0
+        self._gpu_luids_tries: int = 0
+        # The picked adapter name last logged as missing (#236), so the fallback is logged once.
+        self._gpu_missing_logged: Optional[str] = None
         # FALLBACK ONLY (no DXGI): True once any adapter has reported dedicated usage at or above
         # constants.gpu.DEDICATED_USAGE_FALLBACK_MIB. From then on VRAM is the dedicated figure.
         # Not reset on a query rebuild, like _gpu_engine_seen.
@@ -304,6 +340,8 @@ class StatsMonitorThread(QThread):
             # Static per-adapter facts first (does any GPU have real dedicated memory?) - re-read
             # on every rebuild, so an eGPU plugged in or a driver reset is picked up on resume.
             self._gpu_adapters = gpu_adapters.enumerate_adapters()
+            self._gpu_pdh_luids_checked = None
+            self._gpu_luids_pending = None
             if self._gpu_adapters is not None:
                 self.logger.debug("DXGI adapters: %s", [
                     (a.name, hex(a.vendor_id), round(a.dedicated_video_bytes / 2 ** 20), a.software)
@@ -385,6 +423,8 @@ class StatsMonitorThread(QThread):
         # whether the dedicated read succeeded - a failed one never falls into shared mode.
         shared_mib: Dict[str, float] = {}
         dedicated_read_ok = False
+        dedicated_mib: Dict[str, float] = {}   # Dedicated Usage per PDH adapter instance, MiB
+        util_arr: Optional[Dict[Any, Any]] = None
         temp_c = None
         power_w = None
 
@@ -394,16 +434,17 @@ class StatsMonitorThread(QThread):
 
                 # 1. Utilization of the busiest engine, its processes summed (#328) - what Task Manager
                 # shows. The wildcard re-expands each collection, so processes started after us count.
+                # Aggregated after the memory reads below: a picked adapter (#236) is resolved by LUID
+                # against the DXGI list, which those reads may have just refreshed (G4).
                 if self._gpu_util_counter is not None:
                     try:
-                        arr = win32pdh.GetFormattedCounterArray(
+                        util_arr = win32pdh.GetFormattedCounterArray(
                             self._gpu_util_counter, win32pdh.PDH_FMT_DOUBLE)
-                        if arr:
+                        if util_arr:
                             # A non-empty array is the only honest proof a GPU engine exists. Latched,
                             # because the array is legitimately empty on an idle tick and we must not
                             # flap the Monitor's GPU tiles in and out.
                             self._gpu_engine_seen = True
-                        util_pct = aggregate_gpu_engine_utilization(arr)
                     except Exception as e:
                         self.logger.debug("GPU utilization array read failed: %s", e)
 
@@ -415,9 +456,10 @@ class StatsMonitorThread(QThread):
                             self._gpu_vram_counter, win32pdh.PDH_FMT_DOUBLE)
                         _vram_acc = 0.0
                         _had_vram = False
-                        for val in arr.values():
+                        for inst, val in arr.items():
                             if isinstance(val, (int, float)):
                                 _mib = float(val) / (1024.0 * 1024.0)
+                                dedicated_mib[str(inst)] = _mib
                                 _vram_acc += _mib
                                 _had_vram = True
                                 if _mib >= constants.gpu.DEDICATED_USAGE_FALLBACK_MIB:
@@ -444,9 +486,26 @@ class StatsMonitorThread(QThread):
             except Exception as e:
                 self.logger.debug("GPU PDH polling error: %s", e)
 
+        # 2c. A GPU that came or went since the DXGI list was read (G4), then the picked one (#236).
+        self._refresh_adapters_on_luid_change(set(dedicated_mib) | set(shared_mib))
+        selected = self._selected_gpu_adapter()
+        if util_arr is not None:
+            try:
+                util_pct = aggregate_gpu_engine_utilization(
+                    util_arr, selected.luid if selected is not None else None)
+            except Exception as e:
+                self.logger.debug("GPU utilization aggregation failed: %s", e)
+        if selected is not None and dedicated_read_ok:
+            mine = [v for inst, v in dedicated_mib.items()
+                    if gpu_adapters.pdh_instance_luid(inst) == selected.luid]
+            vram_used = sum(mine) if mine else None
+
         # 3. Temperature & Power - prefer LHM/OHM (all vendors) over nvidia-smi (NVIDIA only)
-        need_smi_temp = include_temp
-        need_smi_power = include_power
+        # A picked adapter (#236) takes temperature / power only from a sensor of its own maker;
+        # nvidia-smi is NVIDIA's, so it is not asked for another maker's card.
+        smi_matches = selected is None or selected.vendor_id == constants.gpu.VENDOR_NVIDIA
+        need_smi_temp = include_temp and smi_matches
+        need_smi_power = include_power and smi_matches
 
         # LHM 0.9.5+ HTTP source. SensorId/HardwareId grouping in lhm_http
         # prevents the iGPU or a motherboard "CPU Socket" sensor from winning.
@@ -454,6 +513,10 @@ class StatsMonitorThread(QThread):
         lhm_gpu = lhm_snapshot.preferred_gpu if lhm_snapshot else None
         if lhm_gpu is not None:
             self._lhm_gpu_seen = True
+        if selected is not None:
+            lhm_gpu = (lhm_snapshot.gpu_for(selected.vendor_id, selected.name,
+                                            gpu_adapters.is_integrated(selected))
+                       if lhm_snapshot else None)
         if lhm_gpu:
             if include_temp and lhm_gpu.temperature is not None:
                 temp_c = lhm_gpu.temperature
@@ -473,7 +536,7 @@ class StatsMonitorThread(QThread):
                         )
                         for s in sensors:
                             identifier = str(getattr(s, 'Identifier', '')).lower()
-                            if 'gpu' not in identifier:
+                            if 'gpu' not in identifier or not self._gpu_sensor_matches(identifier, selected):
                                 continue
                             val = float(s.Value)
                             if 0.0 < val < 150.0:
@@ -496,7 +559,7 @@ class StatsMonitorThread(QThread):
                         )
                         for s in sensors:
                             identifier = str(getattr(s, 'Identifier', '')).lower()
-                            if 'gpu' not in identifier:
+                            if 'gpu' not in identifier or not self._gpu_sensor_matches(identifier, selected):
                                 continue
                             val = float(s.Value)
                             if 0.0 < val < 1000.0:
@@ -517,56 +580,76 @@ class StatsMonitorThread(QThread):
         # were needed FROM it, so with LibreHardwareMonitor supplying those, nvidia-smi never ran and
         # the total silently never arrived. Users saw VRAM as used-only with LHM open and used/total
         # with it closed, which is a bizarre thing to have to notice (#250).
-        need_smi_vram_total = self._nvidia_cache_vram_total is None
-        if self._nvidia_smi_path and (need_smi_temp or need_smi_power or need_smi_vram_total):
-            now_mono = time.monotonic()
-            if (now_mono - self._nvidia_last_poll) >= self._NVIDIA_POLL_INTERVAL_SEC:
-                # Stamp first: a hung/failed call then waits the full interval before retry,
-                # instead of re-running (and re-stalling) every poll.
-                self._nvidia_last_poll = now_mono
-                try:
-                    query_fields = "temperature.gpu,memory.total,power.draw"
-                    output = self._run_child(
-                        [self._nvidia_smi_path, f"--query-gpu={query_fields}", "--format=csv,noheader,nounits"],
-                        constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC)
-                    parts = output.strip().split('\n')[0].split(',')
-                    if len(parts) > 0:
-                        try:
-                            _t = float(parts[0].strip())
-                            if 0.0 < _t < 150.0:  # sanity-range like every other temp path
-                                self._nvidia_cache_temp = _t
-                        except: pass
-                    if len(parts) > 1:
-                        try: self._nvidia_cache_vram_total = float(parts[1].strip())  # MiB
-                        except: pass
-                    if len(parts) > 2:
-                        try:
-                            pw = float(parts[2].strip())
-                            if 0.0 < pw < 1000.0:
-                                self._nvidia_cache_power = pw
-                        except: pass
-                except Exception as e:
-                    self.logger.debug("nvidia-smi temp/power query failed: %s", e)
-                    # Sensor likely dropped out - invalidate the cache so readings fall back to
-                    # N/A instead of freezing the last good value forever (the N/A design intent).
-                    self._nvidia_cache_temp = None
-                    self._nvidia_cache_power = None
-                    self._nvidia_cache_vram_total = None
+        smi_pick: Tuple[Optional[float], Optional[float], Optional[float]] = (None, None, None)
+        if selected is None:
+            need_smi_vram_total = self._nvidia_cache_vram_total is None
+            if self._nvidia_smi_path and (need_smi_temp or need_smi_power or need_smi_vram_total):
+                now_mono = time.monotonic()
+                if (now_mono - self._nvidia_last_poll) >= self._NVIDIA_POLL_INTERVAL_SEC:
+                    # Stamp first: a hung/failed call then waits the full interval before retry,
+                    # instead of re-running (and re-stalling) every poll.
+                    self._nvidia_last_poll = now_mono
+                    try:
+                        query_fields = "temperature.gpu,memory.total,power.draw"
+                        output = self._run_child(
+                            [self._nvidia_smi_path, f"--query-gpu={query_fields}", "--format=csv,noheader,nounits"],
+                            constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC)
+                        parts = output.strip().split('\n')[0].split(',')
+                        if len(parts) > 0:
+                            try:
+                                _t = float(parts[0].strip())
+                                if 0.0 < _t < 150.0:  # sanity-range like every other temp path
+                                    self._nvidia_cache_temp = _t
+                            except: pass
+                        if len(parts) > 1:
+                            try: self._nvidia_cache_vram_total = float(parts[1].strip())  # MiB
+                            except: pass
+                        if len(parts) > 2:
+                            try:
+                                pw = float(parts[2].strip())
+                                if 0.0 < pw < 1000.0:
+                                    self._nvidia_cache_power = pw
+                            except: pass
+                    except Exception as e:
+                        self.logger.debug("nvidia-smi temp/power query failed: %s", e)
+                        # Sensor likely dropped out - invalidate the cache so readings fall back to
+                        # N/A instead of freezing the last good value forever (the N/A design intent).
+                        self._nvidia_cache_temp = None
+                        self._nvidia_cache_power = None
+                        self._nvidia_cache_vram_total = None
 
-            # Apply the (possibly just-refreshed) cached values to whatever still needs a source.
-            if need_smi_temp and temp_c is None and self._nvidia_cache_temp is not None:
-                temp_c = self._nvidia_cache_temp
-            if need_smi_power and power_w is None and self._nvidia_cache_power is not None:
-                power_w = self._nvidia_cache_power
+                # Apply the (possibly just-refreshed) cached values to whatever still needs a source.
+                if need_smi_temp and temp_c is None and self._nvidia_cache_temp is not None:
+                    temp_c = self._nvidia_cache_temp
+                if need_smi_power and power_w is None and self._nvidia_cache_power is not None:
+                    power_w = self._nvidia_cache_power
+        elif smi_matches and self._nvidia_smi_path:
+            # A picked NVIDIA card: its OWN nvidia-smi line (by name), never the first line.
+            smi_pick = self._nvidia_smi_for(selected, need_smi_temp or need_smi_power)
+            if need_smi_temp and temp_c is None:
+                temp_c = smi_pick[0]
+            if need_smi_power and power_w is None:
+                power_w = smi_pick[1]
 
         # Outside the gate on purpose: once the total is known it applies on every poll, whatever the
         # reason nvidia-smi did or did not run this time round.
-        if vram_total is None and self._nvidia_cache_vram_total is not None:
-            vram_total = self._nvidia_cache_vram_total
+        if selected is None:
+            if vram_total is None and self._nvidia_cache_vram_total is not None:
+                vram_total = self._nvidia_cache_vram_total
 
-        # 4b. Integrated GPU: no adapter has dedicated memory, so "VRAM 0.0 GB" says nothing. Report
-        # the shared system memory the iGPU actually uses instead (see _shared_vram_reading).
-        shared = self._shared_vram_reading(shared_mib, dedicated_read_ok)
+            # 4b. Integrated GPU: no adapter has dedicated memory, so "VRAM 0.0 GB" says nothing. Report
+            # the shared system memory the iGPU actually uses instead (see _shared_vram_reading).
+            shared = self._shared_vram_reading(shared_mib, dedicated_read_ok)
+        else:
+            # The picked adapter's own memory: nvidia-smi's total for the picked NVIDIA card (its own
+            # line - 12282 MiB where DXGI says 12288), else its DXGI dedicated size (what Task Manager
+            # shows), or - for an iGPU - its shared usage against its shared budget.
+            shared = self._selected_shared_vram(selected, shared_mib, dedicated_read_ok)
+            if shared is None and vram_used is not None:
+                if smi_pick[2] is not None:
+                    vram_total = smi_pick[2]
+                elif selected.dedicated_video_bytes > 0:
+                    vram_total = selected.dedicated_video_bytes / (1024.0 * 1024.0)
         if shared is not None:
             vram_used, vram_total = shared
             vram_is_shared = True
@@ -575,7 +658,10 @@ class StatsMonitorThread(QThread):
         # Init the PDH query FIRST (it's idempotent and sets _power_pp1_counter on first call) -
         # the old guard checked the counter before anything could ever set it, so this whole
         # fallback was dead code.
-        if include_power and power_w is None:
+        # RAPL PP1 is the Intel iGPU's power plane: never an Arc's (or any discrete card's) reading.
+        if include_power and power_w is None and (
+                selected is None or (selected.vendor_id == constants.gpu.VENDOR_INTEL
+                                     and gpu_adapters.is_integrated(selected))):
             try:
                 self._init_power_query()
                 if self._power_query and self._power_pp1_counter is not None:
@@ -631,6 +717,136 @@ class StatsMonitorThread(QThread):
         if used < constants.gpu.SHARED_USAGE_FALLBACK_MIN_MIB:
             return None
         return used, self._half_ram_mib()
+
+    def _selected_shared_vram(self, adapter: gpu_adapters.AdapterInfo, shared_mib: Dict[str, float],
+                              dedicated_read_ok: bool) -> Optional[Tuple[float, Optional[float]]]:
+        """(used_mib, total_mib) of a PICKED integrated GPU's shared memory (#236), or None: the
+        adapter has real dedicated memory, the dedicated read failed, or PDH has no shared reading
+        for it. Same rules as _shared_vram_reading, scoped to the one adapter."""
+        mib = 1024.0 * 1024.0
+        if (not dedicated_read_ok
+                or adapter.dedicated_video_bytes / mib >= constants.gpu.DEDICATED_VIDEO_MEMORY_MIN_MIB):
+            return None
+        mine = [v for inst, v in shared_mib.items() if gpu_adapters.pdh_instance_luid(inst) == adapter.luid]
+        if not mine:
+            return None
+        total = adapter.shared_system_bytes / mib if adapter.shared_system_bytes > 0 else None
+        return sum(mine), total if total else self._half_ram_mib()
+
+    def _selected_gpu_adapter(self) -> Optional[gpu_adapters.AdapterInfo]:
+        """The adapter picked in Settings > Hardware (#236), or None for Automatic. A picked GPU that
+        is not in the machine right now (an unplugged eGPU) - or no DXGI facts - also reads as
+        Automatic, logged once, so the readout never goes blank; it switches back when the GPU
+        returns (G4 re-reads the adapter list when PDH names a new one)."""
+        name = str(self.config.get('gpu_adapter', constants.gpu.ADAPTER_AUTO) or "").strip()
+        if not name:
+            return None
+        adapter = gpu_adapters.find_adapter(self._gpu_adapters, name)
+        if adapter is None:
+            if self._gpu_missing_logged != name:
+                self._gpu_missing_logged = name
+                self.logger.info("Picked GPU %r is not present; showing the busiest GPU until it is.", name)
+        else:
+            self._gpu_missing_logged = None
+        return adapter
+
+    def _gpu_sensor_matches(self, identifier: str, adapter: Optional[gpu_adapters.AdapterInfo]) -> bool:
+        """A WMI GPU sensor counts for a picked adapter only when its identifier names the same maker
+        and - with another GPU of that maker in the machine - the same side of integrated / discrete.
+        Intel's identifiers say so (/gpu-intel-integrated/); an AMD or NVIDIA pair cannot be told
+        apart from the identifier, so it reads N/A rather than the other card's sensor."""
+        if adapter is None:
+            return True
+        if not gpu_adapters.sensor_matches_vendor(identifier, adapter.vendor_id):
+            return False
+        if not gpu_adapters.same_maker_siblings(self._gpu_adapters, adapter):
+            return True
+        if adapter.vendor_id != constants.gpu.VENDOR_INTEL:
+            return False
+        return ("integrated" in identifier.lower()) == gpu_adapters.is_integrated(adapter)
+
+    def _nvidia_smi_for(self, adapter: gpu_adapters.AdapterInfo, want_readings: bool = True
+                        ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+        """(temp_c, power_w, total_mib) from the nvidia-smi line that IS the picked card (#236).
+
+        Matched by name. One NVIDIA card in DXGI and one line: that line, whatever its name. Anything
+        else (two identical cards, a name nvidia-smi spells differently on a multi-card box): all
+        None - N/A, never another card's reading. Same slow sub-cadence and stamp-first rule as the
+        Automatic query; cached per picked name."""
+        name = adapter.name.strip().casefold()
+        cached_name, cached = self._nvidia_pick_cache
+        now = time.monotonic()
+        if cached_name == name and (
+                (now - self._nvidia_pick_last_poll) < self._NVIDIA_POLL_INTERVAL_SEC
+                or (not want_readings and cached[2] is not None)):   # only the total wanted: known
+            return cached
+        self._nvidia_pick_last_poll = now
+        result: Tuple[Optional[float], Optional[float], Optional[float]] = (None, None, None)
+        try:
+            output = self._run_child(
+                [self._nvidia_smi_path, "--query-gpu=name,temperature.gpu,memory.total,power.draw",
+                 "--format=csv,noheader,nounits"], constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC)
+            rows = [[p.strip() for p in line.split(',')] for line in output.strip().splitlines() if line.strip()]
+            mine = [r for r in rows if r and r[0].casefold() == name]
+            nvidia_cards = [a for a in gpu_adapters.hardware_adapters(self._gpu_adapters or [])
+                            if a.vendor_id == constants.gpu.VENDOR_NVIDIA]
+            if not mine and len(rows) == 1 and len(nvidia_cards) == 1:
+                mine = rows
+            if len(mine) == 1 and len(mine[0]) >= 4:
+                def num(text: str, lo: float, hi: float) -> Optional[float]:
+                    try:
+                        v = float(text)
+                    except ValueError:
+                        return None
+                    return v if lo < v < hi else None
+                r = mine[0]
+                result = (num(r[1], 0.0, 150.0), num(r[3], 0.0, 1000.0), num(r[2], 0.0, float("inf")))
+        except Exception as e:
+            self.logger.debug("nvidia-smi query for the picked GPU failed: %s", e)
+        self._nvidia_pick_cache = (name, result)
+        return result
+
+    def _refresh_adapters_on_luid_change(self, pdh_instances) -> None:
+        """Re-read the DXGI adapter list when PDH's GPU set no longer matches it (rc.2 G4).
+
+        The list is read at query init, and a query is rebuilt on resume and on a display change, but
+        an eGPU hot-plugged without one would otherwise keep the old "no dedicated memory" verdict
+        (shared-VRAM mode) until the next rebuild - or, unplugged, keep a stale dedicated one. A
+        LUID in PDH the cache lacks, or a cached real GPU PDH no longer lists, triggers one re-read
+        (~0.3 ms); the same LUID set is never checked twice, so a permanent mismatch costs nothing
+        per poll."""
+        if self._gpu_adapters is None:
+            return   # DXGI unavailable: re-reading would not help, and the fallback latch applies
+        luids = frozenset(x for x in (gpu_adapters.pdh_instance_luid(i) for i in pdh_instances) if x)
+        if not luids or luids == self._gpu_pdh_luids_checked:
+            return
+        if self._adapters_cover(luids):
+            self._gpu_pdh_luids_checked = luids
+            self._gpu_luids_pending = None
+            return
+        g = constants.gpu
+        now = time.monotonic()
+        if luids != self._gpu_luids_pending:
+            self._gpu_luids_pending, self._gpu_luids_tries, self._gpu_luids_retry_at = luids, 0, 0.0
+        if now < self._gpu_luids_retry_at:
+            return
+        self._gpu_luids_tries += 1
+        self._gpu_luids_retry_at = now + g.ADAPTER_RECHECK_SEC
+        fresh = gpu_adapters.enumerate_adapters()
+        if fresh is not None and fresh != self._gpu_adapters:
+            self._gpu_adapters = fresh
+            self.logger.info("GPU adapters changed: %s", [a.name for a in gpu_adapters.hardware_adapters(fresh)])
+        # Marked checked only once resolved - or after the last bounded retry (a LUID DXGI never
+        # lists), so a permanent mismatch stops costing anything.
+        if (fresh is not None and self._adapters_cover(luids)) or self._gpu_luids_tries >= g.ADAPTER_RECHECK_MAX:
+            self._gpu_pdh_luids_checked = luids
+            self._gpu_luids_pending = None
+
+    def _adapters_cover(self, luids: frozenset) -> bool:
+        """The cached DXGI list knows every LUID PDH names, and PDH still lists every real GPU."""
+        known = {a.luid for a in self._gpu_adapters or []}
+        real = {a.luid for a in gpu_adapters.hardware_adapters(self._gpu_adapters or [])}
+        return luids <= known and real <= luids
 
     @staticmethod
     def _half_ram_mib() -> Optional[float]:
@@ -1299,6 +1515,8 @@ class StatsMonitorThread(QThread):
                 # OR in record_hardware_history, polling + recording CPU/GPU/RAM with monitoring off;
                 # whether a sample is persisted is now the controller's call (hardware_persist_allowed).
                 _collect_cpu, _collect_gpu = hardware_collection_gates(self.config, _force_hw)
+                # RAM/VRAM follow their own switches too (G5), not only the CPU/GPU ones.
+                _collect_ram, _collect_vram = memory_collection_gates(self.config, _force_hw)
 
                 # 2. CPU / RAM (Optional)
                 if _collect_cpu:
@@ -1309,19 +1527,23 @@ class StatsMonitorThread(QThread):
                     if self.config.get('show_hardware_power', False) or _force_hw:
                         stats['cpu_power'] = self._poll_cpu_power()
 
-                    # RAM is often grouped with CPU in simple monitors
+                if _collect_ram:
                     mem = psutil.virtual_memory()
                     stats['ram_used'] = mem.used / (1024**3) # GB
                     stats['ram_total'] = mem.total / (1024**3) # GB
 
-                # 3. GPU / VRAM (Optional - skipped entirely in RDP sessions)
-                if _collect_gpu and not _in_rdp:
+                # 3. GPU / VRAM (Optional - skipped entirely in RDP sessions). VRAM alone still needs
+                # the PDH GPU poll; temperature / power / utilization are only asked for with the GPU on.
+                if (_collect_gpu or _collect_vram) and not _in_rdp:
                     try:
-                        include_temp = bool(self.config.get('show_hardware_temps', False)) or _force_hw
-                        include_power = bool(self.config.get('show_hardware_power', False)) or _force_hw
+                        include_temp = _collect_gpu and (
+                            bool(self.config.get('show_hardware_temps', False)) or _force_hw)
+                        include_power = _collect_gpu and (
+                            bool(self.config.get('show_hardware_power', False)) or _force_hw)
                         gpu = self._poll_gpu_hybrid(include_temp=include_temp, include_power=include_power)
 
-                        stats['gpu'] = gpu.util
+                        if _collect_gpu:
+                            stats['gpu'] = gpu.util
                         stats['gpu_present'] = gpu.present   # lets the Monitor hide GPU tiles on no-GPU boxes
                         if include_temp:
                             stats['gpu_temp'] = gpu.temp

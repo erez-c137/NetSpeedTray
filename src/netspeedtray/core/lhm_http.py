@@ -71,6 +71,29 @@ class LhmSnapshot:
     def preferred_gpu(self) -> Optional[LhmGpu]:
         return min(self.gpus, key=_gpu_rank) if self.gpus else None
 
+    def gpu_for(self, vendor_id: int, name: str = "",
+                integrated: Optional[bool] = None) -> Optional[LhmGpu]:
+        """The GPU group for the adapter the user picked (#236), or None - "no sensor of THIS GPU",
+        never another card's reading.
+
+        Same maker only (hardware id or name). Among those: the one LHM names exactly as DXGI does;
+        else the one on the same side of integrated / discrete (``integrated``, from DXGI's dedicated
+        memory; LHM says so in its id - /gpu-intel-integrated/ - or the AMD APU name). Two or more
+        candidates left (two identical cards, two same-maker GPUs LHM cannot tell apart): None."""
+        from netspeedtray.core.gpu_adapters import sensor_matches_vendor
+        same = [g for g in self.gpus
+                if sensor_matches_vendor(g.hardware_id, vendor_id)
+                or sensor_matches_vendor(g.hardware_name, vendor_id)]
+        wanted = (name or "").strip().casefold()
+        named = [g for g in same if wanted and g.hardware_name.strip().casefold() == wanted]
+        if len(named) == 1:
+            return named[0]
+        if named:
+            return None
+        if integrated is not None:
+            same = [g for g in same if lhm_gpu_is_integrated(g) == integrated]
+        return same[0] if len(same) == 1 else None
+
 
 def parse_lhm_value(value: Any) -> Optional[float]:
     """Parse values such as ``58,9 °C`` and ``56.8 W`` safely."""
@@ -198,6 +221,13 @@ def _is_amd_igpu(name: str) -> bool:
     if _AMD_IGPU_MODEL_RE.search(name):
         return True
     return "graphics" in words
+
+
+def lhm_gpu_is_integrated(gpu: LhmGpu) -> bool:
+    """LHM's own word that a GPU group is integrated: its id (/gpu-intel-integrated/) or name."""
+    ident = gpu.hardware_id.casefold()
+    name = gpu.hardware_name.casefold()
+    return "integrated" in ident or " igpu" in name or "integrated" in name or _is_amd_igpu(name)
 
 
 def _gpu_rank(gpu: LhmGpu) -> Tuple[int, str]:

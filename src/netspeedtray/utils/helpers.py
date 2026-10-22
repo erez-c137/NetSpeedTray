@@ -464,6 +464,57 @@ def format_decimal(value: float, i18n, places: int = 1) -> str:
     return s.replace(".", sep) if sep and sep != "." else s
 
 
+def temperature_unit(config) -> str:
+    """The configured display unit ("celsius" / "fahrenheit"); anything unexpected reads as Celsius."""
+    t = constants.hardware.temperature
+    raw = (config.get("temperature_unit", t.CELSIUS) if hasattr(config, "get")
+           else getattr(config, "temperature_unit", t.CELSIUS))
+    return t.FAHRENHEIT if raw == t.FAHRENHEIT else t.CELSIUS
+
+
+def celsius_to_unit(celsius: float, unit: str) -> float:
+    """A Celsius reading in ``unit`` (only the display converts - every stored value is Celsius)."""
+    c = float(celsius)
+    return c * 9.0 / 5.0 + 32.0 if unit == constants.hardware.temperature.FAHRENHEIT else c
+
+
+def unit_to_celsius(value: float, unit: str) -> float:
+    """The inverse of celsius_to_unit (Settings' throttle slider shows the user's unit)."""
+    v = float(value)
+    return (v - 32.0) * 5.0 / 9.0 if unit == constants.hardware.temperature.FAHRENHEIT else v
+
+
+def temperature_symbol(unit: str) -> str:
+    t = constants.hardware.temperature
+    return t.SYMBOLS.get(unit, t.SYMBOLS[t.CELSIUS])
+
+
+def format_temperature(celsius: float, unit: str) -> str:
+    """A Celsius reading as the user's unit, rounded to a whole degree: "62°C" / "144°F". Rounded,
+    never truncated (#237: the taskbar's int() once disagreed with the Monitor's :.0f)."""
+    return f"{celsius_to_unit(celsius, unit):.0f}{temperature_symbol(unit)}"
+
+
+def temperature_reference(unit: str, hover: bool = False) -> str:
+    """The widest temperature the readout reserves room for in ``unit`` ("99°C" / "999°F"); see
+    constants.hardware.temperature."""
+    t = constants.hardware.temperature
+    table = t.HOVER_REFERENCE_NUMBER if hover else t.WIDGET_REFERENCE_NUMBER
+    return table.get(unit, table[t.CELSIUS]) + temperature_symbol(unit)
+
+
+def hw_suffix_reference(show_temps: bool, show_power: bool, unit: str) -> str:
+    """The widest "(temp, power)" suffix of a CPU/GPU row - the one string the renderer, the
+    side-bar fit and the layout all size from, so they cannot drift apart."""
+    if show_temps and show_power:
+        return f"({temperature_reference(unit)}, 250.0W)"
+    if show_power:
+        return "(250.0W)"
+    if show_temps:
+        return f"({temperature_reference(unit)})"
+    return ""
+
+
 def format_percent(value, i18n) -> str:
     """``value`` as a percentage in the locale's form (PERCENT_TEMPLATE): "10%", "10 %" (fr/de, a
     non-breaking space), "%10" (tr). ``value`` is shown as given - pass an int or a formatted string."""

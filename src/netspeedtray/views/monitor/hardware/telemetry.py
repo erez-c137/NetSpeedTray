@@ -128,7 +128,8 @@ class TelemetryStrip(QWidget):
         # by default under the Monitor's forced collection; power only when the user opted into it).
         parts: List[str] = [f"{float(usage):.0f}%"]
         if temp is not None and float(temp) >= 1:
-            parts.append(f"{float(temp):.0f}°C")
+            from netspeedtray.utils.helpers import format_temperature, temperature_unit
+            parts.append(format_temperature(float(temp), temperature_unit(self._config)))
         if power is not None and float(power) >= 0.5:   # >= 0.5 so a 0.3 W reading doesn't show "0 W"
             parts.append(f"{float(power):.0f} W")
         return "  ·  ".join(parts)
