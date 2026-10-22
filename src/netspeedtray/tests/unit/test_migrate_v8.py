@@ -633,3 +633,53 @@ def test_migrates_under_an_awkward_profile_path(tmp_path, name):
     assert M.migrate(db, now=NOW).status == "migrated"
     assert _ver(db) == 8
     assert sorted(p.name for p in tmp_path.iterdir()) == [name], "a truncated URI created a stray file"
+
+
+# --- rc.2 X1: recover()'s delete retries a briefly held file, as the renames do ----------------------
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows sharing semantics")
+def test_unlink_db_files_waits_out_a_sharing_violation(tmp_path):
+    """The flaky test_migration_kill[1]: the killed process's handle (or an AV scanner) still held the
+    half-built .v8tmp for a moment and recover() failed with WinError 32 instead of retrying."""
+    import threading
+    tmp = tmp_path / (DB + M.TMP_SUFFIX)
+    tmp.write_bytes(b"half-built")
+    held = open(tmp, "rb")                       # a plain Python handle: no FILE_SHARE_DELETE
+    threading.Timer(0.4, held.close).start()
+    M._unlink_db_files(tmp)
+    assert not tmp.exists()
+
+
+# --- rc.2 review (a): a clock set back into the hour tier ----------------------------------------
+_CLOCKS = {
+    "normal_plus_1_day": F.RAW_START + 4000 + 86400,
+    "back_2_days_inside_the_minute_tier": F.RAW_START - 2 * 86400,
+    "back_into_the_hour_tier_on_the_hour": F.T0 + 300 * 3600,
+    "back_into_the_hour_tier_mid_hour": F.T0 + 300 * 3600 + 1800,
+    "back_into_the_hour_tier_at_the_slack_edge": F.T0 + 300 * 3600 - M.FUTURE_SLACK_SECONDS,
+    "back_years_before_all_data": F.T0 - 400 * 86400,
+}
+
+
+@pytest.mark.parametrize("clock", sorted(_CLOCKS))
+def test_the_migration_survives_a_clock_set_back(tmp_path, clock):
+    """A clock ~30 days to retention behind put the newest counted hour bucket inside the hour the
+    minute watermark is capped at, and verify refused the file ("hour rows lie above the minute
+    watermark") at every start until the clock passed it. An hour bucket starting at or after the
+    horizon's hour floor is a future row: carried, counted, moving no watermark."""
+    db = _make_v7(tmp_path)
+    now = datetime.fromtimestamp(_CLOCKS[clock])
+    res = M.migrate(db, now=now)
+    assert res.status == "migrated", res
+    assert _ver(db) == 8
+    c = sqlite3.connect(sqlite_ro_uri(db), uri=True)
+    try:
+        wm = dict(c.execute("SELECT key, value FROM metadata WHERE key IN ('"
+                            + "', '".join(S.WATERMARK_KEYS) + "')"))
+        hour_h = M._hour_horizon(int(now.timestamp()))
+        for hour, key in ((S.NET_HOUR, S.WATERMARK_MINUTE_KEY), (S.HW_HOUR, S.HW_WATERMARK_MINUTE_KEY)):
+            # Every non-future hour row ends at or below the minute watermark; the rest were counted.
+            assert c.execute(f"SELECT COUNT(*) FROM {hour} WHERE ts + 3600 > ? AND ts < ?",
+                             (int(wm[key]), hour_h)).fetchone()[0] == 0
+        assert res.counts["future_rows"] == M._future_rows(c, int(now.timestamp()))
+    finally:
+        c.close()

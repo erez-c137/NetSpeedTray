@@ -40,7 +40,13 @@ class ConfigConstants:
     # presets. The bump is what makes load() keep a `.bak.v1.1` of the 2.1.x file before migrating it;
     # 2.1.x leaves a newer version untouched (verified against the 2.1.7 tree).
     CONFIG_SCHEMA_VERSION: Final[str] = "1.2"
-    
+    # A same-version field migration (e.g. dropping a beta's key) rewrites the file without a schema
+    # bump. The first `.bak.v<ver>.fields` copy is kept forever (the pristine one); each LATER such
+    # migration also snapshots the file as it was just before it, as `.fields.<timestamp>`, and only
+    # the newest few of those are kept - enough to undo the last few rewrites, bounded on disk
+    # (rc.2 D3). They are taken only when a migration is about to write, never on a plain launch.
+    FIELD_MIGRATION_SNAPSHOTS_KEPT: Final[int] = 3
+
     # --- Default Values for Individual Settings (referencing other constants) ---
     DEFAULT_UPDATE_RATE: Final[float] = 1.0
     DEFAULT_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT

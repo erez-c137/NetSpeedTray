@@ -276,9 +276,26 @@ def _rename(src: Path, dst: Path) -> None:
 
 
 def _unlink_db_files(p: Path) -> None:
-    """Delete a database file and every sidecar it may have."""
+    """Delete a database file and every sidecar it may have.
+
+    A sharing violation / access denied is retried with the same backoff and budget as ``_rename``
+    (RENAME_RETRY_SECONDS): right after a killed migration the dead process's handle - or an AV scanner
+    or the indexer - can hold the half-built ``.v8tmp`` for a moment, and recover() raised WinError 32 at
+    once (the flaky test_migration_kill[1], rc.2 X1). Past the budget, or for any other error, the
+    OSError propagates as before."""
     for f in (p,) + _sidecars(p):
-        f.unlink(missing_ok=True)
+        deadline = time.monotonic() + RENAME_RETRY_SECONDS
+        delay = 0.05
+        while True:
+            try:
+                f.unlink(missing_ok=True)
+                break
+            except OSError as e:
+                left = deadline - time.monotonic()
+                if getattr(e, "winerror", None) not in _RETRYABLE_WINERRORS or left <= 0:
+                    raise
+                time.sleep(min(delay, left))
+                delay = min(delay * 2, 0.5)
 
 
 def _write_journal(path: Path, data: Dict[str, Any]) -> None:
@@ -557,19 +574,36 @@ def _wm_rule(hour_max: Optional[int], min_min: Optional[int], min_max: Optional[
     return max(wm_raw, wm_min), wm_min
 
 
+def _hour_horizon(now_ts: int) -> int:
+    """The first hour bucket that counts as FUTURE: the one holding now + FUTURE_SLACK_SECONDS, floored.
+
+    _wm_rule caps the minute watermark at that floor (the writer's own invariant: never past the clock's
+    hour), so an hour row whose bucket starts at or after it can never lie below the minute watermark.
+    Treating it as an ordinary row made the migration's verification fail ("hour rows lie above the
+    minute watermark") whenever the clock was behind by about 30 days up to the retention - a clock set
+    back into the hour tier (review (a), rc.2). Such rows are carried, counted as future rows, and move
+    no watermark, like every other row past the horizon."""
+    return int(now_ts + FUTURE_SLACK_SECONDS) // 3600 * 3600
+
+
 def _watermarks_v8(c: sqlite3.Connection, now_ts: int, schema: str = "main") -> Dict[str, int]:
     """The four watermarks of a v8 file, from its own tiers (what _build stamps). Rows dated past
-    now + FUTURE_SLACK_SECONDS do not count (see _wm_rule)."""
+    now + FUTURE_SLACK_SECONDS do not count (see _wm_rule) - and an HOUR row counts only when its bucket
+    began before the horizon's hour floor (``_hour_horizon``)."""
     horizon = now_ts + FUTURE_SLACK_SECONDS
 
     def one(sql: str) -> Optional[int]:
         return c.execute(sql + f" WHERE ts <= {int(horizon)}").fetchone()[0]
+
+    def hour_max(table: str) -> Optional[int]:
+        return c.execute(f"SELECT MAX(ts) FROM {schema}.{table} WHERE ts < ?",
+                         (_hour_horizon(now_ts),)).fetchone()[0]
     out: Dict[str, int] = {}
     for (raw, minute, hour), (k_raw, k_min) in (
             ((S.NET_RAW, S.NET_MINUTE, S.NET_HOUR), (S.WATERMARK_RAW_KEY, S.WATERMARK_MINUTE_KEY)),
             ((S.HW_RAW, S.HW_MINUTE, S.HW_HOUR), (S.HW_WATERMARK_RAW_KEY, S.HW_WATERMARK_MINUTE_KEY))):
         out[k_raw], out[k_min] = _wm_rule(
-            one(f"SELECT MAX(ts) FROM {schema}.{hour}"), one(f"SELECT MIN(ts) FROM {schema}.{minute}"),
+            hour_max(hour), one(f"SELECT MIN(ts) FROM {schema}.{minute}"),
             one(f"SELECT MAX(ts) FROM {schema}.{minute}"), one(f"SELECT MIN(ts) FROM {schema}.{raw}"),
             now_ts)
     return out
@@ -592,19 +626,23 @@ def _watermarks_from_v7(c: sqlite3.Connection, now_ts: int) -> Dict[str, int]:
     net_min_max = one(f"SELECT MAX(t) FROM (SELECT MAX(timestamp) AS t FROM {sm}{h} "
                       f"UNION ALL SELECT MAX(timestamp) / 60 * 60 FROM {sr}{hr_})")
     out: Dict[str, int] = {}
+    hh_ = f" WHERE timestamp < {_hour_horizon(now_ts)}"   # hour buckets: see _hour_horizon
     out[S.WATERMARK_RAW_KEY], out[S.WATERMARK_MINUTE_KEY] = _wm_rule(
-        one(f"SELECT MAX(timestamp) FROM {sh}{h}"), net_min_min, net_min_max, None, now_ts)
+        one(f"SELECT MAX(timestamp) FROM {sh}{hh_}"), net_min_min, net_min_max, None, now_ts)
     out[S.HW_WATERMARK_RAW_KEY], out[S.HW_WATERMARK_MINUTE_KEY] = _wm_rule(
-        one(f"SELECT MAX(timestamp) FROM {hh}{h}"), one(f"SELECT MIN(timestamp) FROM {hm}{h}"),
+        one(f"SELECT MAX(timestamp) FROM {hh}{hh_}"), one(f"SELECT MIN(timestamp) FROM {hm}{h}"),
         one(f"SELECT MAX(timestamp) FROM {hm}{h}"), one(f"SELECT MIN(timestamp) FROM {hr}{h}"), now_ts)
     return out
 
 
 def _future_rows(c: sqlite3.Connection, now_ts: int, schema: str = "main") -> int:
-    """Rows dated past the clock + slack (a wrong clock): carried over, but they move no watermark."""
+    """Rows dated past the clock + slack (a wrong clock): carried over, but they move no watermark. An
+    hour row is one from its bucket's start on (``_hour_horizon``), matching what the watermarks ignore."""
     horizon = int(now_ts + FUTURE_SLACK_SECONDS)
-    return sum(c.execute(f"SELECT COUNT(*) FROM {schema}.{t} WHERE ts > ?", (horizon,)).fetchone()[0]
-               for t in (S.NET_RAW, S.NET_MINUTE, S.NET_HOUR, S.HW_RAW, S.HW_MINUTE, S.HW_HOUR))
+    n = sum(c.execute(f"SELECT COUNT(*) FROM {schema}.{t} WHERE ts > ?", (horizon,)).fetchone()[0]
+            for t in (S.NET_RAW, S.NET_MINUTE, S.HW_RAW, S.HW_MINUTE))
+    return n + sum(c.execute(f"SELECT COUNT(*) FROM {schema}.{t} WHERE ts >= ?",
+                             (_hour_horizon(now_ts),)).fetchone()[0] for t in (S.NET_HOUR, S.HW_HOUR))
 
 
 def _shadowed(c: sqlite3.Connection, wm: Dict[str, int], schema: str = "main") -> Dict[str, int]:
@@ -814,10 +852,11 @@ def verify(tmp: Path, v7_path: Path, now_ts: Optional[int] = None) -> Dict[str, 
                     f"SELECT COUNT(*) FROM main.{S.NET_MINUTE} WHERE ts + 60 > ? AND ts <= ?",
                     want_wm[S.WATERMARK_RAW_KEY], horizon):
                 problems.append("folded network rows lie above the raw watermark")
-            if one(f"SELECT COUNT(*) FROM main.{S.NET_HOUR} WHERE ts + 3600 > ? AND ts <= ?",
-                   want_wm[S.WATERMARK_MINUTE_KEY], horizon) or one(
-                    f"SELECT COUNT(*) FROM main.{S.HW_HOUR} WHERE ts + 3600 > ? AND ts <= ?",
-                    want_wm[S.HW_WATERMARK_MINUTE_KEY], horizon):
+            hour_h = _hour_horizon(now_ts)                  # an hour bucket from here on is future
+            if one(f"SELECT COUNT(*) FROM main.{S.NET_HOUR} WHERE ts + 3600 > ? AND ts < ?",
+                   want_wm[S.WATERMARK_MINUTE_KEY], hour_h) or one(
+                    f"SELECT COUNT(*) FROM main.{S.HW_HOUR} WHERE ts + 3600 > ? AND ts < ?",
+                    want_wm[S.HW_WATERMARK_MINUTE_KEY], hour_h):
                 problems.append("hour rows lie above the minute watermark")
 
         if problems:

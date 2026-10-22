@@ -738,8 +738,10 @@ class ConfigManager:
         (e.g. a 2.2 beta's `taskbar_height`): it is about to be rewritten too, so it gets its own
         `<name>.bak.v<version>.fields` copy - a separate name, so it can never stand in for the
         `.bak.v<version>` a later schema bump must take of the file as it is then. Like every
-        backup here, `.fields` keeps the FIRST copy ever made; later field migrations of the same
-        version leave it untouched.
+        backup here, `.fields` keeps the FIRST copy ever made. A LATER field migration of the same
+        version is about to rewrite a file that copy no longer matches, so it also snapshots the
+        file as it is now, to `.fields.<YYYYmmdd_HHMMSS>[_n]`, keeping the newest
+        FIELD_MIGRATION_SNAPSHOTS_KEPT of those (rc.2 D3; see _snapshot_before_field_migration).
 
         Returns True when a backup exists afterwards - none was needed, one was already there,
         or it was just copied - and False when it could not be made. A failure never blocks
@@ -757,6 +759,8 @@ class ConfigManager:
             if backup_path.exists():
                 self.logger.debug("Config backup %s already exists; keeping the pristine copy.",
                                   backup_path.name)
+                if same_version:
+                    return self._snapshot_before_field_migration(backup_path)
                 return True
             shutil.copy2(self.config_path, backup_path)
             self.logger.info(
@@ -771,6 +775,53 @@ class ConfigManager:
                                       "migrated settings in memory without saving them over the "
                                       "original.")
             return False
+
+    def _snapshot_before_field_migration(self, pristine: Path) -> bool:
+        """
+        Copy the on-disk config to `<pristine>.<YYYYmmdd_HHMMSS>[_n]` before a repeat same-version
+        field migration rewrites it, then prune to the newest FIELD_MIGRATION_SNAPSHOTS_KEPT.
+
+        Why a rolling set and not one more fixed name: the pristine `.fields` must never move (it is
+        the oldest state we hold), and a single "previous" slot would be overwritten by the very
+        migration it is meant to undo if that one is retried. Timestamped names sort by age, never
+        collide, and the cap bounds the disk use. The snapshot is taken before pruning, so a failed
+        prune can only leave one extra copy - never fewer than promised. Returns False only when the
+        snapshot itself could not be made (load() then does not write the migration).
+        """
+        from datetime import datetime
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        target = pristine.with_name(f"{pristine.name}.{stamp}")
+        n = 1
+        while target.exists():
+            target = pristine.with_name(f"{pristine.name}.{stamp}_{n}")
+            n += 1
+        try:
+            shutil.copy2(self.config_path, target)
+            self.logger.info("Snapshotted config to %s before a repeat field migration.", target.name)
+        except Exception:
+            if not self._backup_failure_logged:
+                self._backup_failure_logged = True
+                self.logger.exception("Failed to snapshot config before a field migration; running "
+                                      "on the migrated settings in memory without saving them.")
+            return False
+        try:
+            stamp_re = re.compile(re.escape(pristine.name) + r"\.(\d{8}_\d{6})(?:_(\d+))?$")
+            snapshots = []
+            for p in pristine.parent.iterdir():
+                m = stamp_re.match(p.name)
+                if m:   # age order: the zero-padded stamp, then the same-second counter
+                    snapshots.append(((m.group(1), int(m.group(2) or 0)), p))
+            snapshots.sort()
+            # Name order is age order only while the clock moves forward: with the clock set back, the
+            # snapshot just taken sorts OLDEST and would be pruned first (review L2). It is the one copy
+            # of the state this migration overwrites - never prune it; drop the oldest others instead.
+            others = [p for _, p in snapshots if p != target]
+            keep_others = max(0, constants.config.defaults.FIELD_MIGRATION_SNAPSHOTS_KEPT - 1)
+            for old in others[:max(0, len(others) - keep_others)]:
+                old.unlink()
+        except OSError as e:
+            self.logger.debug("Could not prune old field-migration snapshots: %s", e)
+        return True
 
     def load(self) -> Dict[str, Any]:
         """Loads and validates the configuration from the file."""

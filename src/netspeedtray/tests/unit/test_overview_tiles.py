@@ -681,3 +681,60 @@ def test_sparkline_paints_baseline_when_sparse(q_app):
     s.set_series([])     # zero points -> baseline path, must not raise
     s.set_series([42.0], vmax=100.0)  # one point -> flat line at height, must not raise
     s.repaint()
+
+
+# --- F19 (rc.2): data-usage honesty line under the cap bar --------------------------------
+
+def test_cap_card_says_this_pc_only_and_how_much_of_the_period_was_recorded(q_app):
+    u = UsageTile(I18nStrings("en_US"))
+    u.set((1e6, 2e6), (3e6, 4e6), cap=(4.0, 10.0, 40.0), coverage=0.926)
+    assert u._cap_note.isVisibleTo(u)
+    assert u._cap_note.text() == "NetSpeedTray ran 92% of this period · This PC only"
+    assert u._cap_note.toolTip()                       # what the gaps mean
+    # Unknown coverage (history from before 2.2): no percentage is guessed.
+    u.set((1e6, 2e6), (3e6, 4e6), cap=(4.0, 10.0, 40.0), coverage=None)
+    assert u._cap_note.text() == "This PC only"
+    # No cap: no line.
+    u.set((1e6, 2e6), (3e6, 4e6), cap=None, coverage=0.5)
+    assert not u._cap_note.isVisibleTo(u)
+
+
+def test_cap_coverage_line_never_rounds_a_gap_up_to_100(q_app):
+    u = UsageTile(I18nStrings("en_US"))
+    u.set((1e6, 2e6), (3e6, 4e6), cap=(4.0, 10.0, 40.0), coverage=0.996)
+    assert u._cap_note.text().startswith("NetSpeedTray ran 99%")
+
+
+def test_cap_coverage_line_uses_each_locales_template(q_app):
+    de = I18nStrings("de_DE")
+    u = UsageTile(de)
+    u.set((1e6, 2e6), (3e6, 4e6), cap=(4.0, 10.0, 40.0), coverage=0.5)
+    assert u._cap_note.text() == f"{de.USAGE_CAP_COVERAGE_TEMPLATE.format(pct='50')} · {de.USAGE_CAP_THIS_PC_ONLY}"
+
+
+class _CovWS:
+    def __init__(self, cov):
+        class _R:
+            def coverage(self, start, end, _c=cov):
+                if isinstance(_c, Exception):
+                    raise _c
+                return _c
+        self.history_reader = _R()
+
+
+def test_cap_coverage_reads_the_recorded_sessions():
+    from netspeedtray.core.db.history_reader import Coverage
+    from netspeedtray.views.monitor.overview.tab import _cap_coverage
+    start = datetime(2026, 10, 15)
+    assert _cap_coverage(_CovWS(None), None) is None                         # no cap
+    two = Coverage(0, 1000, 600, 400, 0, ((0, 300), (700, 1000)))
+    assert _cap_coverage(_CovWS(two), start) == pytest.approx(0.6)
+    # The live session's last heartbeat lags now by a few seconds: that is not a gap.
+    lag = Coverage(0, 1000, 990, 10, 0, ((0, 990),))
+    assert _cap_coverage(_CovWS(lag), start) == pytest.approx(1.0)
+    # A long tail IS a gap (the app was closed).
+    closed = Coverage(0, 1000, 500, 500, 0, ((0, 500),))
+    assert _cap_coverage(_CovWS(closed), start) == pytest.approx(0.5)
+    # Part of the period predates the first recorded session: unknown, so no figure.
+    assert _cap_coverage(_CovWS(Coverage(0, 1000, 500, 0, 500, ((500, 1000),))), start) is None
+    assert _cap_coverage(_CovWS(RuntimeError("locked")), start) is None

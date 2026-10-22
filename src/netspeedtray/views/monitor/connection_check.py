@@ -10,6 +10,13 @@ Privacy: the internet hop runs only when the public probe is on in Settings, or 
 "Also check the internet (sends pings to <host>)" here - a one-off that is never saved, with the host
 named in the label. Changing the box restarts the check so it always matches what the box says.
 Nothing the sheet measures is persisted; the standing probe is the record.
+
+Network details (#214): the adapter the default gateway is on, its addresses and DNS servers, read once
+per check by the worker (one WMI query, nothing sent). "Copy figures" includes the adapter, PRIVATE
+IPv4 addresses and the DNS servers - like the router address the report already carries, they are
+local facts a helper needs - but NOT IPv6 addresses or a public IPv4 (a PC on a modem with no NAT):
+those are globally routable and identify the household (the #306 rule: a pasted report must not leak
+more than the problem needs).
 """
 from __future__ import annotations
 
@@ -50,6 +57,13 @@ _ATTRIBUTION_KEYS = {
                       "Without replies from your router, this check can't tell whether loss is on "
                       "your Wi-Fi or local network or beyond it."),
 }
+# Network details rows: (NetworkDetails field, i18n key, English fallback, in the copied report).
+_DETAIL_ROWS = [
+    ("adapter", "CHECK_CONN_DETAILS_ADAPTER", "Adapter", True),
+    ("ipv4", "CHECK_CONN_DETAILS_IPV4", "IPv4 address", True),
+    ("ipv6", "CHECK_CONN_DETAILS_IPV6", "IPv6 address", False),
+    ("dns", "CHECK_CONN_DETAILS_DNS", "DNS servers", True),
+]
 # Stat cells per hop, in grid order: (field, i18n key, English fallback).
 _CELLS = [
     ("sent", "CHECK_CONN_SENT", "Sent"),
@@ -213,6 +227,76 @@ class _HopCard(QFrame):
         return cell, val
 
 
+class _DetailsCard(QFrame):
+    """Network details (#214): label / value rows, values selectable so an address can be copied."""
+
+    def __init__(self, i18n, c: Dict[str, str], parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("detailsCard")
+        self.setStyleSheet(
+            f"#detailsCard {{ background: {c['card_bg']}; border: 1px solid {c['card_stroke']};"
+            f" border-radius: 8px; }}")
+        box = QVBoxLayout(self)
+        box.setContentsMargins(16, 12, 16, 12)
+        box.setSpacing(8)
+        title = QLabel(_tr(i18n, "CHECK_CONN_DETAILS_TITLE", "Network details"))
+        title.setFont(su.font(tokens.TYPE_BODY_STRONG))
+        title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+        box.addWidget(title)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(4)
+        self.values: Dict[str, QLabel] = {}
+        self._rows: Dict[str, Tuple[QLabel, QLabel]] = {}
+        for i, (field, key, default, _copied) in enumerate(_DETAIL_ROWS):
+            name = QLabel(_tr(i18n, key, default))
+            name.setFont(su.font(tokens.TYPE_CAPTION))
+            name.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+            val = QLabel("")
+            val.setFont(su.font(tokens.TYPE_CAPTION))
+            val.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+            val.setWordWrap(True)
+            val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            grid.addWidget(name, i, 0, Qt.AlignmentFlag.AlignTop)
+            grid.addWidget(val, i, 1)
+            self.values[field] = val
+            self._rows[field] = (name, val)
+        grid.setColumnStretch(1, 1)
+        box.addLayout(grid)
+
+    def show_details(self, details) -> None:
+        """Fill the rows from a NetworkDetails; a field with nothing to show hides its row."""
+        for field, (name, val) in self._rows.items():
+            text = _detail_text(details, field)
+            val.setText(text)
+            name.setVisible(bool(text))
+            val.setVisible(bool(text))
+
+
+def _detail_text(details, field: str) -> str:
+    value = getattr(details, field, None) if details is not None else None
+    if isinstance(value, (tuple, list)):
+        return ", ".join(str(v) for v in value if v)
+    return str(value or "")
+
+
+def _copied_detail_text(details, field: str) -> str:
+    """``_detail_text`` for the pasted report. The own-address row keeps only PRIVATE addresses: a PC
+    connected straight to a modem (no NAT) holds a public IPv4, which identifies the household just
+    as an IPv6 one does (review L1). DNS servers stay: a resolver's address says nothing about you."""
+    if field != "ipv4":
+        return _detail_text(details, field)
+    import ipaddress
+    keep = []
+    for a in (getattr(details, field, None) or ()) if details is not None else ():
+        try:
+            if ipaddress.ip_address(str(a)).is_private:
+                keep.append(str(a))
+        except ValueError:
+            continue
+    return ", ".join(keep)
+
+
 class ConnectionCheckSheet(QDialog):
     """The modal check sheet. ``gateway_ip`` is the standing probe's router (None = look it up)."""
 
@@ -231,6 +315,7 @@ class ConnectionCheckSheet(QDialog):
         self._started_at: Optional[datetime] = None
         self._resolved_gw: Optional[str] = gateway_ip
         self._anchor_host: Optional[str] = None
+        self._details = None                    # latency_probe.NetworkDetails of the last check (#214)
         self.logger = logging.getLogger("NetSpeedTray.ConnectionCheck")
         lat = constants.network.latency
         self._total = lat.CHECK_ECHOES
@@ -262,6 +347,10 @@ class ConnectionCheckSheet(QDialog):
         }
         root.addWidget(self._cards[CC.HOP_GATEWAY])
         root.addWidget(self._cards[CC.HOP_ANCHOR])
+        # Network details (#214) - hidden until the worker has read them (and when it found none).
+        self._details_card = _DetailsCard(i18n, c)
+        self._details_card.setVisible(False)
+        root.addWidget(self._details_card)
 
         # One plain sentence from the D1 attribution rule, right under the figures it explains.
         self._sentence = QLabel("")
@@ -326,6 +415,7 @@ class ConnectionCheckSheet(QDialog):
         self._reset_view()
         w = CC.ConnectionCheck(self._gateway_ip, self._anchor_host)
         w.gateway_resolved.connect(self._on_gateway)
+        w.details_resolved.connect(self._on_details)
         w.echo_done.connect(self._on_echo)
         w.check_finished.connect(self._on_finished)
         self._worker = w
@@ -347,8 +437,8 @@ class ConnectionCheckSheet(QDialog):
         self._worker = None
         if sip.isdeleted(w):
             return   # finished and already released by the registry
-        for sig, slot in ((w.gateway_resolved, self._on_gateway), (w.echo_done, self._on_echo),
-                          (w.check_finished, self._on_finished)):
+        for sig, slot in ((w.gateway_resolved, self._on_gateway), (w.details_resolved, self._on_details),
+                          (w.echo_done, self._on_echo), (w.check_finished, self._on_finished)):
             try:
                 sig.disconnect(slot)
             except Exception:
@@ -371,6 +461,13 @@ class ConnectionCheckSheet(QDialog):
     def _on_gateway(self, ip) -> None:
         self._resolved_gw = ip
         self._refresh()
+
+    def _on_details(self, details) -> None:
+        self._details = details
+        self._details_card.show_details(details)
+        self._details_card.setVisible(details is not None and any(
+            _detail_text(details, f) for f, _k, _d, _c in _DETAIL_ROWS))
+        self.adjustSize()
 
     def _on_echo(self, hop: str, index: int, ms) -> None:
         if hop in self._echoes:
@@ -527,6 +624,11 @@ class ConnectionCheckSheet(QDialog):
                     loss = self._loss_text(st)
                     verdict = f"  [{self._tr(k, d)}{', ' + loss if loss else ''}]"
             lines.append(f"{head}{verdict}\n  {cells}")
+        details = [f"{_tr(self._i18n, key, default)}: {_copied_detail_text(self._details, field)}"
+                   for field, key, default, copied in _DETAIL_ROWS
+                   if copied and _copied_detail_text(self._details, field)]
+        if details:
+            lines.append("  ".join(details))
         sentence = self._attribution_text()
         if sentence:
             lines.append(sentence)

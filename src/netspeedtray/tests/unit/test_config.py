@@ -569,6 +569,76 @@ def test_same_version_field_migration_takes_its_own_backup(tmp_path):
     assert "taskbar_height" not in json.loads(path.read_text(encoding="utf-8"))
 
 
+def test_a_repeat_field_migration_snapshots_the_state_just_before_it(tmp_path):
+    """rc.2 D3: `.fields` keeps only the FIRST copy, so a second same-version field migration
+    rewrote the file with no backup of the state right before it. It must snapshot that state too,
+    keep the pristine copy as it was, and keep only the newest FIELD_MIGRATION_SNAPSHOTS_KEPT."""
+    from datetime import datetime as real_datetime
+    first = {"config_version": "1.2", "taskbar_height": 40, "font_size": 13}
+    path = _write_config_file(tmp_path, first)
+    ConfigManager(path).load()
+    pristine = path.with_name(f"{path.name}.bak.v1.2.fields")
+    kept = constants.config.defaults.FIELD_MIGRATION_SNAPSHOTS_KEPT
+
+    states = []
+    for i in range(kept + 2):
+        state = {"config_version": "1.2", "taskbar_height": 50 + i, "font_size": 14 + i}
+        states.append(state)
+        path.write_text(json.dumps(state), encoding="utf-8")
+
+        class _Clock(real_datetime):
+            @classmethod
+            def now(cls, tz=None, _i=i):
+                return real_datetime(2026, 10, 22, 12, 0, _i // 2)   # two per second: same-second ties
+        with patch("datetime.datetime", _Clock):
+            ConfigManager(path).load()
+        assert "taskbar_height" not in json.loads(path.read_text(encoding="utf-8"))
+
+    assert json.loads(pristine.read_text(encoding="utf-8")) == first
+    snaps = sorted(tmp_path.glob(f"{pristine.name}.*"),
+                   key=lambda p: p.name.replace(".fields.", ".fields.~"))
+    assert len(snaps) == kept
+    got = [json.loads(p.read_text(encoding="utf-8")) for p in snaps]
+    assert sorted(got, key=lambda d: d["font_size"]) == states[-kept:]
+
+
+def test_a_clock_set_back_never_prunes_the_snapshot_just_taken(tmp_path):
+    """Review L2: names sort by their timestamp, so with the clock set back the newest snapshot sorts
+    oldest. It holds the state this migration overwrites - it must survive the prune."""
+    from datetime import datetime as real_datetime
+    path = _write_config_file(tmp_path, {"config_version": "1.2", "taskbar_height": 40})
+    ConfigManager(path).load()
+    pristine = path.with_name(f"{path.name}.bak.v1.2.fields")
+    kept = constants.config.defaults.FIELD_MIGRATION_SNAPSHOTS_KEPT
+
+    def migrate_at(when, height):
+        path.write_text(json.dumps({"config_version": "1.2", "taskbar_height": height}), encoding="utf-8")
+
+        class _Clock(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return when
+        with patch("datetime.datetime", _Clock):
+            ConfigManager(path).load()
+
+    for i in range(kept):
+        migrate_at(real_datetime(2026, 10, 22, 12, 0, i), 50 + i)
+    migrate_at(real_datetime(2025, 1, 1, 0, 0, 0), 99)          # the clock is now a year behind
+    snaps = list(tmp_path.glob(f"{pristine.name}.*"))
+    assert len(snaps) == kept
+    assert any(json.loads(p.read_text(encoding="utf-8"))["taskbar_height"] == 99 for p in snaps)
+
+
+def test_a_failed_snapshot_blocks_the_repeat_field_migration(tmp_path):
+    path = _write_config_file(tmp_path, {"config_version": "1.2", "taskbar_height": 40})
+    ConfigManager(path).load()                                   # takes the pristine `.fields`
+    path.write_text(json.dumps({"config_version": "1.2", "taskbar_height": 41}), encoding="utf-8")
+    before = path.read_bytes()
+    with patch("netspeedtray.utils.config.shutil.copy2", side_effect=OSError("disk full")):
+        ConfigManager(path).load()
+    assert path.read_bytes() == before
+
+
 def test_same_version_field_migration_is_not_persisted_when_the_backup_fails(tmp_path):
     path = _write_config_file(tmp_path, {"config_version": "1.2", "taskbar_height": 40})
     before = path.read_bytes()

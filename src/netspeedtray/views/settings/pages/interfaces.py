@@ -69,12 +69,22 @@ class InterfacesPage(QWidget):
             (self.all_virtual_interfaces_radio, self.i18n.MONITORING_MODE_VIRTUAL_SUBTITLE),
             (self.selected_interfaces_radio, self.i18n.MONITORING_MODE_SELECTED_SUBTITLE),
         ]
+        # D5 (rc.2): what a mode METERS, for the data cap too - Auto follows the one routing adapter
+        # (the VPN's, with a full-tunnel VPN up), Physical sums the real NICs and leaves tunnels out.
+        tooltips = {
+            self.auto_interface_radio: self.i18n.MONITORING_MODE_AUTO_TOOLTIP.format(
+                mode=self.i18n.MONITORING_MODE_PHYSICAL),
+            self.all_physical_interfaces_radio: self.i18n.MONITORING_MODE_PHYSICAL_TOOLTIP,
+        }
         for radio, subtitle_text in radio_subtitle_pairs:
             radio.toggled.connect(self._on_mode_toggled)
             ml.addWidget(radio)
             subtitle = QLabel(subtitle_text)
             subtitle.setWordWrap(True)
             subtitle.setStyleSheet(subtitle_style)
+            if radio in tooltips:
+                radio.setToolTip(tooltips[radio])
+                subtitle.setToolTip(tooltips[radio])
             ml.addWidget(subtitle)
 
         # The per-interface checkbox list (revealed only for "selected" mode), inside the same card.

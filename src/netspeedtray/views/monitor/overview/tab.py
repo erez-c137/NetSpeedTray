@@ -111,10 +111,32 @@ def saved_period_index(config: Dict[str, Any]) -> int:
         return 2
 
 
+def _cap_coverage(ws, cap_start: Optional[datetime]) -> Optional[float]:
+    """The fraction of the data cap's period (``cap_start`` to now) NetSpeedTray was running, from
+    the recorded sessions (F19) - or None when that is not known for ALL of it: no cap, a reader with
+    no session record (v7), a period that began before the first recorded session (history from
+    before 2.2, or after "Delete all history"), or a failed read. Never a guess."""
+    if cap_start is None:
+        return None
+    try:
+        cov = ws.history_reader.coverage(cap_start, datetime.now())
+    except Exception:
+        return None
+    if cov is None or cov.unknown_seconds > 0 or cov.end_ts <= cov.start_ts:
+        return None
+    running = cov.running_seconds
+    # The live session ends at its last heartbeat: the few seconds since are this run, not a gap.
+    tail = cov.end_ts - (cov.sessions[-1][1] if cov.sessions else cov.start_ts)
+    if cov.sessions and 0 < tail <= constants.network.usage.COVERAGE_HEARTBEAT_SLACK_SEC:
+        running += tail
+    return min(1.0, running / float(cov.end_ts - cov.start_ts))
+
+
 def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
-                 series: Optional[Dict[str, list]], poll: float, latency_enabled: bool):
-    """The window's DB reads - (series, summaries, drop events, session volume). Runs on the reader
-    thread. ``series`` is the Session window's, already copied from the in-memory deques on the GUI
+                 series: Optional[Dict[str, list]], poll: float, latency_enabled: bool,
+                 cap_start: Optional[datetime] = None):
+    """The window's DB reads - (series, summaries, drop events, session volume, cap coverage). Runs
+    on the reader thread. ``series`` is the Session window's, already copied from the in-memory deques on the GUI
     thread (they are appended there); None means read the sparklines from the DB. The session volume
     (the strip's ↓/↑ totals, independent of the range) rides along so the 1 Hz render never reads."""
     start, end, _is_session = _resolve_window(ws, key, now, session_start)
@@ -147,7 +169,7 @@ def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
             volume = ws.get_history_volume_for_period(session_start, datetime.now())
         except Exception:
             volume = None   # the strip just shows the uptime, as when this read failed on the GUI thread
-    return series, summ, events, volume
+    return series, summ, events, volume, _cap_coverage(ws, cap_start)
 
 
 class _WindowLoader(QObject):
@@ -554,7 +576,16 @@ class OverviewTab(QWidget):
         self._load_busy = True
         self._load_requested.emit(self._load_seq, partial(
             _read_window, ws, key, now, session_start, series, poll,
-            bool(self._config.get("latency_enabled", True))))
+            bool(self._config.get("latency_enabled", True)), self._cap_period_start(ws)))
+
+    def _cap_period_start(self, ws) -> Optional[datetime]:
+        """The data cap's current period start (the odometer owns it), or None with no cap set."""
+        try:
+            if not self._config.get("data_cap_enabled") or float(self._config.get("data_cap_gb", 0) or 0) <= 0:
+                return None
+            return datetime.strptime(str(ws.get_usage_period_key()), "%Y-%m-%d")
+        except Exception:
+            return None
 
     @pyqtSlot(int, object)
     def _on_window_loaded(self, seq: int, result) -> None:
@@ -568,7 +599,8 @@ class OverviewTab(QWidget):
                 if self._win_summ is None:
                     self._win_summ = {}     # stop saying "Reading history…"; the strip stays quiet
             else:
-                self._series, self._win_summ, self._latency_events, self._session_volume = result
+                self._series, self._win_summ, self._latency_events, self._session_volume = result[:4]
+                self._cap_coverage = result[4] if len(result) > 4 else None
             self._render()
         if self._load_dirty:
             self._load_dirty = False
@@ -689,7 +721,8 @@ class OverviewTab(QWidget):
             note = (self._tr("USAGE_RECORDED_HISTORY_NOTE", "")
                     if getattr(mw, "_hover_usage_reconstructed", False) else None)
             self._usage.set(today, month, cap, history_note=note or None,
-                            period_start=getattr(mw, "_hover_usage_period_start", None))
+                            period_start=getattr(mw, "_hover_usage_period_start", None),
+                            coverage=getattr(self, "_cap_coverage", None))
 
             self._session_lbl.setText(self._session_text(mw))
             self._context_r_lbl.setText(self._context_right_text(mw))
