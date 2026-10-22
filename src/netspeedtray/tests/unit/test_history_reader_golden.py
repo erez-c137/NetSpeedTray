@@ -174,6 +174,26 @@ WINDOWS = _windows()
 
 # --- 1. get_speed_history ---------------------------------------------------------------------------
 
+def _without_legacy_padding(rows, start, end, return_raw):
+    """The legacy reader's rows minus its edge padding - the second intended divergence (rc.2 S4):
+    the reader returns stored rows only. The oracle padded a bounded window with an all-zero row AT
+    ``start`` / ``end`` when the data did not reach them, and filled an empty window with a flat
+    all-zero baseline from ``start`` to ``end``; those rows drew unmeasured time as a measured zero."""
+    if not (start and end) or not rows:
+        return rows
+    s_pt = int(start.timestamp()) if return_raw else start
+    e_pt = int(end.timestamp()) if return_raw else end
+    out = list(rows)
+    first = out[0][0] if isinstance(out[0][0], (int, float)) else out[0][0].timestamp()
+    if all(not (r[1] or r[2]) for r in out) and int(first) == int(start.timestamp()) and len(out) >= 10:
+        return []                                      # the synthetic baseline of an empty window
+    if out and out[0][0] == s_pt and not (out[0][1] or out[0][2]):
+        out = out[1:]
+    if out and out[-1][0] == e_pt and not (out[-1][1] or out[-1][2]):
+        out = out[:-1]
+    return out
+
+
 def _expected_local_days(ws, start, end, iface):
     """{local-midnight epoch: (up, down)} for day resolution, from the legacy reader's hour buckets
     (raw + minute + hour tiers, the same tiers and per-bucket peaks as day resolution). Exact when
@@ -213,7 +233,8 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
             if resolution == "minute" and (span is None or span > timedelta(days=10)):
                 continue
             kw = dict(interface_name=iface, return_raw=return_raw, resolution=resolution, wait_for_flush=False)
-            old = Legacy.get_speed_history(ws, start, end, **kw)
+            old = _without_legacy_padding(Legacy.get_speed_history(ws, start, end, **kw), start, end,
+                                          return_raw)
             new = ws.get_speed_history(start, end, **kw)
             effective = resolution if resolution != "auto" else \
                 constants.data.history_period.get_target_resolution(start, end)
@@ -222,7 +243,7 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
                 # UTC midnight (which moved by an hour across DST). Compared per day against an
                 # oracle built from the frozen legacy reader's HOUR buckets, re-binned by local
                 # midnight: each interface's peak per local day, summed across interfaces as the
-                # reader does for "all". (Zero rows are the reader's edge padding and are skipped.)
+                # reader does for "all". (Zero rows - the legacy edge padding - are skipped.)
                 got = {}
                 for p in new:
                     if p[1] or p[2]:
@@ -348,8 +369,11 @@ def test_readers_on_an_empty_history_match_legacy(q_app, tmp_path):
         _same(state.get_earliest_data_timestamp(), Legacy.get_earliest_data_timestamp(state))
         _same(state.get_distinct_interfaces(), Legacy.get_distinct_interfaces(state))
         for start, end in ((now - timedelta(hours=1), now), (now - timedelta(days=40), now)):
-            _same(state.get_speed_history(start, end, wait_for_flush=False),
-                  Legacy.get_speed_history(state, start, end, wait_for_flush=False))
+            # The one divergence (rc.2 S4): no flat zero baseline for an empty window.
+            assert state.get_speed_history(start, end, wait_for_flush=False) == []
+            legacy = Legacy.get_speed_history(state, start, end, wait_for_flush=False)
+            assert legacy and not any(r[1] or r[2] for r in legacy)
+            _same(_without_legacy_padding(legacy, start, end, False), [])
             _same(state.get_hardware_history("cpu", start, end), Legacy.get_hardware_history(state, "cpu", start, end))
             _same(state.summarize_network("download", start, end), Legacy.summarize_network(state, "download", start, end))
             _same(state.summarize_hardware("cpu", start, end), Legacy.summarize_hardware(state, "cpu", start, end))

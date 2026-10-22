@@ -21,6 +21,10 @@ class GraphDataWorker(QObject):
     # (sequence_id, reconstructed): emitted just before a single-stat data_ready - True when part of
     # its totals was estimated from speeds recorded before 2.2 (D5), so the Network header can say so.
     totals_provenance = pyqtSignal(int, bool)
+    # (sequence_id, {"resolution", "measured"}): emitted just before a DB-backed network data_ready -
+    # WidgetState.get_graph_coverage, so the renderer can name the statistic (S3) and tell measured idle
+    # from unmeasured time (S4). Absent for the in-memory Session, which claims neither.
+    graph_coverage = pyqtSignal(int, object)
     error = pyqtSignal(str)
 
     # Maximum data points to return (prevents excessive rendering time)
@@ -45,6 +49,30 @@ class GraphDataWorker(QObject):
             sampled.append(peak_down)
 
         return sorted(sampled, key=lambda point: point[0])
+
+    @staticmethod
+    def _thin_keep_peaks(data: List[Tuple[float, float, float]], max_points: int) -> List[Tuple[float, float, float]]:
+        """At most ``max_points`` of ``data`` (time-ordered (ts, up, down) rows), keeping every bucket's
+        peaks: the rows are cut into max_points // 2 consecutive buckets and each keeps its
+        highest-download row and its highest-upload row (one row when they coincide).
+
+        The old thinning kept every Nth row plus the single biggest peak, so every other spike was
+        halved or dropped depending on where the stride fell (rc.2 review of #436: on 4 h a 45 Mbps
+        spike drew as 22 and a 3.7 Mbps upload spike vanished). The kept rows are stored rows,
+        unchanged, so the hover still reports a measured value - the bucket's peak - and the line
+        still passes through every bucket's top."""
+        n = len(data)
+        if n <= max_points or max_points < 2:
+            return list(data)
+        buckets = max_points // 2
+        size = -(-n // buckets)                          # ceil: every row lands in a bucket
+        keep = []
+        for b0 in range(0, n, size):
+            chunk = range(b0, min(n, b0 + size))
+            i_down = max(chunk, key=lambda i: float(data[i][2] or 0.0))
+            i_up = max(chunk, key=lambda i: float(data[i][1] or 0.0))
+            keep.extend(sorted({i_down, i_up}))
+        return [data[i] for i in keep]
 
     def __init__(self, widget_state):
         """
@@ -254,17 +282,27 @@ class GraphDataWorker(QObject):
                 # Fetch totals from DB as well (DURING the worker thread to avoid UI freeze), with
                 # their provenance: part of them may be estimated from pre-2.2 speeds (D5).
                 total_up, total_down, reconstructed = self._period_totals(request)
+                try:
+                    coverage = self.widget_state.get_graph_coverage(
+                        request.start_time, request.end_time, request.interface_name)
+                except Exception as e:   # the graph still draws; every silence then breaks the line
+                    self.logger.debug("graph coverage read failed: %s", e)
+                    coverage = {"resolution": None, "measured": None}
+                self.graph_coverage.emit(request.sequence_id, coverage)
 
             # Smart Downsampling: Cap at MAX_DATA_POINTS for rendering performance
             if len(history_data) > self.MAX_DATA_POINTS:
                 stride = len(history_data) // self.MAX_DATA_POINTS
                 downsampled = history_data[::stride]
                 if request.stat_type == "network":
-                    history_data = self._preserve_global_peaks(history_data, downsampled)
+                    history_data = self._thin_keep_peaks(history_data, self.MAX_DATA_POINTS)
                 else:
                     history_data = downsampled
 
-            if not history_data or len(history_data) < 2:
+            # The history is never padded (S4), so a ranged network window can hold ONE stored row:
+            # drawn as a point, not dropped as "no traffic".
+            min_rows = 1 if (request.stat_type == "network" and not net_use_memory) else 2
+            if not history_data or len(history_data) < min_rows:
                 self.totals_provenance.emit(request.sequence_id, False)
                 self.data_ready.emit([], 0.0, 0.0, request.sequence_id)
                 return
