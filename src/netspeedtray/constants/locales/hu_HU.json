@@ -113,6 +113,7 @@
     "START_WITH_WINDOWS_LABEL": "Indítás a Windowszal",
     "FREE_MOVE_LABEL": "Szabad mozgatás (illesztés nélkül)",
     "FREE_FLOAT_LABEL": "Lebegtetés tálca nélküli kijelzőn",
+    "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Ezen a monitoron nincs tálca, ezért a NetSpeedTray az elsődleges monitor tálcáján van. Kapcsold be a(z) „{option}” lehetőséget, hogy ezen a monitoron maradjon.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Maradjon látható teljes képernyőn",
     "FONT_SIZE_LABEL": "Betűméret",
     "FONT_FAMILY_LABEL": "Betűtípus",

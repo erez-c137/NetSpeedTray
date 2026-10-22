@@ -113,6 +113,7 @@
     "START_WITH_WINDOWS_LABEL": "Start with Windows",
     "FREE_MOVE_LABEL": "Free move (no snapping)",
     "FREE_FLOAT_LABEL": "Float on a display without a taskbar",
+    "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "This monitor has no taskbar, so NetSpeedTray sits on the primary monitor's taskbar. Turn on “{option}” to keep it on this monitor.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Keep visible in fullscreen",
     "FONT_SIZE_LABEL": "Font size",
     "FONT_FAMILY_LABEL": "Font",

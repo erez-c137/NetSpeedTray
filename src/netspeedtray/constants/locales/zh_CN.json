@@ -113,6 +113,7 @@
     "START_WITH_WINDOWS_LABEL": "开机自启",
     "FREE_MOVE_LABEL": "自由移动（无吸附）",
     "FREE_FLOAT_LABEL": "在无任务栏的显示器上悬浮显示",
+    "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "此显示器没有任务栏，因此 NetSpeedTray 显示在主显示器的任务栏上。若要让它留在此显示器上，请打开“{option}”。",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "全屏时保持可见",
     "FONT_SIZE_LABEL": "字号",
     "FONT_FAMILY_LABEL": "字体",

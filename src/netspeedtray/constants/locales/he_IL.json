@@ -113,6 +113,7 @@
     "START_WITH_WINDOWS_LABEL": "התחל עם Windows",
     "FREE_MOVE_LABEL": "תנועה חופשית (ללא הצמדה)",
     "FREE_FLOAT_LABEL": "רחף על תצוגה ללא שורת משימות",
+    "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "למסך זה אין שורת משימות, ולכן NetSpeedTray ממוקם בשורת המשימות של המסך הראשי. הפעל את \"{option}\" כדי להשאיר אותו במסך זה.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "השאר גלוי במסך מלא",
     "FONT_SIZE_LABEL": "גודל גופן",
     "FONT_FAMILY_LABEL": "גופן",

@@ -113,6 +113,7 @@
     "START_WITH_WINDOWS_LABEL": "Windows ile birlikte başlat",
     "FREE_MOVE_LABEL": "Serbest taşıma (hizalama yok)",
     "FREE_FLOAT_LABEL": "Görev çubuğu olmayan bir ekranda serbestçe hareket ettir",
+    "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Bu monitörde görev çubuğu yok, bu yüzden NetSpeedTray birincil monitörün görev çubuğunda duruyor. Bu monitörde kalması için \"{option}\" seçeneğini açın.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Tam ekranda görünür tut",
     "FONT_SIZE_LABEL": "Yazı boyutu",
     "FONT_FAMILY_LABEL": "Yazı tipi",

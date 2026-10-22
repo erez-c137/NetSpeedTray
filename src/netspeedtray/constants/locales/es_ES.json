@@ -113,6 +113,7 @@
     "START_WITH_WINDOWS_LABEL": "Iniciar con Windows",
     "FREE_MOVE_LABEL": "Movimiento libre (sin ajuste)",
     "FREE_FLOAT_LABEL": "Flotar en una pantalla sin barra de tareas",
+    "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Este monitor no tiene barra de tareas, así que NetSpeedTray se coloca en la barra de tareas del monitor principal. Activa «{option}» para mantenerlo en este monitor.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Mantener visible en pantalla completa",
     "FONT_SIZE_LABEL": "Tamaño de fuente",
     "FONT_FAMILY_LABEL": "Fuente",

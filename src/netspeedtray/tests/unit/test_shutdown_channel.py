@@ -130,7 +130,9 @@ def test_arm_window_marks_and_opens_uipi(monkeypatch):
     monkeypatch.setattr(sc, "_set_prop", lambda hwnd: calls.append(("prop", hwnd)) or True)
     monkeypatch.setattr(sc, "_allow_through_uipi", lambda hwnd, msg: calls.append(("uipi", hwnd, msg)) or True)
     assert sc.arm_window(0x55) is True
-    assert calls == [("prop", 0x55), ("uipi", 0x55, sc.shutdown_message_id())]
+    # ...and for the second launch's "show yourself" (#234, test_second_launch_activate.py).
+    assert calls == [("prop", 0x55), ("uipi", 0x55, sc.shutdown_message_id()),
+                     ("uipi", 0x55, sc.activate_message_id())]
 
 
 def test_arm_window_rejects_null_hwnd(monkeypatch):

@@ -147,6 +147,8 @@ _BURIAL_FIGHT_WINDOW_S = constants.timeouts.BURIAL_FIGHT_WINDOW_MS / 1000.0
 # ... unless fresh burials come faster than a person can cause them (rationale with the constants).
 _BURIAL_FRESH_RATE_MAX = constants.timeouts.BURIAL_FRESH_RATE_MAX
 _BURIAL_FRESH_RATE_WINDOW_S = constants.timeouts.BURIAL_FRESH_RATE_WINDOW_MS / 1000.0
+# A recovery this close to a dock / tray change logs at DEBUG and keeps the INFO line (rc.2 W8).
+_BURIAL_LOG_SETTLE_S = constants.timeouts.BURIAL_LOG_SETTLE_MS / 1000.0
 _ERROR_ACCESS_DENIED = 5
 # The on-top stretch must be OBSERVED: checks run at least once a second while the widget is
 # shown, so a longer gap between two verified on-top checks (the widget was hidden, or nothing
@@ -539,6 +541,11 @@ class PositionCalculator:
             # the show-hidden-icons "^" chevron and steals its clicks (#161 pt1).
             right_boundary = round(tray_rect[0] / dpi_scale)
             offset = max(offset, constants.layout.TRAY_EDGE_MIN_GAP_PX)
+            # Classic toolbars (Desktop / Links, Win10) between the apps and the tray: hug their left
+            # edge instead of drawing over them (#324, best-effort). Always None on Win11.
+            toolbars = taskbar_utils.valid_rect(getattr(taskbar_info, "toolbars_rect", None))
+            if toolbars is not None and toolbars[0] < tray_rect[0]:
+                right_boundary = round(toolbars[0] / dpi_scale)
         else:
             # A Win11 SECONDARY taskbar (Shell_SecondaryTrayWnd) has no TrayNotifyWnd child, so
             # get_tray_rect() is None. Its clock is shell-drawn with no HWND to hug; reserve an
@@ -643,6 +650,10 @@ class PositionCalculator:
         # Calculate Y: align to bottom (system tray side) with offset.
         tray_rect = taskbar_info.get_tray_rect()
         bottom_boundary = round(tray_rect[1] / dpi_scale) if tray_rect else (full_geom.bottom() + 1)
+        # Classic toolbars above the tray on a Win10 side bar (#324, best-effort): sit above them.
+        toolbars = taskbar_utils.valid_rect(getattr(taskbar_info, "toolbars_rect", None))
+        if tray_rect and toolbars is not None and toolbars[1] < tray_rect[1]:
+            bottom_boundary = round(toolbars[1] / dpi_scale)
 
         y = round(bottom_boundary - widget_height - offset_y)
 
@@ -769,6 +780,11 @@ class PositionManager(QObject):
         self._reseat_attempts: int = 0
         self._last_reseat_ts: float = 0.0
         self._first_recovery_logged: bool = False
+        # rc.2 W8: when the widget last docked (owner set) or saw the tray rect change, and when the
+        # INFO recovery line was logged - see _log_recovery / note_layout_settle. 0.0 = never.
+        self._layout_settle_ts: float = 0.0
+        self._recovery_info_ts: float = 0.0
+        self._last_seen_tray: Optional[tuple] = None
         # Start of the current continuous on-top stretch (is_buried_behind_taskbar);
         # None while we have not verified we are on top. Gates backoff retirement.
         self._on_top_since: Optional[float] = None
@@ -796,6 +812,10 @@ class PositionManager(QObject):
         self._access_denied_logged: bool = False
         # One INFO line per stretch of a not-ready tray rect (see _tray_rect_ready).
         self._tray_not_ready_logged: bool = False
+        # No taskbar at all (Explorer restarting, rc.2 W5) - see holding_for_taskbar.
+        self._had_real_taskbar: bool = False
+        self._taskbar_absent_since: Optional[float] = None
+        self._taskbar_hold_expired_logged: bool = False
         # Last good tray rect per (monitor, edge), as offsets from the taskbar's right/bottom.
         self._last_good_tray: Dict[tuple, Tuple[int, int, int, int]] = {}
         # Side-bar automatic placement (Phase B). Decided at startup, on a dock change (edge /
@@ -901,6 +921,11 @@ class PositionManager(QObject):
             if self._free_float_active and self._apply_free_float_position():
                 return
 
+            # No taskbar at all while Explorer restarts: keep the last position (the widget hides
+            # meanwhile) instead of moving to the off-bar fallback spot (rc.2 W5).
+            if self.holding_for_taskbar(self._state.taskbar_info):
+                return
+
             # A just-restarted taskbar reports a degenerate tray rect for seconds (live: the
             # TrayNotifyWnd sat at (0,1032,0,1032) for ~11 s until TaskbarCreated); computing
             # from it snaps the widget to the far left, over the Widgets button. Place it on the
@@ -915,6 +940,41 @@ class PositionManager(QObject):
                 logger.warning("Failed to calculate position.")
         except Exception as e:
             logger.error("Error updating position: %s", e, exc_info=True)
+
+    def holding_for_taskbar(self, info: Any) -> bool:
+        """
+        True while a DOCKED widget that has had a real taskbar sees none at all (``hwnd == 0``, the
+        fallback TaskbarInfo get_taskbar_info returns while Explorer restarts) - for at most
+        TASKBAR_ABSENT_HOLD_MS. Callers then keep the last position and the widget hides, instead
+        of floating at the screen-fallback spot for the ~2 s until the new taskbar exists (rc.2 W5).
+
+        False with a real taskbar (which it records), before any real taskbar was ever seen (a
+        start with no shell keeps the old fallback), for Free Move / free-float (nothing docked),
+        and once the hold has run out (the old behaviour; logged once per absence). The "tray rect
+        not ready" stretch after the new taskbar appears is #419's (_tray_rect_ready), not this.
+        """
+        hwnd = getattr(info, "hwnd", 0) if info is not None else 0
+        if hwnd:
+            if self._taskbar_absent_since is not None:
+                logger.info("Taskbar is back after %.1fs.", time.monotonic() - self._taskbar_absent_since)
+            self._had_real_taskbar = True
+            self._taskbar_absent_since = None
+            self._taskbar_hold_expired_logged = False
+            return False
+        if not self._had_real_taskbar or self.is_floating():
+            return False
+        now = time.monotonic()
+        if self._taskbar_absent_since is None:
+            self._taskbar_absent_since = now
+            logger.info("No taskbar found (Explorer restarting?) - hiding the widget at its last "
+                        "position for up to %.0fs.", constants.timeouts.TASKBAR_ABSENT_HOLD_MS / 1000.0)
+        if (now - self._taskbar_absent_since) * 1000.0 < constants.timeouts.TASKBAR_ABSENT_HOLD_MS:
+            return True
+        if not self._taskbar_hold_expired_logged:
+            self._taskbar_hold_expired_logged = True
+            logger.warning("Still no taskbar after %.0fs - showing the widget at the fallback position.",
+                           now - self._taskbar_absent_since)
+        return False
 
     @staticmethod
     def _tray_memory_key(info: Any) -> Optional[tuple]:
@@ -983,6 +1043,10 @@ class PositionManager(QObject):
             if tray is not None:
                 try:
                     self._remember_tray(info, tray)
+                    seen = (int(info.hwnd or 0),) + tuple(int(v) for v in tray)
+                    if self._last_seen_tray is not None and seen != self._last_seen_tray:
+                        self.note_layout_settle("tray change")   # e.g. a tray icon arrived (W8)
+                    self._last_seen_tray = seen
                 except Exception:
                     pass
             if self._tray_not_ready_logged:
@@ -1405,7 +1469,10 @@ class PositionManager(QObject):
             True iff the owner was just (re)established on this call.
         """
         try:
-            tb_info = self._state.taskbar_info or get_taskbar_info()
+            # Fallback: the widget's own (preferred-monitor) taskbar, never a bare lookup - that is
+            # the PRIMARY's, and would dock a secondary-monitor widget to it (rc.2 W12).
+            tb_info = self._state.taskbar_info or get_taskbar_info(
+                preferred_screen_name=self._state.config.get('preferred_monitor'))
             tb_hwnd = int(tb_info.hwnd) if tb_info and tb_info.hwnd else 0
             if not tb_hwnd or not win32gui.IsWindow(tb_hwnd):
                 return False
@@ -1455,6 +1522,7 @@ class PositionManager(QObject):
                     hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
                     win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
                 )
+                self.note_layout_settle("dock")   # a burial right after docking is not news (W8)
             # A widget that fell out of the topmost band (Qt can drop WS_EX_TOPMOST across
             # show/flag changes) is necessarily BELOW the topmost taskbar, so it is "buried"
             # in is_buried_behind_taskbar()'s terms and the widget's guarded recovery path
@@ -1715,22 +1783,13 @@ class PositionManager(QObject):
                 return True
             if fresh:
                 self._fresh_reseat_times.append(now)
-                if self._first_recovery_logged:
-                    logger.debug("Widget re-seated above the taskbar after a fresh burial "
-                                 "(no backoff charged).")
-                else:
-                    logger.info("Widget recovered from taskbar burial - re-seated directly above "
-                                "the taskbar.")
-                    self._first_recovery_logged = True
+                self._log_recovery(now, "Widget re-seated above the taskbar after a fresh burial "
+                                        "(no backoff charged).")
                 return True
             self._last_reseat_ts = now
             self._reseat_attempts = min(self._reseat_attempts + 1, _RESEAT_BACKOFF_EXP_CAP + 1)
             self._deferral_logged = None
-            if self._first_recovery_logged:
-                logger.debug("Widget re-seated above the taskbar (attempt %d).", self._reseat_attempts)
-            else:
-                logger.info("Widget recovered from taskbar burial - re-seated directly above the taskbar.")
-                self._first_recovery_logged = True
+            self._log_recovery(now, "Widget re-seated above the taskbar (attempt %d).", self._reseat_attempts)
             return True
         except Exception as e:
             logger.error("Failed to re-seat the widget above the taskbar: %s", e)
@@ -1795,6 +1854,37 @@ class PositionManager(QObject):
                         "Z-band %s (taskbar Z-band %s): %s.",
                         prev_class, _window_band(prev), tb_band, outcome)
         return ok
+
+    def _log_recovery(self, now: float, debug_msg: str, *args) -> None:
+        """
+        Log a re-seat: INFO for the first one of an episode, DEBUG for the rest (#327). A re-seat
+        within _BURIAL_LOG_SETTLE_S of the widget docking or of a tray change is the shell laying
+        the taskbar out, not a burial worth a support-bundle line: DEBUG, and the INFO line stays
+        for the next real one (rc.2 W8 - a startup false burial or a tray-icon arrival used it up).
+        """
+        settling = bool(self._layout_settle_ts) and now - self._layout_settle_ts < _BURIAL_LOG_SETTLE_S
+        if self._first_recovery_logged or settling:
+            logger.debug(debug_msg + (" (taskbar settling after a dock / tray change)" if settling else ""),
+                         *args)
+            return
+        logger.info("Widget recovered from taskbar burial - re-seated directly above the taskbar.")
+        self._first_recovery_logged = True
+        self._recovery_info_ts = now
+
+    def note_layout_settle(self, reason: str = "") -> None:
+        """
+        The widget just docked (owner set) or the tray rect changed: the shell is re-laying the
+        taskbar, and a burial now is part of that (rc.2 W8). Starts the settle window; an INFO
+        recovery logged just BEFORE it (the tray-icon arrival buries the widget first, the tray rect
+        changes on the next ~1 s refresh) is handed back, so the next real burial logs at INFO.
+        """
+        now = time.monotonic()
+        self._layout_settle_ts = now
+        if self._first_recovery_logged and self._recovery_info_ts and \
+                now - self._recovery_info_ts < _BURIAL_LOG_SETTLE_S:
+            self._first_recovery_logged = False
+            logger.debug("The last burial recovery came with a %s - the next one logs at INFO again.",
+                         reason or "layout change")
 
     def _log_deferral(self, reason: str, msg: str, *args) -> None:
         """DEBUG-log a deferred re-seat once per (reason, backoff window), not once per tick."""

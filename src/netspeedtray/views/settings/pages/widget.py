@@ -85,6 +85,14 @@ class WidgetPage(QWidget):
         self.preferred_monitor_combo.setMinimumWidth(220)
         self._populate_monitor_combo()   # (re)connects on_change itself - connecting here too doubled it
         layout.addWidget(SettingCard(self.i18n.PREFERRED_MONITOR_LABEL, control=self.preferred_monitor_combo))
+        # rc.2 W13: a chosen monitor with no taskbar of its own, with floating off, silently docked the
+        # widget to the PRIMARY taskbar. Say so right under the picker (see _sync_monitor_note).
+        self.monitor_note = QLabel("")
+        self.monitor_note.setWordWrap(True)
+        self.monitor_note.setStyleSheet(
+            f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
+        self.monitor_note.setVisible(False)
+        layout.addWidget(self.monitor_note)
 
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
@@ -93,6 +101,7 @@ class WidgetPage(QWidget):
         # #188: float the widget on a preferred monitor that has no taskbar of its own.
         self.free_float = Win11Toggle(label_text="")
         self.free_float.toggled.connect(self.on_change)
+        self.free_float.toggled.connect(lambda _checked: self._sync_monitor_note())
         self._free_float_card = SettingCard(
             getattr(self.i18n, "FREE_FLOAT_LABEL", "Float on a display without a taskbar"),
             control=self.free_float)
@@ -187,6 +196,30 @@ class WidgetPage(QWidget):
         if hasattr(self, "_free_float_card"):
             MiniGraphSection._set_card_enabled(self._free_float_card,
                                                self.preferred_monitor_combo.currentData() is not None)
+        self._sync_monitor_note()
+
+    def _sync_monitor_note(self) -> None:
+        """Show the "no taskbar on this monitor" note (rc.2 W13) when the chosen monitor is connected,
+        has no taskbar of its own and floating is off - the one case where the widget docks to the
+        primary taskbar instead. With floating on it floats there (#188); an unplugged monitor already
+        reads "(not connected)" in the list. Re-checked on every change and each time the page shows."""
+        note = getattr(self, "monitor_note", None)
+        if note is None or not hasattr(self, "free_float"):
+            return
+        name = self.preferred_monitor_combo.currentData()
+        show = False
+        if name and not self.free_float.isChecked():
+            try:
+                from netspeedtray.utils.taskbar_utils import get_free_float_screen
+                show = get_free_float_screen(name) is not None   # connected AND taskbar-less
+            except Exception:
+                show = False
+        if show:
+            note.setText(self.i18n.PREFERRED_MONITOR_NO_TASKBAR_NOTE.format(
+                option=self.i18n.FREE_FLOAT_LABEL))
+        if note.isVisibleTo(self) != show:
+            note.setVisible(show)
+            self.layout_changed.emit()
 
     def showEvent(self, event):  # type: ignore[override]
         """Refresh the monitor dropdown whenever the page becomes visible.
@@ -281,6 +314,7 @@ class WidgetPage(QWidget):
 
         self.free_move.setChecked(config.get("free_move", False))
         self.free_float.setChecked(config.get("free_float", True))
+        self._sync_monitor_note()
         self.keep_visible_fullscreen.setChecked(
             config.get("keep_visible_fullscreen", constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN))
 

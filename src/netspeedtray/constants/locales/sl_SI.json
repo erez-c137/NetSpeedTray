@@ -113,6 +113,7 @@
     "START_WITH_WINDOWS_LABEL": "Zaženi z zagonom sistema Windows",
     "FREE_MOVE_LABEL": "Prosto premikanje (brez pripenjanja)",
     "FREE_FLOAT_LABEL": "Prosto lebdenje na zaslonu brez opravilne vrstice",
+    "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Ta monitor nima opravilne vrstice, zato je NetSpeedTray v opravilni vrstici primarnega monitorja. Vklopite »{option}«, da ostane na tem monitorju.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Ohrani vidno v celozaslonskem načinu",
     "FONT_SIZE_LABEL": "Velikost pisave",
     "FONT_FAMILY_LABEL": "Pisava",

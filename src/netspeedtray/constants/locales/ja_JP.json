@@ -113,6 +113,7 @@
     "START_WITH_WINDOWS_LABEL": "Windows 起動時に実行",
     "FREE_MOVE_LABEL": "自由移動 (スナップ無効)",
     "FREE_FLOAT_LABEL": "タスクバーのないディスプレイではフローティング表示する",
+    "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "このモニターにはタスクバーがないため、NetSpeedTray はプライマリ モニターのタスクバーに表示されます。このモニターに表示するには [{option}] をオンにしてください。",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "フルスクリーン時も表示を維持",
     "FONT_SIZE_LABEL": "フォントサイズ",
     "FONT_FAMILY_LABEL": "フォント",
