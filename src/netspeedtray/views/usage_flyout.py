@@ -13,10 +13,11 @@ rounded corners to match the native Win11 flyouts. Built on the shared design to
 """
 from __future__ import annotations
 
+import logging
 import math
 from typing import Optional, Tuple
 
-from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtCore import Qt, QRect, pyqtSignal
 from PyQt6.QtGui import QColor, QFontMetrics, QScreen
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QGridLayout, QVBoxLayout, QHBoxLayout,
@@ -41,22 +42,76 @@ Totals = Tuple[float, float]
 CapInfo = Tuple[float, float, float]
 
 
+_GWL_EXSTYLE = -20
+_WS_EX_TRANSPARENT = 0x00000020
+
+logger = logging.getLogger(__name__)
+# Directions (True = set, False = clear) whose failure has already been logged: a style call that
+# fails tends to fail on every card, and the card is rebuilt on every hover - warn once, not per show.
+_click_through_warned: set = set()
+
+
+def _warn_click_through_failed(through: bool, detail: object) -> None:
+    if through in _click_through_warned:
+        return
+    _click_through_warned.add(through)
+    logger.warning(
+        "Hover card: could not %s WS_EX_TRANSPARENT on its native window (%s) - %s. "
+        "Further failures are not logged.",
+        "set" if through else "clear", detail,
+        "the card may catch the pointer while it is only informational" if through
+        else "a pinned card may not take clicks")
+
+
+def _set_click_through(widget: QWidget, through: bool) -> bool:
+    """Toggle WS_EX_TRANSPARENT on the card's native window, in place. This native style is the
+    card's ONLY click-through mechanism.
+
+    Never ``Qt.WindowTransparentForInput``: Qt drops every mouse event addressed to a window carrying
+    that flag, even after the native style is cleared - a pinned card then swallowed clicks and did
+    nothing (rc.1 live test B5, 2026-10-22; pinned by test_hover_card_pin_native.py). Not
+    ``setWindowFlags`` either (re-creates and re-shows the window: a blink) nor ``QWindow.setFlag`` (verified 2026-10-21: drops
+    WS_EX_LAYERED, which the translucent card uses). Every other extended style - WS_EX_NOACTIVATE
+    above all, and WS_EX_LAYERED, without which WS_EX_TRANSPARENT does not pass clicks through - is
+    kept. Returns True if the style is now as asked; a failure (an exception, or the style read back
+    unchanged) is logged once per direction at WARNING."""
+    try:
+        import ctypes
+        hwnd = int(widget.winId())
+        user32 = ctypes.windll.user32
+        ex = user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+        new = (ex | _WS_EX_TRANSPARENT) if through else (ex & ~_WS_EX_TRANSPARENT)
+        if new != ex:
+            user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, new)
+            # SetWindowLongW's return value can't tell failure from a previous style of 0: read back.
+            if bool(user32.GetWindowLongW(hwnd, _GWL_EXSTYLE) & _WS_EX_TRANSPARENT) != bool(through):
+                _warn_click_through_failed(through, f"style still 0x{ex & 0xFFFFFFFF:08X}")
+                return False
+        return True
+    except Exception as e:
+        _warn_click_through_failed(through, e)
+        return False
+
+
 class UsageFlyout(QWidget):
     """A hover-triggered, non-focusing usage card. Build it, then call ``show_for()``."""
+
+    # A click on a PINNED card (the only state in which it takes clicks) asks the widget to close it.
+    dismiss_requested = pyqtSignal()
 
     def __init__(self, i18n, today: Optional[Totals] = None, month: Optional[Totals] = None,
                  hint: Optional[str] = None, cap: Optional[CapInfo] = None,
                  power: Optional[dict] = None,
                  parent: Optional[QWidget] = None, history_note: Optional[str] = None,
-                 hardware: Optional[dict] = None, month_label: Optional[str] = None) -> None:
+                 hardware: Optional[dict] = None, month_label: Optional[str] = None,
+                 pin_hint: Optional[str] = None) -> None:
         super().__init__(
             parent,
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-            | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus
-            # Purely informational, never clicked: let the pointer fall through to whatever is under
-            # it. Then even a card forced over its widget (a screen too small for it anywhere, see
-            # ``placement``) cannot take the hover away from the widget and start a flicker loop.
-            | Qt.WindowType.WindowTransparentForInput,
+            | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus,
+            # Click-through while informational is the NATIVE WS_EX_TRANSPARENT style, set in
+            # show_for (see _set_click_through) - deliberately not Qt.WindowTransparentForInput,
+            # which would leave a pinned card deaf to clicks for good.
         )
         self._i18n = i18n
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -83,6 +138,7 @@ class UsageFlyout(QWidget):
         body = QVBoxLayout(card)
         body.setContentsMargins(tokens.SPACE_M + 2, tokens.SPACE_M, tokens.SPACE_M + 2, tokens.SPACE_M)
         body.setSpacing(tokens.SPACE_S)
+        self._body_layout = body
         outer.addWidget(card)
 
         # The card carries any subset of {hardware, battery, gesture hint, usage rows, cap progress},
@@ -113,6 +169,13 @@ class UsageFlyout(QWidget):
             hint_lbl.setMaximumWidth(300)
             body.addWidget(hint_lbl)
             sections += 1
+
+        self._pin_hint_lbl: Optional[QLabel] = None
+        self._last_show: Optional[tuple] = None
+        self._pinned = False
+        # Live usage labels, for update_usage() while the card is pinned.
+        self._usage_labels: dict = {}
+        self._cap_labels: Optional[tuple] = None
 
         # --- Today / This-month usage (aligned columns) ---
         if today is not None and month is not None:
@@ -149,13 +212,13 @@ class UsageFlyout(QWidget):
             cap_row.addStretch(1)
             gb = self._tr("GB_UNIT", "GB")
             cap_txt = helpers.format_decimal(cap_gb, self._i18n, 1).rstrip("0").rstrip(".,")   # 500 / 2,5
-            cap_row.addWidget(self._label(f"{helpers.format_decimal(used_gb, self._i18n, 1)} / {cap_txt} {gb}",
-                                          tokens.TYPE_BODY, self._c["text_secondary"],
-                                          Qt.AlignmentFlag.AlignRight))
+            used_lbl = self._label(f"{helpers.format_decimal(used_gb, self._i18n, 1)} / {cap_txt} {gb}",
+                                   tokens.TYPE_BODY, self._c["text_secondary"], Qt.AlignmentFlag.AlignRight)
+            cap_row.addWidget(used_lbl)
             pct_color = _OVER_CAP_COLOR if over else self._c["accent"]
-            cap_row.addWidget(self._label("  " + helpers.format_percent(f"{pct:.0f}", self._i18n),
-                                          tokens.TYPE_BODY_STRONG, pct_color,
-                                          Qt.AlignmentFlag.AlignRight))
+            pct_lbl = self._label("  " + helpers.format_percent(f"{pct:.0f}", self._i18n),
+                                  tokens.TYPE_BODY_STRONG, pct_color, Qt.AlignmentFlag.AlignRight)
+            cap_row.addWidget(pct_lbl)
             body.addLayout(cap_row)
 
             bar = QProgressBar()
@@ -169,6 +232,14 @@ class UsageFlyout(QWidget):
                 f"QProgressBar::chunk {{ background: {fill}; border-radius: 2px; }}"
             )
             body.addWidget(bar)
+            self._cap_labels = (used_lbl, pct_lbl, bar, cap_txt, gb)
+
+        # --- Footer: "Click to keep this open" (a card opened by hover; dropped once pinned) ---
+        if pin_hint:
+            self._pin_hint_lbl = self._label(pin_hint, tokens.TYPE_CAPTION, self._c["text_secondary"])
+            self._pin_hint_lbl.setWordWrap(True)
+            self._pin_hint_lbl.setMaximumWidth(300)
+            body.addWidget(self._pin_hint_lbl)
 
     # ----------------------------------------------------------------- helpers
 
@@ -197,10 +268,30 @@ class UsageFlyout(QWidget):
     def _usage_row(self, grid: QGridLayout, row: int, label: str, totals: Totals) -> None:
         up_bytes, down_bytes = totals
         grid.addWidget(self._label(label, tokens.TYPE_BODY_STRONG, self._c["text_primary"]), row, 0)
-        grid.addWidget(self._label(f"↓ {self._fmt(down_bytes)}", tokens.TYPE_BODY,
-                                   self._c["text_primary"], Qt.AlignmentFlag.AlignRight), row, 1)
-        grid.addWidget(self._label(f"↑ {self._fmt(up_bytes)}", tokens.TYPE_BODY,
-                                   self._c["text_primary"], Qt.AlignmentFlag.AlignRight), row, 2)
+        down = self._label(f"↓ {self._fmt(down_bytes)}", tokens.TYPE_BODY,
+                           self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
+        up = self._label(f"↑ {self._fmt(up_bytes)}", tokens.TYPE_BODY,
+                         self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
+        grid.addWidget(down, row, 1)
+        grid.addWidget(up, row, 2)
+        self._usage_labels[row] = (down, up)
+
+    def update_usage(self, today: Optional[Totals], month: Optional[Totals],
+                     cap: Optional[CapInfo] = None) -> None:
+        """Refresh the usage rows / cap line in place (a pinned card stays open for minutes)."""
+        for row, totals in ((0, today), (1, month)):
+            labels = self._usage_labels.get(row)
+            if labels is None or totals is None:
+                continue
+            up_bytes, down_bytes = totals
+            labels[0].setText(f"↓ {self._fmt(down_bytes)}")
+            labels[1].setText(f"↑ {self._fmt(up_bytes)}")
+        if cap is not None and self._cap_labels is not None:
+            used_lbl, pct_lbl, bar, cap_txt, gb = self._cap_labels
+            used_gb, _cap_gb, pct = cap
+            used_lbl.setText(f"{helpers.format_decimal(used_gb, self._i18n, 1)} / {cap_txt} {gb}")
+            pct_lbl.setText("  " + helpers.format_percent(f"{pct:.0f}", self._i18n))
+            bar.setValue(int(max(0.0, min(100.0, pct))))
 
     # Rows of the hardware section, in order: (key, label). The labels are the universal abbreviations
     # the widget itself paints (not translated there either).
@@ -417,15 +508,77 @@ class UsageFlyout(QWidget):
                     handle.setScreen(screen)
             except Exception:
                 pass
-        self.adjustSize()
         bounds = None
         try:
             bounds = screen.geometry() if screen is not None else None
         except Exception:
             bounds = None
+        self._last_show = (widget_geo, avail, edge, bounds)
+        self.adjustSize()
         rect = self.placement(widget_geo, avail, self.size(), edge, bounds=bounds)
         self.move(rect.x(), rect.y())
+        # Purely informational until pinned: let the pointer fall through to whatever is under it.
+        # Then even a card forced over its widget (a screen too small for it anywhere, see
+        # ``placement``) cannot take the hover away from the widget and start a flicker loop. Set on
+        # the native window BEFORE it is shown, so not even the first frame catches the pointer.
+        try:
+            self.winId()
+        except Exception:
+            pass
+        _set_click_through(self, not self._pinned)
         self.show()
+
+    def _replace(self, widget_geo: Optional[QRect] = None) -> None:
+        """Re-place against the widget (its new frame rect, or the one it was shown for), with the
+        same work area, edge and screen bounds as ``show_for``."""
+        if self._last_show is None:
+            return
+        old_geo, avail, edge, bounds = self._last_show
+        geo = widget_geo if widget_geo is not None else old_geo
+        self._last_show = (geo, avail, edge, bounds)
+        self.adjustSize()
+        rect = self.placement(geo, avail, self.size(), edge, bounds=bounds)
+        self.move(rect.x(), rect.y())
+
+    def reanchor(self, widget_geo: QRect) -> None:
+        """The widget moved (no dock change - e.g. the tray grew): follow it."""
+        self._replace(widget_geo)
+
+    @property
+    def pin_hint_visible(self) -> bool:
+        return self._pin_hint_lbl is not None and not self._pin_hint_lbl.isHidden()
+
+    @property
+    def pinned(self) -> bool:
+        return self._pinned
+
+    def set_pinned(self, pinned: bool) -> None:
+        """The card was clicked to stay open: drop the "Click to keep this open" line, re-place the
+        (now shorter) card against the widget, and make it take clicks - an informational card passes
+        the pointer through (native WS_EX_TRANSPARENT), but a pinned one sits there for minutes, and a
+        click on it must not press a button or drop a caret in the app behind it. Clicking it closes it
+        (``dismiss_requested``). Moves, resizes and restyles only - never activates (WS_EX_NOACTIVATE /
+        WindowDoesNotAcceptFocus / WA_ShowWithoutActivating stay)."""
+        pinned = bool(pinned)
+        if pinned == self._pinned:
+            return
+        self._pinned = pinned
+        _set_click_through(self, not pinned)
+        if self._pin_hint_lbl is not None and self._pin_hint_lbl.isHidden() != pinned:
+            self._pin_hint_lbl.setVisible(not pinned)
+            # The hide only POSTS a layout request; settle the nested layouts now so adjustSize()
+            # measures the card without the line.
+            for lay in (self._body_layout, self.layout()):
+                if lay is not None:
+                    lay.invalidate()
+                    lay.activate()
+            self._replace()
+
+    def mousePressEvent(self, event) -> None:
+        """Only a pinned card receives clicks (see set_pinned): a click closes it, and is consumed."""
+        event.accept()
+        if self._pinned:
+            self.dismiss_requested.emit()
 
     @staticmethod
     def _candidates(widget_geo: QRect, avail: QRect, sz, edge: Optional[object]):

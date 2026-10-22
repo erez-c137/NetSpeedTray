@@ -43,6 +43,7 @@ class TrayIconManager(QObject):
         # Retrieve actions for external use if needed (e.g., toggling text)
         self.pause_action: Optional[QAction] = None
         self.pause_separator: Optional[QAction] = None
+        self.reset_position_action: Optional[QAction] = None
         # [(QAction, Segoe-Fluent-codepoint)] - icons are (re)tinted to the text color on each open.
         self._menu_icon_actions: list = []
 
@@ -83,6 +84,8 @@ class TrayIconManager(QObject):
         self.logger.debug("Initializing context menu in manager...")
         try:
             self.context_menu = QMenu(self.widget)
+            # However the menu is opened, it replaces the hover card - a pinned one included.
+            self.context_menu.aboutToShow.connect(self._dismiss_hover_card)
 
             # The menu is a MAP, not a flat list - tiers, separated, so a new user can read
             # what the app does straight from the right-click. Live data usage (today / this
@@ -108,6 +111,11 @@ class TrayIconManager(QObject):
             # pair's visibility is refreshed on every open in _refresh_dynamic_items. ---
             self.pause_action = self.context_menu.addAction(self.i18n.PAUSE_MENU_ITEM)
             self.pause_action.triggered.connect(self._toggle_pause)
+            # Reset position - shown only once the widget sits where the user dragged it (or a saved
+            # free-move spot), so the default menu stays calm; refreshed on every open.
+            self.reset_position_action = self.context_menu.addAction(self.i18n.RESET_POSITION_MENU_ITEM)
+            if hasattr(self.widget, 'reset_to_default_position'):
+                self.reset_position_action.triggered.connect(self.widget.reset_to_default_position)
             self.pause_separator = self.context_menu.addSeparator()
 
             # --- Tier 4: App-level (least frequent) ---
@@ -137,6 +145,7 @@ class TrayIconManager(QObject):
                 (settings_action, 0xE713),    # Settings (gear)
                 (monitor_action, 0xE9D9),     # Monitor (chart)
                 (self.pause_action, 0xE769),  # Pause (→ play when paused)
+                (self.reset_position_action, 0xE72C),  # Reset position (refresh)
                 (update_action, 0xE895),      # Check for updates (sync)
                 (support_action, 0xEB51),     # Support (heart)
                 (exit_action, 0xE7E8),        # Exit (power)
@@ -145,6 +154,14 @@ class TrayIconManager(QObject):
             self.logger.debug("Context menu initialized successfully.")
         except Exception as e:
             self.logger.error("Error initializing context menu: %s", e, exc_info=True)
+
+    def _dismiss_hover_card(self) -> None:
+        dismiss = getattr(self.widget, "dismiss_hover_card", None)
+        if callable(dismiss):
+            try:
+                dismiss()
+            except Exception as e:
+                self.logger.debug("hover card dismiss on menu open failed: %s", e)
 
     def _toggle_pause(self, _checked: bool = False) -> None:
         """Toggle the widget's paused state from the tray menu."""
@@ -193,8 +210,13 @@ class TrayIconManager(QObject):
                 # Match the glyph to the state: play when paused (→ resume), pause when running.
                 self.pause_action.setIcon(
                     su.fluent_icon(0xE768 if paused else 0xE769, 16, su.semantic_colors()['text_primary']))
+            show_reset = False
+            if getattr(self, "reset_position_action", None) is not None:
+                moved = getattr(self.widget, "has_custom_position", None)
+                show_reset = bool(moved()) if callable(moved) else False
+                self.reset_position_action.setVisible(show_reset)
             if self.pause_separator is not None:
-                self.pause_separator.setVisible(show_pause)
+                self.pause_separator.setVisible(show_pause or show_reset)
         except Exception as e:
             self.logger.error("Error refreshing dynamic menu items: %s", e, exc_info=True)
 
@@ -206,6 +228,7 @@ class TrayIconManager(QObject):
             return
 
         try:
+            self._dismiss_hover_card()   # before styling/positioning; aboutToShow repeats it
             self._apply_menu_style()
             self._refresh_dynamic_items()
             menu_pos = self._calculate_menu_position()
