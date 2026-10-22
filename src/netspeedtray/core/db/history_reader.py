@@ -38,6 +38,7 @@ flush-before-read barrier, the ``db_worker`` presence guard, the poll-interval l
 the odometer's in-memory state.
 """
 
+import calendar
 import logging
 import sqlite3
 import time
@@ -209,22 +210,67 @@ def _local_bin_sql(col: str, interval: int) -> str:
     honoured): plain ``ts / 86400`` buckets
     started at UTC midnight - 02:00 or 03:00 in Israel, moving by an hour across a DST change - and
     hour buckets were half an hour off in +5:30 / +9:30 zones. Minute and second buckets are the same
-    either way, so they keep the cheap integer form."""
+    either way, so they keep the cheap integer form.
+
+    DAY buckets come back as a local DAY NUMBER (days since 1970-01-01 on the local calendar), not a
+    timestamp: one 'localtime' call per row, the same cost as an hour bucket. Every caller passes the
+    grouped value through ``_bin_start()``, which turns each day number into its local midnight once
+    per OUTPUT row. Day numbers and midnights map one to one, so GROUP BY / ORDER BY are unchanged."""
     if interval < 3600:
         return f"CAST({col} / {interval} AS INTEGER) * {interval}"
     local = f"CAST(strftime('%s', {col}, 'unixepoch', 'localtime') AS INTEGER)"
-    # The row's own offset, applied to the row: start of its local hour (or day) as an epoch. Never
-    # later than the row, and on a fall-back night the two 01:00-02:00 hours stay two buckets.
-    own = f"({col} - ({local} % {interval}))"
-    if interval < 86400:
-        return own
-    # Days: the local midnight converted back with the MIDNIGHT's offset ('utc' modifier) - on a
-    # 23 h / 25 h day the row's offset is not the midnight's, and `own` would label the day 23:00 /
-    # 01:00. The CASE keeps a bucket from ever starting after its row should a zone's midnight be the
-    # ambiguous, repeated instant (SQLite resolves those to the later one).
-    midnight = (f"CAST(strftime('%s', CAST({local} / {interval} AS INTEGER) * {interval}, "
-                f"'unixepoch', 'utc') AS INTEGER)")
-    return f"(CASE WHEN {midnight} <= {col} THEN {midnight} ELSE {own} END)"
+    if interval >= 86400:
+        return f"CAST({local} / {interval} AS INTEGER)"
+    # The row's own offset, applied to the row: start of its local hour as an epoch. Never later than
+    # the row, and on a fall-back night the two 01:00-02:00 hours stay two buckets.
+    return f"({col} - ({local} % {interval}))"
+
+
+def _local_epoch(ts: int) -> int:
+    """``ts`` as local wall-clock seconds since 1970 - the C runtime's localtime, as SQLite's."""
+    return calendar.timegm(time.localtime(ts))
+
+
+def _local_day_start(day: int) -> int:
+    """The first instant (epoch s) whose local date is local day number ``day``: its local midnight,
+    converted back with the MIDNIGHT's own offset - on a 23 h / 25 h day the offset at the day's
+    other rows is not the midnight's. Where midnight is repeated (a fall-back at 01:00 -> 00:00) the
+    earlier instance is taken, so a bucket never starts after its rows; where it is skipped (a
+    spring-forward at 00:00) the day starts at its first valid local time."""
+    target = day * 86400
+    try:
+        return _first_instant_at_or_after(target)
+    except (OSError, OverflowError, ValueError):   # outside the C runtime's range (pre-1970 on Windows)
+        return target
+
+
+def _first_instant_at_or_after(target: int) -> int:
+    # Every offset in force around that midnight (offsets are within +-14 h, transitions are never
+    # less than a day apart), so one of these candidates is the midnight whenever it exists.
+    offs = {_local_epoch(t) - t for t in (target - 15 * 3600, target, target + 15 * 3600)}
+    hits = [target - o for o in offs if _local_epoch(target - o) == target]
+    if hits:
+        return min(hits)
+    # Midnight skipped: the first instant whose local time is at or past it (binary search over the
+    # transition, which lies between the two candidates).
+    lo, hi = target - max(offs), target - min(offs)
+    while _local_epoch(hi) < target:   # defensive: widen until the bracket holds
+        hi += 3600
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if _local_epoch(mid) >= target:
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+def _bin_start(value, interval: int):
+    """A ``_local_bin_sql`` column value as its bucket's start (epoch s): day numbers -> local
+    midnight; every shorter interval is already a timestamp. NULL stays NULL."""
+    if value is None or interval < 86400:
+        return value
+    return _local_day_start(int(value))
 
 
 _HOURLY_PROFILE_SQL = ("SELECT CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) AS h, "
@@ -510,6 +556,7 @@ class V7HistoryReader(_ReaderBase):
                     target_res
                 )
 
+            valid_rows = [(_bin_start(row[0], target_interval), row[1], row[2]) for row in valid_rows]
             data_points = []
             if return_raw:
                 data_points = [(int(row[0]), float(row[1] or 0.0), float(row[2] or 0.0)) for row in valid_rows]
@@ -826,7 +873,7 @@ class V7HistoryReader(_ReaderBase):
                  + (stat_type, start_ts, end_ts) + hour_params)
             rows = cursor.fetchall()
 
-            return [(datetime.fromtimestamp(row[0]), row[1]) for row in rows]
+            return [(datetime.fromtimestamp(_bin_start(row[0], interval)), row[1]) for row in rows]
         except Exception as e:
             self._log_read_failure("Error fetching hardware history", e)
             return []
@@ -1068,7 +1115,7 @@ class V8HistoryReader(_ReaderBase):
             return []
         self.logger.debug("History query: target_res=%s fetched_rows=%d", target_res, len(rows))
 
-        valid = [r for r in rows if r and r[0] is not None]
+        valid = [(_bin_start(r[0], interval), r[1], r[2]) for r in rows if r and r[0] is not None]
         if len(valid) != len(rows):
             self.logger.warning("Dropping %d invalid graph rows with NULL timestamp (resolution=%s).",
                                 len(rows) - len(valid), target_res)
@@ -1345,7 +1392,7 @@ class V8HistoryReader(_ReaderBase):
         try:
             rows = self._conn().execute(
                 f"SELECT b, AVG(v) FROM ({' UNION ALL '.join(parts)}) GROUP BY b ORDER BY b ASC", params).fetchall()
-            return [(datetime.fromtimestamp(r[0]), r[1]) for r in rows]
+            return [(datetime.fromtimestamp(_bin_start(r[0], interval)), r[1]) for r in rows]
         except Exception as e:
             self._log_read_failure("Error fetching hardware history", e)
             return []
