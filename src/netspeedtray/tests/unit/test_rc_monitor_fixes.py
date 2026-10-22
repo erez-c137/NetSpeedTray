@@ -243,13 +243,14 @@ def test_day_and_hour_buckets_start_on_local_boundaries():
     local-time conversion (the one the graph's axis labels use) across both DST changes of a year.
     (On a UTC machine - CI - the old form happens to agree; the owner's UTC+2/+3 PC is where it bit.)"""
     import sqlite3
-    from netspeedtray.core.db.history_reader import _local_bin_sql
+    from netspeedtray.core.db.history_reader import _bin_start, _local_bin_sql
     conn = sqlite3.connect(":memory:")
     base = int(datetime(2026, 1, 1).timestamp())
     for i in range(0, 366 * 24, 7):                      # every 7 hours through a year
         ts = base + i * 3600 + 1234
         local = datetime.fromtimestamp(ts)
-        day = conn.execute(f"SELECT {_local_bin_sql('?', 86400)}".replace("?", str(ts))).fetchone()[0]
+        day = _bin_start(conn.execute(f"SELECT {_local_bin_sql('?', 86400)}".replace("?", str(ts))).fetchone()[0],
+                         86400)
         hour = conn.execute(f"SELECT {_local_bin_sql('?', 3600)}".replace("?", str(ts))).fetchone()[0]
         assert datetime.fromtimestamp(day) == local.replace(hour=0, minute=0, second=0), local
         assert datetime.fromtimestamp(hour) == local.replace(minute=0, second=0), local
