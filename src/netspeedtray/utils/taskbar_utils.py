@@ -193,7 +193,9 @@ def find_apps_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
 # background thread. Unlike the #200 Widgets probe this one has NO periodic refresh: it is requested
 # at startup, on a dock change, on Reset position, and - as re-checks that KEEP the last result until
 # the new one lands (``keep_last``) - when core/side_bar_watcher predicts the app group reaching the
-# widget or sees the icon alignment flip. It never runs for a TOP/BOTTOM bar today (#24 may reuse it).
+# widget or sees the icon alignment flip. On a TOP/BOTTOM bar only the #24 app-button yield
+# (core/app_overlap_yield.py) runs it - keep_last re-checks that read the contiguous app group and
+# never change the horizontal placement.
 _layout_lock = threading.Lock()
 # Notified (under _layout_lock) whenever a probe lands or a request ends: wait_for_taskbar_layout.
 _layout_landed = threading.Condition(_layout_lock)

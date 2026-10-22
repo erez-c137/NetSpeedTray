@@ -81,6 +81,10 @@ class LayoutConstants:
     # looked at (a real taskbar has a handful).
     TOOLBAR_BAND_ADJACENCY_TOLERANCE_PX: Final[int] = 2
     TOOLBAR_BAND_SCAN_LIMIT: Final[int] = 32
+    # One Win11 taskbar button slot along a horizontal bar, logical px (44 physical px at 96 DPI,
+    # scaled with the DPI; owner's probe 2026-10-22). Only an ESTIMATE for the #24 yield's "is the app
+    # group near the widget" poll gating - the collision itself always uses UIA's real rects.
+    APP_BUTTON_SLOT_PX: Final[int] = 44
 
     def __init__(self) -> None:
         self.validate()

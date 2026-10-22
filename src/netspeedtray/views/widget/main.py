@@ -418,6 +418,9 @@ class NetworkSpeedWidget(QWidget):
             )
             self.position_manager = PositionManager(window_state, parent=self)
             self.position_manager.on_side_no_room = self._maybe_show_side_no_room_notice
+            # #24: the app buttons reached the widget (or left it) - re-run the visibility gate.
+            self.position_manager.on_app_yield_changed = self._on_app_yield_changed
+            self.position_manager.on_app_yield_first = self._maybe_show_app_overlap_notice
             # Note: InputHandler is initialized in _init_ui_components() after tray_manager is created
             
             self.logger.debug("Managers initialized successfully.")
@@ -506,12 +509,20 @@ class NetworkSpeedWidget(QWidget):
 
             # Allow user override to keep widget visible even when a fullscreen window is present
             keep_visible = self.config.get("keep_visible_fullscreen", False)
+            # #24 app-button yield: attach / detach for this taskbar first (floating detaches it).
+            self.position_manager.sync_app_overlap(taskbar_info)
             if free_float_active:
                 # The accessory display has no taskbar to hide behind, and the visibility/obstruction
                 # checks are judged against the (irrelevant) primary taskbar - so just keep it shown.
                 should_be_visible = True
             else:
                 should_be_visible = is_taskbar_visible(taskbar_info) and (keep_visible or not is_taskbar_obstructed(taskbar_info, hwnd))
+                # #24: a native horizontal Win11 bar whose app buttons reach the widget - it steps
+                # aside on this same hide path (never moves, #200). ANDed: neither this nor the
+                # fullscreen hide / keep_visible_fullscreen overrides the other. ``is True``: a stand-in
+                # position manager without the yield never hides the widget.
+                if self.position_manager.is_yielding_to_apps() is True:
+                    should_be_visible = False
 
             if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)
@@ -2258,6 +2269,30 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.debug("side-bar no-room notice failed: %s", e)
 
+    def _on_app_yield_changed(self) -> None:
+        """The #24 yield flipped (its probe landed): apply it through the authoritative refresh, out
+        of the probe's poll callback. A hover card (pinned ones last minutes) goes with the widget."""
+        try:
+            if self.position_manager.is_yielding_to_apps() is True:
+                self.dismiss_hover_card()
+        except Exception as e:
+            self.logger.debug("hover card dismiss on app yield failed: %s", e)
+        QTimer.singleShot(0, self._execute_refresh)
+
+    def _maybe_show_app_overlap_notice(self) -> None:
+        """One-time heads-up (ever), the first time the widget steps aside for app buttons on a
+        horizontal taskbar (#24). Reuses the side-bar no-room title and flyout; non-activating."""
+        try:
+            if getattr(self, "_app_overlap_notice_shown", False) or self.config.get("app_overlap_notice_shown", False):
+                return
+            self._app_overlap_notice_shown = True
+            self.update_config({"app_overlap_notice_shown": True})
+            title = self.i18n.SIDE_BAR_NO_ROOM_TITLE
+            body = self.i18n.APP_OVERLAP_YIELD_BODY
+            QTimer.singleShot(0, lambda: self._show_notice_flyout(title, body))
+        except Exception as e:
+            self.logger.debug("app-overlap notice failed: %s", e)
+
     # The no-room notice is longer than a usage alert: give it time to be read.
     _NOTICE_FLYOUT_DISMISS_MS = 30000
 
@@ -2875,6 +2910,7 @@ class NetworkSpeedWidget(QWidget):
             if getattr(self, 'position_manager', None):
                 self.position_manager.stop_monitoring()
                 self.position_manager.stop_side_watcher()
+                self.position_manager.stop_app_overlap()
 
         def _state_watcher() -> None:
             timer = getattr(self, '_state_watcher_timer', None)

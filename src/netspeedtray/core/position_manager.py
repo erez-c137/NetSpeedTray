@@ -848,6 +848,14 @@ class PositionManager(QObject):
         # ever attached to a native side bar.
         from netspeedtray.core.side_bar_watcher import SideBarWatcher
         self._side_watcher = SideBarWatcher(self._side_watch_context, self._apply_side_recheck, parent=self)
+        # #24: on a native horizontal Win11 bar the widget steps aside (hides) while the app buttons
+        # reach it - it never moves for them (#200). The widget wires both callbacks.
+        self.on_app_yield_changed: Optional[Callable[[], None]] = None
+        self.on_app_yield_first: Optional[Callable[[], None]] = None
+        self._app_overlap_info: Optional[TaskbarInfo] = None
+        from netspeedtray.core.app_overlap_yield import AppOverlapYield
+        self._app_yield = AppOverlapYield(self._app_overlap_context, self._app_yield_changed,
+                                          self._app_yield_first, parent=self)
 
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -1351,9 +1359,60 @@ class PositionManager(QObject):
                                 user_placed=user_placed_side_offset(self._state.config))
 
     def note_foreground_change(self) -> None:
-        """The widget saw a foreground change: a new app's button may be growing the side bar's app
-        group toward it (side-bar watcher; no-op elsewhere)."""
+        """The widget saw a foreground change: a new app's button may be growing the app group toward
+        it (side-bar watcher on a side bar, the #24 yield on a horizontal one; each a no-op elsewhere)."""
         self._side_watcher.note_foreground_change()
+        self._app_yield.note_foreground_change()
+
+    # --- #24: app-button yield on a native horizontal Win11 bar --------------------------------
+
+    def sync_app_overlap(self, taskbar_info: Optional[TaskbarInfo]) -> None:
+        """Every refresh (1 s tick + foreground changes), BEFORE the visibility gate: attach / detach
+        the yield for this taskbar and run its bounded re-check."""
+        self._app_overlap_info = taskbar_info
+        self._app_yield.sync()
+
+    def is_yielding_to_apps(self) -> bool:
+        """True while the widget steps aside for app buttons that reach it (#24)."""
+        return self._app_yield.yielded
+
+    def note_user_drop(self) -> None:
+        """A drag ended: a drop onto the app buttons is the user's choice (no yield until clear once)."""
+        self._app_yield.note_user_drop()
+
+    def stop_app_overlap(self) -> None:
+        self._app_yield.detach()
+
+    def _app_overlap_context(self):
+        """The yield's view of the widget: None when this is not a native Win11 TOP/BOTTOM bar (side
+        bars, ExplorerPatcher / Win10 bars with a real task list, fallback taskbars), or floating;
+        BUSY while the widget is dragged or its menu is open."""
+        from netspeedtray.core.app_overlap_yield import BUSY, OverlapContext
+        info = self._app_overlap_info or self._state.taskbar_info
+        if info is None or not getattr(info, "hwnd", 0) or self.is_floating():
+            return None
+        try:
+            edge = info.get_edge_position()
+        except Exception:
+            return None
+        if edge not in (constants.taskbar.edge.TOP, constants.taskbar.edge.BOTTOM):
+            return None
+        if taskbar_utils.valid_rect(getattr(info, "tasklist_rect", None)) is not None:
+            return None
+        if self._widget_busy():
+            return BUSY
+        widget = self._state.widget
+        dpi = info.dpi_scale if info.dpi_scale and info.dpi_scale > 0 else 1.0
+        left = float(widget.pos().x())
+        return OverlapContext(hwnd=int(info.hwnd), dpi=dpi, widget=(left, left + float(widget.width())))
+
+    def _app_yield_changed(self) -> None:
+        if self.on_app_yield_changed is not None:
+            self.on_app_yield_changed()
+
+    def _app_yield_first(self) -> None:
+        if self.on_app_yield_first is not None:
+            self.on_app_yield_first()
 
     def note_taskbar_alignment_hint(self) -> None:
         """A WM_SETTINGCHANGE / alignment signal: let the side-bar watcher compare TaskbarAl."""
@@ -1452,6 +1511,7 @@ class PositionManager(QObject):
         # We rely on the caller (Widget) to persist this config change to disk if needed.
         self.update_position()
         self.ensure_topmost()
+        self._app_yield.note_position_reset()
 
     def move_to_default_for_session(self) -> bool:
         """

@@ -564,6 +564,7 @@
     "RESET_POSITION_MENU_ITEM": "Reset P&osition",
     "SIDE_BAR_NO_ROOM_TITLE": "No free spot on the taskbar",
     "SIDE_BAR_NO_ROOM_BODY": "Your taskbar's app buttons fill it, so NetSpeedTray sits next to the tray and may cover some of them. You can drag it anywhere along the taskbar - it'll remember the spot. To undo a drag, right-click it and choose Reset Position. (This message won't show again.)",
+    "APP_OVERLAP_YIELD_BODY": "Your taskbar's app buttons have reached NetSpeedTray, so it steps aside and comes back as soon as there is room again. If you'd rather keep it in view, drag it to a spot you prefer once it's back. (This message won't show again.)",
     "HOVER_CARD_PIN_HINT": "Click the widget to keep this open",
     "INTEGRATIONS_GROUP": "Integrations",
     "METRICS_ENDPOINT_LABEL": "Local metrics endpoint",

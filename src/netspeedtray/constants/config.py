@@ -333,6 +333,7 @@ class ConfigConstants:
         "location_onboarding_dismissed": False,  # user permanently dismissed the SSID/Location explainer
         "widgets_overlap_nudge_shown": False,  # one-time #200 nudge: widget overlaps the Widgets/weather panel
         "side_bar_no_room_notice_shown": False,  # one-time heads-up: a side taskbar's apps leave no free spot
+        "app_overlap_notice_shown": False,  # one-time heads-up: the widget stepped aside for app buttons (#24)
         "cpu_load_high_threshold": DEFAULT_CPU_LOAD_HIGH_THRESHOLD,
         "cpu_load_low_threshold": DEFAULT_CPU_LOAD_LOW_THRESHOLD,
         "gpu_load_high_threshold": DEFAULT_GPU_LOAD_HIGH_THRESHOLD,
@@ -493,6 +494,7 @@ class ConfigConstants:
         "location_onboarding_dismissed": {"type": bool, "default": False},
         "widgets_overlap_nudge_shown": {"type": bool, "default": False},
         "side_bar_no_room_notice_shown": {"type": bool, "default": False},
+        "app_overlap_notice_shown": {"type": bool, "default": False},
         "cpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
         "cpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
         "gpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_GPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},

@@ -564,6 +564,7 @@
     "RESET_POSITION_MENU_ITEM": "重設位置(&O)",
     "SIDE_BAR_NO_ROOM_TITLE": "工作列上沒有空位",
     "SIDE_BAR_NO_ROOM_BODY": "應用程式按鈕已佔滿工作列，因此 NetSpeedTray 位於通知區域旁，可能會遮住其中一些按鈕。您可以將它拖曳到工作列上的任何位置，它會記住這個位置。若要復原，請以滑鼠右鍵按一下它，然後選擇「重設位置」。（此訊息不會再次顯示。）",
+    "APP_OVERLAP_YIELD_BODY": "工作列上的應用程式按鈕已延伸到 NetSpeedTray，因此它會暫時讓開，一有空位就會重新出現。如果您希望它保持可見，請在它重新出現後將它拖曳到您想要的位置。（此訊息不會再次顯示。）",
     "HOVER_CARD_PIN_HINT": "按一下小工具以保持開啟",
     "INTEGRATIONS_GROUP": "整合",
     "METRICS_ENDPOINT_LABEL": "本機指標端點",

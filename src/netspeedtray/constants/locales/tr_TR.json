@@ -564,6 +564,7 @@
     "RESET_POSITION_MENU_ITEM": "Konumu &sıfırla",
     "SIDE_BAR_NO_ROOM_TITLE": "Görev çubuğunda boş yer yok",
     "SIDE_BAR_NO_ROOM_BODY": "Uygulama düğmeleri görev çubuğunuzu dolduruyor, bu yüzden NetSpeedTray sistem tepsisinin yanında duruyor ve bazılarının üzerine gelebilir. Onu görev çubuğu boyunca istediğiniz yere sürükleyebilirsiniz; konumu hatırlanır. Geri almak için sağ tıklayıp \"Konumu sıfırla\"yı seçin. (Bu mesaj bir daha gösterilmeyecek.)",
+    "APP_OVERLAP_YIELD_BODY": "Görev çubuğunuzdaki uygulama düğmeleri NetSpeedTray'e ulaştı, bu yüzden kenara çekiliyor ve yeniden yer açılır açılmaz geri geliyor. Görünür kalmasını tercih ederseniz, geri geldiğinde onu istediğiniz bir yere sürükleyin. (Bu mesaj bir daha gösterilmeyecek.)",
     "HOVER_CARD_PIN_HINT": "Açık kalması için widget'a tıklayın",
     "INTEGRATIONS_GROUP": "Entegrasyonlar",
     "METRICS_ENDPOINT_LABEL": "Yerel metrik uç noktası",

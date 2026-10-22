@@ -123,6 +123,12 @@ class TimeoutConstants:
     # costs at most this, once, and the provisional decision is re-done as soon as the probe lands.
     SIDE_BAR_FIRST_LAYOUT_WAIT_MS: Final[int] = 250
     SIDE_BAR_NEAR_SLOTS: Final[int] = 3
+    # #24 app-button yield on a horizontal Win11 bar (core/app_overlap_yield.py): hiding is immediate,
+    # but the widget comes back only after two clear readings at least this far apart - the buttons
+    # animate for ~300-550 ms after an app closes, and one mid-animation read must not blink it back.
+    # (The probe rate limit, SIDE_BAR_MIN_PROBE_INTERVAL_MS, makes the real spacing >= 500 ms.) The
+    # yield reuses the side-bar cadence above: foreground follow-up, near re-check + back-off, slots.
+    APP_YIELD_SHOW_CONFIRM_MS: Final[int] = 300
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
     # Explorer restart (rc.2 W5): between the old taskbar going away and the new one existing there

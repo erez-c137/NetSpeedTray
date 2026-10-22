@@ -564,6 +564,7 @@
     "RESET_POSITION_MENU_ITEM": "Res&tablecer posición",
     "SIDE_BAR_NO_ROOM_TITLE": "No hay hueco libre en la barra de tareas",
     "SIDE_BAR_NO_ROOM_BODY": "Los botones de las aplicaciones llenan la barra de tareas, así que NetSpeedTray se coloca junto a la bandeja del sistema y puede tapar algunos. Puedes arrastrarlo a cualquier punto de la barra de tareas y recordará la posición. Para deshacerlo, haz clic derecho sobre él y elige «Restablecer posición». (Este mensaje no volverá a aparecer.)",
+    "APP_OVERLAP_YIELD_BODY": "Los botones de las aplicaciones han llegado hasta NetSpeedTray, así que se aparta y vuelve en cuanto haya sitio de nuevo. Si prefieres tenerlo siempre a la vista, arrástralo al lugar que quieras cuando vuelva. (Este mensaje no volverá a aparecer.)",
     "HOVER_CARD_PIN_HINT": "Haz clic en el widget para mantenerla abierta",
     "INTEGRATIONS_GROUP": "Integraciones",
     "METRICS_ENDPOINT_LABEL": "Punto de conexión local de métricas",

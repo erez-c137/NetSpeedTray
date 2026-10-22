@@ -564,6 +564,7 @@
     "RESET_POSITION_MENU_ITEM": "P&ositie herstellen",
     "SIDE_BAR_NO_ROOM_TITLE": "Geen vrije plek op de taakbalk",
     "SIDE_BAR_NO_ROOM_BODY": "De app-knoppen vullen je taakbalk, dus NetSpeedTray staat naast het systeemvak en kan er enkele bedekken. Je kunt het overal langs de taakbalk slepen - de plek wordt onthouden. Om dat ongedaan te maken, klik je er met de rechtermuisknop op en kies je 'Positie herstellen'. (Dit bericht verschijnt niet meer.)",
+    "APP_OVERLAP_YIELD_BODY": "De app-knoppen op je taakbalk hebben NetSpeedTray bereikt, dus het gaat even opzij en komt terug zodra er weer ruimte is. Wil je het liever in beeld houden, sleep het dan naar een plek naar keuze zodra het terug is. (Dit bericht verschijnt niet meer.)",
     "HOVER_CARD_PIN_HINT": "Klik op de widget om dit open te houden",
     "INTEGRATIONS_GROUP": "Integraties",
     "METRICS_ENDPOINT_LABEL": "Lokaal metrics-eindpunt",
