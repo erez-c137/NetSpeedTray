@@ -146,6 +146,8 @@ def mock_i18n():
     i18n.MONITORING_MODE_PHYSICAL_SUBTITLE = "Excludes VPNs and virtual adapters"
     i18n.MONITORING_MODE_VIRTUAL_SUBTITLE = "Includes VPNs, virtual adapters, and tunnels"
     i18n.MONITORING_MODE_SELECTED_SUBTITLE = "Choose specific interfaces from the list below"
+    i18n.MONITORING_MODE_AUTO_TOOLTIP = "Counts only the routing adapter. For a data cap, “{mode}”."
+    i18n.MONITORING_MODE_PHYSICAL_TOOLTIP = "Adds up every real network adapter."
 
     # For GeneralPage update rate slider
     i18n.UPDATE_MODE_AGGRESSIVE_LABEL = "Aggressive"

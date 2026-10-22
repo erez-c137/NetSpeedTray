@@ -238,7 +238,17 @@ counter glitch cannot add phantom gigabytes. Each write also stores, in `metadat
 counters that total was counted up to (`usage_counter_snapshot`, below); a later launch **in the
 same boot** adds what moved while the app was closed. After a reboot, or if an adapter's counters
 went backwards, nothing is added; in auto mode, nothing is added either when the primary interface
-is not the one the snapshot was metered on.
+is not the one the snapshot was metered on. A launch before any route exists (an autostart at sign-in
+with Wi-Fi still connecting) waits for the primary to resolve, then recovers, and the polls in between
+are charged to that primary rather than dropped.
+
+**What the odometer meters is the interface mode's selection.** Auto meters only the primary - the
+adapter the route to the internet uses right now; with a full-tunnel VPN up that is the VPN adapter,
+so the tunnel's overhead and split-tunnel traffic are not in the count. `all_physical` sums every
+adapter the shared classifier calls physical (OS hardware flag + ifType, then names); VPN / tunnel /
+virtual adapters - WireGuard, Wintun, Tailscale, NordLynx, ZeroTier, vEthernet, PPP, WAN Miniport -
+are excluded, so their bytes (which also cross the real NIC) are not counted twice. It counts this
+PC's traffic only.
 
 Bytes are charged to the period in which their measurement window **began**: a standby gap or a
 closed-app window that spans the reset day counts toward the period it started in (the lifetime

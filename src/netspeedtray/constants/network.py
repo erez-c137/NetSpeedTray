@@ -246,6 +246,10 @@ class UsageOdometerConstants:
     # ahead by less than this across a reset day rolls the period over up to that much early (the
     # bytes of those hours count toward the new period); the period key then simply stays correct.
     FUTURE_PERIOD_TOLERANCE_DAYS: Final[int] = 2
+    # The cap card's "NetSpeedTray ran N% of this period" line (F19) reads the recorded sessions, whose
+    # live one ends at its last 10 s heartbeat. A gap this short before now is that heartbeat lag, not
+    # time the app was closed - without it a cap reset an hour ago could never read 100%.
+    COVERAGE_HEARTBEAT_SLACK_SEC: Final[int] = 30
 
 
 class MetricsEndpointConstants:

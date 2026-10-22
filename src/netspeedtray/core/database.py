@@ -1025,6 +1025,13 @@ class DatabaseWorker(QThread):
             else:
                 out = self._writer.run_maintenance()   # step-7 note 5: right after migrate()
                 self.logger.info("Post-upgrade maintenance: %s", {k: v for k, v in out.items() if "moved" in k})
+                # rc.2 D4: that pass moves a day of raw hardware rows (107k on the owner's file) and
+                # leaves ~3 MB of frames in the WAL. Nothing else checkpointed them reliably: the startup
+                # maintenance's TRUNCATE races the first GUI reads (the odometer load), and then the WAL
+                # sat just under the 1000-page auto-checkpoint until ~4-5 min of polls tipped it over -
+                # the unexplained post-upgrade burst minute. The readers are still held off here (ready
+                # is set after this returns), so fold those pages into the upgrade moment instead.
+                self._checkpoint_truncate(constants.timeouts.DB_CHECKPOINT_RETRIES)
                 # That pass ran before any v8 poll existed, so polls landing in the folded minute stay
                 # below the raw watermark - hidden - until a roll-up: the next hourly pass, up to an hour
                 # away. One extra pass once that minute is over and flushed (see _persist_v8) closes it.

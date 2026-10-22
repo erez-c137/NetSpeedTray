@@ -332,6 +332,44 @@ def default_gateway_ip() -> Optional[str]:
     return None
 
 
+@dataclass(frozen=True)
+class NetworkDetails:
+    """The connection the default gateway is on, as the Check connection sheet shows it (#214)."""
+    adapter: str = ""
+    ipv4: Tuple[str, ...] = ()
+    ipv6: Tuple[str, ...] = ()
+    gateway: Optional[str] = None
+    dns: Tuple[str, ...] = ()
+
+
+def _strs(values: Any) -> Tuple[str, ...]:
+    return tuple(str(v) for v in (values or ()) if v)
+
+
+def network_details() -> Optional[NetworkDetails]:
+    """Adapter, addresses, IPv4 gateway and DNS servers of the adapter that has the default gateway -
+    the same adapter, found the same way (the first IP-enabled one with an IPv4 gateway), as
+    ``default_gateway_ip``. One read-only WMI query, no admin, nothing sent on the network. Needs COM
+    initialised on the calling thread. None when no adapter has an IPv4 gateway (or WMI failed).
+    IPv6 link-local addresses (fe80::) are left out: they are not reachable from anywhere else."""
+    try:
+        import wmi  # already a dependency
+        for nic in wmi.WMI().Win32_NetworkAdapterConfiguration(IPEnabled=True):
+            gws = [g for g in _strs(getattr(nic, "DefaultIPGateway", None)) if ":" not in g]
+            if not gws:
+                continue
+            addrs = _strs(getattr(nic, "IPAddress", None))
+            return NetworkDetails(
+                adapter=str(getattr(nic, "Description", "") or ""),
+                ipv4=tuple(a for a in addrs if ":" not in a),
+                ipv6=tuple(a for a in addrs if ":" in a and not a.lower().startswith("fe80:")),
+                gateway=gws[0],
+                dns=_strs(getattr(nic, "DNSServerSearchOrder", None)))
+    except Exception:
+        return None
+    return None
+
+
 class LatencyProbe(QThread):
     """Background latency sampler. Emits one `LatencySample` per cycle."""
 

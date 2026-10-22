@@ -134,6 +134,7 @@ class ConnectionCheck(QThread):
     """One check run. Signals carry plain data; the sheet owns all formatting."""
 
     gateway_resolved = pyqtSignal(object)   # the router IP (str) or None when none was found
+    details_resolved = pyqtSignal(object)   # latency_probe.NetworkDetails, or None (#214)
     echo_done = pyqtSignal(str, int, object)   # hop, 1-based echo index, rtt ms or None
     check_finished = pyqtSignal(object)     # {hop: HopStats}; NOT emitted for a cancelled run
 
@@ -169,16 +170,23 @@ class ConnectionCheck(QThread):
         return not self._stop_event.is_set()
 
     def _resolve_gateway(self) -> Optional[str]:
-        if self._gateway_ip or not self._lookup_gateway:
+        """The router to ping, and (#214) the connection's details for the sheet - one WMI query for
+        both. A router the standing probe already knows is kept; the details are still read."""
+        if not self._lookup_gateway:
             return self._gateway_ip
-        # default_gateway_ip() uses WMI, which needs COM initialised on THIS thread (see LatencyProbe.run).
+        # WMI needs COM initialised on THIS thread (see LatencyProbe.run).
         try:
             import pythoncom
             pythoncom.CoInitialize()
         except Exception:
             pythoncom = None
         try:
-            return LP.default_gateway_ip()
+            details = LP.network_details()
+            if not self._stop_event.is_set():
+                self.details_resolved.emit(details)
+            if self._gateway_ip:
+                return self._gateway_ip
+            return details.gateway if details is not None else LP.default_gateway_ip()
         finally:
             try:
                 if pythoncom is not None:

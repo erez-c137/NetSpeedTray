@@ -448,11 +448,20 @@ class UsageTile(QFrame):
         self._cap_text = QLabel("")
         self._cap_text.setFont(su.font(tokens.TYPE_CAPTION))
         self._cap_text.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        # F19 (data-usage honesty): under the bar, how much of the period the app was running to
+        # record it, and that the count is this PC's alone. The tooltip says what the gaps mean.
+        self._cap_note = QLabel("")
+        self._cap_note.setFont(su.font(tokens.TYPE_CAPTION))
+        self._cap_note.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        self._cap_note.setWordWrap(True)
+        self._cap_note.setToolTip(self._tr("USAGE_CAP_COVERAGE_TOOLTIP", ""))
         lay.addSpacing(2)
         lay.addWidget(self._cap_text)
         lay.addWidget(self._cap_bar)
+        lay.addWidget(self._cap_note)
         self._cap_bar.setVisible(False)
         self._cap_text.setVisible(False)
+        self._cap_note.setVisible(False)
 
         # When no cap is set, a discoverable one-click hint to configure one (Settings → Network).
         hint = self._tr("USAGE_SET_LIMIT_HINT", "Set a monthly limit")
@@ -512,10 +521,13 @@ class UsageTile(QFrame):
 
     def set(self, today: Tuple[float, float], month: Tuple[float, float],
             cap: Optional[Tuple[float, float, float]], history_note: Optional[str] = None,
-            period_start: Optional[datetime] = None) -> None:
+            period_start: Optional[datetime] = None, coverage: Optional[float] = None) -> None:
         """``period_start``: the data-cap billing period's start when ``month`` covers that period
         (a reset day other than the 1st) instead of the calendar month - the row then reads
-        "This period" and avg/day + projected use the period's days, matching the cap bar."""
+        "This period" and avg/day + projected use the period's days, matching the cap bar.
+        ``coverage``: the fraction (0-1) of the cap's period NetSpeedTray was running, from the
+        recorded sessions - None when that is not known for the whole period (history from before
+        2.2, a failed read): the line then only says "This PC only", never a guessed percentage."""
         if not isinstance(period_start, datetime):
             period_start = None
         self._today[1].setText(self._fmt_pair(today))
@@ -545,6 +557,7 @@ class UsageTile(QFrame):
         if cap is None:
             self._cap_bar.setVisible(False)
             self._cap_text.setVisible(False)
+            self._cap_note.setVisible(False)
             self._cap_hint.setVisible(True)     # surface the (built-but-hidden) data-cap feature
             return
         self._cap_hint.setVisible(False)
@@ -565,6 +578,21 @@ class UsageTile(QFrame):
             self._cap_text.setText(f"{used_s} / {cap_s} GB ({pct_s}%)")
         self._cap_bar.setVisible(True)
         self._cap_text.setVisible(True)
+        self._cap_note.setText(self._coverage_text(coverage))
+        self._cap_note.setVisible(True)
+
+    def _coverage_text(self, coverage: Optional[float]) -> str:
+        this_pc = self._tr("USAGE_CAP_THIS_PC_ONLY", "This PC only")
+        if coverage is None or coverage != coverage:   # unknown (or NaN): no percentage at all
+            return this_pc
+        # Floored, never rounded up: 99.6% running is not "100%" - the gap exists, however short.
+        pct = int(max(0.0, min(1.0, float(coverage))) * 100.0)
+        tmpl = self._tr("USAGE_CAP_COVERAGE_TEMPLATE", "NetSpeedTray ran {pct}% of this period")
+        try:
+            ran = tmpl.format(pct=format_decimal(pct, self._i18n, 0))
+        except Exception:
+            ran = f"{pct}%"
+        return f"{ran} · {this_pc}"
 
     def _tr(self, key: str, default: str) -> str:
         return str(getattr(self._i18n, key, default)) if self._i18n is not None else default

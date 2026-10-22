@@ -665,6 +665,28 @@ def test_an_ipv6_only_network_resolves_the_primary_interface():
     nu._unreachable_since = None
 
 
+def test_an_ipv6_only_network_is_metered_end_to_end():
+    """rc.2 D2: the controller in auto mode on an IPv6-only network, through the REAL routing lookup
+    (only the sockets and the adapter table are faked): the primary resolves via the IPv6 probe and
+    the odometer counts that adapter's bytes - not zero, not the other adapter's."""
+    from netspeedtray.utils import network_utils as nu
+    nu._unreachable_since = None
+    addrs = {
+        "Ethernet": [_Addr(socket.AF_INET6, "fe80::1%7", None, None, None)],
+        "Wi-Fi": [_Addr(socket.AF_INET6, "2001:db8:1::42", None, None, None)],
+    }
+    state = FakeState()
+    c = _controller(state, mode="auto")
+    with patch("socket.socket", _Sock), patch("psutil.net_if_addrs", return_value=addrs):
+        _poll(c, {"Wi-Fi": NetIO(0, 0), "Ethernet": NetIO(0, 0)}, 1000.0)
+        _poll(c, {"Wi-Fi": NetIO(4_000, 90_000), "Ethernet": NetIO(500, 500)}, 1001.0)
+        _poll(c, {"Wi-Fi": NetIO(6_000, 120_000), "Ethernet": NetIO(900, 900)}, 1002.0)
+    nu._unreachable_since = None
+    assert c.primary_interface == "Wi-Fi"
+    assert state.totals() == (6_000, 120_000)
+    assert state.add_kwargs[-1]["primary"] == "Wi-Fi"
+
+
 def test_bytes_before_the_odometer_loads_are_kept_not_dropped(tmp_path, q_app):
     """v8 step 7: the readers are held off while the worker recovers / migrates the file (seconds on
     a large v7 database), so the odometer row cannot load yet. Polls in that window are real usage:

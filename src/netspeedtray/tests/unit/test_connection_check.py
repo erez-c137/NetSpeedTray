@@ -34,6 +34,12 @@ def q_app():
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def _no_real_network_details(monkeypatch):
+    """The worker reads the connection's details over WMI (#214): never this machine's in a test."""
+    monkeypatch.setattr(LP, "network_details", lambda: None)
+
+
 # --- the math, against fixed RTT lists ----------------------------------------------------------------
 
 def test_hop_stats_on_a_fixed_rtt_list():
@@ -635,3 +641,76 @@ def test_closed_sheets_and_finished_workers_are_released(q_app, fast_pings):
     sheet.done(0)
     _drain_deletes()
     assert sip.isdeleted(sheet), "a closed sheet must be deleted (WA_DeleteOnClose)"
+
+
+# --- #214: network details on the sheet --------------------------------------------------------------
+
+class _Nic:
+    def __init__(self, desc, ips, gws, dns):
+        self.Description, self.IPAddress, self.DefaultIPGateway, self.DNSServerSearchOrder = desc, ips, gws, dns
+
+
+def _fake_wmi(monkeypatch, nics):
+    import sys
+    import types
+    mod = types.ModuleType("wmi")
+
+    class _W:
+        def Win32_NetworkAdapterConfiguration(self, IPEnabled=True):
+            return list(nics)
+    mod.WMI = _W
+    monkeypatch.setitem(sys.modules, "wmi", mod)
+
+
+def test_network_details_reads_the_adapter_with_the_default_gateway(monkeypatch):
+    monkeypatch.undo()   # the real network_details, against a fake WMI
+    _fake_wmi(monkeypatch, [
+        _Nic("Hyper-V Virtual Ethernet Adapter", ("172.20.0.1",), None, None),     # no gateway
+        _Nic("Intel(R) Wi-Fi 6 AX201", ("192.168.1.23", "fe80::1c2:3%12", "2001:db8::23"),
+             ("fe80::1", "192.168.1.1"), ("192.168.1.1", "2001:db8::53")),
+    ])
+    d = LP.network_details()
+    assert d == LP.NetworkDetails(adapter="Intel(R) Wi-Fi 6 AX201", ipv4=("192.168.1.23",),
+                                  ipv6=("2001:db8::23",), gateway="192.168.1.1",
+                                  dns=("192.168.1.1", "2001:db8::53"))
+
+
+def test_network_details_none_without_a_gateway_or_wmi(monkeypatch):
+    monkeypatch.undo()
+    _fake_wmi(monkeypatch, [_Nic("Loopback", ("127.0.0.1",), None, None)])
+    assert LP.network_details() is None
+    import sys
+    monkeypatch.setitem(sys.modules, "wmi", None)       # import fails
+    assert LP.network_details() is None
+
+
+_DETAILS = LP.NetworkDetails(adapter="Intel(R) Wi-Fi 6 AX201", ipv4=("192.168.1.23",),
+                             ipv6=("2001:db8::23",), gateway=GW, dns=("192.168.1.1", "9.9.9.9"))
+
+
+def test_sheet_shows_the_network_details_and_copies_all_but_ipv6(q_app, fast_pings, monkeypatch):
+    monkeypatch.setattr(LP, "network_details", lambda: _DETAILS)
+    sheet = _run_sheet(q_app, {}, gateway=GW)
+    card = sheet._details_card
+    assert card.isVisibleTo(sheet)
+    assert card.values["adapter"].text() == "Intel(R) Wi-Fi 6 AX201"
+    assert card.values["ipv6"].text() == "2001:db8::23"
+    assert card.values["dns"].text() == "192.168.1.1, 9.9.9.9"
+    text = sheet.copy_text()
+    assert "Adapter: Intel(R) Wi-Fi 6 AX201" in text and "IPv4 address: 192.168.1.23" in text
+    assert "DNS servers: 192.168.1.1, 9.9.9.9" in text
+    assert "2001:db8::23" not in text          # a global IPv6 address identifies the household
+
+
+def test_the_details_gateway_is_pinged_when_the_probe_has_none(q_app, fast_pings, monkeypatch):
+    monkeypatch.setattr(LP, "network_details", lambda: _DETAILS)
+    monkeypatch.setattr(LP, "default_gateway_ip", lambda: "10.9.9.9")   # one query, not two
+    sheet = _run_sheet(q_app, {}, gateway=None)
+    assert sheet._resolved_gw == GW
+    assert set(fast_pings.ips()) == {GW}
+
+
+def test_no_details_hides_the_card(q_app, fast_pings):
+    sheet = _run_sheet(q_app, {}, gateway=GW)
+    assert not sheet._details_card.isVisibleTo(sheet)
+    assert "Adapter" not in sheet.copy_text()
