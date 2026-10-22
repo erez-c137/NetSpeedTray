@@ -19,6 +19,8 @@ re-probe, cheaply:
   each move of the legacy task-switch windows adds one button slot to the prediction; while the
   predicted group is within ``SIDE_BAR_NEAR_SLOTS`` slots of the widget the 1 s safety-net tick
   re-probes every ``SIDE_BAR_NEAR_RECHECK_MS`` (and a foreground change once more, 800 ms later).
+  That interval doubles, up to ``SIDE_BAR_NEAR_RECHECK_MAX_MS``, while consecutive probes find the
+  same span (a widget in a centred bar's top gap is always "near"), and resets on any hook event.
 * Alignment (``TaskbarAl``): the WM_SETTINGCHANGE broadcast never arrives on 26200, so the value is
   also read on every coalesced hook burst and on the safety-net tick (one registry read). A flip
   re-decides the whole placement once the re-laid bar has settled.
@@ -28,7 +30,12 @@ keep_last=True)``), is rate-limited, and waits for the animation: a probe whose 
 start where the legacy Start window already is gets repeated a few times. The result goes back to
 PositionManager, which moves the widget only when the fresh layout really collides with it (or the
 alignment flipped). A user's drag always wins: collision re-checks are skipped while a drag offset is
-in force; an alignment flip only re-clamps it.
+in force; an alignment flip only re-clamps it. Nothing is applied while the widget is being dragged or
+its menu is open (deferred to the next reposition).
+
+By design, apps CLOSING never move the widget back to a better spot (#200 anti-jitter: a widget that
+followed every app would never sit still); a restart, Reset Position, a dock change or an alignment
+flip re-decides it.
 
 Never runs for a TOP/BOTTOM taskbar or an ExplorerPatcher-style bar (PositionManager attaches it
 only to a native side bar), so those layouts are untouched.
@@ -118,6 +125,10 @@ class SideBarWatcher(QObject):
         self._last_probe_at = -1e9
         self._retries = 0
         self._again = False                      # another request arrived while one was in flight
+        # The near re-check's current interval (backs off while nothing changes - rc.2 M2).
+        self._near_interval_ms = t.SIDE_BAR_NEAR_RECHECK_MS
+        # Bumped by detach(): a delayed retry from an earlier attachment must not fire (rc.2 L6).
+        self._gen = 0
 
         self._burst_timer = self._timer(t.SIDE_BAR_COALESCE_MS, self._on_burst)
         self._probe_timer = self._timer(0, self._run_probe)
@@ -162,7 +173,8 @@ class SideBarWatcher(QObject):
                      taskbar_hwnd, start, sorted(self._task_hwnds), self._hook is not None)
 
     def detach(self) -> None:
-        """Stop watching (the widget left the side bar, or the taskbar was re-created)."""
+        """Stop watching (the widget left the side bar, Free Move, or the taskbar was re-created)."""
+        self._gen += 1
         hook, self._hook = self._hook, None
         if hook is not None:
             try:
@@ -181,6 +193,7 @@ class SideBarWatcher(QObject):
         self._inflight = False
         self._again = False
         self._retries = 0
+        self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
 
     # --- inputs --------------------------------------------------------------------------------
 
@@ -218,7 +231,7 @@ class SideBarWatcher(QObject):
         if ctx is None or ctx.user_placed:
             return
         if (self._near(ctx) and not self._inflight and not self._probe_timer.isActive()
-                and (self._clock() - self._last_probe_at) * 1000.0 >= constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS):
+                and (self._clock() - self._last_probe_at) * 1000.0 >= self._near_interval_ms):
             self._schedule(full=False, delay_ms=0)
 
     def _on_followup(self) -> None:
@@ -296,6 +309,7 @@ class SideBarWatcher(QObject):
     def _on_burst(self) -> None:
         """A coalesced burst of legacy-window moves: alignment, then the collision prediction."""
         task_moved, self._task_moved = self._task_moved, False
+        self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS   # something moved
         if self._check_alignment():
             return
         ctx = self._context()
@@ -368,16 +382,23 @@ class SideBarWatcher(QObject):
                 and self._retries < constants.timeouts.SIDE_BAR_MAX_RETRIES:
             self._retries += 1
             self._poll_timer.stop()
-            QTimer.singleShot(constants.timeouts.SIDE_BAR_RETRY_MS, lambda: self._retry(full))
+            gen = self._gen
+            QTimer.singleShot(constants.timeouts.SIDE_BAR_RETRY_MS, lambda: self._retry(full, gen))
             return
         if ctx is not None and apps is not None:
             scale = ctx.dpi or 1.0
-            self._model = (apps[1] / scale, apps[3] / scale)
+            model = (apps[1] / scale, apps[3] / scale)
+            t = constants.timeouts
+            if self._model is not None and all(abs(a - b) < 1.0 for a, b in zip(model, self._model)):
+                self._near_interval_ms = min(self._near_interval_ms * 2, t.SIDE_BAR_NEAR_RECHECK_MAX_MS)
+            else:
+                self._near_interval_ms = t.SIDE_BAR_NEAR_RECHECK_MS
+            self._model = model
             self._assumed_growth = 0.0
         self._finish(apply=True, full=full)
 
-    def _retry(self, full: bool) -> None:
-        if self._hwnd and self._inflight:
+    def _retry(self, full: bool, gen: int) -> None:
+        if gen == self._gen and self._hwnd and self._inflight:
             self._fire_probe(full)
 
     def _settled(self, ctx: SideWatchContext) -> bool:

@@ -179,6 +179,10 @@ class WinEventHook(QObject, threading.Thread):
         Its ONLY job is to emit the internal signal to safely cross the thread boundary
         (after the optional source filter).
         """
+        # idObject first: the cheapest test, and the one that drops the bulk of a process-scoped
+        # LOCATIONCHANGE stream (Explorer reports every cursor move as OBJID_CURSOR - rc.2 L4).
+        if self.object_id_filter is not None and idObject != self.object_id_filter:
+            return
         flt = self.source_hwnd_filter
         if flt is not None:
             if isinstance(flt, frozenset):
@@ -186,8 +190,6 @@ class WinEventHook(QObject, threading.Thread):
                     return
             elif (hwnd or 0) != flt:
                 return
-        if self.object_id_filter is not None and idObject != self.object_id_filter:
-            return
         self._internal_event_received.emit(hwnd or 0)
 
     def set_source_hwnd_filter(self, hwnds: Optional[Union[int, FrozenSet[int]]]) -> None:

@@ -526,8 +526,8 @@ def test_app_group_on_a_side_bar_and_without_start():
 def test_full_query_infers_the_axis_and_returns_the_group():
     els = [("ToggleButton", "StartButton", (X0, 145, X1, 190)),
            ("Taskbar.TaskListButtonAutomationPeer", "a", (X0, 190, X1, 234))]
-    apps, widgets, group = uia_widgets._layout_from_elements_full(els, None)
-    assert apps == group == (X0, 145, X1, 234) and widgets is None
+    apps, widgets, group, overflow = uia_widgets._layout_from_elements_full(els, None)
+    assert apps == group == (X0, 145, X1, 234) and widgets is None and overflow is None
 
 
 def test_worker_stores_a_two_value_result_from_older_callers(layout):
@@ -573,3 +573,249 @@ def test_widget_forwards_foreground_changes_to_the_watcher(q_app):
     stub.config["free_move"] = True
     NetworkSpeedWidget._on_foreground_for_side_bar(stub, 123)
     assert stub.position_manager.note_foreground_change.call_count == 1
+
+
+# --- rc.2 review + live test of #406 (7c6e94d8): M1, M2, L1, L2, L4, L5, L6 ----------------------
+
+def test_m1_a_probe_landing_mid_drag_never_moves_the_widget(layout):
+    """Live: a probe in flight when a drag started re-placed the widget 183 -> 92 -> 186 in 13 ms,
+    and the release could save the automatic spot. The re-check waits for the drag to end."""
+    pm, tb, widget = _pm(widget_top=150)
+    pm._side_placement_for(tb, 56)
+    widget._dragging = True
+    with patch.object(pm, "update_position") as upd:
+        pm._apply_side_recheck(False)
+    upd.assert_not_called()
+    assert pm._side_recheck == "collision"                       # kept, not dropped
+    with patch.object(pm, "_recheck_side_placement") as rc:
+        pm._side_placement_for(tb, 56)                           # a reposition mid-drag
+    rc.assert_not_called()                                       # never reads the mid-drag position
+    widget._dragging = False
+    with patch.object(pm, "_recheck_side_placement", return_value=None) as rc:
+        pm._side_placement_for(tb, 56)                           # the first reposition after release
+    assert rc.call_args.args[3] == "collision" and pm._side_recheck is None
+    pm.stop_side_watcher()
+
+
+def test_m1_an_open_context_menu_defers_the_re_check_too(layout):
+    pm, tb, widget = _pm(widget_top=150)
+    pm._side_placement_for(tb, 56)
+    widget._is_context_menu_visible = True
+    with patch.object(pm, "update_position") as upd:
+        pm._apply_side_recheck(True)
+    upd.assert_not_called()
+    assert pm._side_watch_context() is None
+    pm.stop_side_watcher()
+
+
+def _no_room_pm(layout):
+    pm, tb, widget = _pm(widget_top=842)
+    taskbar_utils.request_taskbar_layout_probe(HWND)
+    layout.land((101, 850), widgets=(10, 54))
+    with patch.object(taskbar_utils, "wait_for_taskbar_layout", return_value=True), \
+            patch.object(taskbar_utils, "request_taskbar_layout_probe"):
+        first = pm._side_placement_for(tb, 56)
+    assert first.mode == "tray_no_room"
+    return pm, tb, widget
+
+
+def test_m2_same_span_rechecks_neither_re_decide_nor_log_at_info(layout, caplog):
+    """Live: in no-room every probe "collided" with the span the widget was placed against and
+    re-decided, 2 INFO lines per probe (~50k lines a day)."""
+    pm, tb, _w = _no_room_pm(layout)
+    caplog.clear()
+    caplog.set_level("DEBUG", logger="NetSpeedTray")
+    with patch.object(pm, "_decide_side_placement", wraps=pm._decide_side_placement) as decide:
+        for _ in range(20):
+            taskbar_utils.request_taskbar_layout_probe(HWND, keep_last=True)
+            layout.land((101, 850), widgets=(10, 54))
+            pm._recheck_side_placement(tb, 1.0, 56, "collision")
+    decide.assert_not_called()
+    assert [r for r in caplog.records if r.levelname == "INFO"] == []
+    pm.stop_side_watcher()
+
+
+def test_m2_a_changed_span_re_decides_and_logs_info_only_when_the_spot_changes(layout, caplog):
+    pm, tb, _w = _no_room_pm(layout)
+    caplog.clear()
+    caplog.set_level("DEBUG", logger="NetSpeedTray")
+    taskbar_utils.request_taskbar_layout_probe(HWND, keep_last=True)
+    layout.land((92, 846), widgets=(10, 54))                    # one more app: span changed...
+    assert pm._recheck_side_placement(tb, 1.0, 56, "collision").mode == "tray_no_room"
+    assert [r for r in caplog.records if r.levelname == "INFO"] == []   # ...the spot did not
+    taskbar_utils.request_taskbar_layout_probe(HWND, keep_last=True)
+    layout.land((300, 600), widgets=(10, 54))                   # apps closed: the tray end fits
+    with patch.object(pm._state.widget, "pos", return_value=QPoint(X0, 560)):
+        assert pm._recheck_side_placement(tb, 1.0, 56, "collision").mode == "tray"
+    assert len([r for r in caplog.records if r.levelname == "INFO"]) == 1
+    pm.stop_side_watcher()
+
+
+def test_m2_idle_near_rechecks_back_off_to_a_minute_and_reset_on_a_hook_event(rig, layout):
+    r = rig(model=(232, 849), start_top=232, widget=(114, 172))   # centred, widget in the top gap
+    intervals = []
+    for _ in range(8):
+        r.now += 120
+        r.w.on_tick()
+        r.fire_probe()
+        layout.land((232, 849))
+        r.w._poll_probe()
+        intervals.append(r.w._near_interval_ms)
+    assert intervals == [6000, 12000, 24000, 48000, 60000, 60000, 60000, 60000]
+    r.now += 30                                                   # 30 s later: still backed off
+    r.w.on_tick()
+    assert not r.w._probe_timer.isActive()
+    r.burst(REBAR)                                                # Explorer moved something
+    assert r.w._near_interval_ms == T.SIDE_BAR_NEAR_RECHECK_MS
+    r.w._near_interval_ms = 48000
+    r.now += 120
+    r.w.on_tick()
+    r.fire_probe()
+    layout.land((232, 893))                                       # the span changed
+    r.w._poll_probe()
+    assert r.w._near_interval_ms == T.SIDE_BAR_NEAR_RECHECK_MS
+
+
+def test_l1_the_first_placement_waits_for_the_probe_and_appears_once(layout):
+    """Live: tray end first (lagging HWND rect), then the top gap ~1 s later."""
+    import threading
+    pm, tb, _w = _pm(widget_top=0)
+    with patch.object(taskbar_utils, "find_apps_rect", return_value=(X0, 231, X1, 716)):
+        timer = threading.Timer(0.03, lambda: layout.land((232, 849), widgets=(10, 54)))
+        timer.start()
+        placement = pm._side_placement_for(tb, 56)
+        timer.join()
+    assert placement.mode == "top" and pm._side_placement_source == "uia"
+    assert not pm._side_placement_provisional
+    pm.stop_side_watcher()
+
+
+def test_l1_a_slow_probe_is_picked_up_within_one_poll_not_the_next_tick(layout):
+    pm, tb, _w = _pm(widget_top=0)
+    with patch.object(taskbar_utils, "find_apps_rect", return_value=(X0, 231, X1, 716)), \
+            patch.object(constants.timeouts, "SIDE_BAR_FIRST_LAYOUT_WAIT_MS", 1):
+        placement = pm._side_placement_for(tb, 56)
+    assert placement.mode == "tray" and pm._side_placement_provisional
+    assert pm._provisional_timer.isActive()
+    with patch.object(pm, "update_position") as upd:
+        pm._on_provisional_poll()                                  # still pending: keeps polling
+        upd.assert_not_called()
+        layout.land((232, 849), widgets=(10, 54))
+        pm._on_provisional_poll()
+    upd.assert_called_once_with()
+    pm.stop_side_watcher()
+
+
+def test_l1_wait_gives_up_after_its_bound(layout):
+    import time as _t
+    taskbar_utils.request_taskbar_layout_probe(HWND)
+    t0 = _t.monotonic()
+    assert taskbar_utils.wait_for_taskbar_layout(HWND, 0.05) is False
+    assert _t.monotonic() - t0 < 1.0
+
+
+OV = (802, 846)   # the "..." overflow button on the owner's Right+Center bar (apps 91..846)
+
+
+def test_l2_no_room_never_covers_the_overflow_button():
+    """Live: a no-room widget at the tray end covered 4-6 px (Center) / 20-47 px (Top) of "...",
+    the only way to reach the hidden apps. It now ends just above it (covering an app instead)."""
+    from netspeedtray.core.position_manager import SideBarGeometry, choose_side_placement
+    geo = SideBarGeometry(bar_top=0, tray_top=908, limit_top=54, apps_top=91, apps_bottom=846,
+                          overflow_top=OV[0], overflow_bottom=OV[1])
+    p = choose_side_placement(geo, 58)
+    assert p.mode == "tray_no_room" and p.y == OV[0] - 58
+    # Top alignment: Widgets by the tray (852..896), "..." right above it.
+    geo = SideBarGeometry(bar_top=0, tray_top=908, limit_top=0, apps_top=0, apps_bottom=850,
+                          end_top=852, overflow_top=806, overflow_bottom=850)
+    p = choose_side_placement(geo, 58)
+    assert p.mode == "tray_no_room" and p.y + 58 <= 806
+    # No overflow button in reach: the tray end, as before.
+    geo = SideBarGeometry(bar_top=0, tray_top=908, limit_top=54, apps_top=91, apps_bottom=846)
+    assert choose_side_placement(geo, 58) == SidePlacement("tray_no_room")
+
+
+def test_l2_the_calculator_honours_the_no_room_y(layout):
+    pm, tb, _w = _pm(widget_top=0)
+    pos = PositionCalculator().calculate_position(tb, (48, 58), {"tray_offset_y": 3},
+                                                  side_placement=SidePlacement("tray_no_room", 744))
+    assert pos.y == 744
+    pm.stop_side_watcher()
+
+
+def test_l2_overflow_button_is_found_by_name_or_as_the_runs_last_non_app_button():
+    base = [("ToggleButton", "WidgetsButton", (X0, 10, X1, 54)),
+            ("ToggleButton", "StartButton", (X0, 91, X1, 136)),
+            ("Taskbar.TaskListButtonAutomationPeer", "a", (X0, 136, X1, 802))]
+    named = base + [("ToggleButton", "TaskbarOverflowButton", (X0, 802, X1, 846))]
+    generic = base + [("Microsoft.UI.Xaml.Controls.Button", "MoreAppsButton", (X0, 802, X1, 846))]
+    assert uia_widgets.overflow_button_from_elements(named, vertical=True) == (X0, 802, X1, 846)
+    assert uia_widgets.overflow_button_from_elements(generic, vertical=True) == (X0, 802, X1, 846)
+    assert uia_widgets.overflow_button_from_elements(base, vertical=True) is None
+    far = base + [("Button", "FutureShellButton", (X0, 860, X1, 900))]       # not touching the run
+    assert uia_widgets.overflow_button_from_elements(far, vertical=True) is None
+
+
+def test_l2_the_decision_uses_the_probed_overflow_button(layout):
+    pm, tb, _w = _pm(widget_top=842)
+    taskbar_utils.request_taskbar_layout_probe(HWND)
+    layout.result = (_r((91, 846)), _r((10, 54)), _r((91, 846)), _r(OV))
+    while layout.workers:
+        layout.workers.pop(0)()
+    with patch.object(taskbar_utils, "wait_for_taskbar_layout", return_value=True), \
+            patch.object(taskbar_utils, "request_taskbar_layout_probe"):
+        p = pm._side_placement_for(tb, 56)
+    assert p == SidePlacement("tray_no_room", OV[0] - 56)
+    pm.stop_side_watcher()
+
+
+def test_l4_cursor_events_return_before_the_hwnd_filter():
+    """Live: 84 OBJID_CURSOR LOCATIONCHANGE events in 6 s of mouse movement reach the hook."""
+    from netspeedtray.utils import win_event_hook as weh
+
+    class Boom(frozenset):
+        def __contains__(self, item):
+            raise AssertionError("hwnd filter consulted for a cursor event")
+
+    seen = []
+    hook = weh.WinEventHook(weh.EVENT_OBJECT_LOCATIONCHANGE, source_hwnd_filter=Boom({START}),
+                            object_id_filter=weh.OBJID_WINDOW)
+    hook.event_triggered.connect(seen.append)
+    hook.callback(None, 0x800B, 0, -9, 0, 0, 0)                   # OBJID_CURSOR
+    assert seen == []
+
+
+def test_l5_free_move_unhooks_and_turning_it_off_re_attaches(layout):
+    pm, tb, _w = _pm(widget_top=840)
+    with patch.object(pm._side_watcher, "detach") as detach, \
+            patch.object(pm._side_watcher, "attach") as attach, \
+            patch("netspeedtray.core.position_manager.get_taskbar_info", return_value=tb), \
+            patch.object(pm, "refresh_float_state"), \
+            patch.object(pm, "_apply_saved_position", return_value=True):
+        pm._state.config["free_move"] = True
+        pm.update_position()
+        detach.assert_called()
+        attach.assert_not_called()
+    pm._state.config["free_move"] = False
+    with patch.object(pm._side_watcher, "attach") as attach:
+        pm._side_placement_for(tb, 56)
+    attach.assert_called_with(HWND)
+    pm.stop_side_watcher()
+
+
+def test_l6_a_retry_scheduled_before_a_detach_never_fires_after_re_attach(rig, layout):
+    r = rig(model=(300, 900), start_top=300, widget=(150, 206))
+    r.start_top = 210
+    r.burst(START)
+    r.fire_probe()
+    retries = []
+    with patch.object(QTimer, "singleShot", side_effect=lambda ms, fn: retries.append(fn)):
+        layout.land((250, 900))                                   # mid-animation: a retry is queued
+        r.w._poll_probe()
+    assert retries
+    r.w.detach()
+    r.w.attach(HWND)
+    r.w._inflight = True                                          # even with a new probe in flight
+    layout.requests.clear()
+    retries[0]()
+    assert layout.requests == []

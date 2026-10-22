@@ -153,12 +153,15 @@ def find_apps_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
 # the new one lands (``keep_last``) - when core/side_bar_watcher predicts the app group reaching the
 # widget or sees the icon alignment flip. It never runs for a TOP/BOTTOM bar today (#24 may reuse it).
 _layout_lock = threading.Lock()
+# Notified (under _layout_lock) whenever a probe lands or a request ends: wait_for_taskbar_layout.
+_layout_landed = threading.Condition(_layout_lock)
 # gen: bumped by every request (a result for an older gen is dropped); running: a worker thread is
 # alive (at most one at a time - repeated requests re-run it instead of piling up threads);
 # started: monotonic time of the current gen's request, for the timeout.
 # group: the contiguous Start-led button run (uia_widgets.app_group_from_elements), for consumers that
 # must not count far-away buttons; landed: how many probe results have landed (a sequence number).
-_layout_state: dict = {"hwnd": 0, "apps": None, "widgets": None, "group": None, "pending": False,
+_layout_state: dict = {"hwnd": 0, "apps": None, "widgets": None, "group": None, "overflow": None,
+                       "pending": False,
                        "done": False, "gen": 0, "running": False, "started": 0.0, "landed": 0}
 # A UIA call into a hung Explorer can block for a long time. Past this, the request counts as
 # finished WITHOUT a result (placement goes final on the classic HWND rect); a late result is dropped.
@@ -184,7 +187,10 @@ def _layout_worker() -> None:
                 _layout_state["running"] = False
                 return
         result = _query_taskbar_layout_blocking(hwnd)
-        if isinstance(result, tuple) and len(result) == 3:
+        overflow = None
+        if isinstance(result, tuple) and len(result) == 4:
+            apps, widgets, group, overflow = result
+        elif isinstance(result, tuple) and len(result) == 3:
             apps, widgets, group = result
         elif isinstance(result, tuple) and len(result) == 2:
             (apps, widgets), group = result, None
@@ -193,8 +199,10 @@ def _layout_worker() -> None:
         with _layout_lock:
             if _layout_state["gen"] == gen and _layout_state["pending"]:
                 _layout_state.update(apps=valid_rect(apps), widgets=valid_rect(widgets),
-                                     group=valid_rect(group), pending=False, done=True,
+                                     group=valid_rect(group), overflow=valid_rect(overflow),
+                                     pending=False, done=True,
                                      landed=_layout_state.get("landed", 0) + 1)
+                _layout_landed.notify_all()
                 logger.debug("Taskbar layout probe: apps=%s widgets=%s", apps, widgets)
             # else: superseded (loop re-runs for the newer request) or timed out (loop exits)
 
@@ -216,7 +224,7 @@ def request_taskbar_layout_probe(taskbar_hwnd: Optional[int], keep_last: bool = 
             _layout_state.update(pending=True, started=time.monotonic())
         else:
             _layout_state.update(hwnd=int(taskbar_hwnd), apps=None, widgets=None, group=None,
-                                 pending=True, done=False, started=time.monotonic())
+                                 overflow=None, pending=True, done=False, started=time.monotonic())
         start = not _layout_state["running"]
         _layout_state["running"] = True
     if start:
@@ -243,10 +251,37 @@ def taskbar_layout_snapshot(taskbar_hwnd: Optional[int]):
             else:
                 logger.info("Taskbar layout probe timed out after %.0f s; using the taskbar's own rect.",
                             LAYOUT_PROBE_TIMEOUT_S)
-                _layout_state.update(pending=False, done=True, apps=None, widgets=None, group=None)
+                _layout_state.update(pending=False, done=True, apps=None, widgets=None, group=None,
+                                     overflow=None)
         if _layout_state["done"]:
             return _layout_state["apps"], _layout_state["widgets"], bool(_layout_state["pending"])
         return None, None, bool(_layout_state["pending"])
+
+
+def taskbar_layout_overflow(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
+    """The last probed "..." overflow button (physical px) for ``taskbar_hwnd``, or None."""
+    taskbar_layout_snapshot(taskbar_hwnd)   # applies the timeout rule
+    with _layout_lock:
+        if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
+            return None
+        return _layout_state["overflow"]
+
+
+def wait_for_taskbar_layout(taskbar_hwnd: Optional[int], timeout_s: float) -> bool:
+    """Block up to ``timeout_s`` until the requested probe for ``taskbar_hwnd`` is no longer pending.
+    True when it landed (or nothing was pending). For the FIRST side-bar placement only, so the
+    widget appears once instead of hopping from the lagging HWND rect to the UIA spot (rc.2 L1);
+    the timeout keeps a hung Explorer from holding the GUI thread."""
+    if not taskbar_hwnd:
+        return False
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    with _layout_landed:
+        while _layout_state["hwnd"] == int(taskbar_hwnd) and _layout_state["pending"]:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return False
+            _layout_landed.wait(left)
+        return _layout_state["hwnd"] == int(taskbar_hwnd) and bool(_layout_state["done"])
 
 
 def taskbar_layout_group(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:

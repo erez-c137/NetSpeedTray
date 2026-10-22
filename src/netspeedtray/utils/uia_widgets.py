@@ -323,15 +323,57 @@ def query_taskbar_layout(taskbar_hwnd: int):
     return None if full is None else (full[0], full[1])
 
 
+def overflow_button_from_elements(elements, vertical: bool) -> Optional[Tuple[int, int, int, int]]:
+    """Pure: the app group's "..." overflow button (physical px), or None.
+
+    It is the only way to reach the apps Win11 hides when the bar is full, so the widget must never
+    cover it (rc.2 live test L2). Its class / AutomationId have not been probed live, so: an element
+    whose class or id says "overflow"; else the non-app button (not Start/Search/Task View/an app,
+    not Widgets, not the tray) that ENDS the contiguous Start-led run on the tray side."""
+    for cls, aid, rect in elements:
+        if "overflow" in (cls or "").lower() or "overflow" in (aid or "").lower():
+            r = _int_rect(rect)
+            if r is not None and _is_other_bar_button(cls, aid) and aid != _WIDGETS_ID:
+                return r
+    group = app_group_from_elements(elements, vertical)
+    if group is None:
+        return None
+    hi = group[3] if vertical else group[2]
+    best = None
+    for cls, aid, rect in elements:
+        r = _int_rect(rect)
+        if r is None or aid == _WIDGETS_ID or cls in _APP_BUTTON_CLASSES or aid in _APP_GROUP_IDS:
+            continue
+        if not _is_other_bar_button(cls, aid):
+            continue
+        end = r[3] if vertical else r[2]
+        inside = (r[1] >= group[1] and r[3] <= group[3]) if vertical else (r[0] >= group[0] and r[2] <= group[2])
+        if inside and end == hi:
+            best = r
+    return best
+
+
+def _int_rect(rect) -> Optional[Tuple[int, int, int, int]]:
+    try:
+        left, top, right, bottom = (int(v) for v in rect)
+    except Exception:
+        return None
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
+
+
 def _layout_from_elements_full(elements, vertical: Optional[bool]):
     apps, widgets = taskbar_layout_from_elements(elements)
     if vertical is None:   # infer the axis from the union: a left/right bar's run is taller than wide
         vertical = apps is not None and (apps[3] - apps[1]) > (apps[2] - apps[0])
-    return apps, widgets, app_group_from_elements(elements, vertical)
+    return (apps, widgets, app_group_from_elements(elements, vertical),
+            overflow_button_from_elements(elements, vertical))
 
 
 def query_taskbar_layout_full(taskbar_hwnd: int, vertical: Optional[bool] = None):
-    """``(apps_rect, widgets_rect, app_group_rect)`` in physical px (see ``app_group_from_elements``),
+    """``(apps_rect, widgets_rect, app_group_rect, overflow_rect)`` in physical px (see
+    ``app_group_from_elements`` / ``overflow_button_from_elements``),
     or None when UIA is unavailable. Same cost and rules as ``query_taskbar_layout`` - ONE FindAll."""
     ole32 = ctypes.oledll.ole32
     initialized = False

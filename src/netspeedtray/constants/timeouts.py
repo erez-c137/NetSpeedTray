@@ -102,6 +102,15 @@ class TimeoutConstants:
     # the widget (#24 design, 2026-10-22).
     SIDE_BAR_FOREGROUND_FOLLOWUP_MS: Final[int] = 800
     SIDE_BAR_NEAR_RECHECK_MS: Final[int] = 3000
+    # ...doubling (3 -> 6 -> 12 ... s) while consecutive re-checks find the same app span, up to this,
+    # and back to SIDE_BAR_NEAR_RECHECK_MS on any hook event or a changed span. A widget parked in
+    # the top gap of a centred bar is always "near" (rc.2 live test M2: a probe every ~3.3 s forever).
+    SIDE_BAR_NEAR_RECHECK_MAX_MS: Final[int] = 60000
+    # The FIRST side-bar placement of a dock waits this long on the GUI thread for its UIA probe
+    # (~10-50 ms when Explorer is healthy), so the widget appears once at the right spot instead of
+    # at the lagging HWND rect's spot and hopping ~1 s later (rc.2 L1). Bounded: a hung Explorer
+    # costs at most this, once, and the provisional decision is re-done as soon as the probe lands.
+    SIDE_BAR_FIRST_LAYOUT_WAIT_MS: Final[int] = 250
     SIDE_BAR_NEAR_SLOTS: Final[int] = 3
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
