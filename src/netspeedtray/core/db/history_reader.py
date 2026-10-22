@@ -212,11 +212,19 @@ def _local_bin_sql(col: str, interval: int) -> str:
     either way, so they keep the cheap integer form."""
     if interval < 3600:
         return f"CAST({col} / {interval} AS INTEGER) * {interval}"
-    # Truncate on the local wall clock, then convert that local boundary back to an epoch with ITS own
-    # offset ('utc' modifier) - on a DST-change day the midnight's offset differs from the row's.
     local = f"CAST(strftime('%s', {col}, 'unixepoch', 'localtime') AS INTEGER)"
-    return (f"CAST(strftime('%s', CAST({local} / {interval} AS INTEGER) * {interval}, "
-            f"'unixepoch', 'utc') AS INTEGER)")
+    # The row's own offset, applied to the row: start of its local hour (or day) as an epoch. Never
+    # later than the row, and on a fall-back night the two 01:00-02:00 hours stay two buckets.
+    own = f"({col} - ({local} % {interval}))"
+    if interval < 86400:
+        return own
+    # Days: the local midnight converted back with the MIDNIGHT's offset ('utc' modifier) - on a
+    # 23 h / 25 h day the row's offset is not the midnight's, and `own` would label the day 23:00 /
+    # 01:00. The CASE keeps a bucket from ever starting after its row should a zone's midnight be the
+    # ambiguous, repeated instant (SQLite resolves those to the later one).
+    midnight = (f"CAST(strftime('%s', CAST({local} / {interval} AS INTEGER) * {interval}, "
+                f"'unixepoch', 'utc') AS INTEGER)")
+    return f"(CASE WHEN {midnight} <= {col} THEN {midnight} ELSE {own} END)"
 
 
 _HOURLY_PROFILE_SQL = ("SELECT CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) AS h, "
