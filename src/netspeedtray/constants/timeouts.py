@@ -47,6 +47,14 @@ class TimeoutConstants:
     # EVENT_OBJECT_REORDER / foreground changes arrive in a burst. The first change is checked
     # at once; the rest of a burst collapses into one check at the end of the window.
     ZORDER_RECHECK_MIN_INTERVAL_MS: Final[int] = 100
+    # Burial "fight window" (pasharm, PR #327 rc.1 report on Win10): only a burial found within
+    # this long of OUR last re-seat is the shell fighting back and is charged to the re-seat
+    # backoff. A real fight re-buries within a frame or two (~16-33 ms) and is checked at the
+    # latest at the coalescer's trailing edge (ZORDER_RECHECK_MIN_INTERVAL_MS after our re-seat);
+    # the rc.1 live fight probe re-buries on a 0.2 s poll. A user can't bury it that fast again:
+    # every maximize / restore buries the widget on Win10, and the shortest re-seat -> user burial
+    # gap in his runs was ~420 ms. Anything later is a fresh burial: re-seated at once, free.
+    BURIAL_FIGHT_WINDOW_MS: Final[int] = 250
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
 
