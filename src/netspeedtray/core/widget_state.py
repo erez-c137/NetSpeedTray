@@ -1245,6 +1245,17 @@ class WidgetState(QObject):
 
         return self.history_reader.speed_history(start_time, end_time, interface_name, return_raw, resolution)
 
+    def get_graph_coverage(self, start_time: datetime, end_time: datetime,
+                           interface_name: Optional[str] = None) -> Dict[str, Any]:
+        """What the network graph needs besides the rows ``get_speed_history`` returns (rc.2 S3/S4):
+        ``resolution`` - the tier the window is read at ('raw', 'minute', 'hour', 'day'; None if
+        unknown), which says what a point IS (a per-second rate or a per-bucket peak); ``measured`` -
+        the spans the app was measuring (``HistoryReader.measured_spans``; None when unknown), which
+        say whether a stretch with no rows was idle or unmeasured. Reads only, no flush barrier (call
+        it after ``get_speed_history``, which flushes)."""
+        return {"resolution": self.history_reader.speed_resolution(start_time, end_time, interface_name),
+                "measured": self.history_reader.measured_spans(start_time, end_time)}
+
 
     def get_distinct_interfaces(self) -> List[str]:
         """Returns a sorted list of all unique interface names from the database."""
