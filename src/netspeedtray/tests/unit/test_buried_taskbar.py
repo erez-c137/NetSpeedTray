@@ -461,3 +461,62 @@ def test_insert_after_destroyed_mid_call_is_debug_and_free(caplog):
         win32.SetWindowPos.side_effect = z.SetWindowPos
         assert m.reseat_above_taskbar() is True                    # retry hits the new neighbour
         assert z.set_calls[-1][:2] == (W, MENU)
+
+
+# --- B1 (PR #327 live test): Start / Task View lifts the taskbar - and the widget - into a ---
+# higher Z-band. The walk from the taskbar then misses the widget although nothing is wrong.
+
+
+def test_raised_taskbar_band_is_not_reported_as_burial():
+    """Task View open: taskbar AND widget in band 6, the walk cannot find the widget above."""
+    with _env([TB, W], bands={TB: 6, W: 6}) as (m, *_):
+        assert m.is_buried_behind_taskbar() is False
+
+
+def test_raised_taskbar_band_never_reseats_even_when_bands_match():
+    """The old guard only compared the two bands - always equal here, since the widget is owned."""
+    with _env([TB, W], bands={TB: 6, W: 6}) as (m, z, *_):
+        assert m.reseat_above_taskbar() is False
+        assert z.set_calls == []
+        assert m._reseat_attempts == 0 and not m._last_reseat_ts
+
+
+def test_raised_taskbar_band_breaks_the_on_top_stretch():
+    with _env([W, TB], bands={TB: 1, W: 1}) as (m, z, _w, clock):
+        m.is_buried_behind_taskbar()
+        assert m._on_top_since is not None
+    with _env([W, TB], bands={TB: 6, W: 6}, clock=clock) as (m2, *_):
+        m2._on_top_since = m._on_top_since
+        m2.is_buried_behind_taskbar()
+        assert m2._on_top_since is None
+
+
+def test_task_view_repro_does_not_escalate_backoff_and_real_burial_recovers_at_once():
+    """Live repro: Win+Tab for 20 s (checks every event + 1 s tick), then Esc. Before the fix
+    every check reported burial, re-seated and doubled the backoff, so the real burial left
+    behind after Esc waited out an escalated window (11-12 s on the owner's PC)."""
+    bands = {TB: 6, W: 6}
+    with _env([TB, W], bands=bands) as (m, z, _w, clock):
+        for _ in range(40):                      # 20 s of checks at 2 Hz
+            clock.t += 0.5
+            if m.is_buried_behind_taskbar():
+                m.reseat_above_taskbar()
+            z.order = [TB, W]                    # the walk keeps missing the widget
+        assert z.set_calls == []
+        assert m._reseat_attempts == 0
+        bands[TB] = bands[W] = 1                 # Esc: back to the desktop band, widget buried
+        clock.t += 0.1
+        assert m.is_buried_behind_taskbar() is True
+        assert m.reseat_above_taskbar() is True  # immediate - no backoff was charged
+        assert z.above(W, TB)
+
+
+def test_deferral_for_raised_band_logs_once(caplog):
+    with _env([TB, W], bands={TB: 6, W: 6}) as (m, _z, _w, clock):
+        with caplog.at_level(logging.DEBUG, logger=pm_mod.logger.name):
+            for _ in range(10):
+                clock.t += 0.5
+                m.is_buried_behind_taskbar()
+                m.reseat_above_taskbar()
+    lines = [r for r in caplog.records if "Z-band 6" in r.getMessage()]
+    assert len(lines) == 1

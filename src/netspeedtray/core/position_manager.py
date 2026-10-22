@@ -100,6 +100,20 @@ def _window_band(hwnd: int) -> Optional[int]:
     return None
 
 
+# The taskbar's normal Z-band (ZBID_DESKTOP). Opening Start or Task View lifts the taskbar into a
+# higher band (6 on a live Win11 26200 probe) and the widget, owned by it, goes along. While it is
+# up there the GW_HWNDPREV walk from the taskbar no longer finds the widget, so the burial check
+# cannot tell burial from "moved with the taskbar" - it must not guess, re-seat or charge the
+# backoff; the band dropping back (a foreground / reorder event, or the 1 s tick) re-checks.
+_ZBID_DESKTOP = 1
+
+
+def _taskbar_band_is_raised(tb: int) -> Optional[int]:
+    """The taskbar's band when it is KNOWN to be outside the normal band, else None."""
+    band = _window_band(tb)
+    return band if band is not None and band != _ZBID_DESKTOP else None
+
+
 # Re-seat backoff, the safety net against a shell that re-buries the widget the instant it
 # is re-seated: the first recovery fires immediately, then each re-seat that does not hold
 # doubles the wait (1, 2, 4 ... 60 s). The seat above the taskbar cannot clip a menu, so the
@@ -971,6 +985,14 @@ class PositionManager(QObject):
             if not tb:
                 self.note_on_top_unverified()
                 return False
+            raised = _taskbar_band_is_raised(tb)
+            if raised is not None:
+                # Start / Task View is open: the Z-order walk cannot verify anything (PR #327 B1).
+                self.note_on_top_unverified()
+                self._log_deferral(
+                    "tb-band", "Burial check deferred: the taskbar is in Z-band %s (Start / Task View).",
+                    raised)
+                return False
             above = self._is_above_in_zorder(hwnd, tb)
             if above is None:
                 self.note_on_top_unverified()
@@ -1016,7 +1038,8 @@ class PositionManager(QObject):
         the re-seat refuses to follow it there.
 
         Guards, in order (each one defers; the next event or the 1 s tick retries):
-        backoff -> taskbar not topmost -> taskbar in another Z-band -> already seated.
+        backoff -> taskbar not topmost -> taskbar out of its normal Z-band -> widget in another
+        Z-band -> already seated.
 
         Returns True when the widget was actually re-seated.
         """
@@ -1036,6 +1059,11 @@ class PositionManager(QObject):
                 # A fullscreen app (or anything else) took the taskbar out of the topmost band:
                 # following it down would put the widget under that window - leave it alone.
                 self._log_deferral("tb-not-topmost", "Re-seat deferred: the taskbar is not topmost.")
+                return False
+            raised = _taskbar_band_is_raised(tb)
+            if raised is not None:
+                self._log_deferral(
+                    "tb-band", "Re-seat deferred: the taskbar is in Z-band %s (Start / Task View).", raised)
                 return False
             own_band, tb_band = _window_band(hwnd), _window_band(tb)
             if own_band is not None and tb_band is not None and own_band != tb_band:
