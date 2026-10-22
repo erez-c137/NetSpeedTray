@@ -603,6 +603,38 @@ Two things look different in 2.1.4-2.1.7, and neither is damage:
 for rows recorded before 2.2 it estimates `average × MIN(sample_count, 60)` - the seconds the row
 really stands for - instead of a flat 60, and labels the result *recorded history*.
 
+### Moving to a new PC
+
+Your history is one file, and the new PC can simply use it. There is no in-app import yet (planned
+for 2.3, #334), but the move by hand is safe: at start NetSpeedTray opens whatever v7 or v8 file it
+finds under the live name, exactly as it does after an upgrade.
+
+1. **On the old PC, get a copy of the history.** Either:
+   - **Settings > Advanced > Back up history...** - saves a consistent, checked copy (by default
+     `Documents\NetSpeedTray-history-<date>.db`) while the app keeps running; or
+   - right-click the tray icon > **Exit**, then copy `%APPDATA%\NetSpeedTray\speed_history.db`.
+     A clean exit leaves no `speed_history.db-wal`; if one is there, the app did not close cleanly
+     and its last writes are still in it - start NetSpeedTray, Exit again, then copy.
+
+   Copy `NetSpeedTray_Config.json` from the same folder too if you want your settings.
+2. **On the new PC, exit NetSpeedTray** (tray icon > Exit). In `%APPDATA%\NetSpeedTray`, delete **all
+   three** of `speed_history.db`, `speed_history.db-wal` and `speed_history.db-shm` - the `-wal` / `-shm`
+   files belong to the database you are replacing, and SQLite would replay them into the copied file
+   (see step 1 of [Restoring a backup](#restoring-a-backup) for why that is destructive).
+3. Paste the copy into that folder and name it `speed_history.db` (and `NetSpeedTray_Config.json`, if
+   you brought it).
+4. Start NetSpeedTray (2.2 or later; a file from 2.1.x is upgraded on this start, with the usual
+   `.bak.v7_...` kept).
+
+The new PC's own history **and its data-usage count for the current period** are replaced by the old
+PC's (`usage_counter` travels in the file; the counter snapshot it carries belongs to the old PC's
+boot, so nothing from it is re-added on the new one). Adapter names come along as they were: if the new
+PC's adapters are named differently, the old ones show as separate adapters in the graphs, and with
+**Selected** adapters you may need to pick them again.
+
+A backup made with the button is never touched by the app's own clean-up: it does not use the
+`speed_history.db...` names, and the button refuses to save under one.
+
 ---
 
 ## Maintenance

@@ -2184,20 +2184,33 @@ class NetworkSpeedWidget(QWidget):
     # The no-room notice is longer than a usage alert: give it time to be read.
     _NOTICE_FLYOUT_DISMISS_MS = 30000
 
-    def _show_notice_flyout(self, title: str, body: str) -> None:
-        """A one-time notice next to the widget that never takes focus (the data-cap alerts' flyout)."""
+    def _show_notice_flyout(self, title: str, body: str, action_text: Optional[str] = None,
+                            on_action=None) -> None:
+        """A one-time notice next to the widget that never takes focus (the data-cap alerts' flyout).
+        ``action_text`` / ``on_action``: an optional button (e.g. "Open folder")."""
         try:
             from netspeedtray.views.flyout import Flyout
             from PyQt6 import sip
             previous = getattr(self, "_notice_flyout", None)
             if previous is not None and not sip.isdeleted(previous):
                 previous.close()
-            self._notice_flyout = Flyout(title, body, auto_dismiss_ms=self._NOTICE_FLYOUT_DISMISS_MS)
+            self._notice_flyout = Flyout(title, body, action_text=action_text if on_action else None,
+                                         auto_dismiss_ms=self._NOTICE_FLYOUT_DISMISS_MS)
+            if on_action is not None and action_text:
+                self._notice_flyout.action_clicked.connect(on_action)
             geo = self.frameGeometry()
             self._notice_flyout.show_at(QPoint(geo.left(), geo.top()))
         except Exception as e:
             self.logger.error("Error showing a notice: %s", e, exc_info=True)
 
+
+    def show_backup_notice(self, title: str, body: str, path: Optional[str] = None) -> None:
+        """Settings > Advanced > Back up history finished while Settings was closed (#334): say so in the
+        non-focus flyout, with "Open folder" when a copy was written - never a modal box with no visible
+        parent, which would take focus and block the Monitor."""
+        from netspeedtray.utils.helpers import reveal_in_explorer
+        self._show_notice_flyout(title, body, action_text=self.i18n.STATS_DETAIL_OPEN_FOLDER if path else None,
+                                 on_action=(lambda: reveal_in_explorer(path)) if path else None)
 
     def apply_all_settings(self) -> None:
         """Delegates to ConfigController."""
@@ -2838,6 +2851,13 @@ class NetworkSpeedWidget(QWidget):
         def _position_config() -> None:
             self._capture_position_config()
 
+        def _history_backup() -> None:
+            # A running Settings > Advanced > Back up history (#334): interrupt its copy and give its
+            # thread a moment to delete the unfinished file + -journal. It only ever reads the live
+            # file, so a thread still running after the wait loses nothing (it is a daemon thread).
+            from netspeedtray.core.db import history_backup
+            history_backup.cancel_all(constants.timeouts.HISTORY_BACKUP_CANCEL_WAIT_MS / 1000.0)
+
         def _config_save() -> None:
             self.logger.debug("Performing final configuration save...")
             self.config_manager.save(self.config)
@@ -2851,7 +2871,7 @@ class NetworkSpeedWidget(QWidget):
         steps = (
             ("hover card", _hover_card), ("event hooks", _event_hooks),
             ("position manager", _position_manager), ("state watcher", _state_watcher),
-            ("monitor window", _monitor_window),
+            ("monitor window", _monitor_window), ("history backup", _history_backup),
             ("monitor thread", _monitor_thread), ("latency probe", _latency_probe),
             ("update checker", _update_checker),
             ("metrics endpoint", _metrics_endpoint), ("controller", _controller),

@@ -24,7 +24,7 @@ from collections import deque
 from functools import partial
 from typing import Any, Deque, Dict, Optional
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from PyQt6 import sip
 from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
@@ -337,6 +337,7 @@ class OverviewTab(QWidget):
         self._bottom_grid.setVerticalSpacing(12)
         self._usage = UsageTile(i18n)
         self._usage.set_cap_requested.connect(self._open_settings)
+        self._usage.usage_history_requested.connect(self._open_usage_history)
         self._busiest = BusiestAppsCard(i18n)
         self._busiest.go_to_network.connect(self._goto_network)
         root.addLayout(self._bottom_grid)
@@ -952,6 +953,34 @@ class OverviewTab(QWidget):
             # it - while exec() still runs; deleteLater() on the dead wrapper then raised out of this
             # click handler and the app logged it as CRITICAL on the way out.
             if sheet is not None and not sip.isdeleted(sheet):
+                sheet.deleteLater()
+
+    def _open_usage_history(self) -> None:
+        """The usage card's "Usage by day" link - the per-day / month / year table (#334)."""
+        mw = self._main_widget
+        ws = getattr(mw, "widget_state", None)
+        if ws is None:
+            return
+        from netspeedtray.views.monitor.usage_history_sheet import UsageHistorySheet
+
+        def period_ceiling():
+            # The usage card's own rule with a cap set: its period row IS the odometer, and Today never
+            # reads above it. (period start, (up, down)), else None.
+            cap_set = getattr(mw, "_usage_cap_set", None)
+            if cap_set is None or not cap_set():
+                return None
+            return date.fromisoformat(ws.get_usage_period_key()), tuple(ws.get_usage_this_period())
+
+        sheet = None
+        try:
+            sheet = UsageHistorySheet(ws, getattr(mw, "config", None) or self._config, self._i18n,
+                                      period_ceiling=period_ceiling,
+                                      parent=self.window())
+            sheet.exec()
+        except Exception as e:
+            self.logger.error("Could not open usage history: %s", e, exc_info=True)
+        finally:
+            if sheet is not None and not sip.isdeleted(sheet):   # as _open_detail
                 sheet.deleteLater()
 
     def _open_connection_check(self) -> None:
