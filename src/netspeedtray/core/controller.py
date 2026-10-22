@@ -415,10 +415,14 @@ class StatsController(QObject):
                 # its bytes are real (#13). The window began at the previous sample: bytes are
                 # charged to the period it began in.
                 if byte_deltas:
-                    if self._awaiting_first_primary():
+                    holding = self._awaiting_first_primary()
+                    if holding:
                         # No primary yet, so auto mode cannot tell which adapter it meters: hold the
-                        # deltas and charge the primary's share once it resolves (D1). The odometer
-                        # still gets this poll's counters (nothing added), so its snapshot stays paired.
+                        # deltas and charge the primary's share once it resolves (D1). counters=None:
+                        # handing the odometer this poll's counters would let its 30 s persist replace
+                        # the PREVIOUS session's snapshot - a quit or crash before a route appears would
+                        # then lose that closed window, the held bytes and the next launch's recovery.
+                        # Kept as it was, the snapshot still pairs the stored total (nothing added).
                         self._hold_unrouted(byte_deltas, last_wall)
                         charge = (0.0, 0.0)
                     else:
@@ -426,7 +430,7 @@ class StatsController(QObject):
                         charge = self._aggregate_for_odometer(byte_deltas)
                     self._write_byte_sink(
                         "data-usage odometer", self.widget_state.add_usage_bytes,
-                        *charge, counters=current_counters,
+                        *charge, counters=None if holding else current_counters,
                         sampled_at=sample_wall, window_start=last_wall,
                         primary=self._odometer_primary())
                 # v8 history: every interface's exact delta over the measured span (ending at this

@@ -493,7 +493,7 @@
     "USAGE_SET_LIMIT_HINT": "월간 한도 설정",
     "USAGE_CAP_COVERAGE_TEMPLATE": "이번 기간의 {pct}% 동안 NetSpeedTray 실행됨",
     "USAGE_CAP_THIS_PC_ONLY": "이 PC만",
-    "USAGE_CAP_COVERAGE_TOOLTIP": "한도는 이 PC의 트래픽만 집계하며, 네트워크의 다른 기기는 포함하지 않습니다. NetSpeedTray가 닫혀 있는 동안에는 아무것도 측정되지 않지만, 그동안의 트래픽은 다음 실행 시 더해집니다(그 사이에 Windows를 다시 시작한 경우 제외). PC가 꺼져 있던 동안에는 데이터를 사용하지 않았습니다.",
+    "USAGE_CAP_COVERAGE_TOOLTIP": "한도는 이 PC의 트래픽만 집계하며, 네트워크의 다른 기기는 포함하지 않습니다. NetSpeedTray가 닫혀 있는 동안에는 아무것도 측정되지 않지만, 그동안의 트래픽은 다음 실행 시 더해집니다(그 사이에 Windows를 다시 시작했거나 자동 모드에서 사용 중인 연결이 바뀐 경우 제외). PC가 꺼져 있던 동안에는 데이터를 사용하지 않았습니다.",
     "//_5": "--- Settings: Connection (latency + plan) / Hardware throttle ---",
     "CONN_LATENCY_TITLE": "연결 지연 시간",
     "CONN_LATENCY_SUB": "라우터까지의 Ping 및 패킷 손실, 그리고 시간 경과에 따른 연결 끊김",

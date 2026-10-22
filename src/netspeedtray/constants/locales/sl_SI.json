@@ -493,7 +493,7 @@
     "USAGE_SET_LIMIT_HINT": "Nastavi mesečno omejitev",
     "USAGE_CAP_COVERAGE_TEMPLATE": "NetSpeedTray je deloval {pct}% tega obdobja",
     "USAGE_CAP_THIS_PC_ONLY": "Samo ta računalnik",
-    "USAGE_CAP_COVERAGE_TOOLTIP": "Omejitev šteje le promet tega računalnika, ne drugih naprav v vašem omrežju. Ko je NetSpeedTray zaprt, se nič ne meri; ta promet se doda ob naslednjem zagonu, razen če se je Windows vmes znova zagnal. Ko je bil računalnik izklopljen, ni porabil podatkov.",
+    "USAGE_CAP_COVERAGE_TOOLTIP": "Omejitev šteje le promet tega računalnika, ne drugih naprav v vašem omrežju. Ko je NetSpeedTray zaprt, se nič ne meri; ta promet se doda ob naslednjem zagonu, razen če se je Windows vmes znova zagnal ali se je v samodejnem načinu zamenjala uporabljena povezava. Ko je bil računalnik izklopljen, ni porabil podatkov.",
     "//_5": "--- Settings: Connection (latency + plan) / Hardware throttle ---",
     "CONN_LATENCY_TITLE": "Zakasnitev povezave",
     "CONN_LATENCY_SUB": "Ping in izguba paketov do usmerjevalnika ter prekinitve povezave skozi čas",

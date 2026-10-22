@@ -702,12 +702,63 @@ def test_sheet_shows_the_network_details_and_copies_all_but_ipv6(q_app, fast_pin
     assert "2001:db8::23" not in text          # a global IPv6 address identifies the household
 
 
+def test_a_public_ipv4_is_shown_but_never_copied(q_app, fast_pings, monkeypatch):
+    """Review L1: a PC straight on a modem (no NAT) holds a public IPv4 - as identifying as IPv6."""
+    monkeypatch.setattr(LP, "network_details", lambda: LP.NetworkDetails(
+        adapter="Realtek PCIe GbE", ipv4=("93.184.215.14", "10.0.0.5"), gateway=GW, dns=("9.9.9.9",)))
+    sheet = _run_sheet(q_app, {}, gateway=GW)
+    assert sheet._details_card.values["ipv4"].text() == "93.184.215.14, 10.0.0.5"
+    text = sheet.copy_text()
+    assert "93.184.215.14" not in text and "IPv4 address: 10.0.0.5" in text and "9.9.9.9" in text
+
+
 def test_the_details_gateway_is_pinged_when_the_probe_has_none(q_app, fast_pings, monkeypatch):
     monkeypatch.setattr(LP, "network_details", lambda: _DETAILS)
     monkeypatch.setattr(LP, "default_gateway_ip", lambda: "10.9.9.9")   # one query, not two
     sheet = _run_sheet(q_app, {}, gateway=None)
     assert sheet._resolved_gw == GW
     assert set(fast_pings.ips()) == {GW}
+
+
+def test_a_hung_wmi_never_holds_a_check_with_a_known_router(q_app, fast_pings, monkeypatch):
+    """Review M2: the details read must not run before the pings. With the router known the bursts
+    start at once, and a WMI call that never returns is abandoned after CHECK_DETAILS_TIMEOUT_S - the
+    worker thread still ends (no live QThread for the quit wait to time out on)."""
+    release = threading.Event()
+    monkeypatch.setattr(LAT, "CHECK_DETAILS_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(LP, "network_details", lambda: release.wait(30) and None)
+    t0 = time.monotonic()
+    try:
+        w = CC.ConnectionCheck(GW, None, count=3, spacing_ms=0, timeout_ms=100)
+        got = []
+        w.check_finished.connect(lambda st: got.append(st))
+        w.start()
+        assert w.wait(5000), "the worker waited on the hung WMI call"
+        assert time.monotonic() - t0 < 3.0
+        assert set(fast_pings.ips()) == {GW}
+        # The pings started before the details wait, not after it.
+        assert fast_pings.log[0][0] - t0 < 0.25
+    finally:
+        release.set()
+
+
+def test_a_hung_wmi_with_no_router_known_ends_as_no_router(q_app, fast_pings, monkeypatch):
+    release = threading.Event()
+    monkeypatch.setattr(LAT, "CHECK_DETAILS_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(LP, "network_details", lambda: release.wait(30) and None)
+    calls = []
+    monkeypatch.setattr(LP, "default_gateway_ip", lambda: calls.append(1) or GW)
+    try:
+        w = CC.ConnectionCheck(None, None, count=3, spacing_ms=0, timeout_ms=100)
+        resolved = []
+        w.gateway_resolved.connect(lambda ip: resolved.append(ip))
+        w.start()
+        assert w.wait(5000)
+        q_app.processEvents()
+        assert resolved == [None] and not fast_pings.ips()
+        assert calls == [], "no second WMI query behind a failed one"
+    finally:
+        release.set()
 
 
 def test_no_details_hides_the_card(q_app, fast_pings):

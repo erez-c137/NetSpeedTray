@@ -12,10 +12,11 @@ named in the label. Changing the box restarts the check so it always matches wha
 Nothing the sheet measures is persisted; the standing probe is the record.
 
 Network details (#214): the adapter the default gateway is on, its addresses and DNS servers, read once
-per check by the worker (one WMI query, nothing sent). "Copy figures" includes the adapter, the IPv4
-address and the DNS servers - like the router address the report already carries, they are local
-facts a helper needs - but NOT the IPv6 addresses: those are usually globally routable and identify
-the household (the #306 rule: a pasted report must not leak more than the problem needs).
+per check by the worker (one WMI query, nothing sent). "Copy figures" includes the adapter, PRIVATE
+IPv4 addresses and the DNS servers - like the router address the report already carries, they are
+local facts a helper needs - but NOT IPv6 addresses or a public IPv4 (a PC on a modem with no NAT):
+those are globally routable and identify the household (the #306 rule: a pasted report must not leak
+more than the problem needs).
 """
 from __future__ import annotations
 
@@ -277,6 +278,23 @@ def _detail_text(details, field: str) -> str:
     if isinstance(value, (tuple, list)):
         return ", ".join(str(v) for v in value if v)
     return str(value or "")
+
+
+def _copied_detail_text(details, field: str) -> str:
+    """``_detail_text`` for the pasted report. The own-address row keeps only PRIVATE addresses: a PC
+    connected straight to a modem (no NAT) holds a public IPv4, which identifies the household just
+    as an IPv6 one does (review L1). DNS servers stay: a resolver's address says nothing about you."""
+    if field != "ipv4":
+        return _detail_text(details, field)
+    import ipaddress
+    keep = []
+    for a in (getattr(details, field, None) or ()) if details is not None else ():
+        try:
+            if ipaddress.ip_address(str(a)).is_private:
+                keep.append(str(a))
+        except ValueError:
+            continue
+    return ", ".join(keep)
 
 
 class ConnectionCheckSheet(QDialog):
@@ -606,9 +624,9 @@ class ConnectionCheckSheet(QDialog):
                     loss = self._loss_text(st)
                     verdict = f"  [{self._tr(k, d)}{', ' + loss if loss else ''}]"
             lines.append(f"{head}{verdict}\n  {cells}")
-        details = [f"{_tr(self._i18n, key, default)}: {_detail_text(self._details, field)}"
+        details = [f"{_tr(self._i18n, key, default)}: {_copied_detail_text(self._details, field)}"
                    for field, key, default, copied in _DETAIL_ROWS
-                   if copied and _detail_text(self._details, field)]
+                   if copied and _copied_detail_text(self._details, field)]
         if details:
             lines.append("  ".join(details))
         sentence = self._attribution_text()

@@ -222,6 +222,10 @@ class LatencyConstants:
     }
     # How long closing the sheet waits for the worker: one in-flight echo plus slack.
     CHECK_STOP_WAIT_MS: Final[int] = 1500
+    # The sheet's network details (#214) come from one WMI query (~150 ms) on a daemon thread. A hung
+    # WMI service must never hold the check: past this the check goes on without them (and, with no
+    # router known yet, without a router), and the worker thread still ends on time.
+    CHECK_DETAILS_TIMEOUT_S: Final[float] = 3.0
 
 
 class UsageOdometerConstants:

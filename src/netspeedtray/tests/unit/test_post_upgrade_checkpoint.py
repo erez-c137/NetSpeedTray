@@ -55,3 +55,33 @@ def test_the_upgrade_leaves_no_post_maintenance_frames_in_the_wal(tmp_path, monk
         assert not wal.exists() or wal.stat().st_size <= 8 * 4096 + 4096
     finally:
         w._close_connection()
+
+
+def test_an_hourly_pass_never_stalls_writes_while_the_monitor_reads(tmp_path):
+    """Review (b): the hourly pass ran a raw wal_checkpoint(TRUNCATE) on the 5 s busy timeout, so a
+    Monitor read holding its snapshot stalled every queued write ~5 s each hour. It now tries once on the
+    short timeout and leaves a busy checkpoint to the idle retry - with no restart marker written."""
+    import sqlite3
+    import time
+    from netspeedtray import constants
+    w = DatabaseWorker(tmp_path / DB)
+    try:
+        w._prepare_storage()                                         # a fresh v8 file
+        reader = sqlite3.connect((tmp_path / DB).as_uri() + "?mode=ro", uri=True, isolation_level=None)
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM metadata").fetchone()   # the Monitor's snapshot
+        with w.conn:
+            w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('d4b', 'x')")
+        t0 = time.perf_counter()
+        w._execute_task("maintenance", constants.config.defaults.DEFAULT_CONFIG.copy())
+        took = time.perf_counter() - t0
+        assert took < 2.0, f"the hourly pass blocked {took:.1f} s on a reader"
+        assert w._wal_pending and w._compact_pending
+        assert w.conn.execute("SELECT value FROM metadata WHERE key = ?",
+                              (w._COMPACT_MARKER_KEY,)).fetchone() is None
+        reader.execute("COMMIT")
+        reader.close()
+        w._retry_pending_compaction(force=True)                      # the idle tick, reader gone
+        assert not w._wal_pending and not w._compact_pending
+    finally:
+        w._close_connection()

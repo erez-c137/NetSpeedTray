@@ -493,7 +493,7 @@
     "USAGE_SET_LIMIT_HINT": "设置月度限额",
     "USAGE_CAP_COVERAGE_TEMPLATE": "本期 NetSpeedTray 运行了 {pct}% 的时间",
     "USAGE_CAP_THIS_PC_ONLY": "仅限本机",
-    "USAGE_CAP_COVERAGE_TOOLTIP": "上限只统计本机的流量，不包括网络中的其他设备。NetSpeedTray 关闭期间不会测量；这段时间的流量会在下次启动时补记，除非期间重启过 Windows。电脑关机期间不消耗流量。",
+    "USAGE_CAP_COVERAGE_TOOLTIP": "上限只统计本机的流量，不包括网络中的其他设备。NetSpeedTray 关闭期间不会测量；这段时间的流量会在下次启动时补记，除非期间重启过 Windows，或在自动模式下所用的连接发生了变化。电脑关机期间不消耗流量。",
     "//_5": "--- 设置：连接（延迟 + 套餐）/ 硬件阈值 ---",
     "CONN_LATENCY_TITLE": "连接延迟",
     "CONN_LATENCY_SUB": "路由器 Ping 值与丢包率，以及连接中断情况",

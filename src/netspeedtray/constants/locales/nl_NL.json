@@ -493,7 +493,7 @@
     "USAGE_SET_LIMIT_HINT": "Stel een maandlimiet in",
     "USAGE_CAP_COVERAGE_TEMPLATE": "NetSpeedTray draaide {pct}% van deze periode",
     "USAGE_CAP_THIS_PC_ONLY": "Alleen deze pc",
-    "USAGE_CAP_COVERAGE_TOOLTIP": "De limiet telt alleen het verkeer van deze pc, niet dat van andere apparaten in je netwerk. Zolang NetSpeedTray gesloten is, wordt niets gemeten; dat verkeer wordt bij de volgende start alsnog opgeteld, tenzij Windows tussendoor opnieuw is opgestart. Terwijl de pc uit stond, werd geen data gebruikt.",
+    "USAGE_CAP_COVERAGE_TOOLTIP": "De limiet telt alleen het verkeer van deze pc, niet dat van andere apparaten in je netwerk. Zolang NetSpeedTray gesloten is, wordt niets gemeten; dat verkeer wordt bij de volgende start alsnog opgeteld, tenzij Windows tussendoor opnieuw is opgestart of in de automatische modus de gebruikte verbinding is gewijzigd. Terwijl de pc uit stond, werd geen data gebruikt.",
     "//_5": "--- Settings: Connection (latency + plan) / Hardware throttle ---",
     "CONN_LATENCY_TITLE": "Verbindingslatentie",
     "CONN_LATENCY_SUB": "Ping + pakketverlies naar je router, en verbindingsonderbrekingen in de loop van de tijd",

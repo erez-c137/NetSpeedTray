@@ -171,6 +171,9 @@ class DatabaseWorker(QThread):
         self._vacuum_pending = False
         self._backups_pending = False   # Delete all history could not remove a backup yet (retried)
         self._wal_pending = False       # ... or could not checkpoint the WAL yet
+        # The pending compaction is only an hourly pass's busy checkpoint (no delete): retried without
+        # the restart marker. A history delete taking over clears it (see _delete_history).
+        self._compact_after_maintenance = False
         self._backup_attempts = 0       # backup-removal retries this session (exponential backoff)
         self._vacuum_attempts = 0       # deferred incremental-vacuum retries this session
         self._kept_backups: set = set()   # names given up on for good (read-only + linked elsewhere)
@@ -1247,11 +1250,16 @@ class DatabaseWorker(QThread):
         except Exception as e:   # never fatal to maintenance (the stamp above is already written)
             self.logger.warning("Backup age-out skipped: %s", e)
         # Bound the WAL: long-lived reader connections (the Monitor's graph worker) can hold back the
-        # automatic checkpoint. A busy checkpoint is harmless and must not undo the maintenance.
-        try:
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);").fetchall()
-        except sqlite3.Error as e:
-            self.logger.debug("WAL checkpoint skipped: %s", e)
+        # automatic checkpoint. A busy checkpoint is harmless and must not undo the maintenance. One
+        # attempt on the SHORT busy timeout (_checkpoint_truncate): the raw pragma waited the full 5 s
+        # whenever the Monitor was reading, stalling every queued write each hourly pass (review (b),
+        # rc.2). A busy one is left to the idle retry, which never blocks the queue either.
+        if not self._checkpoint_truncate(1):
+            self._wal_pending = True
+            if not self._compact_pending:
+                self._compact_pending = True
+                self._compact_after_maintenance = True
+                self._last_compact_attempt = time.monotonic()
         self.database_updated.emit()
 
     def _resolve_retention_days(self, cursor: sqlite3.Cursor, config: Dict[str, Any], now: datetime) -> float:
@@ -1334,6 +1342,7 @@ class DatabaseWorker(QThread):
         checkpoint_ok = self._checkpoint_truncate(constants.timeouts.DB_CHECKPOINT_RETRIES)
         self.database_updated.emit()
         T = constants.timeouts
+        self._compact_after_maintenance = False   # a delete's compaction owns the retry from here on
         self._vacuum_pending = not vacuum_ok
         self._vacuum_attempts = 0
         self._wal_pending = not checkpoint_ok
@@ -1728,6 +1737,15 @@ class DatabaseWorker(QThread):
                     self.logger.warning("A database backup still could not be removed after %d attempts; "
                                         "trying again at the next start.", self._backup_attempts)
         backups_owed = self._backups_pending
+        if self._compact_after_maintenance:
+            # Only an hourly pass's busy checkpoint is owed (no history delete): nothing to carry over
+            # a restart, so no marker writes - just retry the checkpoint on the short timeout.
+            if self._wal_pending and self._checkpoint_truncate(1):
+                self._wal_pending = False
+            if not self._wal_pending:
+                self._compact_pending = False
+                self._compact_after_maintenance = False
+            return
         if self._wal_pending:
             # The restart marker is written to its final state BEFORE the checkpoint, so the
             # checkpoint also folds that write in; a failed checkpoint re-arms it.
@@ -1778,6 +1796,7 @@ class DatabaseWorker(QThread):
         if row:
             self.logger.info("Resuming the file compaction a previous history delete could not finish.")
             self._compact_pending = True
+            self._compact_after_maintenance = False
             self._vacuum_pending = True    # cheap insurance: the old pages may also be on the freelist
             self._wal_pending = True
             self._backup_attempts = 0

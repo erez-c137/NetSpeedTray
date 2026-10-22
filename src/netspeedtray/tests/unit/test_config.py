@@ -602,6 +602,33 @@ def test_a_repeat_field_migration_snapshots_the_state_just_before_it(tmp_path):
     assert sorted(got, key=lambda d: d["font_size"]) == states[-kept:]
 
 
+def test_a_clock_set_back_never_prunes_the_snapshot_just_taken(tmp_path):
+    """Review L2: names sort by their timestamp, so with the clock set back the newest snapshot sorts
+    oldest. It holds the state this migration overwrites - it must survive the prune."""
+    from datetime import datetime as real_datetime
+    path = _write_config_file(tmp_path, {"config_version": "1.2", "taskbar_height": 40})
+    ConfigManager(path).load()
+    pristine = path.with_name(f"{path.name}.bak.v1.2.fields")
+    kept = constants.config.defaults.FIELD_MIGRATION_SNAPSHOTS_KEPT
+
+    def migrate_at(when, height):
+        path.write_text(json.dumps({"config_version": "1.2", "taskbar_height": height}), encoding="utf-8")
+
+        class _Clock(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return when
+        with patch("datetime.datetime", _Clock):
+            ConfigManager(path).load()
+
+    for i in range(kept):
+        migrate_at(real_datetime(2026, 10, 22, 12, 0, i), 50 + i)
+    migrate_at(real_datetime(2025, 1, 1, 0, 0, 0), 99)          # the clock is now a year behind
+    snaps = list(tmp_path.glob(f"{pristine.name}.*"))
+    assert len(snaps) == kept
+    assert any(json.loads(p.read_text(encoding="utf-8"))["taskbar_height"] == 99 for p in snaps)
+
+
 def test_a_failed_snapshot_blocks_the_repeat_field_migration(tmp_path):
     path = _write_config_file(tmp_path, {"config_version": "1.2", "taskbar_height": 40})
     ConfigManager(path).load()                                   # takes the pristine `.fields`

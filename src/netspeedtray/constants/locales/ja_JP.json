@@ -493,7 +493,7 @@
     "USAGE_SET_LIMIT_HINT": "月間上限を設定",
     "USAGE_CAP_COVERAGE_TEMPLATE": "この期間の {pct}% で NetSpeedTray が実行されていました",
     "USAGE_CAP_THIS_PC_ONLY": "この PC のみ",
-    "USAGE_CAP_COVERAGE_TOOLTIP": "上限はこの PC の通信だけを数え、ネットワーク上の他のデバイスは含みません。NetSpeedTray を閉じている間は何も計測されませんが、その間の通信は次回起動時に加算されます（その間に Windows を再起動した場合を除く）。PC の電源が切れていた間はデータを使用していません。",
+    "USAGE_CAP_COVERAGE_TOOLTIP": "上限はこの PC の通信だけを数え、ネットワーク上の他のデバイスは含みません。NetSpeedTray を閉じている間は何も計測されませんが、その間の通信は次回起動時に加算されます（その間に Windows を再起動した場合や、自動モードで使用中の接続が変わった場合を除く）。PC の電源が切れていた間はデータを使用していません。",
     "//_5": "--- Settings: Connection (latency + plan) / Hardware throttle ---",
     "CONN_LATENCY_TITLE": "接続の遅延",
     "CONN_LATENCY_SUB": "ルーターへの Ping とパケットロス、および時間経過に伴う接続切断を計測します",

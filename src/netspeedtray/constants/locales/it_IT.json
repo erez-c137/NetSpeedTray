@@ -493,7 +493,7 @@
     "USAGE_SET_LIMIT_HINT": "Imposta un limite mensile",
     "USAGE_CAP_COVERAGE_TEMPLATE": "NetSpeedTray è rimasto attivo per il {pct}% di questo periodo",
     "USAGE_CAP_THIS_PC_ONLY": "Solo questo PC",
-    "USAGE_CAP_COVERAGE_TOOLTIP": "Il limite conta solo il traffico di questo PC, non quello degli altri dispositivi della tua rete. Mentre NetSpeedTray è chiuso non viene misurato nulla; quel traffico viene aggiunto all'avvio successivo, a meno che Windows non sia stato riavviato nel frattempo. Mentre il PC era spento non sono stati usati dati.",
+    "USAGE_CAP_COVERAGE_TOOLTIP": "Il limite conta solo il traffico di questo PC, non quello degli altri dispositivi della tua rete. Mentre NetSpeedTray è chiuso non viene misurato nulla; quel traffico viene aggiunto all'avvio successivo, a meno che nel frattempo Windows non sia stato riavviato o, in modalità Automatico, non sia cambiata la connessione in uso. Mentre il PC era spento non sono stati usati dati.",
     "//_5": "--- Impostazioni: connessione (latenza + piano) / soglia hardware ---",
     "CONN_LATENCY_TITLE": "Latenza della connessione",
     "CONN_LATENCY_SUB": "Ping + perdita pacchetti verso il router e cadute di connessione nel tempo",

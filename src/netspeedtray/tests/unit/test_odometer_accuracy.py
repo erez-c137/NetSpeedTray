@@ -762,6 +762,33 @@ def test_the_held_bytes_go_to_the_primary_only():
     assert state.totals() == (15, 30)
 
 
+def test_a_quit_while_waiting_for_a_route_loses_nothing_at_the_next_launch():
+    """Review M1: while the reconcile waits for a route, the odometer must not be handed the live
+    counters - its 30 s persist would replace the previous session's snapshot, and a quit (or crash)
+    before the route appears would lose the closed window, the held bytes and the next recovery."""
+    snap = _snapshot({"Wi-Fi": (400_000, 500_000)})
+    snap["primary"] = "Wi-Fi"
+    s1 = FakeState(snap)
+    c1 = _controller(s1, mode="auto")
+    with patch("netspeedtray.core.controller.get_primary_interface_name", return_value=None), \
+            patch("netspeedtray.core.usage_snapshot.psutil.boot_time", return_value=BOOT + 0.6):
+        _poll(c1, {"Wi-Fi": NetIO(1_000_000, 2_000_000)}, 1000.0)
+        _poll(c1, {"Wi-Fi": NetIO(1_010_000, 2_050_000)}, 1001.0)
+        _poll(c1, {"Wi-Fi": NetIO(1_020_000, 2_090_000)}, 1002.0)
+    # The app quits here. What would have been persisted: the newest counters the odometer was given.
+    handed = [k for k in s1.add_kwargs if k.get("counters") is not None]
+    assert handed == [], "a held poll replaced the previous session's snapshot"
+    persisted = snap                                   # so the stored snapshot is still the old one
+    # Next launch, same boot, the route is up: the whole window since the OLD snapshot is recovered.
+    s2 = FakeState(persisted)
+    c2 = _controller(s2, mode="auto")
+    with patch("netspeedtray.core.controller.get_primary_interface_name", return_value="Wi-Fi"), \
+            patch("netspeedtray.core.usage_snapshot.psutil.boot_time", return_value=BOOT + 0.6):
+        _poll(c2, {"Wi-Fi": NetIO(1_030_000, 2_100_000)}, 2000.0)
+    total = tuple(a + b for a, b in zip(s1.totals(), s2.totals()))
+    assert total == (1_030_000 - 400_000, 2_100_000 - 500_000)
+
+
 def test_a_late_reconcile_never_repairs_the_odometer_to_the_launch_counters():
     """Once live polls handed the odometer newer counters, the waited-for reconcile must not hand it
     the launch counters (the next launch would recover the live window a second time)."""

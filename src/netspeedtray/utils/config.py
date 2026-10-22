@@ -812,7 +812,12 @@ class ConfigManager:
                 if m:   # age order: the zero-padded stamp, then the same-second counter
                     snapshots.append(((m.group(1), int(m.group(2) or 0)), p))
             snapshots.sort()
-            for _, old in snapshots[:-constants.config.defaults.FIELD_MIGRATION_SNAPSHOTS_KEPT]:
+            # Name order is age order only while the clock moves forward: with the clock set back, the
+            # snapshot just taken sorts OLDEST and would be pruned first (review L2). It is the one copy
+            # of the state this migration overwrites - never prune it; drop the oldest others instead.
+            others = [p for _, p in snapshots if p != target]
+            keep_others = max(0, constants.config.defaults.FIELD_MIGRATION_SNAPSHOTS_KEPT - 1)
+            for old in others[:max(0, len(others) - keep_others)]:
                 old.unlink()
         except OSError as e:
             self.logger.debug("Could not prune old field-migration snapshots: %s", e)

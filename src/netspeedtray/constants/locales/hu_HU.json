@@ -493,7 +493,7 @@
     "USAGE_SET_LIMIT_HINT": "Havi korlát beállítása",
     "USAGE_CAP_COVERAGE_TEMPLATE": "A NetSpeedTray az időszak {pct}%-ában futott",
     "USAGE_CAP_THIS_PC_ONLY": "Csak ez a számítógép",
-    "USAGE_CAP_COVERAGE_TOOLTIP": "A korlát csak ennek a számítógépnek a forgalmát számolja, a hálózat többi eszközéét nem. Amíg a NetSpeedTray be van zárva, semmi sem mérődik; ezt a forgalmat a következő indításkor pótolja, hacsak a Windows közben nem indult újra. Amíg a számítógép ki volt kapcsolva, nem fogyott adat.",
+    "USAGE_CAP_COVERAGE_TOOLTIP": "A korlát csak ennek a számítógépnek a forgalmát számolja, a hálózat többi eszközéét nem. Amíg a NetSpeedTray be van zárva, semmi sem mérődik; ezt a forgalmat a következő indításkor pótolja, hacsak a Windows közben nem indult újra, vagy automatikus módban nem változott a használt kapcsolat. Amíg a számítógép ki volt kapcsolva, nem fogyott adat.",
     "//_5": "--- Beállítások: Kapcsolat (késleltetés + csomag) / hardveres hőkorlát ---",
     "CONN_LATENCY_TITLE": "Kapcsolat késleltetési ideje",
     "CONN_LATENCY_SUB": "Ping + csomagvesztés az útválasztó felé, valamint a kapcsolatmegszakadások időbeli alakulása",
