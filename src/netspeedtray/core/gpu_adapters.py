@@ -68,6 +68,18 @@ def find_adapter(adapters: Optional[Iterable[AdapterInfo]], name: object) -> Opt
     return None
 
 
+def is_integrated(adapter: AdapterInfo) -> bool:
+    """An integrated GPU by the same static DXGI fact the shared-VRAM rule uses: less dedicated video
+    memory than constants.gpu.DEDICATED_VIDEO_MEMORY_MIN_MIB (an iGPU's BIOS stolen chunk)."""
+    return adapter.dedicated_video_bytes / (1024.0 * 1024.0) < constants.gpu.DEDICATED_VIDEO_MEMORY_MIN_MIB
+
+
+def same_maker_siblings(adapters: Optional[Iterable[AdapterInfo]], adapter: AdapterInfo) -> List[AdapterInfo]:
+    """The OTHER real adapters from ``adapter``'s maker (an Intel iGPU beside an Arc, an APU beside a
+    Radeon): the case where a vendor-only sensor match cannot say which card a reading is from."""
+    return [a for a in hardware_adapters(adapters or []) if a.vendor_id == adapter.vendor_id and a != adapter]
+
+
 def sensor_matches_vendor(text: object, vendor_id: int) -> bool:
     """Whether a sensor's hardware id / name / identifier names the maker ``vendor_id`` (see
     constants.gpu.VENDOR_SENSOR_TOKENS). An unknown vendor matches nothing."""

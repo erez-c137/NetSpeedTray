@@ -314,7 +314,7 @@ class HardwarePage(QWidget):
     def _throttle_c(self) -> int:
         """The throttle slider's value as stored: whole Celsius, 0 = off."""
         shown = int(self.throttle_temp.value())
-        if shown <= 0:
+        if shown <= self.throttle_temp.slider.minimum():   # the "Off" stop (0 °C / 32 °F)
             return 0
         c = int(round(helpers.unit_to_celsius(shown, self._throttle_unit)))
         return max(1, min(self.THROTTLE_MAX_C, c))   # a non-zero pick never collapses to "Off"
@@ -324,9 +324,14 @@ class HardwarePage(QWidget):
         self._throttle_unit = unit if unit else constants.hardware.temperature.CELSIUS
         self.throttle_temp.blockSignals(True)
         self.throttle_temp.setSuffix(helpers.temperature_symbol(self._throttle_unit))
-        self.throttle_temp.setRange(0, int(round(helpers.celsius_to_unit(self.THROTTLE_MAX_C, self._throttle_unit))))
+        # The scale starts at the user-unit value of the Celsius minimum (0 °C = 32 °F, shown "Off"),
+        # so every stop above it is a real, positive Celsius threshold (L6: a 0 °F floor saved
+        # anything under ~33 °F as 1 °C).
+        lo = int(round(helpers.celsius_to_unit(0, self._throttle_unit)))
+        hi = int(round(helpers.celsius_to_unit(self.THROTTLE_MAX_C, self._throttle_unit)))
+        self.throttle_temp.setRange(lo, hi)
         self.throttle_temp.setValue(int(round(helpers.celsius_to_unit(celsius, self._throttle_unit)))
-                                    if celsius > 0 else 0)
+                                    if celsius > 0 else lo)
         self.throttle_temp.blockSignals(False)
         self.throttle_temp.setSpecialValueText(str(getattr(self.i18n, "CONN_PLAN_OFF", "Off")))
 
@@ -427,7 +432,20 @@ class HardwarePage(QWidget):
         self._ram_card.setToolTip("" if cpu_on else self.i18n.HARDWARE_NEEDS_CPU_TOOLTIP)
         self._vram_card.setToolTip("" if gpu_on else self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP)
         self._gpu_adapter_card.setToolTip("" if gpu_on else self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP)
-        self._mem_labels_card.setToolTip("" if mem_on else self.i18n.SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP)
+        self._mem_labels_card.setToolTip("" if mem_on else self._mem_labels_reason(cpu_on, gpu_on))
+
+    def _mem_labels_reason(self, cpu_on: bool, gpu_on: bool) -> str:
+        """Why the memory-labels card is greyed, for the switches as they are now (L5): the memory
+        readouts are off, or they are on but their host monitor (CPU for RAM, GPU for VRAM) is off."""
+        ram, vram = self.monitor_ram.isChecked(), self.monitor_vram.isChecked()
+        needs_cpu, needs_gpu = ram and not cpu_on, vram and not gpu_on
+        if needs_cpu and needs_gpu:
+            return self.i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB   # "Turn on CPU or GPU monitoring..."
+        if needs_cpu:
+            return self.i18n.HARDWARE_NEEDS_CPU_TOOLTIP
+        if needs_gpu:
+            return self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP
+        return self.i18n.SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP
 
     def get_settings(self) -> Dict[str, Any]:
         return {

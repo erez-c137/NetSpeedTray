@@ -35,7 +35,9 @@ def _eng(luid_low: int, pid: int, eng: int = 0) -> str:
 
 
 @pytest.fixture
-def thread(q_app):
+def thread(q_app, monkeypatch):
+    # Never the real DXGI from a unit test (review L3); tests that exercise G4 patch it themselves.
+    monkeypatch.setattr(gpu_adapters, "enumerate_adapters", lambda: None)
     t = StatsMonitorThread(interval=0.1)
     t.logger = MagicMock()
     t._gpu_query = 123
@@ -261,10 +263,138 @@ def test_greyed_cards_say_why(page):
     assert page._temps_card.toolTip().startswith(EN.RECORD_HARDWARE_HISTORY_INACTIVE_SUB)
     assert EN.SHOW_HARDWARE_TEMPS_TOOLTIP in page._temps_card.toolTip()
     assert EN.SHOW_HARDWARE_POWER_TOOLTIP in page._power_card.toolTip()
-    assert page._mem_labels_card.toolTip() == EN.SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP
     page.monitor_cpu.setChecked(True)
     assert page._ram_card.toolTip() == ""
     assert page._temps_card.toolTip() == EN.SHOW_HARDWARE_TEMPS_TOOLTIP
+
+
+@pytest.mark.parametrize("cpu, gpu, ram, vram, reason", [
+    (False, False, False, False, "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP"),   # no memory readout on
+    (True, True, False, False, "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP"),
+    (False, True, True, False, "HARDWARE_NEEDS_CPU_TOOLTIP"),              # RAM on, CPU off (L5)
+    (True, False, False, True, "HARDWARE_NEEDS_GPU_TOOLTIP"),              # VRAM on, GPU off
+    (False, False, True, True, "RECORD_HARDWARE_HISTORY_INACTIVE_SUB"),    # both hosts off
+])
+def test_memory_labels_tooltip_names_the_actual_reason(page, cpu, gpu, ram, vram, reason):
+    page.load_settings({"monitor_cpu_enabled": cpu, "monitor_gpu_enabled": gpu,
+                        "monitor_ram_enabled": ram, "monitor_vram_enabled": vram})
+    assert not page._mem_labels_card.isEnabled()
+    assert page._mem_labels_card.toolTip() == getattr(EN, reason)
+
+
+def test_fahrenheit_throttle_floor_is_the_celsius_off_stop(page):
+    """L6: the °F scale starts at 32 °F (= 0 °C, "Off"), so no low °F stop saves as 1 °C."""
+    page.load_settings({"temperature_unit": "fahrenheit", "throttle_temp_c": 0})
+    assert page.throttle_temp.slider.minimum() == 32 and page.throttle_temp.value() == 32
+    assert page.get_settings()["throttle_temp_c"] == 0
+    page.throttle_temp.setValue(33)
+    assert page.get_settings()["throttle_temp_c"] == 1
+    page.throttle_temp.setValue(266)
+    assert page.get_settings()["throttle_temp_c"] == 130
+
+
+# --- review M1 / L1 / L2 / L6 -------------------------------------------------------------------
+
+ARC = AdapterInfo("Intel(R) Arc(TM) A770", 0x8086, (0, 0xAB01), 16 * GIB, int(8 * GIB), False)
+
+
+def test_picked_arc_never_reports_the_igpus_rapl_power(thread):
+    """M1: RAPL PP1 is the Intel iGPU's plane - a picked Arc must not show it (reproduced 4.2 W)."""
+    thread._gpu_adapters = [INTEL_UHD, ARC]
+    thread._power_query = 7
+    thread._power_pp1_counter = 8
+    thread._init_power_query = MagicMock()
+    with patch("win32pdh.GetFormattedCounterValue", return_value=(0, 4200.0)):
+        thread.config = {"gpu_adapter": ARC.name}
+        arc = _poll(thread, {}, {IGPU_I: 0.0, DGPU_I: 10 * MIB}, {IGPU_I: 600 * MIB}, include_power=True)
+        thread.config = {"gpu_adapter": INTEL_UHD.name}
+        uhd = _poll(thread, {}, {IGPU_I: 0.0, DGPU_I: 10 * MIB}, {IGPU_I: 600 * MIB}, include_power=True)
+    assert arc.power is None
+    assert uhd.power == pytest.approx(4.2)
+
+
+def test_lhm_same_maker_pair_is_told_apart_by_integrated_or_na():
+    """L1: an Arc pick whose name LHM spells differently gets the discrete group, not the iGPU's."""
+    snap = LhmSnapshot(gpus=(LhmGpu("/gpu-intel-integrated/0", "Intel(R) UHD Graphics 770", temperature=45.0),
+                             LhmGpu("/gpu-intel/0", "Intel Arc A770 Graphics", temperature=66.0)))
+    assert snap.gpu_for(0x8086, ARC.name, integrated=False).temperature == 66.0
+    assert snap.gpu_for(0x8086, INTEL_UHD.name, integrated=True).temperature == 45.0
+    twins = LhmSnapshot(gpus=(LhmGpu("/gpu-nvidia/0", "RTX A", temperature=50.0),
+                              LhmGpu("/gpu-nvidia/1", "RTX B", temperature=70.0)))
+    assert twins.gpu_for(0x10DE, "NVIDIA GeForce RTX 4070", integrated=False) is None   # can't tell: N/A
+
+
+def test_wmi_same_maker_pair_reads_only_its_own_side(thread):
+    thread._gpu_adapters = [INTEL_UHD, ARC]
+    assert thread._gpu_sensor_matches("/gpu-intel/0/temperature/0", ARC)
+    assert not thread._gpu_sensor_matches("/gpu-intel-integrated/0/temperature/0", ARC)
+    assert thread._gpu_sensor_matches("/gpu-intel-integrated/0/temperature/0", INTEL_UHD)
+    thread._gpu_adapters = [AdapterInfo("AMD Radeon(TM) Graphics", 0x1002, (0, 0xD9C1), 512 * 2 ** 20, GIB, False),
+                            RADEON]
+    assert not thread._gpu_sensor_matches("/gpu-amd/0/temperature/0", RADEON)   # can't tell: N/A
+
+
+def test_picked_nvidia_card_reads_its_own_nvidia_smi_line(thread):
+    """L1/L6: the picked card's line by name - not the first line - and nvidia-smi's total."""
+    rtx2 = AdapterInfo("NVIDIA GeForce RTX 3060", 0x10DE, (0, 0xEE01), 12 * GIB, int(8 * GIB), False)
+    thread._gpu_adapters = [RTX, rtx2]
+    thread._nvidia_smi_path = "nvidia-smi.exe"
+    thread._run_child = MagicMock(return_value="NVIDIA GeForce RTX 3060, 55, 12288, 90.0\n"
+                                                "NVIDIA GeForce RTX 4070, 64, 12282, 110.5\n")
+    thread.config = {"gpu_adapter": RTX.name}
+    r = _poll(thread, {}, {DGPU_I: 3000 * MIB}, {DGPU_I: 5 * MIB}, include_temp=True, include_power=True)
+    assert (r.temp, r.power, r.vram_total) == (64.0, 110.5, 12282.0)
+    calls = thread._run_child.call_count
+    _poll(thread, {}, {DGPU_I: 3000 * MIB}, {DGPU_I: 5 * MIB}, include_temp=True, include_power=True)
+    assert thread._run_child.call_count == calls      # cached on the slow sub-cadence
+
+
+def test_ambiguous_nvidia_smi_line_reads_na_but_keeps_the_dxgi_total(thread):
+    twin = AdapterInfo("NVIDIA GeForce RTX 4070", 0x10DE, (0, 0xEE01), 12 * GIB, int(8 * GIB), False)
+    thread._gpu_adapters = [RTX, twin]
+    thread._nvidia_smi_path = "nvidia-smi.exe"
+    thread._run_child = MagicMock(return_value="NVIDIA GeForce RTX 4070, 50, 12282, 90.0\n"
+                                                "NVIDIA GeForce RTX 4070, 70, 12282, 200.0\n")
+    thread.config = {"gpu_adapter": RTX.name}
+    r = _poll(thread, {}, {DGPU_I: 3000 * MIB}, {DGPU_I: 5 * MIB}, include_temp=True, include_power=True)
+    assert r.temp is None and r.power is None
+    assert r.vram_total == pytest.approx(12 * 1024)
+
+
+def test_g4_retries_an_unresolved_set_a_bounded_number_of_times(thread):
+    """L2: a fresh read that still misses the LUID is retried later (PDH can lead DXGI on a hot-plug),
+    at most ADAPTER_RECHECK_MAX times, never on every poll."""
+    g = constants.gpu
+    thread._gpu_adapters = [INTEL_UHD, BASIC_RENDER]
+    clock = [1000.0]
+    reads = [[INTEL_UHD, BASIC_RENDER], [INTEL_UHD, BASIC_RENDER, RADEON]]
+    with patch("netspeedtray.core.monitor_thread.time.monotonic", side_effect=lambda: clock[0]), \
+         patch.object(gpu_adapters, "enumerate_adapters", side_effect=lambda: reads.pop(0) if reads
+                      else [INTEL_UHD, BASIC_RENDER, RADEON]) as enum:
+        pdh = {IGPU_I: 0.0, DGPU_I: 2048 * MIB}
+        first = _poll(thread, {}, pdh, {IGPU_I: 600 * MIB})
+        assert enum.call_count == 1 and first.vram_is_shared is True     # DXGI not caught up yet
+        _poll(thread, {}, pdh, {IGPU_I: 600 * MIB})
+        assert enum.call_count == 1                                     # not every poll
+        clock[0] += g.ADAPTER_RECHECK_SEC
+        second = _poll(thread, {}, pdh, {IGPU_I: 600 * MIB})
+        assert enum.call_count == 2 and second.vram_is_shared is False  # resolved on the retry
+        clock[0] += 10 * g.ADAPTER_RECHECK_SEC
+        _poll(thread, {}, pdh, {IGPU_I: 600 * MIB})
+        assert enum.call_count == 2                                     # resolved: checked for good
+
+
+def test_g4_gives_up_on_a_luid_dxgi_never_lists(thread):
+    g = constants.gpu
+    thread._gpu_adapters = [INTEL_UHD, BASIC_RENDER]
+    clock = [1000.0]
+    ghost = "luid_0x00000000_0x0000EEEE_phys_0"
+    with patch("netspeedtray.core.monitor_thread.time.monotonic", side_effect=lambda: clock[0]), \
+         patch.object(gpu_adapters, "enumerate_adapters", return_value=[INTEL_UHD, BASIC_RENDER]) as enum:
+        for _ in range(g.ADAPTER_RECHECK_MAX * 3):
+            _poll(thread, {}, {IGPU_I: 0.0, ghost: 0.0}, {IGPU_I: 600 * MIB})
+            clock[0] += g.ADAPTER_RECHECK_SEC
+    assert enum.call_count == g.ADAPTER_RECHECK_MAX
 
 
 # --- F8: the display unit -----------------------------------------------------------------------

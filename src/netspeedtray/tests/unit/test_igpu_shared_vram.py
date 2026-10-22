@@ -43,7 +43,9 @@ AMD_APU = AdapterInfo("AMD Radeon(TM) Graphics", 0x1002, (0, 0xD9C1), 512 * 2 **
 
 
 @pytest.fixture
-def thread(q_app):
+def thread(q_app, monkeypatch):
+    # The G4 re-read must never reach the real DXGI from a unit test: these fixtures set the facts.
+    monkeypatch.setattr(gpu_adapters, "enumerate_adapters", lambda: None)
     t = StatsMonitorThread(interval=0.1)
     t.logger = MagicMock()
     t._gpu_query = 123
