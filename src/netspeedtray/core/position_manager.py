@@ -1241,7 +1241,10 @@ class PositionManager(QObject):
                 self._side_watcher.detach()
                 return None
             hwnd = int(taskbar_info.hwnd)
-            self._side_watcher.attach(hwnd)
+            # Never for a "Show on all taskbars" mirror (side_watcher_enabled=False, #229): no hook
+            # thread per mirror; a mirror keeps the placement decided here, without W1-W4 updates.
+            if self._side_watcher_enabled:
+                self._side_watcher.attach(hwnd)
             key = (taskbar_utils.dock_signature(taskbar_info), hwnd, int(widget_height))
             if key != self._side_placement_key:
                 # New dock (or first sight): probe the layout afresh; decide now from what we have.
@@ -1267,7 +1270,7 @@ class PositionManager(QObject):
                     return self._decide_side_placement(taskbar_info, dpi, widget_height)
             return self._side_placement
         except Exception as e:
-            logger.error("Side-bar placement failed: %s", e, exc_info=True)
+            self._logger.error("Side-bar placement failed: %s", e, exc_info=True)
             return None
 
     def _decide_side_placement(self, taskbar_info: TaskbarInfo, dpi: float,
@@ -1291,7 +1294,7 @@ class PositionManager(QObject):
         # spot used to log two INFO lines each time).
         changed = (previous is None or previous != placement
                    or was_provisional != self._side_placement_provisional)
-        logger.log(logging.INFO if changed else logging.DEBUG,
+        self._logger.log(logging.INFO if changed else logging.DEBUG,
                    "Side-bar placement: %s%s (apps %s..%s, overflow %s..%s, tray %s, from %s%s).",
                    placement.mode, "" if placement.y is None else " y=%d" % placement.y,
                    geo.apps_top, geo.apps_bottom, geo.overflow_top, geo.overflow_bottom, geo.tray_top,
@@ -1301,7 +1304,7 @@ class PositionManager(QObject):
             try:
                 self.on_side_no_room()
             except Exception as e:
-                logger.debug("no-room callback failed: %s", e)
+                self._logger.debug("no-room callback failed: %s", e)
         return placement
 
     def _recheck_side_placement(self, taskbar_info: TaskbarInfo, dpi: float, widget_height: int,
@@ -1330,10 +1333,10 @@ class PositionManager(QObject):
         clearance = constants.layout.DEFAULT_PADDING
         bottom = top + widget_height
         if geo.apps_bottom + clearance <= top or bottom + clearance <= geo.apps_top:
-            logger.debug("Side-bar re-check: apps %s..%s clear of the widget %s..%s - staying.",
+            self._logger.debug("Side-bar re-check: apps %s..%s clear of the widget %s..%s - staying.",
                          geo.apps_top, geo.apps_bottom, top, bottom)
             return self._side_placement
-        logger.debug("Side-bar re-check: apps %s..%s now reach the widget %s..%s - re-deciding.",
+        self._logger.debug("Side-bar re-check: apps %s..%s now reach the widget %s..%s - re-deciding.",
                      geo.apps_top, geo.apps_bottom, top, bottom)
         return self._decide_side_placement(taskbar_info, dpi, widget_height)
 
@@ -1346,7 +1349,7 @@ class PositionManager(QObject):
         if full or self._side_recheck is None:
             self._side_recheck = "full" if full else "collision"
         if self._widget_busy():
-            logger.debug("Side-bar re-check deferred: the widget is being dragged / its menu is open.")
+            self._logger.debug("Side-bar re-check deferred: the widget is being dragged / its menu is open.")
             return
         self._last_applied_geometry = None
         self.update_position()

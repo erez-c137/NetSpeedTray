@@ -683,6 +683,74 @@ class TestSideWatcherNeverPerMirror:
         from netspeedtray.core.position_manager import PositionManager, WindowState
         assert PositionManager(WindowState(config={}, widget=MagicMock()))._side_watcher_enabled is True
 
+    @pytest.fixture
+    def side_bar_hooks(self, monkeypatch):
+        """A native LEFT side bar every placement path accepts, and #406's hook factory replaced by a
+        counter: {"made": n, "live": n}."""
+        from netspeedtray.core import position_manager as pmod, side_bar_watcher
+        from netspeedtray.utils import taskbar_utils
+        from netspeedtray.views.widget import layout as layout_mod
+        hooks = {"made": 0, "live": 0}
+
+        class _Hook:
+            def __init__(self, *a):
+                hooks["made"] += 1
+                hooks["live"] += 1
+
+            def stop(self):
+                hooks["live"] -= 1
+
+        monkeypatch.setattr(side_bar_watcher, "_default_hook_factory", lambda *a: _Hook())
+        monkeypatch.setattr(pmod, "side_bar_geometry", lambda *a, **k: object())
+        # The placement decision itself is #406's (and tested there); only the attach matters here.
+        monkeypatch.setattr(pmod.PositionManager, "_decide_side_placement", lambda self, *a, **k: None)
+        monkeypatch.setattr(taskbar_utils, "find_classic_layout_hwnds", lambda hwnd: (11, 12, 13))
+        monkeypatch.setattr(taskbar_utils, "request_taskbar_layout_probe", lambda hwnd: None)
+        monkeypatch.setattr(taskbar_utils, "get_free_float_screen", lambda name: None)
+        screen = QApplication.primaryScreen()
+        g = screen.geometry()
+
+        def left_bar(hwnd):
+            return SimpleNamespace(
+                hwnd=hwnd, screen_name=screen.name(), rect=(g.left(), g.top(), g.left() + 48, g.bottom() + 1),
+                dpi_scale=1.0, tasklist_rect=None, tray_hwnd=None, is_primary=False, height=g.height(),
+                screen_geometry=(g.left(), g.top(), g.width(), g.height()),
+                work_area=(g.left() + 48, g.top(), g.right() + 1, g.bottom() + 1),
+                get_screen=lambda: screen, get_edge_position=lambda: constants.TaskbarEdge.LEFT,
+                get_tray_rect=lambda: None)
+        holder = {"tb": left_bar(0x300)}
+        monkeypatch.setattr(layout_mod, "get_taskbar_info", lambda preferred_screen_name=None: holder["tb"])
+        return SimpleNamespace(hooks=hooks, left_bar=left_bar, holder=holder)
+
+    def test_main_position_manager_on_a_side_bar_does_hook(self, side_bar_hooks):
+        """Control: the hook counter sees #406's watcher when it IS enabled (the main widget)."""
+        from netspeedtray.core.position_manager import PositionManager, WindowState
+        widget = MagicMock()
+        widget.width.return_value, widget.height.return_value = 48, 60
+        pm = PositionManager(WindowState(config={}, widget=widget, taskbar_info=side_bar_hooks.left_bar(0x300)))
+        pm.get_calculated_position()
+        assert side_bar_hooks.hooks == {"made": 1, "live": 1}
+        pm.stop_side_watcher()
+        assert side_bar_hooks.hooks["live"] == 0
+
+    def test_creating_and_destroying_mirrors_leaves_no_hook(self, qt_owned, side_bar_hooks):
+        """Mirrors on a native side bar, rebuilt (new taskbar HWND) and torn down: no hook is ever
+        made, none is left alive."""
+        from PyQt6.QtCore import QCoreApplication, QEvent
+        main = _real_main(qt_owned)
+        main.docked_taskbar = lambda: (0x100, "PRIMARY-ELSEWHERE")
+        holder = side_bar_hooks.holder
+        mgr = MirrorManager(main, taskbars_provider=lambda: [holder["tb"]], foreground_provider=lambda: 0)
+        for hwnd in (0x300, 0x301, 0x302):          # created, then rebuilt twice (explorer restarts)
+            holder["tb"] = side_bar_hooks.left_bar(hwnd)
+            mgr.tick()
+            mirror = next(iter(mgr.mirrors.values()))
+            assert mirror.taskbar_hwnd == hwnd
+            mirror.position_manager.get_calculated_position()   # the path that attaches on main
+        mgr.shutdown()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        assert side_bar_hooks.hooks == {"made": 0, "live": 0}
+
     def test_destroy_stops_a_side_watcher(self):
         mgr, _ = _manager([_tb(100, "PRIMARY", True), _tb(200, "B")])
         mgr.tick()
