@@ -10,7 +10,7 @@ from the main widget processing. It handles:
 
 import logging
 from typing import Optional, TYPE_CHECKING
-from PyQt6.QtCore import QObject, QPoint, Qt
+from PyQt6.QtCore import QObject, QPoint, QTimer, Qt
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QApplication
 
@@ -39,11 +39,25 @@ class InputHandler(QObject):
         self._drag_start_pos: Optional[QPoint] = None
         self._is_dragging: bool = False
 
+        # Click-to-pin the hover card (side-taskbar design §2). A single left click used to do
+        # nothing; now: a card showing from hover is pinned at once; with no card up (touch has no
+        # hover, or the click beat the hover delay) the click waits doubleClickInterval() first, so a
+        # double-click still runs its action cleanly instead of flashing a card.
+        self._click_timer = QTimer(self)
+        self._click_timer.setSingleShot(True)
+        self._click_timer.timeout.connect(self._on_single_click_settled)
+        # The release that ends a double-click is not a click of its own.
+        self._swallow_release: bool = False
+
     def handle_mouse_press(self, event: QMouseEvent) -> None:
         """Handles mouse press start (left = drag; middle = configurable click action)."""
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_start_pos = event.globalPosition().toPoint() - self.widget.pos()
             self._is_dragging = False # Waiting for move to confirm drag
+            # Qt sends a double-click's 2nd press as MouseButtonDblClick, never as a press: a real
+            # press means any double-click tail is over (its release may have been lost to a menu or
+            # a grab) - don't let it eat this click.
+            self._swallow_release = False
             event.accept()
         elif event.button() == Qt.MouseButton.MiddleButton:
             # Configurable middle-click action (community PR #165, @rami123). Defaults to "Nothing",
@@ -81,6 +95,7 @@ class InputHandler(QObject):
         event.accept()
 
     def _dismiss_hover_card(self) -> None:
+        self._click_timer.stop()
         try:
             timer = getattr(self.widget, "_hover_card_timer", None)
             if timer is not None:
@@ -100,13 +115,53 @@ class InputHandler(QObject):
                 self.widget._dragging = False
                 self._save_dragged_position()
                 self.logger.debug("Drag ended. Position saved: %s", self.widget.pos())
-            
+            elif self._swallow_release:
+                self._swallow_release = False      # the tail of a double-click
+            elif self._drag_start_pos is not None:
+                self._on_single_click()
+
             self._drag_start_pos = None
             event.accept()
+
+    def _on_single_click(self) -> None:
+        """A left click that was not a drag: the hover card's pin toggle."""
+        state_fn = getattr(self.widget, "hover_card_state", None)
+        state = state_fn() if callable(state_fn) else None
+        if state == "pinned":
+            self._call_widget("dismiss_hover_card")       # 2nd click closes it
+        elif state == "hover":
+            self._call_widget("pin_hover_card")           # pointer already resting: pin now
+        else:
+            # Touch (no hover) or a click before the hover delay: wait out the double-click window.
+            self._click_timer.start(QApplication.doubleClickInterval())
+
+    def cancel_pending_click(self) -> None:
+        """Forget a click still waiting out the double-click window (the card was closed by
+        something else meanwhile - it must not reopen pinned a moment later)."""
+        self._click_timer.stop()
+
+    def _on_single_click_settled(self) -> None:
+        """No second click came: open (or pin) the card."""
+        if getattr(self.widget, "_dragging", False):
+            return
+        self._call_widget("pin_hover_card")
+
+    def _call_widget(self, name: str) -> None:
+        fn = getattr(self.widget, name, None)
+        if callable(fn):
+            try:
+                fn()
+            except Exception as e:
+                self.logger.debug("%s failed: %s", name, e)
 
     def handle_double_click(self, event: QMouseEvent) -> None:
         """Handles double-click via the configured action (default: open the unified Monitor)."""
         if event.button() == Qt.MouseButton.LeftButton:
+            # The first click's pending pin is cancelled, and a card it pinned (or one up from hover)
+            # goes away: the double-click is about its action, not the card.
+            self._click_timer.stop()
+            self._swallow_release = True
+            self._call_widget("dismiss_hover_card")
             action = self.widget.config.get(
                 "double_click_action", constants.config.defaults.DEFAULT_DOUBLE_CLICK_ACTION)
             self.logger.debug("Double-click detected. Running action: %s", action)

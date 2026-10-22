@@ -184,12 +184,22 @@ def test_reviewer_placement_sweep(sz):
 
 
 def test_the_card_is_transparent_for_input(q_app):
-    """Even a card forced over its widget cannot steal the hover (and start the flicker loop)."""
-    from PyQt6.QtCore import Qt
+    """Even a card forced over its widget cannot steal the hover (and start the flicker loop): an
+    unpinned card is made click-through - natively, before it is first shown. Never with Qt's
+    WindowTransparentForInput, which leaves a later-pinned card deaf to clicks (B5; the real-window
+    check is test_hover_card_pin_native.py)."""
+    from unittest.mock import patch
+    from PyQt6.QtCore import Qt, QRect
     card = UsageFlyout(types.SimpleNamespace(**{k: k for k in (
         "BYTES_UNIT", "KB_UNIT", "MB_UNIT", "GB_UNIT", "TB_UNIT", "PB_UNIT", "USAGE_TODAY_LABEL",
         "USAGE_THIS_MONTH_LABEL")}), (1, 1), (1, 1))
+    order = []
     try:
-        assert card.windowFlags() & Qt.WindowType.WindowTransparentForInput
+        assert not card.windowFlags() & Qt.WindowType.WindowTransparentForInput
+        with patch("netspeedtray.views.usage_flyout._set_click_through",
+                   side_effect=lambda w, through: order.append(("through", through))), \
+                patch.object(card, "show", side_effect=lambda: order.append("show")):
+            card.show_for(QRect(1600, 1032, 85, 48), QRect(0, 0, 1920, 1032))
+        assert order == [("through", True), "show"]
     finally:
         card.deleteLater()

@@ -237,6 +237,10 @@ class NetworkSpeedWidget(QWidget):
         # Hover usage card - a Win11 flyout we position ourselves (above the taskbar) so it is
         # never clipped, unlike Qt's built-in tooltip. Shown after a short rest on the widget.
         self._hover_card = None
+        # Click-to-pin: a pinned card ignores the pointer leaving and stays until a 2nd click, another
+        # app coming to the front, the context menu, the double-click action, a drag, a fullscreen app
+        # or a dock change (InputHandler drives the clicks).
+        self._hover_card_pinned: bool = False
         self._hover_card_timer = QTimer(self)
         self._hover_card_timer.setSingleShot(True)
         self._hover_card_timer.timeout.connect(self._show_usage_hover_card)
@@ -401,6 +405,9 @@ class NetworkSpeedWidget(QWidget):
         free-float (#188) - where a taskbar-less preferred monitor falls back to the
         primary taskbar, so a fullscreen app on the primary would otherwise transiently
         hide the off-taskbar widget. Mirrors the visibility gate in _execute_refresh()."""
+        # Never leave an always-on-top card (pinned or not) over a game/video - even when the widget
+        # itself stays (keep_visible_fullscreen / free-float).
+        self.dismiss_hover_card()
         if self.config.get("keep_visible_fullscreen", False):
             return
         if self.position_manager and self.position_manager.is_free_float_active():
@@ -788,6 +795,8 @@ class NetworkSpeedWidget(QWidget):
         self.upload_speed = upload_mbps
         self.download_speed = download_mbps
         self.update() # Trigger a repaint
+        if getattr(self, "_hover_card_pinned", False):
+            self._refresh_pinned_usage()
 
 
     def _bar_shows(self, modes: Tuple[str, ...]) -> bool:
@@ -925,6 +934,9 @@ class NetworkSpeedWidget(QWidget):
 
     def _on_theme_changed(self) -> None:
         """Delegates theme change handling."""
+        # An open card (pinned ones last for minutes) keeps the old theme's colours: close it; the
+        # next hover builds it in the new theme.
+        self.dismiss_hover_card()
         self.theme_manager.on_theme_changed()
 
 
@@ -999,6 +1011,7 @@ class NetworkSpeedWidget(QWidget):
 
             # 1. System Event Handler (replaces manual WinEventHooks)
             self.system_event_handler.foreground_app_changed.connect(self._execute_refresh)
+            self.system_event_handler.foreground_app_changed.connect(self._on_foreground_for_hover_card)
             self.system_event_handler.taskbar_changed.connect(self.update_position)
             self._refresh_cached_layout_mode()
             self.system_event_handler.theme_changed.connect(self._on_theme_changed)
@@ -1172,6 +1185,8 @@ class NetworkSpeedWidget(QWidget):
     _HOVER_CARD_DELAY_MS = 350
     # Cache window for the (today, this-month) DB totals so rapid hovers don't hammer the DB.
     _HOVER_USAGE_TTL_SEC = 30.0
+    # Hover-opened cards that carry the "Click to keep this open" footer (fewer once pinned: 0).
+    _PIN_HINT_MAX_SHOWS = 5
 
     def invalidate_usage_cache(self) -> None:
         """Drop the hover card's cached today/this-month totals so the next hover re-reads them
@@ -1204,16 +1219,124 @@ class NetworkSpeedWidget(QWidget):
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
-        """When the pointer leaves the widget, cancel/hide the usage card."""
-        try:
-            self._hover_card_timer.stop()
-            self._hide_usage_hover_card()
-        except Exception as e:
-            self.logger.debug("hover card hide failed: %s", e)
+        """When the pointer leaves the widget, cancel/hide the usage card - unless it is pinned."""
+        self._on_pointer_left()
         super().leaveEvent(event)
 
-    def _show_usage_hover_card(self) -> None:
-        """Build and show the usage card just above the widget (never under the taskbar)."""
+    def _on_pointer_left(self) -> None:
+        try:
+            self._hover_card_timer.stop()
+            if not self._hover_card_pinned:
+                self._hide_usage_hover_card()
+        except Exception as e:
+            self.logger.debug("hover card hide failed: %s", e)
+
+    # --- Click-to-pin (side-taskbar design §2, Phase B) -------------------------------------------
+
+    def hover_card_state(self) -> Optional[str]:
+        """"pinned", "hover" (shown by resting the pointer) or None (no card up)."""
+        if self._hover_card is None:
+            return None
+        return "pinned" if self._hover_card_pinned else "hover"
+
+    def pin_hover_card(self) -> None:
+        """Keep the card open: pin the one showing from hover, or (a touch tap / a click before the
+        hover delay) open it pinned. Pinning itself never activates anything: the card keeps its
+        no-activate style and is only moved / restyled. The click that pins it, though, lands on the
+        widget, and the widget only *shows* without activating (WA_ShowWithoutActivating) - a click
+        still makes it the foreground window, as every click on it always has, so the app the user
+        was typing in loses the keyboard. That foreground change is ours, so it does not close the
+        card (``_on_foreground_for_hover_card``)."""
+        self._hover_card_timer.stop()
+        card = self._hover_card
+        if card is None:
+            self._show_usage_hover_card(pinned=True)
+            return
+        self._hover_card_pinned = True
+        set_pinned = getattr(card, "set_pinned", None)
+        if callable(set_pinned):
+            set_pinned(True)
+        self._retire_pin_hint()
+
+    def _retire_pin_hint(self) -> None:
+        """The user has pinned a card: they know the gesture - stop showing the footer line."""
+        try:
+            if int(self.config.get("pin_hint_shown_count", 0)) < self._PIN_HINT_MAX_SHOWS:
+                self.config_controller.update_config(
+                    {"pin_hint_shown_count": self._PIN_HINT_MAX_SHOWS}, apply_and_repaint=False)
+        except Exception as e:
+            self.logger.debug("pin hint retire failed: %s", e)
+
+    def _pin_hint_text(self) -> Optional[str]:
+        """The "Click to keep this open" footer for a card opened by hover: on the first
+        _PIN_HINT_MAX_SHOWS such cards (its own counter - independent of the gesture hint's
+        graduation, which may already be over for an upgrader), and never again once pinned."""
+        try:
+            count = int(self.config.get("pin_hint_shown_count", 0))
+            if count >= self._PIN_HINT_MAX_SHOWS:
+                return None
+            self.config_controller.update_config({"pin_hint_shown_count": count + 1},
+                                                 apply_and_repaint=False)
+            return self.i18n.HOVER_CARD_PIN_HINT
+        except Exception:
+            return None
+
+    def dismiss_hover_card(self) -> None:
+        """Close the card (pinned or not), cancel a pending hover show and a pending click-to-pin."""
+        try:
+            self._hover_card_timer.stop()
+        except Exception:
+            pass
+        handler = getattr(self, "input_handler", None)
+        cancel = getattr(handler, "cancel_pending_click", None)
+        if callable(cancel):
+            cancel()
+        self._hide_usage_hover_card()
+
+    def _reanchor_hover_card(self) -> None:
+        """The widget moved without a dock change (tray grew, reposition): a pinned card follows it.
+        A hover card needs nothing - the pointer leaving the moved widget closes it."""
+        card = getattr(self, "_hover_card", None)    # moveEvent can fire mid-__init__
+        if card is None or not getattr(self, "_hover_card_pinned", False):
+            return
+        try:
+            card.reanchor(self.frameGeometry())
+        except Exception as e:
+            self.logger.debug("hover card re-anchor failed: %s", e)
+
+    def _refresh_pinned_usage(self) -> None:
+        """A pinned card stays up for minutes: keep its usage rows current, at the hardware rows'
+        cadence (the totals themselves are TTL-cached, so this is not a DB read per tick)."""
+        card = self._hover_card
+        if card is None or not self._hover_card_pinned or not self.config.get("show_usage_on_hover", True):
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_hover_usage_refreshed", 0.0) < self._HOVER_HW_REFRESH_SEC:
+            return
+        self._hover_usage_refreshed = now
+        try:
+            today, month = self._hover_usage_totals()
+            card.update_usage(today, month, self._hover_cap_info())
+        except Exception as e:
+            self.logger.debug("pinned card usage refresh failed: %s", e)
+
+    def _on_foreground_for_hover_card(self, hwnd: int = 0) -> None:
+        """Another app came to the front: a pinned card has done its job. Our own windows (the widget
+        itself when clicked, the card, a menu) don't count."""
+        if not self._hover_card_pinned or not hwnd:
+            return
+        try:
+            import win32process
+            _tid, pid = win32process.GetWindowThreadProcessId(int(hwnd))
+            if pid == os.getpid():
+                return
+        except Exception:
+            pass
+        self.dismiss_hover_card()
+
+    def _show_usage_hover_card(self, pinned: bool = False) -> None:
+        """Build and show the usage card just above the widget (never under the taskbar). ``pinned``
+        opens it already pinned (a click/tap, not a hover)."""
         if self._is_context_menu_visible or self._dragging or not self.isVisible():
             return
         # Don't pop an always-on-top card over a fullscreen app, even when the widget itself is
@@ -1238,9 +1361,18 @@ class NetworkSpeedWidget(QWidget):
             month_label = (self.i18n.USAGE_THIS_PERIOD_LABEL
                            if today is not None and getattr(self, "_hover_usage_period_start", None)
                            else None)
+            # "Click to keep this open" footer: on a card opened by hover only (a pinned card is
+            # already open), for the first few such cards.
+            pin_hint = None if pinned else self._pin_hint_text()
             card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, power=power,
-                               history_note=note, hardware=hardware, month_label=month_label)
+                               history_note=note, hardware=hardware, month_label=month_label,
+                               pin_hint=pin_hint)
+            self._hover_card_pinned = bool(pinned)
             self._hover_hw_refreshed = time.monotonic()
+            self._hover_usage_refreshed = time.monotonic()
+            dismiss_signal = getattr(card, "dismiss_requested", None)
+            if dismiss_signal is not None:
+                dismiss_signal.connect(self.dismiss_hover_card)   # a click on the pinned card
             screen = self.screen() or QApplication.primaryScreen()
             avail = screen.availableGeometry() if screen else self.frameGeometry()
             # Never stack two cards - but show the new one BEFORE the old one goes: a rebuild
@@ -1248,6 +1380,9 @@ class NetworkSpeedWidget(QWidget):
             # no frame in between, instead of a visible blink.
             old, self._hover_card = self._hover_card, card
             card.show_for(self.frameGeometry(), avail, edge=self._hover_card_edge(), screen=screen)
+            if pinned:
+                card.set_pinned(True)    # opened by a click/tap: takes clicks (not pass-through)
+                self._retire_pin_hint()
             if old is not None:
                 try:
                     old.hide()
@@ -1258,7 +1393,8 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error("Error showing usage hover card: %s", e, exc_info=True)
 
     def _hide_usage_hover_card(self) -> None:
-        """Tear down the usage card if one is up."""
+        """Tear down the usage card if one is up (pinned or not)."""
+        self._hover_card_pinned = False
         card, self._hover_card = self._hover_card, None
         if card is not None:
             try:
@@ -1548,7 +1684,12 @@ class NetworkSpeedWidget(QWidget):
             power = (self._hover_power_summary()
                      if self.config.get("power_display_enabled", False) else None)
             if power is None or not card.update_power(power):
-                self._show_usage_hover_card()          # builds the new card, then hides this one
+                # Builds the new card, then hides this one. A pinned card stays pinned across the
+                # rebuild (a plug-in while the user reads the pinned card must not unpin it).
+                if getattr(self, "_hover_card_pinned", False):
+                    self._show_usage_hover_card(pinned=True)
+                else:
+                    self._show_usage_hover_card()
                 if self._hover_card is card:           # nothing to show (or not now): close it
                     self._hide_usage_hover_card()
         except Exception as e:
@@ -1658,6 +1799,10 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error showing context menu: {e}", exc_info=True)
             event.ignore()
 
+
+    def moveEvent(self, event) -> None:
+        super().moveEvent(event)
+        self._reanchor_hover_card()
 
     def showEvent(self, event: QShowEvent) -> None:
         self.logger.debug(f"Widget showEvent triggered. New visibility: {self.isVisible()}")
@@ -1834,14 +1979,25 @@ class NetworkSpeedWidget(QWidget):
         self.position_manager.enforce_topmost_status()
 
     def reset_to_default_position(self) -> None:
-        """
-        Resets the widget to its default position using PositionManager.
-        """
+        """Right-click > Reset position: back to the automatic spot by the tray - clears the
+        free-move spot AND the docked drag offsets, then re-places."""
         self.logger.info("Resetting widget position to default.")
+        self._hide_usage_hover_card()
+        defaults = constants.config.defaults
         self.position_manager.reset_to_default()
-        
-        # Save the cleared config state
-        self.update_config({'position_x': None, 'position_y': None})
+        # Persist exactly what reset_to_default cleared in the (shared) config dict.
+        self.update_config({'position_x': None, 'position_y': None,
+                            'tray_offset_x': defaults.DEFAULT_TRAY_OFFSET_X,
+                            'tray_offset_y': defaults.DEFAULT_TRAY_OFFSET_Y})
+
+    def has_custom_position(self) -> bool:
+        """Whether the widget sits where the user put it (a drag, or a saved free-move spot) - the
+        tray menu offers Reset position only then."""
+        defaults = constants.config.defaults
+        cfg = self.config or {}
+        return (cfg.get('position_x') is not None or cfg.get('position_y') is not None
+                or cfg.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X) != defaults.DEFAULT_TRAY_OFFSET_X
+                or cfg.get('tray_offset_y', defaults.DEFAULT_TRAY_OFFSET_Y) != defaults.DEFAULT_TRAY_OFFSET_Y)
 
 
     def apply_all_settings(self) -> None:

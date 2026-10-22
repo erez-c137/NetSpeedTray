@@ -740,11 +740,16 @@ class PositionManager(QObject):
 
     def reset_to_default(self) -> None:
         """
-        Resets the widget to its default position by clearing explicit position Config
-        and triggering a recalculation.
+        Resets the widget to its default position: clears the saved free-move spot AND the docked
+        drag offsets (tray_offset_x / tray_offset_y - a docked drag's offset otherwise outlived every
+        reset), and repositions.
         """
+        defaults = constants.config.defaults
         self._state.config['position_x'] = None
         self._state.config['position_y'] = None
+        self._state.config['tray_offset_x'] = defaults.DEFAULT_TRAY_OFFSET_X
+        self._state.config['tray_offset_y'] = defaults.DEFAULT_TRAY_OFFSET_Y
+        self._last_applied_geometry = None
         # We rely on the caller (Widget) to persist this config change to disk if needed.
         self.update_position()
         self.ensure_topmost()

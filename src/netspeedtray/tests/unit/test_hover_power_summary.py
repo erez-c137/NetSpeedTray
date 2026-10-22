@@ -122,11 +122,12 @@ class _RefreshStub:
         self.hidden = getattr(self, "hidden", 0) + 1
         self._hover_card = None
 
-    def _show_usage_hover_card(self):
+    def _show_usage_hover_card(self, pinned=False):
         # The real one builds the new card and shows it BEFORE the old one goes, so the
         # pointer never sees a frame without a card (no hide first).
         assert getattr(self, "hidden", 0) == 0, "the old card was hidden before the rebuild"
         self.rebuilt += 1
+        self.rebuilt_pinned = pinned
         if self.summary is not None:
             self._hover_card = _FakeCard()
 
@@ -150,6 +151,19 @@ def test_refresh_rebuilds_when_the_rows_change_or_the_section_goes():
     gone = _RefreshStub(_FakeCard(), None)     # switched off in Settings, or no battery anymore
     NetworkSpeedWidget.refresh_hover_power(gone)
     assert gone.rebuilt == 1 and gone.hidden == 1 and gone._hover_card is None
+
+
+def test_a_rebuild_keeps_a_pinned_card_pinned():
+    """Merge of #406 (click-to-pin) with #323 (battery rows): a plug-in while the card is pinned
+    rebuilds it - and the new card must still be pinned, not quietly turned back into a hover card."""
+    stub = _RefreshStub(_FakeCard(accept=False), {"mode": "charge", "live_w": -38.2})
+    stub._hover_card_pinned = True
+    NetworkSpeedWidget.refresh_hover_power(stub)
+    assert stub.rebuilt == 1 and stub.rebuilt_pinned is True
+    unpinned = _RefreshStub(_FakeCard(accept=False), {"mode": "charge", "live_w": -38.2})
+    unpinned._hover_card_pinned = False
+    NetworkSpeedWidget.refresh_hover_power(unpinned)
+    assert unpinned.rebuilt == 1 and unpinned.rebuilt_pinned is False
 
 
 def test_refresh_is_a_no_op_without_a_battery_card():

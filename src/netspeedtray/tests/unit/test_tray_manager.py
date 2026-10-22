@@ -40,6 +40,7 @@ def mock_i18n():
     i18n.SHOW_MONITOR_MENU_ITEM = "Show Monitor"
     i18n.PAUSE_MENU_ITEM = "Pause"
     i18n.RESUME_MENU_ITEM = "Resume"
+    i18n.RESET_POSITION_MENU_ITEM = "Reset Position"
     i18n.CHECK_FOR_UPDATES_MENU_ITEM = "Check for Updates"
     i18n.SUPPORT_MENU_ITEM = "Support"
     i18n.EXIT_MENU_ITEM = "Exit"

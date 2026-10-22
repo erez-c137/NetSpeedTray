@@ -312,6 +312,7 @@ class ConfigConstants:
         "first_run_v2_seen": False,
         "first_run_ever": True,
         "tooltip_hint_shown_count": 0,     # gesture-hint tooltip fades after a few sessions
+        "pin_hint_shown_count": 0,         # "Click to keep this open" footer: first few hover cards
         "history_upgrade_notice_shown": False,  # the one "history upgraded" flyout after v7 -> v8
         "temp_onboarding_dismissed": False,  # user opted out of the no-sensor temp explainer
         "preferred_monitor": None,
@@ -464,6 +465,7 @@ class ConfigConstants:
         "first_run_v2_seen": {"type": bool, "default": False},
         "first_run_ever": {"type": bool, "default": True},
         "tooltip_hint_shown_count": {"type": int, "default": 0, "min": 0},
+        "pin_hint_shown_count": {"type": int, "default": 0, "min": 0},
         "history_upgrade_notice_shown": {"type": bool, "default": False},
         "temp_onboarding_dismissed": {"type": bool, "default": False},
         # QScreen.name() identifier (e.g. "\\.\DISPLAY1"). None = use primary.
