@@ -311,9 +311,9 @@ def _layout(*, hwnd=None, uia=None, widgets=(0, 120), sync=False, edge=RIGHT, th
 
     real_request = taskbar_utils.request_taskbar_layout_probe
 
-    def request(h):
+    def request(h, keep_last=False):
         ctl.requests += 1
-        real_request(h)
+        real_request(h, keep_last=keep_last)
 
     ctl.land = land
     fresh = {"hwnd": 0, "apps": None, "widgets": None, "pending": False, "done": False, "gen": 0,
@@ -760,30 +760,10 @@ def test_read_taskbar_alignment_defaults_to_center_when_the_value_is_absent():
         assert se.read_taskbar_alignment() == 0
 
 
-def test_redecide_side_placement_forgets_the_decision_and_re_places():
-    tb = _taskbar(apps=(300, 900))
-    pm = _manager(tb)
-    pm._side_placement_key = ("sig", 4242, H)
-    pm._side_placement = SidePlacement("top", 181)
-    pm._last_applied_geometry = (1, 2, 3, 4)
-    with patch.object(pm, "update_position") as upd:
-        pm.redecide_side_placement()
-    upd.assert_called_once_with()
-    assert pm._side_placement is None and pm._side_placement_key is None
-    assert pm._last_applied_geometry is None
-
-
-def test_widget_re_decides_once_after_a_burst_of_alignment_changes(q_app):
+def test_widget_forwards_an_alignment_signal_to_the_side_bar_watcher(q_app):
+    """The WM_SETTINGCHANGE path (dead on 26200, kept as a hint) no longer re-decides on a blind 1.5 s
+    timer: the side-bar watcher compares TaskbarAl and waits for the re-laid bar (rc.2 W2)."""
     from netspeedtray.views.widget.main import NetworkSpeedWidget
-    stub = types.SimpleNamespace(logger=MagicMock(), position_manager=MagicMock(),
-                                 _ALIGNMENT_SETTLE_MS=0)
-    stub._redecide_side_placement = lambda: NetworkSpeedWidget._redecide_side_placement(stub)
-    with patch("netspeedtray.views.widget.main.QTimer") as timer_cls:
-        timer = timer_cls.return_value
-        NetworkSpeedWidget._on_taskbar_alignment_changed(stub)
-        NetworkSpeedWidget._on_taskbar_alignment_changed(stub)
-    assert timer_cls.call_count == 1                       # one timer, restarted
-    assert timer.start.call_count == 2
-    timer.setSingleShot.assert_called_once_with(True)
-    timer.timeout.connect.call_args.args[0]()              # the settle delay elapses
-    stub.position_manager.redecide_side_placement.assert_called_once_with()
+    stub = types.SimpleNamespace(logger=MagicMock(), position_manager=MagicMock())
+    NetworkSpeedWidget._on_taskbar_alignment_changed(stub)
+    stub.position_manager.note_taskbar_alignment_hint.assert_called_once_with()

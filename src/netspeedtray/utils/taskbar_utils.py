@@ -148,26 +148,28 @@ def find_apps_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
 # Where the app buttons and the Widgets button sit on a SIDE taskbar decides where the widget goes
 # (PositionManager side placement). Win11's buttons live in a XAML island, so the truth comes from
 # UI Automation (utils/uia_widgets.query_taskbar_layout, in-process, ~10 ms cross-process) on a
-# background thread. Unlike the #200 Widgets probe this one has NO periodic refresh: the placement
-# is decided only at startup, on a dock change, and on Reset position (never per app launch - #200
-# jitter), so it is requested exactly then (``request_taskbar_layout_probe``) and never runs at all
-# for a TOP/BOTTOM bar.
+# background thread. Unlike the #200 Widgets probe this one has NO periodic refresh: it is requested
+# at startup, on a dock change, on Reset position, and - as re-checks that KEEP the last result until
+# the new one lands (``keep_last``) - when core/side_bar_watcher predicts the app group reaching the
+# widget or sees the icon alignment flip. It never runs for a TOP/BOTTOM bar today (#24 may reuse it).
 _layout_lock = threading.Lock()
 # gen: bumped by every request (a result for an older gen is dropped); running: a worker thread is
 # alive (at most one at a time - repeated requests re-run it instead of piling up threads);
 # started: monotonic time of the current gen's request, for the timeout.
-_layout_state: dict = {"hwnd": 0, "apps": None, "widgets": None, "pending": False, "done": False,
-                       "gen": 0, "running": False, "started": 0.0}
+# group: the contiguous Start-led button run (uia_widgets.app_group_from_elements), for consumers that
+# must not count far-away buttons; landed: how many probe results have landed (a sequence number).
+_layout_state: dict = {"hwnd": 0, "apps": None, "widgets": None, "group": None, "pending": False,
+                       "done": False, "gen": 0, "running": False, "started": 0.0, "landed": 0}
 # A UIA call into a hung Explorer can block for a long time. Past this, the request counts as
 # finished WITHOUT a result (placement goes final on the classic HWND rect); a late result is dropped.
 LAYOUT_PROBE_TIMEOUT_S = 5.0
 
 
 def _query_taskbar_layout_blocking(taskbar_hwnd: int):
-    """(apps_rect, widgets_rect) in physical px from UIA, or None. Never raises."""
+    """(apps_rect, widgets_rect, app_group_rect) in physical px from UIA, or None. Never raises."""
     try:
         from netspeedtray.utils import uia_widgets
-        return uia_widgets.query_taskbar_layout(int(taskbar_hwnd))
+        return uia_widgets.query_taskbar_layout_full(int(taskbar_hwnd))
     except Exception as e:  # noqa: BLE001
         logger.debug("Taskbar layout UIA probe failed: %s", e)
         return None
@@ -182,25 +184,39 @@ def _layout_worker() -> None:
                 _layout_state["running"] = False
                 return
         result = _query_taskbar_layout_blocking(hwnd)
-        apps, widgets = result if isinstance(result, tuple) and len(result) == 2 else (None, None)
+        if isinstance(result, tuple) and len(result) == 3:
+            apps, widgets, group = result
+        elif isinstance(result, tuple) and len(result) == 2:
+            (apps, widgets), group = result, None
+        else:
+            apps = widgets = group = None
         with _layout_lock:
             if _layout_state["gen"] == gen and _layout_state["pending"]:
                 _layout_state.update(apps=valid_rect(apps), widgets=valid_rect(widgets),
-                                     pending=False, done=True)
+                                     group=valid_rect(group), pending=False, done=True,
+                                     landed=_layout_state.get("landed", 0) + 1)
                 logger.debug("Taskbar layout probe: apps=%s widgets=%s", apps, widgets)
             # else: superseded (loop re-runs for the newer request) or timed out (loop exits)
 
 
-def request_taskbar_layout_probe(taskbar_hwnd: Optional[int]) -> None:
-    """Drop the cached layout for ``taskbar_hwnd`` and probe it afresh on a background thread.
-    Until the probe lands (or times out), the snapshot says ``pending`` and ``get_apps_extent``
-    answers from the classic HWNDs."""
+def request_taskbar_layout_probe(taskbar_hwnd: Optional[int], keep_last: bool = False) -> None:
+    """Probe ``taskbar_hwnd``'s layout afresh on a background thread.
+
+    Default: drop the cached layout first - until the probe lands (or times out) the snapshot says
+    ``pending`` and ``get_apps_extent`` answers from the classic HWNDs (a one-shot placement).
+    ``keep_last=True`` (a runtime re-check of the SAME taskbar): the last landed result keeps
+    answering until the new one replaces it, so nothing falls back to the lagging HWND rect meanwhile;
+    a timed-out re-check keeps it too."""
     if not taskbar_hwnd:
         return
     with _layout_lock:
         _layout_state["gen"] += 1
-        _layout_state.update(hwnd=int(taskbar_hwnd), apps=None, widgets=None, pending=True, done=False,
-                             started=time.monotonic())
+        same = _layout_state["hwnd"] == int(taskbar_hwnd) and _layout_state["done"]
+        if keep_last and same:
+            _layout_state.update(pending=True, started=time.monotonic())
+        else:
+            _layout_state.update(hwnd=int(taskbar_hwnd), apps=None, widgets=None, group=None,
+                                 pending=True, done=False, started=time.monotonic())
         start = not _layout_state["running"]
         _layout_state["running"] = True
     if start:
@@ -220,12 +236,51 @@ def taskbar_layout_snapshot(taskbar_hwnd: Optional[int]):
         if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd):
             return None, None, False
         if _layout_state["pending"] and time.monotonic() - _layout_state["started"] > LAYOUT_PROBE_TIMEOUT_S:
-            logger.info("Taskbar layout probe timed out after %.0f s; using the taskbar's own rect.",
-                        LAYOUT_PROBE_TIMEOUT_S)
-            _layout_state.update(pending=False, done=True, apps=None, widgets=None)
+            if _layout_state["done"]:   # a keep_last re-check: the last result stays
+                logger.info("Taskbar layout re-check timed out after %.0f s; keeping the last layout.",
+                            LAYOUT_PROBE_TIMEOUT_S)
+                _layout_state.update(pending=False)
+            else:
+                logger.info("Taskbar layout probe timed out after %.0f s; using the taskbar's own rect.",
+                            LAYOUT_PROBE_TIMEOUT_S)
+                _layout_state.update(pending=False, done=True, apps=None, widgets=None, group=None)
         if _layout_state["done"]:
-            return _layout_state["apps"], _layout_state["widgets"], False
+            return _layout_state["apps"], _layout_state["widgets"], bool(_layout_state["pending"])
         return None, None, bool(_layout_state["pending"])
+
+
+def taskbar_layout_group(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
+    """The last probed contiguous Start-led button run (physical px) for ``taskbar_hwnd``, or None."""
+    taskbar_layout_snapshot(taskbar_hwnd)   # applies the timeout rule
+    with _layout_lock:
+        if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
+            return None
+        return _layout_state["group"]
+
+
+def taskbar_layout_landed_count(taskbar_hwnd: Optional[int]) -> int:
+    """How many probe results have landed (for ``taskbar_hwnd``; -1 for another taskbar): a caller
+    that notes it before a request knows its probe landed - rather than timed out - when it grows."""
+    with _layout_lock:
+        if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd):
+            return -1
+        return int(_layout_state.get("landed", 0))
+
+
+def find_classic_layout_hwnds(taskbar_hwnd: int) -> Tuple[int, int, int]:
+    """``(start, rebar, tasksw)``: the hidden legacy ``Start`` child of the taskbar and the
+    ``ReBarWindow32`` / ``MSTaskSwWClass`` pair, 0 for any that is missing. On Win11 26200 Explorer
+    still moves the ``Start`` window with the XAML Start button - 15-30 ms BEFORE UI Automation
+    reports it (rc.1 live probe) - while the task-switch pair's far edge lags behind the buttons."""
+    start = rebar = tasksw = 0
+    try:
+        start = int(win32gui.FindWindowEx(taskbar_hwnd, 0, "Start", None) or 0)
+        rebar = int(win32gui.FindWindowEx(taskbar_hwnd, 0, "ReBarWindow32", None) or 0)
+        if rebar:
+            tasksw = int(win32gui.FindWindowEx(rebar, 0, "MSTaskSwWClass", None) or 0)
+    except Exception as e:  # noqa: BLE001 - fail-safe
+        logger.debug("classic layout HWND lookup failed for taskbar HWND %s: %s", taskbar_hwnd, e)
+    return start, rebar, tasksw
 
 
 def taskbar_layout_probe_pending(taskbar_hwnd: Optional[int]) -> bool:

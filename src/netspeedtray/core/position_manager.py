@@ -794,6 +794,13 @@ class PositionManager(QObject):
         self._side_placement_source: Optional[str] = None   # "uia" / "hwnd" / None - what it used
         # Called once per decision that ends in "tray_no_room" (the widget shows the one-time heads-up).
         self.on_side_no_room: Optional[Callable[[], None]] = None
+        # Runtime re-check requested by the side-bar watcher ("full" after an alignment flip, else
+        # "collision"), applied on the next reposition from the watcher's fresh UIA probe.
+        self._side_recheck: Optional[str] = None
+        # Keeps the placement right as apps come and go and the alignment flips (rc.2 W1/W2). Only
+        # ever attached to a native side bar.
+        from netspeedtray.core.side_bar_watcher import SideBarWatcher
+        self._side_watcher = SideBarWatcher(self._side_watch_context, self._apply_side_recheck, parent=self)
 
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -1098,14 +1105,21 @@ class PositionManager(QObject):
                 # Not a native side bar (any more): forget the dock, so coming back to the same side
                 # bar (side -> bottom -> side, same signature) decides and probes afresh.
                 self._side_placement_key = None
+                self._side_recheck = None
+                self._side_watcher.detach()
                 return None
             hwnd = int(taskbar_info.hwnd)
+            self._side_watcher.attach(hwnd)
             key = (taskbar_utils.dock_signature(taskbar_info), hwnd, int(widget_height))
             if key != self._side_placement_key:
                 # New dock (or first sight): probe the layout afresh; decide now from what we have.
                 self._side_placement_key = key
+                self._side_recheck = None
                 taskbar_utils.request_taskbar_layout_probe(hwnd)
                 return self._decide_side_placement(taskbar_info, dpi, widget_height)
+            if self._side_recheck is not None:
+                kind, self._side_recheck = self._side_recheck, None
+                return self._recheck_side_placement(taskbar_info, dpi, widget_height, kind)
             if self._side_placement_source != "uia":
                 # Decided from the classic HWND rect: re-decide once the probe has finished - with
                 # its result, or (failed / timed out) to make the HWND-based decision final.
@@ -1141,17 +1155,76 @@ class PositionManager(QObject):
                 logger.debug("no-room callback failed: %s", e)
         return placement
 
-    def redecide_side_placement(self) -> None:
-        """The taskbar's icon alignment changed (Center <-> Top moves the Widgets button and the app
-        group on a side bar): decide the side-bar placement afresh - a new UIA layout probe included -
-        and re-place. A user's drag offset is kept (it still wins). No-op work on a horizontal bar:
-        the side placement is only ever decided for a native side bar."""
-        self.forget_side_placement()
+    def _recheck_side_placement(self, taskbar_info: TaskbarInfo, dpi: float, widget_height: int,
+                                kind: str) -> Optional[SidePlacement]:
+        """Apply the side-bar watcher's fresh UIA probe. ``"full"`` (the icon alignment flipped: the
+        Widgets button and the app group moved) decides the placement afresh. ``"collision"`` moves the
+        widget only when the fresh app span really reaches it - apps coming and going elsewhere never
+        move it (#200) - and never while the user's drag offset is in force."""
+        if kind == "full" or self._side_placement is None:
+            return self._decide_side_placement(taskbar_info, dpi, widget_height)
+        if user_placed_side_offset(self._state.config):
+            return self._side_placement
+        apps, source, widgets, _pending = taskbar_utils.taskbar_layout_for(taskbar_info.hwnd)
+        geo = side_bar_geometry(taskbar_info, dpi, apps=apps, widgets=widgets)
+        if geo is None or geo.apps_top is None or geo.apps_bottom is None or source != "uia":
+            return self._side_placement
+        try:
+            top = float(self._state.widget.pos().y())
+        except Exception:
+            return self._side_placement
+        clearance = constants.layout.DEFAULT_PADDING
+        bottom = top + widget_height
+        if geo.apps_bottom + clearance <= top or bottom + clearance <= geo.apps_top:
+            logger.debug("Side-bar re-check: apps %s..%s clear of the widget %s..%s - staying.",
+                         geo.apps_top, geo.apps_bottom, top, bottom)
+            return self._side_placement
+        logger.info("Side-bar re-check: apps %s..%s now reach the widget %s..%s - re-deciding.",
+                    geo.apps_top, geo.apps_bottom, top, bottom)
+        return self._decide_side_placement(taskbar_info, dpi, widget_height)
+
+    def _apply_side_recheck(self, full: bool) -> None:
+        """SideBarWatcher callback: its probe landed; re-place from it on this (GUI) thread."""
+        if full or self._side_recheck is None:
+            self._side_recheck = "full" if full else "collision"
         self._last_applied_geometry = None
         self.update_position()
 
+    def _side_watch_context(self):
+        """What the side-bar watcher compares against: None while there is nothing to watch (not a
+        native side bar, floating, hidden, or mid-drag)."""
+        from netspeedtray.core.side_bar_watcher import SideWatchContext
+        info = self._state.taskbar_info
+        widget = self._state.widget
+        if info is None or not info.hwnd or self._side_placement_key is None or self.is_floating():
+            return None
+        if getattr(widget, "_dragging", False) or not widget.isVisible():
+            return None
+        dpi = info.dpi_scale if info.dpi_scale > 0 else 1.0
+        top = float(widget.pos().y())
+        return SideWatchContext(hwnd=int(info.hwnd), dpi=dpi, widget=(top, top + widget.height()),
+                                user_placed=user_placed_side_offset(self._state.config))
+
+    def note_foreground_change(self) -> None:
+        """The widget saw a foreground change: a new app's button may be growing the side bar's app
+        group toward it (side-bar watcher; no-op elsewhere)."""
+        self._side_watcher.note_foreground_change()
+
+    def note_taskbar_alignment_hint(self) -> None:
+        """A WM_SETTINGCHANGE / alignment signal: let the side-bar watcher compare TaskbarAl."""
+        self._side_watcher.note_alignment_maybe_changed()
+
+    def side_bar_tick(self) -> None:
+        """The widget's 1 s safety-net tick (side-bar watcher: alignment + bounded near re-check)."""
+        self._side_watcher.on_tick()
+
+    def stop_side_watcher(self) -> None:
+        """Unhook (app shutdown)."""
+        self._side_watcher.detach()
+
     def forget_side_placement(self) -> None:
         """Re-decide the side-bar placement on the next reposition (Reset position)."""
+        self._side_recheck = None
         self._side_placement = None
         self._side_placement_key = None
         self._side_placement_provisional = False

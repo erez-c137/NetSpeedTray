@@ -236,6 +236,57 @@ def taskbar_layout_from_elements(elements) -> Tuple[Optional[Tuple[int, int, int
     return apps, widgets
 
 
+# Two buttons belong to one contiguous run when the gap between them is at most this (physical px).
+# Win11's taskbar buttons sit edge to edge (44 px slots at 96 DPI, gap 0); the "..." overflow button
+# follows the last app directly. A button further away (a shell button a future build parks by the
+# tray, Widgets on the far side) is not part of the run.
+APP_GROUP_MAX_GAP_PX = 8
+
+
+def app_group_from_elements(elements, vertical: bool,
+                            max_gap: int = APP_GROUP_MAX_GAP_PX) -> Optional[Tuple[int, int, int, int]]:
+    """Pure: the CONTIGUOUS run of buttons that starts at Start - Start/Search/Task View, the app
+    buttons, and any other non-tray button touching the run (the "..." overflow) - as one
+    ``(l, t, r, b)`` rect in physical px, or None when there is no StartButton.
+
+    Unlike ``taskbar_layout_from_elements``' union, a button separated from the run by more than
+    ``max_gap`` along the bar is left out, so an unknown button far from the apps can't make the whole
+    bar look full. ``vertical`` picks the bar's axis (y for a left/right bar, x for top/bottom). The
+    run is extended from Start in both directions (a right-to-left layout puts Start at the far end)."""
+    buttons = []
+    start = None
+    for cls, aid, rect in elements:
+        try:
+            left, top, right, bottom = (int(v) for v in rect)
+        except Exception:
+            continue
+        if right <= left or bottom <= top or aid == _WIDGETS_ID:
+            continue
+        if not (cls in _APP_BUTTON_CLASSES or aid in _APP_GROUP_IDS or _is_other_bar_button(cls, aid)):
+            continue
+        r = (left, top, right, bottom)
+        lo, hi = (top, bottom) if vertical else (left, right)
+        buttons.append((lo, hi, r))
+        if aid == "StartButton" and start is None:
+            start = (lo, hi, r)
+    if start is None:
+        return None
+    lo, hi = start[0], start[1]
+    group = start[2]
+    remaining = [b for b in buttons if b is not start]
+    grew = True
+    while grew:
+        grew = False
+        for b in list(remaining):
+            if b[0] <= hi + max_gap and b[1] >= lo - max_gap:
+                lo, hi = min(lo, b[0]), max(hi, b[1])
+                r = b[2]
+                group = (min(group[0], r[0]), min(group[1], r[1]), max(group[2], r[2]), max(group[3], r[3]))
+                remaining.remove(b)
+                grew = True
+    return group
+
+
 def _bstr(element: int, index: int) -> str:
     out = ctypes.c_void_p()
     _method(element, index, ctypes.POINTER(ctypes.c_void_p))(element, ctypes.byref(out))
@@ -268,6 +319,20 @@ def query_taskbar_layout(taskbar_hwnd: int):
     """``(apps_rect, widgets_rect)`` in physical px for the taskbar ``taskbar_hwnd`` (Shell_TrayWnd),
     or None when UIA is unavailable. Blocking (cross-process); background thread only. Never raises.
     Searches the XAML island first; the whole taskbar only if that finds no app buttons."""
+    full = query_taskbar_layout_full(taskbar_hwnd)
+    return None if full is None else (full[0], full[1])
+
+
+def _layout_from_elements_full(elements, vertical: Optional[bool]):
+    apps, widgets = taskbar_layout_from_elements(elements)
+    if vertical is None:   # infer the axis from the union: a left/right bar's run is taller than wide
+        vertical = apps is not None and (apps[3] - apps[1]) > (apps[2] - apps[0])
+    return apps, widgets, app_group_from_elements(elements, vertical)
+
+
+def query_taskbar_layout_full(taskbar_hwnd: int, vertical: Optional[bool] = None):
+    """``(apps_rect, widgets_rect, app_group_rect)`` in physical px (see ``app_group_from_elements``),
+    or None when UIA is unavailable. Same cost and rules as ``query_taskbar_layout`` - ONE FindAll."""
     ole32 = ctypes.oledll.ole32
     initialized = False
     try:
@@ -279,7 +344,8 @@ def query_taskbar_layout(taskbar_hwnd: int):
                 raise
         result = None
         for root in _layout_root_hwnds(taskbar_hwnd):
-            result = _probe_layout(ole32, root)
+            elements = _probe_layout(ole32, root)
+            result = None if elements is None else _layout_from_elements_full(elements, vertical)
             if result is not None and result[0] is not None:
                 return result
         return result
@@ -332,7 +398,7 @@ def _probe_layout(ole32, hwnd: int):
                 continue
             finally:
                 _release(kid.value)
-        return taskbar_layout_from_elements(elements)
+        return elements
     finally:
         for p in (kids, true_cond, root, uia):
             _release(p.value)

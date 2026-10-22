@@ -76,6 +76,33 @@ class TimeoutConstants:
     # A tick-only fight trips it after ~12 s, a 300 ms re-burier after ~4 s.
     BURIAL_FRESH_RATE_MAX: Final[int] = 12
     BURIAL_FRESH_RATE_WINDOW_MS: Final[int] = 15000
+    # Side-taskbar re-placement (core/side_bar_watcher, rc.2 W1/W2). Live data, Win11 26200 right bar
+    # (scratchpad p406live/b2_right_center.txt): opening an app moves the legacy Start window to its
+    # FINAL spot at once; UI Automation reports the new button 15-30 ms later and then animates it for
+    # another ~300-550 ms. A burst of LOCATIONCHANGE events is coalesced for SIDE_BAR_COALESCE_MS
+    # (hook probe 2026-10-22, bottom bar: one app = 2-4 events within ~5 ms, sometimes a second step
+    # ~0.5 s later; Explorer is otherwise silent), and the UIA re-check runs SIDE_BAR_SETTLE_MS after the last one, so it measures the
+    # settled layout. A re-check whose app-group start still disagrees with the legacy Start window
+    # (mid-animation) is repeated after SIDE_BAR_RETRY_MS, at most SIDE_BAR_MAX_RETRIES times.
+    SIDE_BAR_COALESCE_MS: Final[int] = 40
+    SIDE_BAR_SETTLE_MS: Final[int] = 600
+    SIDE_BAR_RETRY_MS: Final[int] = 250
+    SIDE_BAR_MAX_RETRIES: Final[int] = 3
+    # Explorer re-lays the whole bar (with a longer animation) after an icon-alignment flip.
+    SIDE_BAR_ALIGNMENT_SETTLE_MS: Final[int] = 1200
+    # How often the landed probe is looked for (GUI thread; the probe itself is ~10 ms on its worker).
+    SIDE_BAR_PROBE_POLL_MS: Final[int] = 50
+    # Never more than one UIA layout probe per this interval (~10 ms cross-process each).
+    SIDE_BAR_MIN_PROBE_INTERVAL_MS: Final[int] = 500
+    # A non-centred group (Top alignment, or a centred one already stopped at the bar's end) grows
+    # toward the widget WITHOUT moving Start, so nothing in the hook sees it: re-check after a
+    # foreground change (a new app usually takes the foreground) and once more after
+    # SIDE_BAR_FOREGROUND_FOLLOWUP_MS (its button slides in), and from the 1 s safety-net tick every
+    # SIDE_BAR_NEAR_RECHECK_MS - only while the group is within SIDE_BAR_NEAR_SLOTS button slots of
+    # the widget (#24 design, 2026-10-22).
+    SIDE_BAR_FOREGROUND_FOLLOWUP_MS: Final[int] = 800
+    SIDE_BAR_NEAR_RECHECK_MS: Final[int] = 3000
+    SIDE_BAR_NEAR_SLOTS: Final[int] = 3
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
 
