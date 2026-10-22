@@ -78,8 +78,10 @@ def _changed(before, after):
 
 @pytest.mark.parametrize("opacity", [55.0, 10.5])
 def test_float_graph_opacity_loads_and_a_noop_save_changes_nothing(qtbot, opacity):
+    # color_is_automatic False: an automatic text colour follows the live Windows theme on Save
+    # (#405) - legitimately a change on a light taskbar, and not what this test is about.
     cfg = dict(DEFAULTS, graph_opacity=opacity, keep_data=365, font_family="Consolas",
-               record_hardware_history=True)
+               record_hardware_history=True, color_is_automatic=False)
     dlg, _ = _make(qtbot, cfg)
     assert dlg._failed_pages == set()
     got = dlg.get_settings()
@@ -97,7 +99,7 @@ def test_a_page_that_fails_to_load_never_writes_its_keys(qtbot, monkeypatch):
         raise TypeError("simulated load failure")
     monkeypatch.setattr(HardwarePage, "load_settings", boom)
     cfg = dict(DEFAULTS, monitor_cpu_enabled=True, cpu_load_high_threshold=91,
-               keep_data=365, metrics_endpoint_port=9555)
+               keep_data=365, metrics_endpoint_port=9555, color_is_automatic=False)   # see above
     dlg, main = _make(qtbot, cfg)
     assert dlg._failed_pages == {"hardware"}
     got = dlg.get_settings()

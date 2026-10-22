@@ -96,3 +96,22 @@ def _no_real_lhm_web_server(monkeypatch):
     reading set ``thread._lhm_http`` themselves."""
     from netspeedtray.core import monitor_thread
     monkeypatch.setattr(monitor_thread, "LhmHttpClient", _NoLhmWebServer)
+
+
+@pytest.fixture(autouse=True)
+def _pin_windows_theme(monkeypatch):
+    """Pin the Windows (taskbar) theme the automatic text colour follows, so no test depends on the
+    machine running it. Settings' live preview / Save / Cancel substitute the current theme's colour
+    for an AUTOMATIC default_color (#405); on a light-mode CI runner that turned the factory white
+    into black and failed exact-config assertions that pass on a dark-mode dev PC (PR #409).
+
+    Dark (white text) by default; NST_TEST_WINDOWS_THEME=light runs the suite under a light taskbar,
+    to prove a test doesn't depend on it. A test that needs a specific theme patches these names
+    itself, which overrides this floor."""
+    import os
+    from netspeedtray import constants
+    light = os.environ.get("NST_TEST_WINDOWS_THEME", "dark").strip().lower() == "light"
+    colour = constants.color.BLACK if light else constants.color.WHITE
+    for target in ("netspeedtray.views.settings.dialog.shell_theme_text_color",
+                   "netspeedtray.views.widget.theme.shell_theme_text_color"):
+        monkeypatch.setattr(target, lambda: colour, raising=False)
