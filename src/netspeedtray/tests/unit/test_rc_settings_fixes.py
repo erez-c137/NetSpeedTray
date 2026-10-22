@@ -328,6 +328,33 @@ def test_inert_controls_grey_out(qtbot):
     assert not dlg.widget_page._free_float_card.isEnabled()   # Primary (auto): floating can't apply
 
 
+def test_reset_all_resets_hidden_settings_and_keeps_state(qtbot):
+    """Review item 5: Reset all no longer reset settings no page shows (2.1.7 did), so the user had
+    no way back to their defaults; app state (onboarding, positions, ...) must still survive."""
+    hidden = {"text_alignment": "left", "force_decimals": not DEFAULTS["force_decimals"],
+              "dynamic_update_enabled": not DEFAULTS["dynamic_update_enabled"],
+              "dark_mode": not DEFAULTS["dark_mode"], "show_legend": not DEFAULTS["show_legend"],
+              "monitor_graph_smoothing": not DEFAULTS["monitor_graph_smoothing"]}
+    state = {"location_onboarding_dismissed": True, "monitor_active_tab": "hardware", "paused": True,
+             "history_period_chosen": True, "history_period_slider_value": 3}
+    dlg, _ = _make(qtbot, dict(DEFAULTS, **hidden, **state))
+    dlg.advanced_page.reset_all_btn.click()
+    for k in hidden:
+        assert dlg.config[k] == DEFAULTS[k], k
+    for k, v in state.items():
+        assert dlg.config[k] == v, k
+
+
+def test_every_config_key_has_a_reset_all_decision(qtbot):
+    """A new config key must be reset by a page, listed as hidden-but-reset, or kept as state."""
+    dlg, _ = _make(qtbot)
+    owned = {"color_is_automatic"}
+    for p in dlg._pages():
+        owned |= set(p.get_settings())
+    undecided = set(DEFAULTS) - owned - set(dlg.RESET_ALL_HIDDEN) - set(dlg.RESET_ALL_KEEPS)
+    assert not undecided, f"decide Reset all behaviour for: {sorted(undecided)}"
+
+
 @pytest.mark.parametrize("mode", ["network_only", "cycle"])
 @pytest.mark.parametrize("stack", [True, False])
 def test_untouched_save_keeps_stack_hardware_stats(qtbot, mode, stack):
