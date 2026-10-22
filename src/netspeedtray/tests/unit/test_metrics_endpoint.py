@@ -623,10 +623,10 @@ def test_server_thread_never_reads_qt_owned_state():
 
 # --- Settings ------------------------------------------------------------------------------------
 @pytest.fixture
-def page(q_app):
+def page(qt_owned):
     from netspeedtray.constants.i18n import I18nStrings
     from netspeedtray.views.settings.pages.advanced import AdvancedPage
-    return AdvancedPage(I18nStrings("en_US"), lambda: None)
+    return qt_owned(AdvancedPage(I18nStrings("en_US"), lambda: None))
 
 
 def test_settings_round_trip_and_url(page):

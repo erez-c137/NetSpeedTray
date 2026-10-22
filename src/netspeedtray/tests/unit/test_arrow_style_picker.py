@@ -8,8 +8,8 @@ from netspeedtray.constants.arrows import ARROW_PRESETS
 
 
 @pytest.fixture
-def picker(q_app):
-    return ArrowStylePicker()
+def picker(qt_owned):
+    return qt_owned(ArrowStylePicker())
 
 
 def test_default_empty_is_classic_and_round_trips_empty(picker):

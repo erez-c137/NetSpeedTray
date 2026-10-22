@@ -19,6 +19,10 @@ from netspeedtray.core import thread_reaper
 
 
 _RELEASE = threading.Event()
+# The REAL interpreter, not the venv's python.exe: that one is a launcher stub that re-spawns the
+# base interpreter as a child, so killing it (what stop() does) leaves the real sleeper running as
+# an orphan - found alive hours later on the maintainer's PC, and a join here that could time out.
+_PY = getattr(sys, "_base_executable", None) or sys.executable
 
 
 class _Sleeper(QThread):
@@ -84,7 +88,7 @@ def test_stop_kills_an_in_flight_helper_process(q_app):
     def call():
         start = time.monotonic()
         try:
-            mt._run_child([sys.executable, "-c", "import time; time.sleep(30)"], 60)
+            mt._run_child([_PY, "-c", "import time; time.sleep(30)"], 60)
         except Exception as e:
             result["error"] = e
         result["took"] = time.monotonic() - start
@@ -98,20 +102,21 @@ def test_stop_kills_an_in_flight_helper_process(q_app):
     assert child is not None
     mt.stop()
     th.join(10)
+    assert not th.is_alive(), "the helper read outlived the kill"
     assert result["took"] < 10 and "error" in result
     assert child.poll() is not None, "the helper process was left running"
     with pytest.raises(RuntimeError):
-        mt._run_child([sys.executable, "-c", "pass"], 5)    # nothing new starts once stopping
+        mt._run_child([_PY, "-c", "pass"], 5)    # nothing new starts once stopping
 
 
 def test_run_child_returns_output_and_raises_on_failure(q_app):
     from netspeedtray.core.monitor_thread import StatsMonitorThread
     mt = StatsMonitorThread(interval=0.1)
-    assert mt._run_child([sys.executable, "-c", "print('52, 8192, 75')"], 30).strip() == "52, 8192, 75"
+    assert mt._run_child([_PY, "-c", "print('52, 8192, 75')"], 30).strip() == "52, 8192, 75"
     with pytest.raises(subprocess.CalledProcessError):
-        mt._run_child([sys.executable, "-c", "import sys; sys.exit(3)"], 30)
+        mt._run_child([_PY, "-c", "import sys; sys.exit(3)"], 30)
     with pytest.raises(subprocess.TimeoutExpired):
-        mt._run_child([sys.executable, "-c", "import time; time.sleep(30)"], 0.5)
+        mt._run_child([_PY, "-c", "import time; time.sleep(30)"], 0.5)
 
 
 def test_the_update_check_is_not_waited_out_at_quit(q_app):

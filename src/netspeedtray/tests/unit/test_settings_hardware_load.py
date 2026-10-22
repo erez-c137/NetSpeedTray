@@ -6,8 +6,8 @@ from netspeedtray.views.settings.pages.hardware import HardwarePage
 
 
 @pytest.fixture
-def page(q_app):
-    return HardwarePage(I18nStrings("en_US"), lambda: None)
+def page(qt_owned):
+    return qt_owned(HardwarePage(I18nStrings("en_US"), lambda: None))
 
 
 def test_load_thresholds_round_trip(page):

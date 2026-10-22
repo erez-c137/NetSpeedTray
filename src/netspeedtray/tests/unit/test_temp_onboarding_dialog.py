@@ -6,8 +6,8 @@ from netspeedtray.views.temp_onboarding_dialog import TempOnboardingDialog
 
 
 @pytest.fixture
-def dlg(q_app):
-    return TempOnboardingDialog(I18nStrings("en_US"))
+def dlg(qt_owned):
+    return qt_owned(TempOnboardingDialog(I18nStrings("en_US")))
 
 
 def test_default_action_is_dismiss(dlg):

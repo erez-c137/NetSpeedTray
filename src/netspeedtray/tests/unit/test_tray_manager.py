@@ -10,9 +10,9 @@ from PyQt6.QtCore import QPoint, QRect
 from netspeedtray.core.tray_manager import TrayIconManager
 
 @pytest.fixture
-def mock_widget(q_app):
+def mock_widget(qt_owned):
     """Provides a mock parent widget."""
-    widget = QWidget()
+    widget = qt_owned(QWidget())
     
     # Monkeypatch methods needed by the manager
     widget.rect = MagicMock()

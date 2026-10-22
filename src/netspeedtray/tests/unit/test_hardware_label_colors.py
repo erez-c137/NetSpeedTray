@@ -352,9 +352,9 @@ def test_validation_keeps_good_values(manager):
 # --------------------------------------------------------------------------- the Settings page
 
 @pytest.fixture
-def page(q_app):
+def page(qt_owned):
     from netspeedtray.views.settings.pages.hardware import HardwarePage
-    return HardwarePage(I18nStrings("en_US"), lambda: None)
+    return qt_owned(HardwarePage(I18nStrings("en_US"), lambda: None))
 
 
 def test_page_round_trips_the_colour_settings(page):
