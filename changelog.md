@@ -364,6 +364,12 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
 - 27 new strings and 3 changed ones are AI-drafted in every language and listed for
   review in [#364]. 19 unused strings were removed.
 
+### Security
+
+- **Pillow 13.0.0**, which matplotlib bundles. It fixes 28 advisories (3 critical: TIFF and JPEG
+  heap overflows, Ghostscript argument injection). None was reachable - NetSpeedTray only writes
+  its own graph images - but the bundle no longer carries them. ([#418])
+
 ### Developer notes
 
 - **No UPX anywhere in the build**, enforced by a post-build check; Inno Setup is pinned to 6.7.1 in
@@ -411,6 +417,7 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
 [#413]: https://github.com/erez-c137/NetSpeedTray/pull/413
 [#415]: https://github.com/erez-c137/NetSpeedTray/pull/415
 [#416]: https://github.com/erez-c137/NetSpeedTray/pull/416
+[#418]: https://github.com/erez-c137/NetSpeedTray/pull/418
 [@kamal63442]: https://github.com/kamal63442
 [@pasharm]: https://github.com/pasharm
 [@emgeka]: https://github.com/emgeka
