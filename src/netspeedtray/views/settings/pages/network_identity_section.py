@@ -40,7 +40,7 @@ class NetworkIdentitySettings(QWidget):
             self._tr("NETWORK_IDENTITY_TITLE", "Network identity"),
             self._tr("NETWORK_IDENTITY_SUB",
                      "Show the Wi-Fi band (2.4G / 5G) on the widget - the thing Windows hides at a glance."),
-            header_toggle=True, initial_on=False)
+            header_toggle=True, initial_on=False, i18n=self._i18n)
         self._exp.toggled.connect(lambda _on: self.on_change())
         body = self._exp.contentLayout()
 

@@ -12,7 +12,7 @@ import re
 from typing import Optional, Final
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QBoxLayout, QCheckBox, QLabel, QSlider,
-    QSizePolicy, QStyleOption, QLineEdit, QFrame, QToolButton, QButtonGroup,
+    QSizePolicy, QStyle, QStyleOption, QLineEdit, QFrame, QToolButton, QButtonGroup,
     QPushButton, QColorDialog, QComboBox,
     QApplication, QScrollArea, QAbstractSlider, QAbstractSpinBox, QAbstractButton
 )
@@ -582,78 +582,6 @@ class Win11Slider(QWidget):
         return QSize(width, max(height, 28))
 
 
-class CollapsibleSection(QWidget):
-    """
-    A collapsible card section with a clickable header and expandable content area.
-    Used to reduce visual density on busy settings pages.
-    """
-    toggled = pyqtSignal(bool)
-
-    def __init__(self, title: str, expanded: bool = True, parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        from netspeedtray.utils.styles import collapsible_section_style
-
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.setSpacing(constants.layout.COLLAPSIBLE_SECTION_SPACING)
-
-        # --- Header ---
-        self._header = QWidget()
-        self._header.setObjectName("collapsibleHeader")
-        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._header.setFixedHeight(constants.layout.COLLAPSIBLE_HEADER_HEIGHT)
-        self._header.setStyleSheet(collapsible_section_style())
-        self._header.mousePressEvent = self._on_header_clicked
-
-        header_layout = QHBoxLayout(self._header)
-        header_layout.setContentsMargins(8, 0, 8, 0)
-        header_layout.setSpacing(6)
-
-        self._chevron = QLabel()
-        self._chevron.setObjectName("sectionChevron")
-        self._chevron.setFixedWidth(16)
-        header_layout.addWidget(self._chevron)
-
-        self._title_label = QLabel(title)
-        self._title_label.setObjectName("sectionTitle")
-        header_layout.addWidget(self._title_label, stretch=1)
-
-        outer_layout.addWidget(self._header)
-
-        # --- Content ---
-        self._content = QWidget()
-        self._content_layout = QVBoxLayout(self._content)
-        self._content_layout.setContentsMargins(0, 0, 0, 0)
-        self._content_layout.setSpacing(10)
-        outer_layout.addWidget(self._content)
-
-        # --- Initial state ---
-        self._expanded = expanded
-        self._update_state()
-
-    def _on_header_clicked(self, event) -> None:
-        self._expanded = not self._expanded
-        self._update_state()
-        self.toggled.emit(self._expanded)
-
-    def _update_state(self) -> None:
-        self._content.setVisible(self._expanded)
-        self._chevron.setText("\u25BE" if self._expanded else "\u25B8")
-
-    def setExpanded(self, expanded: bool) -> None:
-        if self._expanded != expanded:
-            self._expanded = expanded
-            self._update_state()
-            self.toggled.emit(self._expanded)
-
-    def isExpanded(self) -> bool:
-        return self._expanded
-
-    def contentLayout(self) -> QVBoxLayout:
-        """Returns the layout to add child widgets to."""
-        return self._content_layout
-
-
 # =============================================================================
 # Design-system primitives (Fluent settings vocabulary). These consume the
 # tokens in constants/styles.py via utils/styles.font()/semantic_colors() so the
@@ -886,34 +814,80 @@ class ReflowRow(QWidget):
         super().resizeEvent(event)
 
 
+class _ExpanderHeader(QAbstractButton):
+    """The header row of a SettingExpander WITHOUT a header toggle - the disclosure control itself.
+    A button, so UI Automation exposes a Button (with Invoke) and the keyboard can drive it: a Tab
+    stop that Space (Qt's button default) and Enter open and close. (With a header toggle the toggle
+    is the control and the header stays a plain frame, so the tree has no redundant second button.)
+
+    Not checkable on purpose: Qt reports a checkable button to UI Automation as a check box ("not
+    checked"), and PyQt6 has no QAccessible binding to expose a real expanded/collapsed state - so
+    the state rides in the accessible name instead ("Advertised plan speed, collapsed")."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        # Tab only: a mouse click toggles without leaving a focus ring behind.
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        # A button defaults to a fixed height; the header grows with a wrapped title like a frame does.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            # Toggle on the first press only, but swallow the auto-repeats too: an ignored repeat goes
+            # up to the dialog, which "presses" its default Save button - holding Enter on a header
+            # used to save and close Settings (#432 review).
+            if not event.isAutoRepeat():
+                self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event) -> None:
+        # QAbstractButton paints nothing itself: draw the stylesheet box (card fill, stroke, focus ring).
+        opt = QStyleOption()
+        opt.initFrom(self)
+        painter = QPainter(self)
+        self.style().drawPrimitive(QStyle.PrimitiveElement.PE_Widget, opt, painter, self)
+
+
 class SettingExpander(QWidget):
     """
     A Fluent settings expander: a header row (title + optional muted description +
     optional master toggle) over a collapsible content area of child cards. With
     ``header_toggle=True`` a Win11Toggle in the header both controls the feature and
     drives the body's visibility - the native Win11 Settings disclosure idiom.
+    Without one, the header itself opens and closes the body, from the mouse or the keyboard.
     """
     toggled = pyqtSignal(bool)          # master-toggle state (only when header_toggle)
     expandedChanged = pyqtSignal(bool)
 
     def __init__(self, title: str, description: str = "", header_toggle: bool = False,
                  initial_on: bool = False, expanded: bool = False,
-                 parent: Optional[QWidget] = None) -> None:
+                 parent: Optional[QWidget] = None, i18n=None) -> None:
         super().__init__(parent)
         self.setObjectName("settingExpander")
         self._has_toggle = header_toggle
+        self._i18n = i18n
+        self._title = str(title or "").strip().rstrip(":：").strip()
         c = semantic_colors()
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(tokens.SPACE_XS)
 
-        self._header = QFrame()
+        if header_toggle:
+            self._header = QFrame()
+            self._header.mousePressEvent = self._on_header_clicked   # the toggle is the keyboard path
+        else:
+            self._header = _ExpanderHeader()
+            self._header.clicked.connect(self._on_header_clicked)   # mouse, Space, Enter
         self._header.setObjectName("expanderHeader")
         self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+        # The focus ring follows the app's single focus style (2px accent, as on the inputs).
         self._header.setStyleSheet(
-            f"QFrame#expanderHeader {{ background-color: {c['card_bg']}; "
+            f"#expanderHeader {{ background-color: {c['card_bg']}; "
             f"border: 1px solid {c['card_stroke']}; border-radius: {tokens.RADIUS_CARD}px; }}"
+            f" #expanderHeader:focus {{ border: 2px solid {c['accent']}; }}"
         )
         self._header.setMinimumHeight(58)   # match SettingCard's Win11 row height
         hl = QHBoxLayout(self._header)
@@ -956,7 +930,8 @@ class SettingExpander(QWidget):
             f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 12px;")
         hl.addWidget(self._chevron, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self._header.mousePressEvent = self._on_header_clicked
+        if description and not header_toggle:
+            self._header.setAccessibleDescription(str(description).strip())
         outer.addWidget(self._header)
 
         self._content = QWidget()
@@ -972,16 +947,33 @@ class SettingExpander(QWidget):
         self.toggled.emit(on)
         self.setExpanded(on)
 
-    def _on_header_clicked(self, event) -> None:
+    def _on_header_clicked(self, *_args) -> None:
         if self._has_toggle and self._toggle is not None:
             self._toggle.setChecked(not self._toggle.isChecked())  # fires _on_toggle
         else:
             self.setExpanded(not self._expanded)
 
+    def _tr(self, key: str, default: str) -> str:
+        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
+
     def _sync(self) -> None:
         self._content.setVisible(self._expanded)
         # E70D ChevronDown (open) / E76C ChevronRight (closed).
         self._chevron.setText(chr(0xE70D) if self._expanded else chr(0xE76C))
+        # The header's name carries the state a screen reader can't otherwise get (see _ExpanderHeader).
+        # With a header toggle, the toggle's own checked state already says it.
+        if self._has_toggle:
+            return
+        if self._expanded:
+            name = self._tr("EXPANDER_A11Y_EXPANDED", "{title}, expanded")
+        else:
+            name = self._tr("EXPANDER_A11Y_COLLAPSED", "{title}, collapsed")
+        try:
+            name = name.format(title=self._title)
+        except (KeyError, IndexError, ValueError):
+            name = self._title
+        if self._header.accessibleName() != name:
+            self._header.setAccessibleName(name)
 
     def setExpanded(self, on: bool) -> None:
         if self._expanded != on:
@@ -1009,7 +1001,7 @@ class SettingExpander(QWidget):
         """Swap the muted header description (only for an expander built with one)."""
         if self._desc_label is not None:
             self._desc_label.setText(text)
-        for w in self._named:
+        for w in self._named + ([] if self._has_toggle else [self._header]):
             w.setAccessibleDescription(str(text or "").strip())
 
 
