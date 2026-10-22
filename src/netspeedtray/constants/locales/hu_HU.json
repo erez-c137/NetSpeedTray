@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "A NetSpeedTray átfedi a Widgetek panelt",
     "WIDGETS_OVERLAP_NUDGE_BODY": "A NetSpeedTray a Windows Widgetek/időjárás panelje fölött helyezkedik el a tálcán. Bárhová áthúzhatod – megjegyzi a helyét. (Ez az üzenet nem jelenik meg újra.)",
     "RESET_POSITION_MENU_ITEM": "&Pozíció visszaállítása",
-    "HOVER_CARD_PIN_HINT": "Kattints, hogy nyitva maradjon",
+    "HOVER_CARD_PIN_HINT": "Kattints a widgetre, hogy nyitva maradjon",
     "INTEGRATIONS_GROUP": "Integrációk",
     "METRICS_ENDPOINT_LABEL": "Helyi metrikavégpont",
     "METRICS_ENDPOINT_SUB": "Lehetővé teszi, hogy a számítógépen futó Prometheus vagy Grafana lekérdezze az aktuális hálózati sebességeket és az adatforgalmi adatokat. A végpont kizárólag erről a számítógépről érhető el, az adatok nem kerülnek továbbításra külső rendszerbe.",

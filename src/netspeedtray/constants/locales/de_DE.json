@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray überdeckt das Widgets-Panel",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray liegt in Ihrer Taskleiste über den Windows-Widgets bzw. der Wetteranzeige. Sie können es an eine beliebige Stelle ziehen – die Position wird gemerkt. (Diese Meldung wird nicht mehr angezeigt.)",
     "RESET_POSITION_MENU_ITEM": "Position &zurücksetzen",
-    "HOVER_CARD_PIN_HINT": "Klicken, damit diese Karte geöffnet bleibt",
+    "HOVER_CARD_PIN_HINT": "Auf das Widget klicken, damit die Karte offen bleibt",
     "INTEGRATIONS_GROUP": "Integrationen",
     "METRICS_ENDPOINT_LABEL": "Lokaler Metrik-Endpunkt",
     "METRICS_ENDPOINT_SUB": "Lässt Prometheus oder Grafana auf diesem PC Live-Geschwindigkeiten und Datenverbrauch auslesen. Nur dieser PC kann sich verbinden; es wird nichts gesendet.",

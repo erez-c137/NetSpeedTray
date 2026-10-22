@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray si sovrappone al pannello Widget",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray si trova sopra il pannello Widget/meteo di Windows nella barra delle applicazioni. Puoi trascinarlo dove preferisci: ricorderà la posizione. (Questo messaggio non verrà mostrato di nuovo.)",
     "RESET_POSITION_MENU_ITEM": "Ripristina p&osizione",
-    "HOVER_CARD_PIN_HINT": "Fai clic per tenerla aperta",
+    "HOVER_CARD_PIN_HINT": "Fai clic sul widget per tenerla aperta",
     "INTEGRATIONS_GROUP": "Integrazioni",
     "METRICS_ENDPOINT_LABEL": "Endpoint locale delle metriche",
     "METRICS_ENDPOINT_SUB": "Consente a Prometheus o Grafana su questo PC di leggere le velocità in tempo reale e il consumo dati. Solo questo PC può connettersi; non viene inviato nulla da nessuna parte.",

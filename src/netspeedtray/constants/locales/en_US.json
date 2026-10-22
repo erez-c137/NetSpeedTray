@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray overlaps the Widgets panel",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray is sitting over the Windows Widgets/weather panel on your taskbar. You can drag it anywhere you like - it'll remember the spot. (This message won't show again.)",
     "RESET_POSITION_MENU_ITEM": "Reset P&osition",
-    "HOVER_CARD_PIN_HINT": "Click to keep this open",
+    "HOVER_CARD_PIN_HINT": "Click the widget to keep this open",
     "INTEGRATIONS_GROUP": "Integrations",
     "METRICS_ENDPOINT_LABEL": "Local metrics endpoint",
     "METRICS_ENDPOINT_SUB": "Lets Prometheus or Grafana on this PC read live speeds and data usage. Only this PC can connect; nothing is sent anywhere.",

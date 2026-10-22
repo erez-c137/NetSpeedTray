@@ -1222,7 +1222,7 @@ class NetworkSpeedWidget(QWidget):
     _HOVER_CARD_DELAY_MS = 350
     # Cache window for the (today, this-month) DB totals so rapid hovers don't hammer the DB.
     _HOVER_USAGE_TTL_SEC = 30.0
-    # Hover-opened cards that carry the "Click to keep this open" footer (fewer once pinned: 0).
+    # Hover-opened cards that carry the "Click the widget to keep this open" footer (once pinned: 0).
     _PIN_HINT_MAX_SHOWS = 5
 
     def invalidate_usage_cache(self) -> None:
@@ -1305,7 +1305,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.debug("pin hint retire failed: %s", e)
 
     def _pin_hint_text(self) -> Optional[str]:
-        """The "Click to keep this open" footer for a card opened by hover: on the first
+        """The "Click the widget to keep this open" footer for a card opened by hover: on the first
         _PIN_HINT_MAX_SHOWS such cards (its own counter - independent of the gesture hint's
         graduation, which may already be over for an upgrader), and never again once pinned."""
         try:
@@ -1398,8 +1398,8 @@ class NetworkSpeedWidget(QWidget):
             month_label = (self.i18n.USAGE_THIS_PERIOD_LABEL
                            if today is not None and getattr(self, "_hover_usage_period_start", None)
                            else None)
-            # "Click to keep this open" footer: on a card opened by hover only (a pinned card is
-            # already open), for the first few such cards.
+            # "Click the widget to keep this open" footer: on a card opened by hover only (a pinned
+            # card is already open), for the first few such cards.
             pin_hint = None if pinned else self._pin_hint_text()
             card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, power=power,
                                history_note=note, hardware=hardware, month_label=month_label,

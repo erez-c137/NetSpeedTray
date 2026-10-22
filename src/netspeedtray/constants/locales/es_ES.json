@@ -527,7 +527,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray se superpone al panel de widgets",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray está encima del panel de widgets o de El tiempo de Windows en la barra de tareas. Puedes arrastrarlo a donde quieras y recordará la posición. (Este mensaje no volverá a aparecer.)",
     "RESET_POSITION_MENU_ITEM": "Res&tablecer posición",
-    "HOVER_CARD_PIN_HINT": "Haz clic para mantenerla abierta",
+    "HOVER_CARD_PIN_HINT": "Haz clic en el widget para mantenerla abierta",
     "INTEGRATIONS_GROUP": "Integraciones",
     "METRICS_ENDPOINT_LABEL": "Punto de conexión local de métricas",
     "METRICS_ENDPOINT_SUB": "Permite que Prometheus o Grafana en este PC lean las velocidades en directo y el uso de datos. Solo este PC puede conectarse; no se envía nada a ningún sitio.",
