@@ -984,6 +984,21 @@ def test_burial_right_after_docking_does_not_use_up_the_info_line(caplog):
         assert len(_recovery_infos(caplog)) == 1
 
 
+def test_owner_reset_to_the_same_taskbar_is_not_a_new_dock(caplog):
+    """#440 review L4: Qt drops the owner across show / flag changes (after a fullscreen app) and it is
+    re-set to the SAME taskbar. That is no layout change: a burial right after it is real and logs
+    INFO. Only a dock to a different taskbar HWND starts the settle window."""
+    with _env([TB, W], owner=0) as (m, z, _w, clock):
+        with caplog.at_level(logging.DEBUG, logger=pm_mod.logger.name):
+            m.ensure_topmost()                       # first dock to TB: settle
+            clock.t += 60
+            m.ensure_topmost()                       # owner re-set to TB again (fullscreen exit)
+            _bury(z)
+            clock.t += 1
+            assert m.reseat_above_taskbar() is True
+        assert len(_recovery_infos(caplog)) == 1
+
+
 def test_tray_icon_arrival_hands_the_info_line_back(caplog):
     """A tray icon arrives: the widget is buried first, the tray rect changes on the next refresh.
     The INFO the arrival used is handed back, so the real burial after it logs at INFO too."""

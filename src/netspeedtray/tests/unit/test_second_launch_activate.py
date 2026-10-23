@@ -38,7 +38,7 @@ def test_activate_message_is_its_own_registered_atom():
 
 def test_second_launch_signals_this_users_instance_only(monkeypatch):
     _fake_desktop(monkeypatch, [(0x20, 200, True), (0x30, 300, True), (0x40, 400, False)])
-    monkeypatch.setattr(sc, "_same_user_pids", lambda: {200, 999})     # pid 300 is another user's
+    monkeypatch.setattr(sc, "_other_user_pids", lambda: {300})          # pid 300 is another user's
     post = MagicMock(return_value=True)
     monkeypatch.setattr(sc, "_post", post)
     assert sc.request_activate() is True
@@ -46,10 +46,10 @@ def test_second_launch_signals_this_users_instance_only(monkeypatch):
 
 
 def test_unknown_owner_is_still_asked(monkeypatch):
-    """When this user's processes can't be listed, the marked window is asked anyway: all it can do
-    is become visible."""
+    """When processes can't be listed at all, the marked window is asked anyway: all it can do is
+    become visible."""
     _fake_desktop(monkeypatch, [(0x20, 200, True)])
-    monkeypatch.setattr(sc, "_same_user_pids", lambda: None)
+    monkeypatch.setattr(sc, "_other_user_pids", lambda: None)
     post = MagicMock(return_value=True)
     monkeypatch.setattr(sc, "_post", post)
     assert sc.request_activate() is True
@@ -58,16 +58,42 @@ def test_unknown_owner_is_still_asked(monkeypatch):
 
 def test_nothing_to_activate(monkeypatch):
     _fake_desktop(monkeypatch, [(0x20, 300, True)])
-    monkeypatch.setattr(sc, "_same_user_pids", lambda: {999})
+    monkeypatch.setattr(sc, "_other_user_pids", lambda: {300})
     post = MagicMock(return_value=True)
     monkeypatch.setattr(sc, "_post", post)
     assert sc.request_activate() is False
     post.assert_not_called()
 
 
-def test_same_user_pids_includes_this_process():
-    pids = sc._same_user_pids()
-    assert pids is not None and os.getpid() in pids
+def test_other_user_pids_never_contains_this_process():
+    pids = sc._other_user_pids()
+    assert pids is not None and os.getpid() not in pids
+
+
+def test_elevated_instance_with_no_reported_sid_is_still_signalled(monkeypatch):
+    """#440 review M1: from an unelevated second launch WTSEnumerateProcesses reports NO SID for an
+    elevated instance (its token can't be opened). Only a known DIFFERENT SID excludes a process."""
+    import win32api
+    import win32con
+    import win32security
+    import win32ts
+    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+    try:
+        mine = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+    finally:
+        token.Close()
+    other = win32security.ConvertStringSidToSid("S-1-5-21-1-2-3-1001")
+    monkeypatch.setattr(win32ts, "WTSEnumerateProcesses", lambda *a: [
+        (1, 200, "NetSpeedTray.exe", None),       # elevated instance of ours: no SID visible
+        (1, 300, "NetSpeedTray.exe", other),      # another user's copy on this desktop
+        (1, 400, "NetSpeedTray.exe", mine),
+    ])
+    assert sc._other_user_pids() == {300}
+    _fake_desktop(monkeypatch, [(0x20, 200, True), (0x30, 300, True), (0x40, 400, True)])
+    post = MagicMock(return_value=True)
+    monkeypatch.setattr(sc, "_post", post)
+    assert sc.request_activate() is True
+    assert [c.args[0] for c in post.call_args_list] == [0x20, 0x40]
 
 
 def test_arming_also_opens_uipi_for_the_activate_message(monkeypatch):
@@ -120,7 +146,7 @@ def test_real_cross_process_round_trip(tmp_path, monkeypatch):
         assert hwnd in real_enum()
         monkeypatch.setattr(sc, "_enum_top_level_windows", lambda: [h for h in real_enum() if h == hwnd])
         (target,) = sc.find_running_instances()
-        assert target[0] == hwnd and target[1] in sc._same_user_pids()
+        assert target[0] == hwnd and target[1] not in sc._other_user_pids()
         assert sc.request_activate() is True
         assert child.wait(timeout=20) == 0
         assert flag.read_text() == "activated"
@@ -174,7 +200,9 @@ def test_hidden_off_screen_widget_comes_back_to_its_docked_spot(no_timer):
     from netspeedtray.views.widget.main import NetworkSpeedWidget
     fake, pm = _show_fake(visible=False, off_screen=True)
     NetworkSpeedWidget.show_from_second_launch(fake)
-    fake.reset_to_default_position.assert_called_once_with()
+    # #440 review L3: back for THIS session only - Reset position (which saves) is never used.
+    fake.reset_to_default_position.assert_not_called()
+    pm.move_to_default_for_session.assert_called_once_with()
     fake.setVisible.assert_called_once_with(True)
     pm.reset_reseat_state.assert_called_once_with()      # no backoff left to defer the re-seat
     pm.update_position.assert_called_once_with()
@@ -188,9 +216,40 @@ def test_visible_widget_on_screen_keeps_its_spot(no_timer):
     fake, pm = _show_fake(visible=True, off_screen=False, buried=False)
     NetworkSpeedWidget.show_from_second_launch(fake)
     fake.reset_to_default_position.assert_not_called()
+    pm.move_to_default_for_session.assert_not_called()
     fake.setVisible.assert_not_called()
     pm.reseat_above_taskbar.assert_not_called()
     pm.ensure_topmost.assert_called_once_with()
+
+
+def test_session_move_keeps_every_saved_position_value():
+    """#440 review L3: the duplicate start at sign-in can come before the slow monitor that holds the
+    saved Free Move spot connects. The widget moves to the docked spot, but position_x/y and the drag
+    offsets stay exactly as saved, so the spot is back once that monitor is."""
+    from PyQt6.QtCore import QPoint, QRect
+    from netspeedtray.core.position_manager import PositionManager, WindowState
+    from netspeedtray.utils.taskbar_utils import TaskbarInfo
+    screen = MagicMock()
+    screen.name.return_value = "DISPLAY1"
+    screen.geometry.return_value = QRect(0, 0, 1920, 1080)
+    screen.availableGeometry.return_value = QRect(0, 0, 1920, 1032)
+    tb = MagicMock(spec=TaskbarInfo)
+    tb.hwnd, tb.rect, tb.dpi_scale = 0x10, (0, 1032, 1920, 1080), 1.0
+    tb.tasklist_rect = tb.widgets_rect = tb.toolbars_rect = None
+    tb.get_tray_rect.return_value = (1694, 1032, 1920, 1080)
+    tb.get_edge_position.return_value = constants.taskbar.edge.BOTTOM
+    tb.get_screen.return_value = screen
+    widget = MagicMock()
+    widget.width.return_value, widget.height.return_value = 190, 48
+    widget.pos.return_value = QPoint(5000, 2000)
+    cfg = {"free_move": True, "position_x": 5000, "position_y": 2000, "tray_offset_x": 40,
+           "tray_offset_y": 9}
+    saved = dict(cfg)
+    pm = PositionManager(WindowState(config=cfg, widget=widget, taskbar_info=tb))
+    assert pm.move_to_default_for_session() is True
+    x, y = widget.move.call_args[0]
+    assert x == 1694 - 190 - constants.layout.TRAY_EDGE_MIN_GAP_PX and 1032 <= y < 1080
+    assert cfg == saved
 
 
 def test_fullscreen_app_keeps_it_hidden_unless_keep_visible(no_timer):

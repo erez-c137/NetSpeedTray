@@ -1125,6 +1125,11 @@ def get_free_float_screen(preferred_screen_name: Optional[str]) -> Optional[QScr
         if screen is None:
             return None  # preferred monitor not connected -> the primary-taskbar fallback is correct
         taskbars = get_all_taskbar_info()
+        if not any(getattr(tb, "hwnd", 0) for tb in taskbars):
+            # NO taskbar anywhere (only the hwnd-0 fallback, or nothing): Explorer is restarting, not
+            # a taskbar-less display. Floating now would put the widget off the bar for the restart;
+            # the docked path's hold keeps it hidden at its last spot instead (rc.2 W5, #440 M2).
+            return None
         if _select_taskbar_for_screen(taskbars, preferred_screen_name) is not None:
             return None  # it has a taskbar of its own -> dock to it normally
         return screen    # present but taskbar-less -> free-float on it

@@ -225,9 +225,11 @@ def request_shutdown(timeout: float) -> int:
     return result
 
 
-def _same_user_pids() -> Optional[set]:
-    """PIDs of every process of THIS user (any session, elevated ones included - WTSEnumerateProcesses
-    reports each SID without opening the process), or None when that cannot be listed."""
+def _other_user_pids() -> Optional[set]:
+    """PIDs of processes that provably belong to ANOTHER user: WTSEnumerateProcesses reported a SID and
+    it is not ours. A process it reports with NO SID (a token it could not open - an ELEVATED instance
+    of this very user, seen from an unelevated second launch) is not in the set: dropping those made
+    the second launch miss an elevated widget (#440 review M1). None when nothing can be listed."""
     try:
         import win32api
         import win32con
@@ -241,7 +243,7 @@ def _same_user_pids() -> Optional[set]:
         my_sid = win32security.ConvertSidToStringSid(me)
         return {int(pid) for _session, pid, _name, sid in win32ts.WTSEnumerateProcesses(
                     win32ts.WTS_CURRENT_SERVER_HANDLE, 1, 0)
-                if sid is not None and win32security.ConvertSidToStringSid(sid) == my_sid}
+                if sid is not None and win32security.ConvertSidToStringSid(sid) != my_sid}
     except Exception as e:
         logger.debug("Could not list this user's processes: %s", e)
         return None
@@ -251,9 +253,10 @@ def request_activate() -> bool:
     """
     A second launch (the per-user instance mutex is taken, #234): ask THIS user's running widget to show
     itself again - un-hide, re-dock, re-seat above the taskbar, back to its docked spot if off-screen -
-    instead of exiting silently. EnumWindows only sees our own desktop, and a marked window of another
-    user's process (a "Run as different user" copy) is skipped, matching the per-user mutex; when the
-    owner cannot be listed, the marked window is asked anyway (it can only become visible).
+    instead of exiting silently. EnumWindows only sees our own desktop, and a marked window of a process
+    known to be another user's (a "Run as different user" copy) is skipped, matching the per-user
+    mutex; one whose owner can't be told (an elevated instance of ours, or no listing at all) is
+    asked anyway - it can only become visible.
 
     True if a running instance was signalled. Never waits: the second process exits right after.
     """
@@ -263,9 +266,9 @@ def request_activate() -> bool:
         return False
     targets = find_running_instances()
     if targets:
-        mine = _same_user_pids()
-        if mine is not None:
-            targets = [(hwnd, pid) for hwnd, pid in targets if pid in mine]
+        others = _other_user_pids()
+        if others:
+            targets = [(hwnd, pid) for hwnd, pid in targets if pid not in others]
     if not targets:
         logger.info("Second launch: no running widget of this user on this desktop to bring back.")
         return False

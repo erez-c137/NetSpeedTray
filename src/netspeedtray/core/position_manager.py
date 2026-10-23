@@ -785,6 +785,8 @@ class PositionManager(QObject):
         self._layout_settle_ts: float = 0.0
         self._recovery_info_ts: float = 0.0
         self._last_seen_tray: Optional[tuple] = None
+        self._last_dock_owner: int = 0   # taskbar HWND of the last dock that started a settle window
+        self._owner_set_to: int = 0      # taskbar HWND _ensure_taskbar_owner last set as the owner
         # Start of the current continuous on-top stretch (is_buried_behind_taskbar);
         # None while we have not verified we are on top. Gates backoff retirement.
         self._on_top_since: Optional[float] = None
@@ -1451,6 +1453,32 @@ class PositionManager(QObject):
         self.update_position()
         self.ensure_topmost()
 
+    def move_to_default_for_session(self) -> bool:
+        """
+        Put the widget at its automatic docked spot NOW, without touching the saved Free Move spot or
+        the drag offsets (unlike reset_to_default). For the second launch (#234): a duplicate start at
+        sign-in can arrive before a slow monitor holding the saved spot connects, and must not wipe
+        that spot (#440 review L3). Returns True if the widget was moved.
+        """
+        defaults = constants.config.defaults
+        info = self._state.taskbar_info or get_taskbar_info(
+            preferred_screen_name=self._state.config.get('preferred_monitor'))
+        widget = self._state.widget
+        size = (widget.width(), widget.height())
+        if info is None or size[0] <= 0 or size[1] <= 0:
+            return False
+        session_cfg = dict(self._state.config)
+        session_cfg.update(position_x=None, position_y=None,
+                           tray_offset_x=defaults.DEFAULT_TRAY_OFFSET_X,
+                           tray_offset_y=defaults.DEFAULT_TRAY_OFFSET_Y)
+        pos = self._calculator.calculate_position(
+            info, size, session_cfg, side_placement=self._side_placement_for(info, size[1]))
+        if not pos:
+            return False
+        self._last_applied_geometry = None
+        self._apply_geometry(pos.x, pos.y)
+        return True
+
     def _ensure_taskbar_owner(self, hwnd: int) -> bool:
         """
         Dock the widget to the taskbar by making it an OWNED window of the taskbar
@@ -1478,6 +1506,7 @@ class PositionManager(QObject):
                 return False
             if (_GetWindowLongPtr(hwnd, _GWLP_HWNDPARENT) or 0) != tb_hwnd:
                 _SetWindowLongPtr(hwnd, _GWLP_HWNDPARENT, tb_hwnd)
+                self._owner_set_to = tb_hwnd
                 logger.debug("Widget docked to taskbar HWND %s (owner Z-order).", tb_hwnd)
                 return True
         except Exception as e:
@@ -1522,7 +1551,14 @@ class PositionManager(QObject):
                     hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
                     win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
                 )
-                self.note_layout_settle("dock")   # a burial right after docking is not news (W8)
+                # A burial right after docking to a NEW taskbar (startup, Explorer restart) is the
+                # shell laying it out (W8). Qt also drops the owner across show / flag changes (e.g.
+                # after a fullscreen app) and it is re-set to the SAME taskbar: a burial then is real
+                # and keeps its INFO line (#440 review L4).
+                owner = self._owner_set_to
+                if owner != self._last_dock_owner:
+                    self._last_dock_owner = owner
+                    self.note_layout_settle("dock")
             # A widget that fell out of the topmost band (Qt can drop WS_EX_TOPMOST across
             # show/flag changes) is necessarily BELOW the topmost taskbar, so it is "buried"
             # in is_buried_behind_taskbar()'s terms and the widget's guarded recovery path

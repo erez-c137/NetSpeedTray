@@ -135,11 +135,26 @@ def _patched(monkeypatch, hwnd):
 
 
 def test_refresh_hides_the_widget_while_there_is_no_taskbar(monkeypatch):
+    """Hidden from the SECOND consecutive no-taskbar tick; the first only holds (#440 review L5)."""
     _patched(monkeypatch, hwnd=0)
     w = _widget_self(holding=True)
+    w._no_taskbar_ticks = 0
+    widget_main.NetworkSpeedWidget._execute_refresh(w)
+    w.setVisible.assert_not_called()
     widget_main.NetworkSpeedWidget._execute_refresh(w)
     w.setVisible.assert_called_once_with(False)
     w.position_manager.update_position.assert_not_called()
+
+
+def test_single_transient_no_taskbar_tick_never_hides(monkeypatch):
+    """One failed lookup between good ones: held in place, never hidden - no flicker (#440 L5)."""
+    w = _widget_self(holding=True)
+    w._no_taskbar_ticks = 0
+    for hwnd in (0, 4242, 0, 4242):
+        _patched(monkeypatch, hwnd=hwnd)
+        w.position_manager.holding_for_taskbar.return_value = hwnd == 0
+        widget_main.NetworkSpeedWidget._execute_refresh(w)
+    assert (False,) not in [c.args for c in w.setVisible.call_args_list]
 
 
 def test_refresh_shows_and_places_the_widget_once_the_taskbar_is_back(monkeypatch):

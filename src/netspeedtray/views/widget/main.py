@@ -254,6 +254,7 @@ class NetworkSpeedWidget(QWidget):
         self._is_context_menu_visible: bool = False
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         self._taskbar_lost_count: int = 0
+        self._no_taskbar_ticks: int = 0   # consecutive refreshes holding for a missing taskbar (W5)
         self._will_quit_app: bool = False # Flag to distinguish hide vs exit
         self._shutdown_armed_hwnd: int = 0  # HWND the --shutdown channel was armed on
         
@@ -491,11 +492,17 @@ class NetworkSpeedWidget(QWidget):
             # No taskbar at all (Explorer restarting, rc.2 W5): hide and keep the last position until
             # the new taskbar exists, rather than float at the screen-fallback spot. Bounded - past
             # TASKBAR_ABSENT_HOLD_MS the old fallback applies. `is True`: a mocked manager is not.
+            # Debounced (#440 review L5): the first no-taskbar tick only holds the position; the widget
+            # hides from the second consecutive one, so one transient failed lookup can't flicker it.
             if not free_float_active and self.position_manager.holding_for_taskbar(taskbar_info) is True:
-                if self.isVisible():
+                ticks = getattr(self, "_no_taskbar_ticks", 0)
+                ticks = (ticks if isinstance(ticks, int) else 0) + 1
+                self._no_taskbar_ticks = ticks
+                if ticks >= constants.timeouts.TASKBAR_ABSENT_HIDE_AFTER_TICKS and self.isVisible():
                     self.dismiss_hover_card()
                     self.setVisible(False)
                 return
+            self._no_taskbar_ticks = 0
 
             # Allow user override to keep widget visible even when a fullscreen window is present
             keep_visible = self.config.get("keep_visible_fullscreen", False)
@@ -2176,9 +2183,9 @@ class NetworkSpeedWidget(QWidget):
     def show_from_second_launch(self) -> None:
         """
         The app was launched again while running (#234, rc.2 W14; the second process posts
-        ACTIVATE_MESSAGE_NAME and exits). Bring the widget back however it was lost: off-screen (a
-        Free Move spot on a monitor that is gone) -> Reset position to the docked spot; hidden -> shown;
-        then re-dock to the current taskbar and re-seat it above the taskbar if it was buried, with the
+        ACTIVATE_MESSAGE_NAME and exits). Bring the widget back however it was lost: hidden -> shown;
+        re-placed and re-docked to the current taskbar; still off-screen -> the docked spot for this
+        session (nothing saved is cleared); re-seated above the taskbar if it was buried, with the
         burial backoff forgotten so nothing defers it. The 1 s refresh then applies the usual rules
         (an auto-hidden taskbar still hides it). A fullscreen app keeps it hidden, as always - unless
         Keep visible in fullscreen is on. Never opens a window: a duplicate Run-key start at sign-in
@@ -2194,14 +2201,17 @@ class NetworkSpeedWidget(QWidget):
                     and not self.config.get("keep_visible_fullscreen", False)):
                 self.logger.info("A fullscreen app is active - the widget comes back when it ends.")
                 return
-            if self._is_off_screen():
-                self.logger.info("The widget was off-screen - moving it back to its docked spot.")
-                self.reset_to_default_position()
             self._taskbar_lost_count = 0
             if not self.isVisible():
                 self.setVisible(True)
             pm.reset_reseat_state()
-            pm.update_position()
+            pm.update_position()   # a saved spot on a monitor that is gone already falls back here
+            if self._is_off_screen():
+                # Still nowhere visible: the docked spot for THIS session only. Nothing saved is
+                # cleared - a duplicate start at sign-in can beat a slow monitor that holds the
+                # saved Free Move spot (#440 review L3); Reset position stays the explicit choice.
+                self.logger.info("The widget was off-screen - showing it at its docked spot for now.")
+                pm.move_to_default_for_session()
             pm.ensure_topmost()
             if pm.is_buried_behind_taskbar():
                 pm.reseat_above_taskbar()

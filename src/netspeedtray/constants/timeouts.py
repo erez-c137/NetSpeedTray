@@ -129,6 +129,9 @@ class TimeoutConstants:
     # behaviour applies: shown at the fallback spot. A restart takes ~2-5 s; a crashed Explorer that
     # Windows relaunches can take longer.
     TASKBAR_ABSENT_HOLD_MS: Final[int] = 15000
+    # ...and it hides only from this many CONSECUTIVE no-taskbar refreshes (~1 s apart): the first one
+    # just holds the position, so a single transient failed lookup can't flicker it (#440 review L5).
+    TASKBAR_ABSENT_HIDE_AFTER_TICKS: Final[int] = 2
 
     # Widget / UI Delays (milliseconds)
     WIDGET_INIT_DELAY_MS: Final[int] = 500
