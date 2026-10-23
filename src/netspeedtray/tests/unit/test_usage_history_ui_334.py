@@ -44,7 +44,7 @@ class _WS:
 def _sheet(qt_owned, days=None, config=None, ceiling=None, lang="en_US"):
     ws = _WS(_days() if days is None else days)
     s = qt_owned(UsageHistorySheet(ws, config or {}, I18nStrings(lang),
-                                   today_ceiling=(lambda: ceiling) if ceiling else None))
+                                   period_ceiling=(lambda: ceiling) if ceiling else None))
     return s, ws
 
 
@@ -92,7 +92,7 @@ def test_months_follow_the_billing_period_with_a_reset_day(qt_owned):
 
 
 def test_today_row_takes_the_cards_cap_clamp(qt_owned):
-    s, _ws = _sheet(qt_owned, ceiling=(0.5e9, 2e9))
+    s, _ws = _sheet(qt_owned, ceiling=(TODAY.replace(day=1), (0.5e9, 2e9)))
     s.set_days(_days())
     assert _cells(s, 0)[1:] == ["2.00 GB", "500.00 MB", "2.50 GB"]
     assert _cells(s, 1)[1] == "5.00 GB"                         # only today is clamped
@@ -188,6 +188,7 @@ def test_advanced_backup_runs_off_the_gui_thread_and_reports(qt_owned, qtbot, tm
     src = tmp_path / "speed_history.db"
     _make_db(src)
     page = qt_owned(AdvancedPage(I18nStrings("en_US"), lambda: None, history_path_callback=lambda: src))
+    page.show()                                                # Settings on screen: message boxes
     shown = []
     monkeypatch.setattr(QMessageBox, "exec", lambda self: shown.append(self.text()) or 0)
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: shown.append(("warn", a[2])))
@@ -207,13 +208,15 @@ def test_advanced_backup_runs_off_the_gui_thread_and_reports(qt_owned, qtbot, tm
     shown.clear()
     page.start_backup(src, src.parent / "speed_history.db-wal")
     qtbot.waitUntil(lambda: bool(shown), timeout=10000)
-    assert shown[0][0] == "warn" and I18nStrings("en_US").BACKUP_HISTORY_FAILED in shown[0][1]
+    en = I18nStrings("en_US")
+    assert shown[0][0] == "warn" and shown[0][1] == f"{en.BACKUP_HISTORY_FAILED}\n{en.BACKUP_HISTORY_ERR_REFUSED}"
 
 
 def test_advanced_backup_without_a_history_file(qt_owned, tmp_path, monkeypatch):
     from netspeedtray.views.settings.pages.advanced import AdvancedPage
     page = qt_owned(AdvancedPage(I18nStrings("en_US"), lambda: None,
                                  history_path_callback=lambda: tmp_path / "missing.db"))
+    page.show()
     shown = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: shown.append(a[2]))
     monkeypatch.setattr(QFileDialog, "getSaveFileName",

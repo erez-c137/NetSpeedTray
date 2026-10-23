@@ -350,7 +350,7 @@ def test_backup_falls_back_to_the_backup_api(live, tmp_path, monkeypatch):
 
         def execute(self, sql, *a):
             if sql.strip().upper().startswith("VACUUM INTO"):
-                raise sqlite3.OperationalError("simulated: VACUUM INTO refused")
+                raise sqlite3.OperationalError("attempt to write a readonly database")
             return self._c.execute(sql, *a)
 
         def __getattr__(self, n):
