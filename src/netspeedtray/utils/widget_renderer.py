@@ -20,6 +20,7 @@ from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import hardware_vendors
+from netspeedtray.utils import color_scheme
 
 # v2.1 network-identity band tag, drawn as a rounded pill/badge. The layout RESERVES the fixed
 # worst-case slot and the renderer DRAWS the actual (usually narrower) tag in it - both MUST use these
@@ -174,9 +175,17 @@ class RenderConfig:
     font_family: str
     font_size: int
     font_weight: int
+    # The themed colours (2.2 rc.2) hold the CURRENT taskbar's half of each <stem>_dark/_light pair -
+    # from_dict resolves them (utils/color_scheme), so every consumer gets the right theme for free.
     default_color: str
     high_speed_color: str
     low_speed_color: str
+    # Optional third band between Low and High (#9); 0 = Off, which bands exactly as before.
+    medium_speed_threshold: float = constants.config.defaults.DEFAULT_MEDIUM_SPEED_THRESHOLD
+    medium_speed_color: str = constants.config.defaults.DEFAULT_MEDIUM_SPEED_COLOR
+    # The mini graph's direction colours (#117); the Monitor window keeps constants.graph's.
+    graph_upload_color: str = constants.graph.UPLOAD_LINE_COLOR
+    graph_download_color: str = constants.graph.DOWNLOAD_LINE_COLOR
     background_color: str = field(default_factory=lambda: constants.config.defaults.DEFAULT_BACKGROUND_COLOR)
     background_opacity: float = field(default_factory=lambda: constants.config.defaults.DEFAULT_BACKGROUND_OPACITY / 100.0)
     graph_opacity: float = field(default_factory=lambda: constants.config.defaults.DEFAULT_GRAPH_OPACITY / 100.0)
@@ -267,6 +276,10 @@ class RenderConfig:
             if graph_style not in constants.config.defaults.GRAPH_STYLE_CHOICES:
                 graph_style = constants.config.defaults.DEFAULT_GRAPH_STYLE
 
+            # The one place the theme enters: the current Windows mode's colours (never the inert
+            # pre-1.3 single-value keys a migrated file still carries for a rollback).
+            colors = color_scheme.resolve(config)
+
             return cls(
                 color_coding=bool(config.get('color_coding', constants.config.defaults.DEFAULT_COLOR_CODING)),
                 graph_enabled=bool(config.get('graph_enabled', constants.config.defaults.DEFAULT_GRAPH_ENABLED)),
@@ -276,9 +289,14 @@ class RenderConfig:
                 font_family=str(config.get('font_family', constants.config.defaults.DEFAULT_FONT_FAMILY)),
                 font_size=int(config.get('font_size', constants.config.defaults.DEFAULT_FONT_SIZE)),
                 font_weight=weight_val,
-                default_color=str(config.get('default_color', constants.config.defaults.DEFAULT_COLOR)),
-                high_speed_color=str(config.get('high_speed_color', constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR)),
-                low_speed_color=str(config.get('low_speed_color', constants.config.defaults.DEFAULT_LOW_SPEED_COLOR)),
+                default_color=colors['default_color'],
+                high_speed_color=colors['high_speed_color'],
+                low_speed_color=colors['low_speed_color'],
+                medium_speed_threshold=float(config.get(
+                    'medium_speed_threshold', constants.config.defaults.DEFAULT_MEDIUM_SPEED_THRESHOLD) or 0.0),
+                medium_speed_color=colors['medium_speed_color'],
+                graph_upload_color=colors['graph_upload_color'],
+                graph_download_color=colors['graph_download_color'],
                 background_color=str(config.get('background_color', constants.config.defaults.DEFAULT_BACKGROUND_COLOR)),
                 background_opacity=max(0.0, min(1.0, float(config.get('background_opacity', constants.config.defaults.DEFAULT_BACKGROUND_OPACITY)) / 100.0)),
                 graph_opacity=max(0.0, min(1.0, opacity)),
@@ -310,10 +328,8 @@ class RenderConfig:
                 graph_style=graph_style,
                 use_custom_arrow_colors=bool(config.get(
                     'use_custom_arrow_colors', constants.config.defaults.DEFAULT_USE_CUSTOM_ARROW_COLORS)),
-                arrow_up_color=str(config.get(
-                    'arrow_up_color', constants.config.defaults.DEFAULT_ARROW_UP_COLOR)),
-                arrow_down_color=str(config.get(
-                    'arrow_down_color', constants.config.defaults.DEFAULT_ARROW_DOWN_COLOR)),
+                arrow_up_color=colors['arrow_up_color'],
+                arrow_down_color=colors['arrow_down_color'],
                 use_separate_arrow_font=bool(config.get('use_separate_arrow_font', False)),
                 arrow_font_family=str(config.get('arrow_font_family', constants.config.defaults.DEFAULT_FONT_FAMILY)),
                 arrow_font_size=int(config.get('arrow_font_size', constants.config.defaults.DEFAULT_FONT_SIZE)),
@@ -413,6 +429,7 @@ class WidgetRenderer:
         self._cached_pens = {
             'default': QPen(self.default_color),
             'high': QPen(self.high_color),
+            'medium': QPen(QColor(self.config.medium_speed_color)),
             'low': QPen(self.low_color),
             'cpu': QPen(QColor(constants.renderer.CPU_LINE_COLOR)),
             'gpu': QPen(QColor(constants.renderer.GPU_LINE_COLOR)),
@@ -894,15 +911,20 @@ class WidgetRenderer:
         painter.restore()
 
     @staticmethod
-    def _speed_band(raw_bytes: float, high_threshold_mbps: float, low_threshold_mbps: float) -> str:
+    def _speed_band(raw_bytes: float, high_threshold_mbps: float, low_threshold_mbps: float,
+                    medium_threshold_mbps: float = 0.0) -> str:
         """
-        Return the color band ('high' | 'low' | 'default') for a speed.
+        Return the color band ('high' | 'medium' | 'low' | 'default') for a speed.
 
         `raw_bytes` is the canonical speed in bytes/sec; it is converted to Mbps -
         the unit the high/low thresholds are defined in - before comparison. This is
         deliberately independent of the on-screen display unit: parsing the displayed
         number (which may be in Kbps, MB/s, ...) banded incorrectly whenever that unit
         wasn't Mbps. Bands ascend: default (< low) -> low (low..high) -> high (>= high).
+
+        The optional Medium threshold (#9) splits low..high at itself: low (low..medium) -> medium
+        (medium..high). It counts only when strictly between Low and High - 0 (Off) or a misplaced
+        value (config validation turns one off on the next load) bands exactly as the 3-level rule.
         """
         try:
             # Be order-robust: clamp so banding stays monotonic even if a caller passes
@@ -913,6 +935,9 @@ class WidgetRenderer:
             mbps = (raw_bytes * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
             if mbps >= hi:
                 return 'high'
+            medium = float(medium_threshold_mbps or 0.0)
+            if lo < medium < hi and mbps >= medium:
+                return 'medium'
             if mbps >= lo:
                 return 'low'
         except (TypeError, ValueError):
@@ -926,7 +951,8 @@ class WidgetRenderer:
         # Color coding - band by the canonical speed (see _speed_band), never the
         # on-screen number, so banding is correct in every display unit.
         if config.color_coding:
-            band = self._speed_band(raw_bytes, config.high_speed_threshold, config.low_speed_threshold)
+            band = self._speed_band(raw_bytes, config.high_speed_threshold, config.low_speed_threshold,
+                                    config.medium_speed_threshold)
             painter.setPen(self._cached_pens[band])
         else:
             painter.setPen(self._cached_pens['default'])
@@ -950,7 +976,8 @@ class WidgetRenderer:
                 # Restore the band pen BEFORE the number. Forgetting this makes the value silently
                 # inherit the arrow color, which reads as a color-coding regression (cf. #153).
                 if config.color_coding:
-                    band = self._speed_band(raw_bytes, config.high_speed_threshold, config.low_speed_threshold)
+                    band = self._speed_band(raw_bytes, config.high_speed_threshold, config.low_speed_threshold,
+                                    config.medium_speed_threshold)
                     painter.setPen(self._cached_pens[band])
                 else:
                     painter.setPen(self._cached_pens['default'])
@@ -1157,8 +1184,8 @@ class WidgetRenderer:
         - custom: the two picked colours (an unparsable one falls back to the text colour).
         - brand (default branch): the vendor palette in hardware_vendors. The taskbar is judged light
           or dark from the text colour - the widget background is usually transparent, and the text
-          colour is exactly what the theme manager flips per taskbar theme (or what the user chose to
-          be legible on theirs), so it is the honest proxy and costs no registry read per paint.
+          colour is the current taskbar's half of the themed pair (the user's choice for that taskbar,
+          or its default), so it is the honest proxy and costs no registry read per paint.
         """
         text = str(getattr(config, 'default_color', constants.config.defaults.DEFAULT_COLOR))
         mode = getattr(config, 'hardware_label_color', constants.config.defaults.DEFAULT_HARDWARE_LABEL_COLOR)
@@ -1381,7 +1408,14 @@ class WidgetRenderer:
                 painter.drawLine(QPointF(float(graph_rect.left()), ceiling_y),
                                  QPointF(float(graph_rect.right()), ceiling_y))
 
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
+            # Additive fills: on the usual transparent widget (DWM composites it over the taskbar) and on
+            # a dark background they read as a glow. Over an opaque LIGHT background, adding colour to a
+            # near-white backdrop saturates to white and the fill vanishes (PR #441 review renders), so
+            # there the fill is blended normally. Transparent / dark output is unchanged.
+            bg = QColor(config.background_color)
+            light_backdrop = config.background_opacity > 0 and bg.isValid() and bg.lightnessF() >= 0.5
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver if light_backdrop
+                                       else QPainter.CompositionMode.CompositionMode_Plus)
 
             from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF
 
@@ -1405,8 +1439,8 @@ class WidgetRenderer:
             if is_hardware:
                 draw_area(upload_points, hardware_color)
             else:
-                draw_area(upload_points, constants.graph.UPLOAD_LINE_COLOR)
-                draw_area(download_points, constants.graph.DOWNLOAD_LINE_COLOR)
+                draw_area(upload_points, config.graph_upload_color)
+                draw_area(download_points, config.graph_download_color)
 
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
             stroke_width = 1.5
@@ -1420,13 +1454,13 @@ class WidgetRenderer:
             else:
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 if upload_points:
-                    upload_pen = QPen(QColor(constants.graph.UPLOAD_LINE_COLOR), stroke_width)
+                    upload_pen = QPen(QColor(config.graph_upload_color), stroke_width)
                     upload_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
                     painter.setPen(upload_pen)
                     painter.drawPolyline(upload_points)
 
                 if download_points:
-                    download_pen = QPen(QColor(constants.graph.DOWNLOAD_LINE_COLOR), stroke_width)
+                    download_pen = QPen(QColor(config.graph_download_color), stroke_width)
                     download_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
                     painter.setPen(download_pen)
                     painter.drawPolyline(download_points)
@@ -1515,8 +1549,8 @@ class WidgetRenderer:
         if is_hardware:
             lines = [(upload_points, hardware_color)]
         else:
-            lines = [(upload_points, constants.graph.UPLOAD_LINE_COLOR),
-                     (download_points, constants.graph.DOWNLOAD_LINE_COLOR)]
+            lines = [(upload_points, config.graph_upload_color),
+                     (download_points, config.graph_download_color)]
         lines = [(pts, c) for pts, c in lines if pts]
 
         fill_alpha = constants.renderer.TREND_FILL_ALPHA

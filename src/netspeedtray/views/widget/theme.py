@@ -1,106 +1,36 @@
-
 import logging
-import winreg
-from typing import TYPE_CHECKING, Optional
-
-from PyQt6.QtGui import QColor
+from typing import TYPE_CHECKING
 
 from netspeedtray import constants
-from netspeedtray.utils.styles import shell_theme_text_color
+from netspeedtray.utils import color_scheme
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget.main import NetworkSpeedWidget
 
 class WidgetThemeManager:
     """
-    Manages theme synchronization (Light/Dark mode) for the NetworkSpeedWidget.
-    Handles registry checks and auto-color updates.
+    Keeps the widget's colours on the Windows (taskbar) theme.
+
+    Since the 2.2 rc.2 colour scheme the config holds a dark-taskbar AND a light-taskbar value for
+    every themed colour, and RenderConfig.from_dict picks the current one (utils/color_scheme). A theme
+    flip therefore never writes the config - in memory or on disk - it only refreshes the cached
+    Windows-mode flag and rebuilds the renderer. (Before, an "automatic" text colour was overwritten in
+    the file at startup and in memory on every flip, and an open Settings dialog had to fight it.)
     """
 
     def __init__(self, widget: "NetworkSpeedWidget"):
         self.widget = widget
         self.logger = logging.getLogger(f"{constants.app.APP_NAME}.ThemeManager")
 
-    def apply_theme_aware_defaults(self) -> None:
-        """
-        Synchronizes the widget's text color with the Windows theme on startup,
-        but ONLY if the user has not manually set a color.
-        """
-        try:
-            config = self.widget.config
-            is_automatic = config.get("color_is_automatic", True)
-
-            if not is_automatic:
-                self.logger.info("User has set a manual color. Skipping auto-theme sync.")
-                return
-
-            # Check Windows Theme
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
-            system_uses_light_theme, _ = winreg.QueryValueEx(key, "SystemUsesLightTheme")
-            winreg.CloseKey(key)
-
-            correct_color = constants.color.BLACK if system_uses_light_theme == 1 else constants.color.WHITE
-            
-            current_color = config.get("default_color", "")
-
-            if current_color.upper() != correct_color.upper():
-                theme_name = "Light" if system_uses_light_theme == 1 else "Dark"
-                self.logger.debug(
-                    f"Windows theme is {theme_name}, auto-color was {current_color}. Correcting to {correct_color}."
-                )
-                updates = {
-                    "default_color": correct_color,
-                    "color_is_automatic": True
-                }
-                config.update(updates)
-                self.widget.update_config(updates)
-
-        except Exception as e:
-            self.logger.warning(f"Could not perform theme-aware color sync: {e}")
-
     def on_theme_changed(self) -> None:
-        """Handles a runtime Windows theme change (Light <-> Dark).
-
-        Uses the in-memory update path (`update_color_for_live_theme`) so
-        flipping themes doesn't churn the config file on disk. The disk-
-        persisting `apply_theme_aware_defaults` is reserved for startup,
-        where syncing the saved color to the actual OS theme is desirable.
-        """
-        self.logger.info("Theme change detected; updating live colors.")
-        self.update_color_for_live_theme()
-        self.widget.update()
-
-    def update_color_for_live_theme(self) -> None:
-        """
-        Checks the current Windows shell (taskbar) theme and updates the widget's
-        text color in real-time (in-memory only).
-        """
-        self.logger.debug("Executing live theme color update check...")
+        """A Windows Light/Dark flip (the system event handler's theme_changed): repaint in the new
+        taskbar's colours."""
+        light = color_scheme.refresh_shell_theme()
+        self.logger.info("Windows theme is now %s; repainting in its colours.", "light" if light else "dark")
         try:
-            if not self.widget.config.get("color_is_automatic", True):
-                return
-
-            target_color_hex = shell_theme_text_color()
-            if target_color_hex is None:
-                self.logger.warning("Could not read the Windows theme for live update.")
-                return
-            theme_name = "Light" if target_color_hex == constants.color.BLACK else "Dark"
-
-            current_color = self.widget.config.get("default_color", constants.config.defaults.DEFAULT_COLOR)
-            
-            if current_color.upper() != target_color_hex.upper():
-                self.logger.info(f"Windows shell theme changed to {theme_name}. Updating text color to {target_color_hex}.")
-                
-                # Update in-memory config only
-                self.widget.config["default_color"] = target_color_hex
-                
-                # Propagate to renderer
-                if hasattr(self.widget, 'renderer'):
-                    self.widget.renderer.update_config(self.widget.config)
-                
-                self.widget.update()
-            
-        except FileNotFoundError:
-             self.logger.warning("Could not find theme registry key for live update.")
+            renderer = getattr(self.widget, "renderer", None)
+            if renderer is not None:
+                renderer.update_config(self.widget.config)   # rebuilds the pens, clears the graph cache
         except Exception as e:
-            self.logger.error(f"Failed to perform live theme color update: {e}", exc_info=True)
+            self.logger.error("Failed to apply the new theme's colours: %s", e, exc_info=True)
+        self.widget.update()

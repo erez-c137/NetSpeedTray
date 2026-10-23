@@ -63,6 +63,13 @@ class RendererConstants:
     # Trend style's point is a clean line. Kept as a one-number switch.
     TREND_FILL_ALPHA: Final[int] = 0
 
+    # Which half of the colour scheme a backdrop gets (utils/color_scheme.backdrop_is_light): light -
+    # dark text - above this relative luminance. 0.1791 is where black and white text have EQUAL WCAG
+    # contrast (sqrt(1.05 * 0.05) - 0.05), so this picks the better-reading text on every backdrop; a
+    # 0.5 split would put white text on mid greys that black reads far better on (#808080: 3.9 vs
+    # 5.3:1). Both taskbar references sit far from it (#202020 0.014, #EEEEEE 0.855).
+    BACKDROP_LUMINANCE_SPLIT: Final[float] = 0.1791
+
     # Two-row readout geometry, shared by the renderer and the layout's fit check (#322): the gap
     # between the upload and download rows, and the CPU/GPU icon box (drawn up from the baseline).
     TWO_ROW_GAP_PX: Final[int] = 1

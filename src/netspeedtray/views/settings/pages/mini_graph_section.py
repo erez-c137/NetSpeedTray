@@ -9,7 +9,7 @@ so the fixed-scale reveal grows at the bottom of the page and shifts nothing.
 Embedded as a section (the way Appearance embeds UnitsPage / ColorsPage). The controls, their config
 keys and the load/get wiring moved as-is.
 """
-from typing import Dict, Any, Callable
+from typing import Dict, Any, Callable, Optional
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QGraphicsOpacityEffect
@@ -19,7 +19,8 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.helpers import format_percent
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, Win11ComboBox, SettingCard
-from netspeedtray.views.settings.pages._fluent import section_header, page_layout, as_int
+from netspeedtray.views.settings.pages._fluent import (
+    section_header, page_layout, as_int, LastValidHex, ThemedColorPair, swatch_style)
 
 
 class MiniGraphSection(QWidget):
@@ -27,10 +28,19 @@ class MiniGraphSection(QWidget):
 
     layout_changed = pyqtSignal()
 
-    def __init__(self, i18n, on_change: Callable[[], None]):
+    # The mini graph's direction colours (#117), a dark- and a light-taskbar value each (2.2 rc.2).
+    COLOR_KEYS = tuple(f"{stem}_{suffix}" for stem in ("graph_upload_color", "graph_download_color")
+                       for suffix in constants.config.defaults.THEME_SUFFIXES)
+
+    def __init__(self, i18n, on_change: Callable[[], None],
+                 color_dialog_callback: Optional[Callable[[str], None]] = None):
         super().__init__()
         self.i18n = i18n
         self.on_change = on_change
+        # SettingsDialog._open_color_dialog(key) - the same QColorDialog flow the Appearance colours use.
+        self.open_color_dialog = color_dialog_callback or (lambda _key: None)
+        self._hex = LastValidHex({k: constants.config.defaults.DEFAULT_CONFIG[k] for k in self.COLOR_KEYS})
+        self._swatches: Dict[str, tuple] = {}   # config key -> (swatch button, hex field)
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -68,6 +78,19 @@ class MiniGraphSection(QWidget):
         self.graph_opacity.valueChanged.connect(self.on_change)
         self._opacity_card = SettingCard(self.i18n.GRAPH_OPACITY_LABEL, control=self.graph_opacity)
         layout.addWidget(self._opacity_card)
+
+        # Upload / download line colours (#117), per taskbar theme. They gray out with the graph off.
+        self._color_cards = []
+        for stem, label in (("graph_upload_color", self.i18n.GRAPH_UPLOAD_COLOR_LABEL),
+                            ("graph_download_color", self.i18n.GRAPH_DOWNLOAD_COLOR_LABEL)):
+            pair = ThemedColorPair(self.i18n, stem, label, self.open_color_dialog, self._on_hex_edited)
+            for key, button in pair.buttons.items():
+                setattr(self, f"{key}_button", button)
+                setattr(self, f"{key}_input", pair.inputs[key])
+                self._swatches[key] = (button, pair.inputs[key])
+            card = SettingCard(label, control=pair)
+            self._color_cards.append(card)
+            layout.addWidget(card)
 
         # The hardware graphs reuse the two settings right above, so the note sits under them (it used
         # to hang under Display Mode, a page away from the controls it describes).
@@ -143,6 +166,10 @@ class MiniGraphSection(QWidget):
         if style_idx < 0:   # a hand-edited value the combo doesn't offer
             style_idx = self.graph_style.findData(d.DEFAULT_GRAPH_STYLE)
         self.graph_style.setCurrentIndex(style_idx)
+        for key, (button, line) in self._swatches.items():
+            c = str(config.get(key) or d.DEFAULT_CONFIG[key])
+            button.setStyleSheet(swatch_style(c))
+            line.setText(c)
         self._sync_style_card()
         self._sync_graph_dependents()
 
@@ -156,7 +183,23 @@ class MiniGraphSection(QWidget):
             "graph_show_ceiling": self.graph_show_ceiling.isChecked(),
             "graph_split_directions": self.graph_split.isChecked(),
             "graph_style": str(self.graph_style.currentData()),
+            **{key: self._hex.get(key, line.text()) for key, (_b, line) in self._swatches.items()},
         }
+
+    def set_color_input(self, key: str, hex_code: str) -> None:
+        """Show a picked colour in the field of config key ``key`` (e.g. ``graph_upload_color_light``)."""
+        if key in self._swatches:
+            button, line = self._swatches[key]
+            line.setText(hex_code)
+            button.setStyleSheet(swatch_style(hex_code))
+            self.on_change()
+
+    def _on_hex_edited(self, key: str, text: str) -> None:
+        """Only a complete #RRGGBB repaints the swatch and reaches the live preview (S8)."""
+        if not self._hex.remember(key, text):
+            return
+        self._swatches[key][0].setStyleSheet(swatch_style(text.strip()))
+        self.on_change()
 
     # --- behavior ----------------------------------------------------------------
     def _on_graph_fixed_scale_toggle(self, checked: bool):
@@ -178,10 +221,10 @@ class MiniGraphSection(QWidget):
         self._set_card_enabled(self._split_card, self.enable_graph.isChecked())
 
     def _sync_graph_dependents(self) -> None:
-        """Timespan, opacity and the fixed scale (with its headroom / plan line) only shape the mini
-        graph, so they grey out while it is off, like the style and split cards (S9)."""
+        """Timespan, opacity, the line colours and the fixed scale (with its headroom / plan line) only
+        shape the mini graph, so they grey out while it is off, like the style and split cards (S9)."""
         on = self.enable_graph.isChecked()
-        for card in (self._duration_card, self._opacity_card, self._fixed_card):
+        for card in (self._duration_card, self._opacity_card, *self._color_cards, self._fixed_card):
             self._set_card_enabled(card, on)
         self.graph_scale_container.setEnabled(on)
 

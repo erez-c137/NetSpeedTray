@@ -116,18 +116,16 @@ def _backups_not_quitting(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _pin_windows_theme(monkeypatch):
-    """Pin the Windows (taskbar) theme the automatic text colour follows, so no test depends on the
-    machine running it. Settings' live preview / Save / Cancel substitute the current theme's colour
-    for an AUTOMATIC default_color (#405); on a light-mode CI runner that turned the factory white
-    into black and failed exact-config assertions that pass on a dark-mode dev PC (PR #409).
+    """Pin the Windows (taskbar) theme the colour scheme resolves against, so no test depends on the
+    machine running it (on a light-mode CI runner the factory white text once turned black and failed
+    exact assertions that pass on a dark-mode dev PC, PR #409).
 
-    Dark (white text) by default; NST_TEST_WINDOWS_THEME=light runs the suite under a light taskbar,
-    to prove a test doesn't depend on it. A test that needs a specific theme patches these names
-    itself, which overrides this floor."""
+    Dark by default; NST_TEST_WINDOWS_THEME=light runs the suite under a light taskbar, to prove a test
+    doesn't depend on it. The cached flag is cleared, so the first resolve reads the pinned value. A
+    test that needs a specific theme patches color_scheme itself (or passes ``light=``), which overrides
+    this floor."""
     import os
-    from netspeedtray import constants
+    from netspeedtray.utils import color_scheme
     light = os.environ.get("NST_TEST_WINDOWS_THEME", "dark").strip().lower() == "light"
-    colour = constants.color.BLACK if light else constants.color.WHITE
-    for target in ("netspeedtray.views.settings.dialog.shell_theme_text_color",
-                   "netspeedtray.views.widget.theme.shell_theme_text_color"):
-        monkeypatch.setattr(target, lambda: colour, raising=False)
+    monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1 if light else 0)
+    monkeypatch.setattr(color_scheme, "_shell_light", None)

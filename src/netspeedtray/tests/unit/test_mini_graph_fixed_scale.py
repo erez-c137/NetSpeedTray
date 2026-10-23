@@ -14,6 +14,7 @@ import pytest
 from PyQt6.QtGui import QColor, QImage, QPainter
 
 from netspeedtray import constants
+from netspeedtray.tests.color_helpers import themed
 from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.core.widget_state import AggregatedSpeedData
 from netspeedtray.utils.widget_renderer import RenderConfig, WidgetRenderer
@@ -40,7 +41,7 @@ def _config(**overrides):
     cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
     cfg.update({"graph_enabled": True, "graph_opacity": 100, "default_color": "#FF00FF"})
     cfg.update(overrides)
-    return cfg
+    return themed(cfg)
 
 
 def _render(cfg, history):

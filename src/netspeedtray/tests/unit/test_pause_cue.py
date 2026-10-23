@@ -15,6 +15,7 @@ from PyQt6.QtCore import QRect
 from PyQt6.QtGui import QColor, QImage, QPainter
 
 from netspeedtray import constants
+from netspeedtray.tests.color_helpers import themed
 from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.utils import widget_paint as wp
 from netspeedtray.utils.widget_renderer import WidgetRenderer
@@ -44,7 +45,7 @@ def _cfg(overrides, text_color):
     cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
     cfg.update({"graph_enabled": False, "background_opacity": 0, "default_color": text_color})
     cfg.update(overrides)
-    return cfg
+    return themed(cfg)
 
 
 def _paint(cfg, w, h, *, layout_mode="horizontal", cycle_mode="network_only", paused=True, glyph=True,
@@ -106,7 +107,7 @@ def test_glyph_never_overlaps_text_on_a_horizontal_taskbar(q_app, monkeypatch, m
 @pytest.mark.parametrize("thickness", [48, 32])
 def test_glyph_never_overlaps_text_on_a_side_taskbar(q_app, monkeypatch, mode, theme, thickness):
     cfg = side._config(**side.MODES[mode])
-    cfg["default_color"] = THEMES[theme]
+    cfg.update(themed({"default_color": THEMES[theme]}))
     w, h, _fit = side._size(cfg, side._taskbar(side.LEFT, thickness))
     _assert_no_overlap(cfg, w, h, monkeypatch, f"side {mode}", layout_mode="vertical")
 

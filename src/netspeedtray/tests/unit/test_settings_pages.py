@@ -50,6 +50,17 @@ def mock_i18n():
     i18n.HIGH_SPEED_COLOR_TOOLTIP = "Select High Color"
     i18n.LOW_SPEED_COLOR_LABEL = "Low Color"
     i18n.LOW_SPEED_COLOR_TOOLTIP = "Select Low Color"
+    # The colour scheme (2.2 rc.2): Medium level, theme glyph names, the note, the graph colours.
+    i18n.MEDIUM_SPEED_THRESHOLD_LABEL = "Medium"
+    i18n.MEDIUM_SPEED_COLOR_LABEL = "Medium Color"
+    i18n.MEDIUM_SPEED_COLOR_TOOLTIP = "Select Medium Color"
+    i18n.MEDIUM_SPEED_RANGE_HINT = "Set Medium between Low and High"
+    i18n.CONN_PLAN_OFF = "Off"
+    i18n.THEME_DARK_TASKBAR = "Dark taskbar"
+    i18n.THEME_LIGHT_TASKBAR = "Light taskbar"
+    i18n.THEMED_COLORS_NOTE = "Each color has two versions"
+    i18n.GRAPH_UPLOAD_COLOR_LABEL = "Upload graph color"
+    i18n.GRAPH_DOWNLOAD_COLOR_LABEL = "Download graph color"
     i18n.MBITS_UNIT = "Mbps"  # threshold spin-box suffix (legacy key)
 
     # Unit labels for get_unit_labels_for_type - the Colors threshold suffix (PR #165) + Units page
@@ -305,7 +316,7 @@ def test_colors_threshold_suffix_follows_unit_type(q_app, mock_i18n, mock_callba
     page = ColorsPage(mock_i18n, mock_callback, color_cb)
 
     base = {"color_coding": True, "high_speed_threshold": 50, "low_speed_threshold": 10,
-            "high_speed_color": "#00FF00", "low_speed_color": "#FFFF00"}
+            "high_speed_color_dark": "#00FF00", "low_speed_color_dark": "#FFFF00"}
 
     page.load_settings({**base, "unit_type": "bits_decimal"})
     assert page.high_speed_threshold.suffix() == " Mbps"
@@ -316,6 +327,9 @@ def test_colors_threshold_suffix_follows_unit_type(q_app, mock_i18n, mock_callba
 
     page.load_settings({**base, "unit_type": "bits_binary"})
     assert page.high_speed_threshold.suffix() == " Mibps"
+    assert page.medium_speed_threshold.suffix() == " Mibps"
+    page.set_unit_type("bytes_decimal")
+    assert page.medium_speed_threshold.suffix() == " MB/s"
 
 
 def test_appearance_page(q_app, mock_i18n, mock_callback):
@@ -328,7 +342,8 @@ def test_appearance_page(q_app, mock_i18n, mock_callback):
         "font_family": "Arial",
         "font_size": 10,
         "font_weight": 600,
-        "default_color": "#FF0000",
+        "default_color_dark": "#FF0000",
+        "default_color_light": "#00FF00",
         "background_color": "#000000",
         "background_opacity": 50,
         "use_separate_arrow_font": False,
@@ -342,7 +357,7 @@ def test_appearance_page(q_app, mock_i18n, mock_callback):
     settings = page.get_settings()
     assert settings["font_family"] == "Arial"
     assert settings["font_size"] == 10
-    assert settings["default_color"] == "#FF0000"
+    assert (settings["default_color_dark"], settings["default_color_light"]) == ("#FF0000", "#00FF00")
     # The Mini Graph section moved to the Widget page (2.2 IA pass) - Appearance no longer owns its keys.
     assert not {"graph_enabled", "history_minutes", "graph_opacity"} & set(settings)
 
@@ -350,11 +365,17 @@ def test_appearance_page(q_app, mock_i18n, mock_callback):
 def test_mini_graph_section_round_trip(q_app, mock_i18n, mock_callback):
     """The basic graph keys (was part of test_appearance_page) round-trip through the moved section."""
     page = MiniGraphSection(mock_i18n, mock_callback)
-    page.load_settings({"graph_enabled": False, "history_minutes": 30, "graph_opacity": 80})
+    page.load_settings({"graph_enabled": False, "history_minutes": 30, "graph_opacity": 80,
+                        "graph_upload_color_light": "#112233", "graph_download_color_dark": "#445566"})
     settings = page.get_settings()
     assert settings["graph_enabled"] is False
     assert settings["history_minutes"] == 30
     assert settings["graph_opacity"] == 80
+    # The line colours (#117); a key the file lacks shows its factory default.
+    assert (settings["graph_upload_color_light"], settings["graph_download_color_dark"]) == ("#112233", "#445566")
+    D = constants.config.defaults.DEFAULT_CONFIG
+    assert (settings["graph_upload_color_dark"], settings["graph_download_color_light"]) == \
+        (D["graph_upload_color_dark"], D["graph_download_color_light"])
 
 def test_colors_page(q_app, mock_i18n, mock_callback):
     """Test ColorsPage."""
@@ -364,19 +385,24 @@ def test_colors_page(q_app, mock_i18n, mock_callback):
     config = {
         "color_coding": True,
         "high_speed_threshold": 50,
+        "medium_speed_threshold": 20,
         "low_speed_threshold": 10,
-        "high_speed_color": "#00FF00",
-        "low_speed_color": "#FFFF00"
+        "high_speed_color_dark": "#00FF00",
+        "high_speed_color_light": "#007700",
+        "medium_speed_color_light": "#AA8800",
+        "low_speed_color_dark": "#FFFF00",
     }
-    
+
     page.load_settings(config)
     settings = page.get_settings()
-    
+
     assert settings["color_coding"] is True
     assert settings["high_speed_threshold"] == 50
+    assert settings["medium_speed_threshold"] == 20
     assert settings["low_speed_threshold"] == 10
-    assert settings["high_speed_color"] == "#00FF00"
-    assert settings["low_speed_color"] == "#FFFF00"
+    assert (settings["high_speed_color_dark"], settings["high_speed_color_light"]) == ("#00FF00", "#007700")
+    assert settings["medium_speed_color_light"] == "#AA8800"
+    assert settings["low_speed_color_dark"] == "#FFFF00"
 
 def test_units_page(q_app, mock_i18n, mock_callback):
     """Test UnitsPage."""
@@ -444,24 +470,26 @@ def test_arrow_colors_round_trip(q_app, mock_i18n, mock_callback):
     page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
 
     page.load_settings({"use_custom_arrow_colors": True,
-                        "arrow_up_color": "#123456",
-                        "arrow_down_color": "#654321"})
+                        "arrow_up_color_dark": "#123456",
+                        "arrow_down_color_light": "#654321"})
     assert page.use_custom_arrow_colors.isChecked() is True
     assert page.arrow_colors_container.isVisibleTo(page) is True
 
     out = page.get_settings()
     assert out["use_custom_arrow_colors"] is True
-    assert out["arrow_up_color"] == "#123456"
-    assert out["arrow_down_color"] == "#654321"
+    assert out["arrow_up_color_dark"] == "#123456"
+    assert out["arrow_down_color_light"] == "#654321"
+    # The white-on-light fix: the light half defaults to black, not the dark half's white.
+    assert (out["arrow_down_color_dark"], out["arrow_up_color_light"]) == ("#FFFFFF", "#007A00")
 
     # Off hides the swatches but must still round-trip the stored colors.
     page.load_settings({"use_custom_arrow_colors": False,
-                        "arrow_up_color": "#ABCDEF",
-                        "arrow_down_color": "#FEDCBA"})
+                        "arrow_up_color_light": "#ABCDEF",
+                        "arrow_down_color_dark": "#FEDCBA"})
     assert page.arrow_colors_container.isVisibleTo(page) is False
     out = page.get_settings()
     assert out["use_custom_arrow_colors"] is False
-    assert out["arrow_up_color"] == "#ABCDEF"
+    assert out["arrow_up_color_light"] == "#ABCDEF"
 
 
 def test_graph_fixed_scale_defaults_off(q_app, mock_i18n, mock_callback):
@@ -531,12 +559,13 @@ def test_graph_split_grayed_out_without_the_mini_graph(q_app, mock_i18n, mock_ca
 
 
 def test_arrow_color_widgets_follow_the_dialog_naming_convention(q_app, mock_i18n, mock_callback):
-    """SettingsDialog routes every non-threshold color back through set_color_input by the
-    "{key}_color_button" / "{key}_color_input" attribute convention. Naming them anything else
-    silently breaks the color picker with no test to catch it."""
+    """SettingsDialog routes a picked colour back through set_color_input(<full config key>); the
+    widgets are "<key>_button" / "<key>_input" (e.g. arrow_up_color_light_input). Naming them anything
+    else silently breaks the color picker with no test to catch it."""
     page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
-    for key in ("arrow_up", "arrow_down"):
-        assert hasattr(page, f"{key}_color_button")
-        assert hasattr(page, f"{key}_color_input")
-    page.set_color_input("arrow_up", "#0F0F0F")
-    assert page.arrow_up_color_input.text() == "#0F0F0F"
+    for key in ("arrow_up_color_dark", "arrow_up_color_light", "arrow_down_color_dark", "arrow_down_color_light"):
+        assert hasattr(page, f"{key}_button")
+        assert hasattr(page, f"{key}_input")
+    page.set_color_input("arrow_up_color_light", "#0F0F0F")
+    assert page.arrow_up_color_light_input.text() == "#0F0F0F"
+    assert page.arrow_up_color_dark_input.text() != "#0F0F0F"

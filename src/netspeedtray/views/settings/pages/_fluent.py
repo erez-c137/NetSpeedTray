@@ -9,9 +9,12 @@ color and inset.
 """
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QLabel, QVBoxLayout
+from typing import Callable, Dict
+
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from netspeedtray.utils import styles as su
+from netspeedtray.utils.color_scheme import themed_key
 from netspeedtray.constants.styles import styles as tokens
 
 
@@ -65,6 +68,65 @@ class LastValidHex:
     def get(self, key: str, text) -> str:
         self.remember(key, text)
         return self._values[key]
+
+
+def swatch_style(hex_code: str) -> str:
+    """The stylesheet of a colour swatch button (the one look every colour row uses)."""
+    return f"background-color: {hex_code}; border: 1px solid #5A5A5A; border-radius: 4px;"
+
+
+# Segoe Fluent Icons (Win11) / Segoe MDL2 Assets (Win10) codepoints: QuietHours (a moon) and Brightness
+# (a sun). Monochrome glyphs that follow the label's text colour, like the Monitor window's tab icons.
+_THEME_GLYPHS = {False: chr(0xE708), True: chr(0xE706)}
+SWATCH_SIZE = (36, 26)
+THEMED_HEX_WIDTH = 72   # 90 px elsewhere; two pairs per row (~268 px) must fit beside a title at 640 px
+
+
+class ThemedColorPair(QWidget):
+    """One colour setting's two values (2.2 rc.2 colour scheme): ``[moon][swatch][hex]  [sun][swatch][hex]``
+    - the dark-taskbar colour, then the light-taskbar one. Every key gets its own widgets, so pages
+    load / get them in plain loops with no "which theme am I editing" state.
+
+    ``buttons`` / ``inputs`` map each config key (``<stem>_dark`` / ``<stem>_light``) to its widget. A
+    swatch click calls ``open_color_dialog(key)``; a hex edit calls ``on_edited(key, text)``."""
+
+    def __init__(self, i18n, stem: str, title: str, open_color_dialog: Callable[[str], None],
+                 on_edited: Callable[[str, str], None], tooltip: str = "") -> None:
+        super().__init__()
+        self.buttons: Dict[str, QPushButton] = {}
+        self.inputs: Dict[str, QLineEdit] = {}
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        name = str(title or "").strip().rstrip(":：").strip()
+        for light in (False, True):
+            key = themed_key(stem, light)
+            theme = i18n.THEME_LIGHT_TASKBAR if light else i18n.THEME_DARK_TASKBAR
+            if light:
+                row.addSpacing(10)
+            glyph = QLabel(_THEME_GLYPHS[light])
+            glyph.setObjectName(f"{key}_glyph")
+            glyph.setToolTip(theme)
+            glyph.setAccessibleName(theme)
+            glyph.setStyleSheet("font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 13px;"
+                                " background: transparent;")
+            button = QPushButton()
+            button.setObjectName(key)
+            button.setFixedSize(*SWATCH_SIZE)
+            button.setToolTip(f"{tooltip} ({theme})" if tooltip else theme)
+            button.setAccessibleName(f"{name}, {theme}")
+            button.clicked.connect(lambda _=False, k=key: open_color_dialog(k))
+            line = QLineEdit()
+            line.setObjectName(f"{key}_input")
+            line.setMaxLength(7)
+            line.setFixedWidth(THEMED_HEX_WIDTH)
+            line.setAccessibleName(f"{name}, {theme}")
+            line.textChanged.connect(lambda t, k=key: on_edited(k, t))
+            row.addWidget(glyph)
+            row.addWidget(button)
+            row.addWidget(line)
+            self.buttons[key] = button
+            self.inputs[key] = line
 
 
 def page_layout(widget) -> QVBoxLayout:

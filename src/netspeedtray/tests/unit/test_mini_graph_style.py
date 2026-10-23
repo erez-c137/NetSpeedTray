@@ -24,6 +24,7 @@ from netspeedtray import constants
 from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.core.widget_state import AggregatedSpeedData, HardwareStatSnapshot
 from netspeedtray.utils.config import ConfigManager
+from netspeedtray.tests.color_helpers import themed
 from netspeedtray.utils.widget_renderer import RenderConfig, WidgetRenderer, trend_smooth, trend_window
 
 MBPS = 125_000.0
@@ -33,9 +34,10 @@ W, H = 120, 40
 
 def _cfg(**overrides):
     cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
-    cfg.update(graph_enabled=True, default_color="#FFFFFF")
+    cfg.update(graph_enabled=True, default_color="#FFFFFF", graph_upload_color=constants.graph.UPLOAD_LINE_COLOR,
+               graph_download_color=constants.graph.DOWNLOAD_LINE_COLOR)
     cfg.update(overrides)
-    return cfg
+    return themed(cfg)
 
 
 def _noisy_history(n=180, seed=3):
