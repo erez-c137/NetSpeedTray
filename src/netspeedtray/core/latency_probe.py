@@ -27,6 +27,7 @@ by every reader that explains a loss (the on-demand connection check, 2.2 D3):
 """
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import logging
 import socket
@@ -37,7 +38,7 @@ import time
 from collections import deque
 from ctypes import wintypes
 from dataclasses import dataclass
-from typing import Any, Callable, Deque, Dict, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, Iterator, Optional, Tuple
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -317,16 +318,41 @@ def icmp_burst(host: str, count: int = constants.network.latency.BURST_SIZE,
     return BurstResult(tuple(rtts), count)
 
 
+@contextlib.contextmanager
+def _wmi_connection() -> Iterator[Any]:
+    """A ``wmi.WMI()`` connection whose COM proxies are all released by plain reference counting, on
+    the calling thread, as soon as the caller drops its results - no garbage collection needed.
+
+    The wmi module caches each class it hands out (``_classes_map``) and every cached class points
+    back at its namespace: a reference cycle that holds the SWbemServices / SWbemObject proxies until
+    the cyclic GC happens to run - possibly on another thread, or after this thread's
+    CoUninitialize. Clearing the cache on the way out breaks that cycle (the only one a query leaves;
+    checked live with gc.DEBUG_SAVEALL), so the Check connection's details thread no longer needs a
+    whole-heap gc.collect() before CoUninitialize. A failed query (an exception) clears it too."""
+    import wmi  # already a dependency
+    conn = wmi.WMI()
+    try:
+        yield conn
+    finally:
+        try:
+            # vars(): the namespace's __getattr__ forwards unknown names to COM.
+            classes = vars(conn).get("_classes_map")
+            if isinstance(classes, dict):
+                classes.clear()
+        except Exception:
+            pass
+
+
 def default_gateway_ip() -> Optional[str]:
     """The default gateway IPv4, via WMI (no admin). None if not found."""
     try:
-        import wmi  # already a dependency
-        for nic in wmi.WMI().Win32_NetworkAdapterConfiguration(IPEnabled=True):
-            gws = getattr(nic, "DefaultIPGateway", None)
-            if gws:
-                for g in gws:
-                    if g and ":" not in g:   # IPv4 only
-                        return str(g)
+        with _wmi_connection() as conn:
+            for nic in conn.Win32_NetworkAdapterConfiguration(IPEnabled=True):
+                gws = getattr(nic, "DefaultIPGateway", None)
+                if gws:
+                    for g in gws:
+                        if g and ":" not in g:   # IPv4 only
+                            return str(g)
     except Exception:
         return None
     return None
@@ -353,18 +379,18 @@ def network_details() -> Optional[NetworkDetails]:
     initialised on the calling thread. None when no adapter has an IPv4 gateway (or WMI failed).
     IPv6 link-local addresses (fe80::) are left out: they are not reachable from anywhere else."""
     try:
-        import wmi  # already a dependency
-        for nic in wmi.WMI().Win32_NetworkAdapterConfiguration(IPEnabled=True):
-            gws = [g for g in _strs(getattr(nic, "DefaultIPGateway", None)) if ":" not in g]
-            if not gws:
-                continue
-            addrs = _strs(getattr(nic, "IPAddress", None))
-            return NetworkDetails(
-                adapter=str(getattr(nic, "Description", "") or ""),
-                ipv4=tuple(a for a in addrs if ":" not in a),
-                ipv6=tuple(a for a in addrs if ":" in a and not a.lower().startswith("fe80:")),
-                gateway=gws[0],
-                dns=_strs(getattr(nic, "DNSServerSearchOrder", None)))
+        with _wmi_connection() as conn:
+            for nic in conn.Win32_NetworkAdapterConfiguration(IPEnabled=True):
+                gws = [g for g in _strs(getattr(nic, "DefaultIPGateway", None)) if ":" not in g]
+                if not gws:
+                    continue
+                addrs = _strs(getattr(nic, "IPAddress", None))
+                return NetworkDetails(
+                    adapter=str(getattr(nic, "Description", "") or ""),
+                    ipv4=tuple(a for a in addrs if ":" not in a),
+                    ipv6=tuple(a for a in addrs if ":" in a and not a.lower().startswith("fe80:")),
+                    gateway=gws[0],
+                    dns=_strs(getattr(nic, "DNSServerSearchOrder", None)))
     except Exception:
         return None
     return None

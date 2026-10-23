@@ -864,3 +864,91 @@ def test_no_details_hides_the_card(q_app, fast_pings):
     sheet = _run_sheet(q_app, {}, gateway=GW)
     assert not sheet._details_card.isVisibleTo(sheet)
     assert "Adapter" not in sheet.copy_text()
+
+
+# --- the details thread releases WMI without a full GC (PR #442 flake finding) -----------------------
+
+def _cyclic_wmi(monkeypatch, nics, fail=False):
+    """A fake wmi module with the real one's reference cycle: the namespace caches each class it hands
+    out (``_classes_map``) and every class points back at its namespace. Returns a list that receives
+    a weakref to each namespace made."""
+    import sys
+    import types
+    import weakref
+    mod = types.ModuleType("wmi")
+    made = []
+
+    class _Class:
+        def __init__(self, ns):
+            self._namespace = ns
+
+        def __call__(self, IPEnabled=True):
+            if fail:
+                raise RuntimeError("WMI query failed")
+            return list(nics)
+
+    class _Namespace:
+        def __init__(self):
+            self._classes_map = {}
+            made.append(weakref.ref(self))
+
+        def __getattr__(self, name):
+            if name.startswith("_"):
+                raise AttributeError(name)
+            if name not in self._classes_map:
+                self._classes_map[name] = _Class(self)
+            return self._classes_map[name]
+    mod.WMI = _Namespace
+    monkeypatch.setitem(sys.modules, "wmi", mod)
+    return made
+
+
+_GW_NIC = [_Nic("Intel(R) Wi-Fi 6 AX201", ("192.168.1.23",), ("192.168.1.1",), ("192.168.1.1",))]
+
+
+@pytest.mark.parametrize("query", ["network_details", "default_gateway_ip"])
+@pytest.mark.parametrize("fail", [False, True], ids=["ok", "query_raises"])
+def test_a_wmi_query_is_released_by_refcount_alone(monkeypatch, query, fail):
+    """The WMI namespace (and the COM proxies it holds) must be freed the moment the query returns,
+    with the cyclic GC switched off - so the details thread can CoUninitialize with no gc.collect()."""
+    import gc
+    monkeypatch.undo()
+    made = _cyclic_wmi(monkeypatch, _GW_NIC, fail=fail)
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        result = getattr(LP, query)()
+        assert len(made) == 1
+        assert made[0]() is None, "the WMI connection outlived the query (left for the cyclic GC)"
+    finally:
+        if was_enabled:
+            gc.enable()
+    if fail:
+        assert result is None
+    else:
+        assert result == ("192.168.1.1" if query == "default_gateway_ip" else LP.NetworkDetails(
+            adapter="Intel(R) Wi-Fi 6 AX201", ipv4=("192.168.1.23",), gateway="192.168.1.1",
+            dns=("192.168.1.1",)))
+
+
+def test_the_details_thread_never_runs_a_full_gc(monkeypatch):
+    """A whole-heap gc.collect() on every check held the GIL 0.1-0.25 s on a loaded machine: a visible
+    GUI hitch, and it starved the check's own worker in CI."""
+    import gc
+    calls = []
+    real_collect = gc.collect
+
+    def spy(*args, **kwargs):
+        if threading.current_thread().name == "ConnectionCheckDetails":
+            calls.append((args, kwargs))
+        return real_collect(*args, **kwargs)
+    monkeypatch.setattr(gc, "collect", spy)
+    monkeypatch.setattr(LP, "network_details", lambda: _DETAILS)
+    w = CC.ConnectionCheck(GW, None)
+    pending = w._start_details()
+    assert pending is not None
+    t, box, done = pending
+    assert done.wait(5)
+    t.join(5)
+    assert box["details"] == _DETAILS
+    assert calls == [], f"the details thread ran gc.collect{calls}"

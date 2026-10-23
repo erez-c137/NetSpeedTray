@@ -193,10 +193,10 @@ class ConnectionCheck(QThread):
             finally:
                 try:
                     if pythoncom is not None:
-                        # Free the WMI proxies while this apartment still exists; left to interpreter
-                        # exit they are released after CoUninitialize and pywin32 prints an exception.
-                        import gc
-                        gc.collect()
+                        # No gc.collect() here: network_details() breaks the wmi module's one
+                        # reference cycle (latency_probe._wmi_connection), so every WMI proxy is
+                        # already released by refcount, in this apartment, before CoUninitialize.
+                        # A whole-heap collection held the GIL 0.1-0.25 s per check (a GUI hitch).
                         pythoncom.CoUninitialize()
                 except Exception:
                     pass
