@@ -233,7 +233,10 @@ def _layout_worker() -> None:
                 return
         result = _query_taskbar_layout_blocking(hwnd)
         overflow = None
-        if isinstance(result, tuple) and len(result) == 4:
+        if isinstance(result, tuple) and len(result) == 5:
+            apps, widgets, group, overflow, tray = result
+            _remember_probed_tray(hwnd, tray)
+        elif isinstance(result, tuple) and len(result) == 4:
             apps, widgets, group, overflow = result
         elif isinstance(result, tuple) and len(result) == 3:
             apps, widgets, group = result
@@ -310,6 +313,35 @@ def taskbar_layout_overflow(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, 
         if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
             return None
         return _layout_state["overflow"]
+
+
+# The UIA tray span (physical px) per taskbar HWND, from the last probe of that taskbar. Kept apart from
+# _layout_state, which holds ONE taskbar at a time: with "Show on all taskbars" (#229/#434) the main
+# widget and every mirror probe their own bar, and a mirror on a Win11 SECONDARY side bar (no
+# TrayNotifyWnd) must still know where its clock is after another bar's probe has replaced the
+# layout cache. Bounded: a handful of taskbars; an Explorer restart brings new HWNDs.
+_probed_tray: dict = {}
+_PROBED_TRAY_MAX = 16
+
+
+def _remember_probed_tray(taskbar_hwnd: int, tray: Any) -> None:
+    rect = valid_rect(tray)
+    with _layout_lock:
+        if rect is None:
+            _probed_tray.pop(int(taskbar_hwnd), None)
+            return
+        if len(_probed_tray) >= _PROBED_TRAY_MAX and int(taskbar_hwnd) not in _probed_tray:
+            _probed_tray.pop(next(iter(_probed_tray)))
+        _probed_tray[int(taskbar_hwnd)] = rect
+
+
+def probed_tray_rect(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
+    """The tray span UIA last saw on ``taskbar_hwnd`` (physical px) - on a Win11 secondary taskbar,
+    its clock - or None when that taskbar has not been probed / showed no tray. Non-blocking."""
+    if not taskbar_hwnd:
+        return None
+    with _layout_lock:
+        return _probed_tray.get(int(taskbar_hwnd))
 
 
 def wait_for_taskbar_layout(taskbar_hwnd: Optional[int], timeout_s: float) -> bool:

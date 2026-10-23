@@ -526,8 +526,9 @@ def test_app_group_on_a_side_bar_and_without_start():
 def test_full_query_infers_the_axis_and_returns_the_group():
     els = [("ToggleButton", "StartButton", (X0, 145, X1, 190)),
            ("Taskbar.TaskListButtonAutomationPeer", "a", (X0, 190, X1, 234))]
-    apps, widgets, group, overflow = uia_widgets._layout_from_elements_full(els, None)
+    apps, widgets, group, overflow, tray = uia_widgets._layout_from_elements_full(els, None)
     assert apps == group == (X0, 145, X1, 234) and widgets is None and overflow is None
+    assert tray is None
 
 
 def test_worker_stores_a_two_value_result_from_older_callers(layout):
