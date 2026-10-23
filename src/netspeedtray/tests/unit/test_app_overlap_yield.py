@@ -259,7 +259,7 @@ def test_hysteresis_drop_baseline_and_unknown():
     assert h.observe(True, 0.0) is None and not h.yielded
     assert h.observe(False, 1.0) is None and not h.suppressed      # seen clear once: spent
     assert h.observe(True, 2.0) == "yield"
-    assert h.observe(None, 3.0) == "show" and not h.yielded        # UIA failed: today's behaviour
+    assert h.observe(None, 3.0) == "show" and not h.yielded        # unknown: show (the watcher holds first)
     assert h.observe(None, 4.0) is None
 
 
@@ -361,7 +361,7 @@ def test_dpi_125_uses_logical_coordinates(rig):
 
 # --- fail-safe ------------------------------------------------------------------------------------
 
-def test_uia_failure_never_yields_and_a_failure_while_yielded_shows_it(rig):
+def test_uia_failure_never_yields_and_a_lasting_failure_while_yielded_shows_it(rig):
     r = rig(1380)
     r.y.sync()
     r.probe(fail=True)
@@ -373,7 +373,9 @@ def test_uia_failure_never_yields_and_a_failure_while_yielded_shows_it(rig):
     r.now += 2.0
     r.y.note_foreground_change()
     r.probe(fail=True)
-    assert not r.y.yielded and r.changes == 2
+    assert r.y.yielded and r.changes == 1        # a transient unknown keeps it aside (window storm) ...
+    r.probe(fail=True, advance=T.APP_YIELD_UNKNOWN_HOLD_MS / 1000.0 + 0.1)
+    assert not r.y.yielded and r.changes == 2    # ... a lasting one shows it (its only surface)
 
 
 def test_a_bar_without_start_button_is_unknown(rig):

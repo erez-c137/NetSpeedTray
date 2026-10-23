@@ -1427,6 +1427,13 @@ class PositionManager(QObject):
             return BUSY
         widget = self._state.widget
         dpi = info.dpi_scale if info.dpi_scale and info.dpi_scale > 0 else 1.0
+        # One coordinate space per judgement: the widget span below (and its would-be spot, computed
+        # from ``info``) is logical px at ``info``'s scale, and the UIA group is converted with ``dpi``.
+        # The monitor's scale is read NOW; a snapshot that disagrees (a live display-scale change in the
+        # last tick) decides nothing until the next tick brings a fresh one and the widget is re-sized.
+        current = taskbar_utils.current_dpi_for_hwnd(int(info.hwnd))
+        if current is not None and abs(current - dpi) > 1e-3:
+            return BUSY
         width = float(widget.width())
         left = float(widget.pos().x())
         if not widget.isVisible():
