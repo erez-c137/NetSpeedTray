@@ -398,6 +398,9 @@ def test_responses_carry_nosniff(endpoint):
     ("[::ffff:127.0.0.1]:9184", True),       # IPv4-mapped loopback literal
     ("[::2]:9184", False),                   # not loopback
     ("[fe80::1%25eth0]:9184", False),        # zone ids are not a loopback Host
+    ("[::1%251]:9184", False),               # ...not even on ::1 (ipaddress accepts the scope)
+    ("[::1%1]", False),
+    ("[127.0.0.1]:9184", False),             # brackets are for IPv6 only (RFC 3986)
     ("::1", False),                          # IPv6 must be bracketed
     ("[::1]:80", False),                     # someone else's port
     ("localhost.evil.example:9184", False),  # a name: rebinding risk

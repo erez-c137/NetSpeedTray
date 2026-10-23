@@ -262,6 +262,24 @@ def test_sheet_never_answering_router_keeps_the_old_explanation(q_app):
     assert sheet.attribution_code() == LP.LOSS_UNKNOWN
 
 
+def test_a_different_router_than_the_probe_saw_answer_proves_nothing(q_app):
+    """The probe's record belongs to ITS router. Opened while the probe had no route (the old router,
+    which was answering, had vanished), the check finds a NEW router that never answers ICMP: that
+    is the old "doesn't answer pings" note, not "your router was answering a moment ago"."""
+    from netspeedtray.views.monitor.connection_check import ConnectionCheckSheet
+    sheet = ConnectionCheckSheet({}, I18nStrings("en_US"), gateway_ip=None, autostart=False,
+                                 gateway_answered=True)
+    sheet._echoes = {CC.HOP_GATEWAY: []}
+    sheet._resolved_gw = "10.0.0.1"          # the check looked the router up itself
+    sheet._state = "running"
+    sheet._on_link(LP.LINK_UNKNOWN)
+    sheet._on_finished({CC.HOP_GATEWAY: _st(0)})
+    assert sheet.lost_reason() is None
+    assert sheet.attribution_code() == LP.LOSS_UNKNOWN
+    # The same router the probe saw answering keeps the PR's behaviour.
+    assert _sheet(q_app, _st(0), answered=True).lost_reason() == CC.LOST_ROUTER
+
+
 def test_the_worker_reports_the_link_after_the_bursts(q_app, monkeypatch):
     """End to end through the real worker: a dead cable (0 replies, adapter down)."""
     from PyQt6.QtWidgets import QApplication

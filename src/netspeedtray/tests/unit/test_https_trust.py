@@ -99,7 +99,8 @@ def test_no_https_call_bypasses_the_helper():
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            via_helper = isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)                 and node.value.id == "https"
+            via_helper = (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                          and node.value.id == "https")
             if isinstance(node, ast.Attribute) and not via_helper and node.attr in (
                     "urlopen", "HTTPSConnection", "create_default_context", "_create_unverified_context"):
                 offenders.append(f"{rel}:{node.lineno} {node.attr}")

@@ -587,8 +587,13 @@ class ConnectionCheckSheet(QDialog):
         """CC.LOST_NO_LINK / CC.LOST_ROUTER once a finished check shows a lost connection, else None."""
         if self._state != "done" or CC.HOP_GATEWAY not in self._stats:
             return None
+        # The probe's record belongs to the router IT saw. A router this check looked up itself (the
+        # probe had none - its answering one had vanished) has proven nothing: an ICMP-silent new
+        # router must not read "was answering a moment ago".
+        answered = self._gateway_answered and (
+            not self._resolved_gw or self._resolved_gw == self._gateway_ip)
         return CC.connection_lost(self._stats[CC.HOP_GATEWAY], bool(self._resolved_gw), self._link,
-                                  self._gateway_answered, self._stats.get(CC.HOP_ANCHOR))
+                                  answered, self._stats.get(CC.HOP_ANCHOR))
 
     def _lost_note(self, lost: str) -> str:
         if lost == CC.LOST_NO_LINK:

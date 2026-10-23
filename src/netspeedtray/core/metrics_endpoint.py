@@ -271,16 +271,21 @@ def _host_allowed(host_header: Optional[str], port: int) -> bool:
     # address is as safe as the canonical one. Windows PowerShell (.NET) sends [::1] in long form,
     # ``[0000:0000:0000:0000:0000:0000:0000:0001]``, and was refused with 403 until this normalised it.
     # IPv6 must be bracketed (RFC 3986); a zone id (``%25...``) is not a valid loopback Host.
-    if h.startswith("[") and h.endswith("]"):
+    bracketed = h.startswith("[") and h.endswith("]")
+    if bracketed:
         literal = h[1:-1]
     elif ":" in h:
         return False   # an unbracketed IPv6 address, or a port other than ours
     else:
         literal = h
+    if "%" in literal:
+        return False   # ipaddress would accept ``::1%1`` as scoped ::1; the comment above refuses it
     try:
-        return ipaddress.ip_address(literal).is_loopback
+        addr = ipaddress.ip_address(literal)
     except ValueError:
         return False   # a name: only the ones in ALLOWED_HOST_NAMES are trusted
+    # Brackets hold IPv6 only, and IPv6 must be bracketed: ``[127.0.0.1]`` is not a valid Host.
+    return addr.is_loopback and bracketed == (addr.version == 6)
 
 
 class _TokenBucket:
