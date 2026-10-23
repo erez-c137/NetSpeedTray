@@ -464,6 +464,25 @@ def test_the_arrows_use_the_text_font_by_default(q_app):
     assert r.arrow_font is r.font
 
 
+def test_settings_keeps_the_weight_of_the_default_variable_font(q_app, monkeypatch):
+    """Settings > Appearance asked QFontDatabase for the styles of "Segoe UI Variable Text" - an optical
+    size, not a family, so none came back: the weight slider went dead and every Apply saved weight 400
+    over the user's (a 2.1.7 "Segoe UI" at DemiBold, migrated to the new default, lost its bold)."""
+    from PyQt6.QtGui import QFontDatabase
+    from netspeedtray.utils import widget_renderer
+    from netspeedtray.views.settings.pages.appearance import AppearancePage
+    monkeypatch.setattr(widget_renderer, "_variable_font_installed", True)   # Windows 11
+    styles = {"Segoe UI Variable": {"Text": 400, "Text Semibold": 600, "Text Bold": 700}}
+    monkeypatch.setattr(QFontDatabase, "styles", staticmethod(lambda fam: list(styles.get(fam, {}))))
+    monkeypatch.setattr(QFontDatabase, "weight", staticmethod(lambda fam, s: styles.get(fam, {}).get(s, -1)))
+    page = AppearancePage(EN, MagicMock(), MagicMock(), MagicMock())
+    page.load_settings(dict(D.DEFAULT_CONFIG, font_family="Segoe UI Variable Text", font_weight=600))
+    assert page.allowed_font_weights == [400, 600, 700]
+    out = page.get_settings()
+    assert out["font_family"] == "Segoe UI Variable Text" and out["font_weight"] == 600
+    assert page.current_font.family() == "Segoe UI Variable"    # what the font dialog opens on
+
+
 def test_light_text_falls_back_to_black_on_a_mid_grey_background(monkeypatch):
     """#1B1B1B on 50 % black over a light bar is 3.9:1; pure black is 4.7:1 - the factory text takes it."""
     monkeypatch.setattr(color_scheme, "_shell_light", True)
