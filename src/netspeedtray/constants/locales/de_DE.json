@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "Primär (auto)",
     "PREFERRED_MONITOR_ITEM": "Monitor {index}: {width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(Hauptbildschirm)",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "Auf allen Taskleisten anzeigen",
+    "SHOW_ON_ALL_TASKBARS_DESC": "Eine Kopie des Widgets auf jeder Taskleiste. Erfordert „Taskleiste auf allen Anzeigen anzeigen“ in Windows.",
     "SETTINGS_NOT_CONNECTED_TAG": "(nicht verbunden)",
     "UPDATE_AVAILABLE_TITLE": "Update verfügbar",
     "UPDATE_DOWNLOADING_TITLE": "Update wird heruntergeladen",

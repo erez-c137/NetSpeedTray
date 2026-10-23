@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "主显示器 (自动)",
     "PREFERRED_MONITOR_ITEM": "显示器 {index}：{width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "（主显示器）",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "在所有任务栏上显示",
+    "SHOW_ON_ALL_TASKBARS_DESC": "在每个任务栏上显示小部件的副本。需要在 Windows 中开启“在所有显示器上显示任务栏”。",
     "SETTINGS_NOT_CONNECTED_TAG": "（未连接）",
     "UPDATE_AVAILABLE_TITLE": "有可用更新",
     "UPDATE_DOWNLOADING_TITLE": "正在下载更新",

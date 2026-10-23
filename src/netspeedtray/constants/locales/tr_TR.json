@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "Birincil (otomatik)",
     "PREFERRED_MONITOR_ITEM": "Monitör {index}: {width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(birincil)",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "Tüm görev çubuklarında göster",
+    "SHOW_ON_ALL_TASKBARS_DESC": "Her görev çubuğunda widget'ın bir kopyası. Windows'ta \"Görev çubuğumu tüm ekranlarda göster\" ayarı gerekir.",
     "SETTINGS_NOT_CONNECTED_TAG": "(bağlı değil)",
     "UPDATE_AVAILABLE_TITLE": "Güncelleme Mevcut",
     "UPDATE_DOWNLOADING_TITLE": "Günceleme indriliyor",

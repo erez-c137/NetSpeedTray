@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "Principal (auto)",
     "PREFERRED_MONITOR_ITEM": "Écran {index} : {width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(principal)",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "Afficher sur toutes les barres des tâches",
+    "SHOW_ON_ALL_TASKBARS_DESC": "Une copie du widget sur chaque barre des tâches. Nécessite « Afficher ma barre des tâches sur tous les écrans » dans Windows.",
     "SETTINGS_NOT_CONNECTED_TAG": "(non connecté)",
     "UPDATE_AVAILABLE_TITLE": "Mise à jour disponible",
     "UPDATE_DOWNLOADING_TITLE": "Téléchargement de la mise à jour",

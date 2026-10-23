@@ -150,6 +150,9 @@ class ConfigConstants:
     # #24: on a native horizontal Win11 taskbar, hide while the app buttons reach the widget (the
     # owner's "yield" choice, rc.2 W17). Off = the widget stays put and may cover them (pre-rc.2).
     DEFAULT_HIDE_WHEN_APPS_COVER: Final[bool] = True
+    # "Show on all taskbars" (#229): a paint-only copy of the widget on every OTHER taskbar (Windows'
+    # "Show my taskbar on all displays"). Off by default - with it off no mirror code runs at all.
+    DEFAULT_SHOW_ON_ALL_TASKBARS: Final[bool] = False
     DEFAULT_FORCE_DECIMALS: Final[bool] = True
     # ON by default: a taskbar status widget people want always-present should come back after a reboot.
     # First launch reconciles this with the actual HKCU Run key (main.py → StartupManager.synchronize_startup_task),
@@ -386,6 +389,7 @@ class ConfigConstants:
         "history_upgrade_notice_shown": False,  # the one "history upgraded" flyout after v7 -> v8
         "temp_onboarding_dismissed": False,  # user opted out of the no-sensor temp explainer
         "preferred_monitor": None,
+        "show_on_all_taskbars": DEFAULT_SHOW_ON_ALL_TASKBARS,
         # --- Data-usage / data-cap ---
         "data_cap_enabled": False,
         "data_cap_gb": 0.0,                # the cap in GB (0 = unset)
@@ -554,6 +558,7 @@ class ConfigConstants:
         # QScreen.name() identifier (e.g. "\\.\DISPLAY1"). None = use primary.
         # If the saved screen isn't found at runtime, fall back to primary.
         "preferred_monitor": {"type": (str, type(None)), "default": None},
+        "show_on_all_taskbars": {"type": bool, "default": DEFAULT_SHOW_ON_ALL_TASKBARS},
         # --- Data-usage / data-cap ---
         "data_cap_enabled": {"type": bool, "default": False},
         "data_cap_gb": {"type": (int, float), "default": 0.0, "min": 0.0, "max": 1_000_000.0},

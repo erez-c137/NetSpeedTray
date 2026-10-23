@@ -13,7 +13,7 @@ import threading
 import time
 from ctypes import wintypes, windll, byref, Structure
 from dataclasses import dataclass
-from typing import Tuple, Optional, List, Any
+from typing import Tuple, Optional, List, Any, Dict
 import psutil
 
 # Win32 Imports
@@ -946,6 +946,13 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
                 return None
 
             rect_phys = win32gui.GetWindowRect(hwnd)
+            if rect_phys[2] <= rect_phys[0] or rect_phys[3] <= rect_phys[1]:
+                # A taskbar collapsed to zero width/height is going away (its display was unplugged,
+                # or Explorer is tearing it down). Not an error: the next enumeration no longer has it
+                # (#434 live run - this was 3-4 ERROR lines per unplug, from the 1 s mirror tick).
+                logger.debug("Taskbar HWND %s (%s) has an empty rect %s - going away. Ignoring.",
+                             hwnd, class_name, rect_phys)
+                return None
             tray_hwnd = win32gui.FindWindowEx(hwnd, 0, "TrayNotifyWnd", None) or None
             tasklist_rect_phys = find_tasklist_rect(hwnd)
             
@@ -1065,7 +1072,10 @@ def _select_taskbar_for_screen(
 # taskbar-less accessory display like the Corsair Xeneon Edge, #188) otherwise spammed this INFO line
 # every second and bloated Support Bundles. Keyed on (preferred, taskbar set) so a genuine topology
 # change (monitor plugged/unplugged, or a changed preference) still logs once more.
-_last_fallback_log_key: Optional[tuple] = None
+# Throttled PER preferred name ({preferred: taskbar set}): with "Show on all taskbars" (#229) the main
+# widget and each mirror resolve different preferred screens every tick, and one shared key made
+# them evict each other - every lookup logged again. None (tests reset it so) means empty.
+_last_fallback_log_key: Optional[Dict[str, tuple]] = None
 
 
 def _log_preferred_monitor_fallback(
@@ -1081,10 +1091,12 @@ def _log_preferred_monitor_fallback(
     safety-net refresh can't spam it (#188).
     """
     global _last_fallback_log_key
-    key = (preferred_screen_name, tuple(sorted((tb.hwnd, tb.screen_name) for tb in taskbars)))
-    if key == _last_fallback_log_key:
+    if _last_fallback_log_key is None:
+        _last_fallback_log_key = {}
+    key = tuple(sorted((tb.hwnd, tb.screen_name) for tb in taskbars))
+    if _last_fallback_log_key.get(preferred_screen_name) == key:
         return
-    _last_fallback_log_key = key
+    _last_fallback_log_key[preferred_screen_name] = key
 
     details = []
     for tb in taskbars:
