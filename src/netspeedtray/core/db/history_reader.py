@@ -44,7 +44,7 @@ import sqlite3
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
@@ -84,6 +84,18 @@ class VolumeResult:
 
 
 @dataclass(frozen=True)
+class DayVolume:
+    """Bytes moved on one LOCAL calendar day (#334's usage table). ``day`` is the local date,
+    ``start_ts`` its first instant (local midnight, DST-correct - ``_local_day_start``).
+    ``reconstructed``: part of the day was estimated from stored rates (``VolumeResult`` D5)."""
+    day: date
+    start_ts: int
+    up_bytes: float
+    down_bytes: float
+    reconstructed: bool
+
+
+@dataclass(frozen=True)
 class Coverage:
     """Whether the app was running over [start_ts, end_ts], from ``app_sessions`` (v8) - a recorded
     fact, never inferred from traffic and never backfilled. The three parts sum to the window:
@@ -115,6 +127,29 @@ class MeteredScope:
     physical_only: bool = True
 
 
+def subtract_spans(spans, holes) -> Tuple[Tuple[float, float], ...]:
+    """``spans`` (sorted, disjoint (start, end) pairs) minus every ``holes`` interval."""
+    out: List[Tuple[float, float]] = []
+    cuts = sorted((float(a), float(b)) for a, b in holes if float(b) > float(a))
+    for s, e in spans:
+        parts = [(float(s), float(e))]
+        for a, b in cuts:
+            nxt = []
+            for ps, pe in parts:
+                if b <= ps or a >= pe:
+                    nxt.append((ps, pe))
+                    continue
+                if a > ps:
+                    nxt.append((ps, a))
+                if b < pe:
+                    nxt.append((b, pe))
+            parts = nxt
+            if not parts:
+                break
+        out.extend(parts)
+    return tuple(out)
+
+
 class HistoryReader(ABC):
     """Every read the app makes against the history database."""
 
@@ -122,8 +157,22 @@ class HistoryReader(ABC):
     def speed_history(self, start_time: Optional[datetime], end_time: Optional[datetime],
                       interface_name: Optional[str], return_raw: bool,
                       resolution: Resolution) -> List[SpeedPoint]:
-        """(timestamp, up B/s, down B/s) binned to ``resolution``, edges zero-padded when the window
-        is bounded. ``timestamp`` is a datetime, or epoch seconds when ``return_raw``."""
+        """(timestamp, up B/s, down B/s) binned to ``resolution``: stored rows only, never padded
+        (a missing bucket is a silence; ``measured_spans`` says whether it was measured).
+        ``timestamp`` is a datetime, or epoch seconds when ``return_raw``."""
+
+    @abstractmethod
+    def speed_resolution(self, start_time: Optional[datetime], end_time: Optional[datetime],
+                         interface_name: Optional[str]) -> Optional[Resolution]:
+        """The resolution ``speed_history(..., resolution='auto')`` reads this window at ('raw',
+        'minute', 'hour', 'day'), or None when it cannot be read."""
+
+    @abstractmethod
+    def measured_spans(self, start_time: datetime,
+                       end_time: datetime) -> Optional[Tuple[Tuple[float, float], ...]]:
+        """Merged (start, end) epoch-second spans inside the window in which the app was measuring:
+        a missing speed row there means no traffic. Outside them (app off, PC asleep, before the first
+        recorded session) nothing was measured. None when the schema cannot say (v7)."""
 
     @abstractmethod
     def hardware_history(self, stat_type: str, start_time: Optional[datetime],
@@ -173,6 +222,17 @@ class HistoryReader(ABC):
         """``metered_volume`` for decisions that move the odometer: None when history cannot answer (a
         failed read; a backend without adapter metadata) - ``metered_volume`` turns every error into
         zeros, which a re-key would take for "nothing moved"."""
+        return None
+
+    #: Whether ``daily_volume`` can answer (v8). The v7 backend - a 2.1 file whose upgrade is deferred
+    #: to a later start - cannot, and the usage table says it will be there after the upgrade.
+    SUPPORTS_DAILY_VOLUME = False
+
+    def daily_volume(self, start_time: Optional[datetime], end_time: datetime,
+                     scope: Optional["MeteredScope"]) -> Optional[List["DayVolume"]]:
+        """``metered_volume`` split by LOCAL calendar day, oldest first (#334's usage table): one entry
+        per day that holds history, each exactly what ``metered_volume`` returns for that day's own
+        window. None when this backend cannot answer (v7: the table waits for the upgrade)."""
         return None
 
     def interface_names(self) -> Optional[List[str]]:
@@ -605,34 +665,8 @@ class V7HistoryReader(_ReaderBase):
                 except Exception:
                     self.logger.exception("Fallback unified DB query failed.")
 
-            # --- Edge Padding (Zero-Fill) ---
-            # If no real data, create evenly-spaced zeros across the timeline.
-            # This prevents gap detection from splitting into single-point segments.
-            if start_time and end_time:
-                duration = (_end_ts - _start_ts)  # seconds
-
-                if not data_points:
-                    # No real data: Generate synthetic flat baseline
-                    # 1 point per hour, min 10, max 100 for performance
-                    num_points = min(100, max(10, int(duration / 3600)))
-                    interval = duration / max(1, num_points - 1)
-
-                    for i in range(num_points):
-                        pt_ts = _start_ts + (i * interval)
-                        if return_raw:
-                            data_points.append((pt_ts, 0.0, 0.0))
-                        else:
-                            data_points.append((datetime.fromtimestamp(pt_ts), 0.0, 0.0))
-                else:
-                    # Has real data: Just ensure edges are covered
-                    s_pt = _start_ts if return_raw else start_time
-                    e_pt = _end_ts if return_raw else end_time
-
-                    if data_points[0][0] > s_pt:
-                        data_points.insert(0, (s_pt, 0.0, 0.0))
-                    if data_points[-1][0] < e_pt:
-                        data_points.append((e_pt, 0.0, 0.0))
-
+            # No edge padding (rc.2 S4): stored rows only, as in V8HistoryReader. The synthetic zero
+            # rows drew unmeasured time as a measured zero.
             return data_points
 
         except sqlite3.Error as e:
@@ -816,6 +850,14 @@ class V7HistoryReader(_ReaderBase):
 
     def coverage(self, start_time: datetime, end_time: datetime) -> Optional[Coverage]:
         return None   # v7 records no sessions; traffic rows are not evidence the app was running
+
+    def measured_spans(self, start_time: datetime,
+                       end_time: datetime) -> Optional[Tuple[Tuple[float, float], ...]]:
+        return None   # no sessions: no silence can be called measured
+
+    def speed_resolution(self, start_time: Optional[datetime], end_time: Optional[datetime],
+                         interface_name: Optional[str]) -> Optional[Resolution]:
+        return constants.data.history_period.get_target_resolution(start_time, end_time)
 
     def distinct_interfaces(self) -> List[str]:
         try:
@@ -1011,6 +1053,7 @@ class V8HistoryReader(_ReaderBase):
     watermarks are scalar subqueries of the statements they bound, so a roll-up that commits mid-read
     (rows + watermark in one transaction, per the contract) can neither drop nor double-count."""
 
+    SUPPORTS_DAILY_VOLUME = True
     _NET = (S8.NET_RAW, S8.NET_MINUTE, S8.NET_HOUR)
     _HW = (S8.HW_RAW, S8.HW_MINUTE, S8.HW_HOUR)
     # (raw, minute) watermark keys per tier family: they roll up independently (the migration folds
@@ -1119,21 +1162,11 @@ class V8HistoryReader(_ReaderBase):
         iface_sql, iface_p = self._iface_filter(interface_name)
         bounds = self._tier_bounds(self._NET, "n")
         if target_res == 'auto':
-            target_res = constants.data.history_period.get_target_resolution(start_time, end_time)
-            # A short window that reaches below the raw watermark (the hours just before the v7 -> v8
-            # upgrade, folded into minute rows) is drawn at minute resolution: raw resolution reads only
-            # the raw tier and drew those hours empty, while the window's summary (which reads every tier)
-            # showed their traffic. Steady state never takes this branch (raw keeps >= 24 h).
-            if target_res == 'raw':
-                try:
-                    if self._conn().execute(
-                            f"SELECT 1 FROM {self._NET[1]} n {self._IFACE_JOIN} "
-                            f"WHERE n.ts BETWEEN ? AND ?{bounds[1][0]}{iface_sql} LIMIT 1",
-                            (_start_ts, _end_ts, *bounds[1][1], *iface_p)).fetchone():
-                        target_res = 'minute'
-                except sqlite3.Error as e:
-                    self._log_read_failure("Unified graph query failed", e)
-                    return []
+            try:
+                target_res = self._auto_resolution(start_time, end_time, interface_name)
+            except sqlite3.Error as e:
+                self._log_read_failure("Unified graph query failed", e)
+                return []
         interval = {'raw': 1, 'minute': 60, 'hour': 3600, 'day': 86400}.get(target_res, 60)
         raw_up, raw_down = self._RAW_RATE.format(d="up"), self._RAW_RATE.format(d="down")
 
@@ -1176,24 +1209,85 @@ class V8HistoryReader(_ReaderBase):
         else:
             points = [(datetime.fromtimestamp(int(r[0])), float(r[1] or 0.0), float(r[2] or 0.0)) for r in valid]
 
-        # Edge padding, exactly as v7: a flat zero baseline for an empty bounded window, else zero
-        # points at the window edges so gap detection never splits on them.
-        if start_time and end_time:
-            duration = _end_ts - _start_ts
-            if not points:
-                num = min(100, max(10, int(duration / 3600)))
-                step = duration / max(1, num - 1)
-                for i in range(num):
-                    pt = _start_ts + i * step
-                    points.append((pt, 0.0, 0.0) if return_raw else (datetime.fromtimestamp(pt), 0.0, 0.0))
-            else:
-                s_pt = _start_ts if return_raw else start_time
-                e_pt = _end_ts if return_raw else end_time
-                if points[0][0] > s_pt:
-                    points.insert(0, (s_pt, 0.0, 0.0))
-                if points[-1][0] < e_pt:
-                    points.append((e_pt, 0.0, 0.0))
+        # No edge padding (rc.2 S4): stored rows only. The zero rows this used to add at the window
+        # edges (and the flat zero baseline it made for an empty window) drew time nobody measured as
+        # a measured zero; the renderer now decides what a silence means from measured_spans().
         return points
+
+    def _auto_resolution(self, start_time: Optional[datetime], end_time: Optional[datetime],
+                         interface_name: Optional[str]) -> Resolution:
+        """The resolution ``speed_history(resolution='auto')`` reads at. Raises sqlite3.Error."""
+        target_res = constants.data.history_period.get_target_resolution(start_time, end_time)
+        # A short window that reaches below the raw watermark (the hours just before the v7 -> v8
+        # upgrade, folded into minute rows) is drawn at minute resolution: raw resolution reads only
+        # the raw tier and drew those hours empty, while the window's summary (which reads every tier)
+        # showed their traffic. Steady state never takes this branch (raw keeps >= 24 h).
+        if target_res == 'raw':
+            _start_ts = int(start_time.timestamp()) if start_time else 0
+            _end_ts = int(end_time.timestamp()) if end_time else self._now_ts()
+            iface_sql, iface_p = self._iface_filter(interface_name)
+            bounds = self._tier_bounds(self._NET, "n")
+            if self._conn().execute(
+                    f"SELECT 1 FROM {self._NET[1]} n {self._IFACE_JOIN} "
+                    f"WHERE n.ts BETWEEN ? AND ?{bounds[1][0]}{iface_sql} LIMIT 1",
+                    (_start_ts, _end_ts, *bounds[1][1], *iface_p)).fetchone():
+                target_res = 'minute'
+        return target_res
+
+    def speed_resolution(self, start_time: Optional[datetime], end_time: Optional[datetime],
+                         interface_name: Optional[str]) -> Optional[Resolution]:
+        try:
+            return self._auto_resolution(start_time, end_time, interface_name)
+        except sqlite3.Error as e:
+            self._log_read_failure("Graph resolution query failed", e)
+            return None
+
+    def measured_spans(self, start_time: datetime,
+                       end_time: datetime) -> Optional[Tuple[Tuple[float, float], ...]]:
+        """The app's running sessions in the window (``coverage()``) minus what it recorded as NOT
+        measured while a session was open: an interval flagged ``FLAG_GAP`` (standby, a stall - the
+        poll that ends it spans far more than the poll rate). On the raw tier that stretch is exact,
+        ``[ts - dt_ms, ts]``. A roll-up row keeps only the flag, so there the stretch runs from the end
+        of the previous stored bucket to the flagged bucket: the PC slept somewhere in between, and
+        when exactly is gone. None when the schema records no sessions or the read fails."""
+        cov = self.coverage(start_time, end_time)
+        if cov is None:
+            return None
+        if not cov.sessions:
+            return ()
+        st, et = cov.start_ts, cov.end_ts
+        minute_s, hour_s = self._BUCKET_SECONDS[1], self._BUCKET_SECONDS[2]
+
+        def run(cur):
+            # Each tier only within the range it answers (the watermark contract, as speed_history):
+            # a row a roll-up already moved on, or a stray below the watermark, is not read twice.
+            bounds = self._tier_bounds(self._NET, "n")
+            holes: List[Tuple[float, float]] = []
+            # A wake row up to an hour past the window can still end a sleep that began inside it.
+            cur.execute(f"SELECT n.ts, MAX(n.dt_ms) FROM {S8.NET_RAW} n WHERE n.ts >= ? AND n.ts <= ? "
+                        f"AND (n.flags & {S8.FLAG_GAP}) != 0{bounds[0][0]} GROUP BY n.ts",
+                        (st, et + hour_s, *bounds[0][1]))
+            for ts, dt_ms in cur.fetchall():
+                holes.append((int(ts) - int(dt_ms or 0) / 1000.0, float(ts)))
+            for k in (1, 2):
+                bucket = self._BUCKET_SECONDS[k]
+                cur.execute(f"SELECT DISTINCT n.ts FROM {self._NET[k]} n WHERE n.ts >= ? AND n.ts <= ? "
+                            f"AND (n.flags & {S8.FLAG_GAP}) != 0{bounds[k][0]}",
+                            (st - bucket, et + hour_s, *bounds[k][1]))
+                for (ts,) in cur.fetchall():
+                    prev = cur.execute(
+                        f"SELECT MAX(e) FROM (SELECT MAX(n.ts) + {minute_s} AS e FROM {S8.NET_MINUTE} n "
+                        f"WHERE n.ts < ?{bounds[1][0]} UNION ALL SELECT MAX(n.ts) + {hour_s} "
+                        f"FROM {S8.NET_HOUR} n WHERE n.ts < ?{bounds[2][0]})",
+                        (ts, *bounds[1][1], ts, *bounds[2][1])).fetchone()[0]
+                    begin = min(float(prev), float(ts)) if prev is not None else float(st)
+                    holes.append((begin, float(ts)))
+            return holes
+
+        holes = self._snapshot_call(run, lambda: None)
+        if holes is None:
+            return None
+        return subtract_spans(cov.sessions, holes)
 
     def summarize_network(self, direction: str, start_time: datetime, end_time: datetime,
                           interface_name: Optional[str] = None, poll_interval: float = 1.0):
@@ -1348,6 +1442,47 @@ class V8HistoryReader(_ReaderBase):
         finally:
             if conn is not None:
                 self._end_snapshot(conn, began)
+
+    def daily_volume(self, start_time: Optional[datetime], end_time: datetime,
+                     scope: Optional[MeteredScope]) -> Optional[List[DayVolume]]:
+        """``_volume_run``'s three per-tier queries - same watermark bounds, same ``_tier_bytes``, same
+        scope filter - grouped by LOCAL day number (``_local_bin_sql``: DST-correct, one 'localtime'
+        per row) and merged across tiers in Python. A row lands wholly in the day its own ``ts`` falls
+        in, exactly as ``metered_volume`` over that day's window counts it, so a day's figure here IS
+        that call's; an hour bucket straddling local midnight (a +5:30 zone) is never split or doubled.
+        One read transaction (``_snapshot_call``), so a roll-up committing mid-read cannot move a slice
+        between tiers under it. None on a failed read."""
+        if scope is not None and scope.names is not None and not scope.names:
+            return []                                    # nothing selected / no eligible adapter
+        scope_sql, scope_p = self._scope_filter(scope)
+        st = int(start_time.timestamp()) if start_time else 0
+        et = int(end_time.timestamp())
+        day_sql = _local_bin_sql("n.ts", 86400)
+
+        def run(cur):
+            bounds = self._tier_bounds(self._NET, "n")
+            acc: Dict[int, List[float]] = {}
+            for k, table in enumerate(self._NET):
+                if k == 0:
+                    cols = "SUM(n.up_bytes), SUM(n.down_bytes), 0"
+                else:
+                    cols = (f"SUM({self._tier_bytes('up', k)}), SUM({self._tier_bytes('down', k)}), "
+                            "SUM(n.up_bytes IS NULL OR n.down_bytes IS NULL)")
+                cur.execute(f"SELECT {day_sql} AS d, {cols} FROM {table} n {self._IFACE_JOIN} "
+                            f"WHERE n.ts BETWEEN ? AND ?{bounds[k][0]}{scope_sql} GROUP BY d",
+                            (st, et) + bounds[k][1] + scope_p)
+                for d, up, down, recon in cur.fetchall():
+                    if d is None:
+                        continue
+                    a = acc.setdefault(int(d), [0.0, 0.0, 0])
+                    a[0] += float(up or 0.0)
+                    a[1] += float(down or 0.0)
+                    a[2] += int(recon or 0)
+            epoch = date(1970, 1, 1)
+            return [DayVolume(epoch + timedelta(days=d), int(_bin_start(d, 86400)), a[0], a[1], a[2] > 0)
+                    for d, a in sorted(acc.items())]
+
+        return self._snapshot_call(run, lambda: None)
 
     def interface_names(self) -> Optional[List[str]]:
         try:

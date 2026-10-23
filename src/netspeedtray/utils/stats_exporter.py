@@ -10,6 +10,9 @@ Both as CSV (UTF-8, dot decimal regardless of UI locale) with a JSON sidecar of 
 The honesty spine (non-negotiable): percentiles/min/stddev are EXACT only inside the raw tier; beyond
 that they are written as empty with a `summary_method_note` saying so - never a fabricated p95. Every
 row carries sample_count + coverage_pct. Units are human/standard at the boundary: Mbps, ms, W, °C, %.
+Temperatures stay °C whatever the display unit (temperature_unit, rc.2 F8): an export is
+machine-readable data whose `unit` column says °C, so files from different settings stay comparable
+(and stddev, unlike the other figures, does not survive a plain °F offset).
 No phone-home - bytes leave only on the user's explicit action; this module just writes local files.
 """
 from __future__ import annotations

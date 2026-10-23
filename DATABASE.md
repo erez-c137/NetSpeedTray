@@ -43,7 +43,7 @@ same commit. This describes **schema v8** (NetSpeedTray 2.2 and later). The desi
 | minute | `net_minute` | `hw_minute` | per minute | the last **30 days** | rolled into per-hour rows, originals deleted |
 | hour | `net_hour` | `hw_hour` | per hour | until your retention setting | deleted |
 
-Retention is **Settings → Advanced → Keep data**, default 365 days. "Keep everything" sets it to
+Retention is **Settings → Advanced → Keep history for**, default 365 days. "Keep everything" sets it to
 36,500 days, which is a hundred years and means in practice *never delete*. A *reduced* retention
 takes effect 48 hours after you set it (so an accidental change can be undone); an increase applies at
 once.
@@ -238,7 +238,17 @@ counter glitch cannot add phantom gigabytes. Each write also stores, in `metadat
 counters that total was counted up to (`usage_counter_snapshot`, below); a later launch **in the
 same boot** adds what moved while the app was closed. After a reboot, or if an adapter's counters
 went backwards, nothing is added; in auto mode, nothing is added either when the primary interface
-is not the one the snapshot was metered on.
+is not the one the snapshot was metered on. A launch before any route exists (an autostart at sign-in
+with Wi-Fi still connecting) waits for the primary to resolve, then recovers, and the polls in between
+are charged to that primary rather than dropped.
+
+**What the odometer meters is the interface mode's selection.** Auto meters only the primary - the
+adapter the route to the internet uses right now; with a full-tunnel VPN up that is the VPN adapter,
+so the tunnel's overhead and split-tunnel traffic are not in the count. `all_physical` sums every
+adapter the shared classifier calls physical (OS hardware flag + ifType, then names); VPN / tunnel /
+virtual adapters - WireGuard, Wintun, Tailscale, NordLynx, ZeroTier, vEthernet, PPP, WAN Miniport -
+are excluded, so their bytes (which also cross the real NIC) are not counted twice. It counts this
+PC's traffic only.
 
 Bytes are charged to the period in which their measurement window **began**: a standby gap or a
 closed-app window that spans the reset day counts toward the period it started in (the lifetime
@@ -592,6 +602,38 @@ Two things look different in 2.1.4-2.1.7, and neither is damage:
 2.1.x over-counted. 2.2 counts exact bytes for every row it records (`up_bytes` / `down_bytes`), and
 for rows recorded before 2.2 it estimates `average × MIN(sample_count, 60)` - the seconds the row
 really stands for - instead of a flat 60, and labels the result *recorded history*.
+
+### Moving to a new PC
+
+Your history is one file, and the new PC can simply use it. There is no in-app import yet (planned
+for 2.3, #334), but the move by hand is safe: at start NetSpeedTray opens whatever v7 or v8 file it
+finds under the live name, exactly as it does after an upgrade.
+
+1. **On the old PC, get a copy of the history.** Either:
+   - **Settings > Advanced > Back up history...** - saves a consistent, checked copy (by default
+     `Documents\NetSpeedTray-history-<date>.db`) while the app keeps running; or
+   - right-click the tray icon > **Exit**, then copy `%APPDATA%\NetSpeedTray\speed_history.db`.
+     A clean exit leaves no `speed_history.db-wal`; if one is there, the app did not close cleanly
+     and its last writes are still in it - start NetSpeedTray, Exit again, then copy.
+
+   Copy `NetSpeedTray_Config.json` from the same folder too if you want your settings.
+2. **On the new PC, exit NetSpeedTray** (tray icon > Exit). In `%APPDATA%\NetSpeedTray`, delete **all
+   three** of `speed_history.db`, `speed_history.db-wal` and `speed_history.db-shm` - the `-wal` / `-shm`
+   files belong to the database you are replacing, and SQLite would replay them into the copied file
+   (see step 1 of [Restoring a backup](#restoring-a-backup) for why that is destructive).
+3. Paste the copy into that folder and name it `speed_history.db` (and `NetSpeedTray_Config.json`, if
+   you brought it).
+4. Start NetSpeedTray (2.2 or later; a file from 2.1.x is upgraded on this start, with the usual
+   `.bak.v7_...` kept).
+
+The new PC's own history **and its data-usage count for the current period** are replaced by the old
+PC's (`usage_counter` travels in the file; the counter snapshot it carries belongs to the old PC's
+boot, so nothing from it is re-added on the new one). Adapter names come along as they were: if the new
+PC's adapters are named differently, the old ones show as separate adapters in the graphs, and with
+**Selected** adapters you may need to pick them again.
+
+A backup made with the button is never touched by the app's own clean-up: it does not use the
+`speed_history.db...` names, and the button refuses to save under one.
 
 ---
 

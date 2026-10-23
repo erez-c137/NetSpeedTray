@@ -9,6 +9,15 @@ from PyQt6.QtCore import QThread
 
 from netspeedtray.core.monitor_thread import StatsMonitorThread
 
+
+def _wait_until(cond, timeout=5.0):
+    """Poll ``cond`` until it holds or ``timeout`` s pass; returns its last value."""
+    deadline = time.monotonic() + timeout
+    while not cond() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    return cond()
+
+
 class TestNetworkMonitorThread:
     
     @pytest.fixture
@@ -40,16 +49,18 @@ class TestNetworkMonitorThread:
             # Let's start the thread and stop it quickly.
             
             monitor_thread.start()
-            time.sleep(0.05) # Allow a few cycles
+            # Wait for the poll itself, not a fixed 50 ms: under a loaded full-tree run the thread's
+            # first poll can take longer than that, and the counter is then still 5.
+            reset = _wait_until(lambda: monitor_thread.consecutive_errors == 0)
             monitor_thread.stop()
             
-            assert monitor_thread.consecutive_errors == 0
+            assert reset and monitor_thread.consecutive_errors == 0
 
     def test_transient_error_increments_count(self, monitor_thread):
         """Test that errors increment the counter but don't stop the thread immediately."""
         with patch('netspeedtray.core.monitor_thread.psutil.net_io_counters', side_effect=OSError("Test Error")):
             monitor_thread.start()
-            time.sleep(0.05)
+            _wait_until(lambda: monitor_thread.consecutive_errors > 0)
             monitor_thread.stop()
             
             assert monitor_thread.consecutive_errors > 0

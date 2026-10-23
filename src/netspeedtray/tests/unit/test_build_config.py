@@ -86,6 +86,17 @@ def test_release_pins_inno_setup():
     assert re.search(r"choco install innosetup --version=\d+\.\d+\.\d+", yml)
 
 
+def test_setup_installs_in_64_bit_mode_wherever_it_is_allowed_to_run():
+    """ArchitecturesAllowed=x64compatible lets Setup run on Windows 11 on ARM (x64 emulation), but
+    ArchitecturesInstallIn64BitMode=x64 (an alias of x64os since Inno 6.3) does not match ARM64, so
+    there Setup installed in 32-bit mode: Program Files (x86), the WOW6432Node uninstall key."""
+    iss = _read("build", "setup.iss")
+    allowed = re.search(r"^ArchitecturesAllowed=(\S+)\s*$", iss, re.M).group(1)
+    mode = re.search(r"^ArchitecturesInstallIn64BitMode=(\S+)\s*$", iss, re.M).group(1)
+    assert allowed == "x64compatible"
+    assert mode == allowed
+
+
 def test_a_previous_folder_on_a_missing_drive_falls_back_to_the_default():
     iss = _read("build", "setup.iss")
     wiz = re.search(r"procedure InitializeWizard\(\);(.*?)\nend;", iss, re.S).group(1)

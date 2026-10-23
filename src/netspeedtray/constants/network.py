@@ -222,6 +222,10 @@ class LatencyConstants:
     }
     # How long closing the sheet waits for the worker: one in-flight echo plus slack.
     CHECK_STOP_WAIT_MS: Final[int] = 1500
+    # The sheet's network details (#214) come from one WMI query (~150 ms) on a daemon thread. A hung
+    # WMI service must never hold the check: past this the check goes on without them (and, with no
+    # router known yet, without a router), and the worker thread still ends on time.
+    CHECK_DETAILS_TIMEOUT_S: Final[float] = 3.0
 
 
 class UsageOdometerConstants:
@@ -246,6 +250,10 @@ class UsageOdometerConstants:
     # ahead by less than this across a reset day rolls the period over up to that much early (the
     # bytes of those hours count toward the new period); the period key then simply stays correct.
     FUTURE_PERIOD_TOLERANCE_DAYS: Final[int] = 2
+    # The cap card's "NetSpeedTray ran N% of this period" line (F19) reads the recorded sessions, whose
+    # live one ends at its last 10 s heartbeat. A gap this short before now is that heartbeat lag, not
+    # time the app was closed - without it a cap reset an hour ago could never read 100%.
+    COVERAGE_HEARTBEAT_SLACK_SEC: Final[int] = 30
 
 
 class MetricsEndpointConstants:

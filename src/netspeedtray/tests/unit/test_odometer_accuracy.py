@@ -665,6 +665,28 @@ def test_an_ipv6_only_network_resolves_the_primary_interface():
     nu._unreachable_since = None
 
 
+def test_an_ipv6_only_network_is_metered_end_to_end():
+    """rc.2 D2: the controller in auto mode on an IPv6-only network, through the REAL routing lookup
+    (only the sockets and the adapter table are faked): the primary resolves via the IPv6 probe and
+    the odometer counts that adapter's bytes - not zero, not the other adapter's."""
+    from netspeedtray.utils import network_utils as nu
+    nu._unreachable_since = None
+    addrs = {
+        "Ethernet": [_Addr(socket.AF_INET6, "fe80::1%7", None, None, None)],
+        "Wi-Fi": [_Addr(socket.AF_INET6, "2001:db8:1::42", None, None, None)],
+    }
+    state = FakeState()
+    c = _controller(state, mode="auto")
+    with patch("socket.socket", _Sock), patch("psutil.net_if_addrs", return_value=addrs):
+        _poll(c, {"Wi-Fi": NetIO(0, 0), "Ethernet": NetIO(0, 0)}, 1000.0)
+        _poll(c, {"Wi-Fi": NetIO(4_000, 90_000), "Ethernet": NetIO(500, 500)}, 1001.0)
+        _poll(c, {"Wi-Fi": NetIO(6_000, 120_000), "Ethernet": NetIO(900, 900)}, 1002.0)
+    nu._unreachable_since = None
+    assert c.primary_interface == "Wi-Fi"
+    assert state.totals() == (6_000, 120_000)
+    assert state.add_kwargs[-1]["primary"] == "Wi-Fi"
+
+
 def test_bytes_before_the_odometer_loads_are_kept_not_dropped(tmp_path, q_app):
     """v8 step 7: the readers are held off while the worker recovers / migrates the file (seconds on
     a large v7 database), so the odometer row cannot load yet. Polls in that window are real usage:
@@ -687,3 +709,91 @@ def test_bytes_before_the_odometer_loads_are_kept_not_dropped(tmp_path, q_app):
     finally:
         ws.db_worker._close_connection()
         ws.cleanup()
+
+
+# --- D1 (rc.2): autostart before a route exists ------------------------------------------
+
+def _route_appears_later(snapshot: Optional[dict]):
+    """Sign-in autostart: the app launches while Wi-Fi is still connecting (no route, so auto mode
+    has no primary), then the route appears. Returns the fake odometer state."""
+    state = FakeState(snapshot)
+    c = _controller(state, mode="auto")
+    lookup = MagicMock(return_value=None)
+    with patch("netspeedtray.core.controller.get_primary_interface_name", lookup), \
+            patch("netspeedtray.core.usage_snapshot.psutil.boot_time", return_value=BOOT + 0.6):
+        _poll(c, {"Wi-Fi": NetIO(1_000_000, 2_000_000)}, 1000.0)    # launch: no route
+        _poll(c, {"Wi-Fi": NetIO(1_000_500, 2_001_000)}, 1001.0)    # still connecting
+        _poll(c, {"Wi-Fi": NetIO(1_010_000, 2_050_000)}, 1017.0)    # still no route (lookup re-ran)
+        lookup.return_value = "Wi-Fi"                               # the route appears
+        _poll(c, {"Wi-Fi": NetIO(1_030_000, 2_150_000)}, 1033.0)    # lookup re-runs: primary found
+        _poll(c, {"Wi-Fi": NetIO(1_031_000, 2_160_000)}, 1034.0)
+        _poll(c, {"Wi-Fi": NetIO(1_032_000, 2_170_000)}, 1035.0)
+    return state
+
+
+def test_route_appearing_after_launch_still_recovers_the_closed_window():
+    """D1: the launch recovery compared the snapshot's primary with None (no route yet) and skipped
+    it. It must wait for the primary instead, then recover against the LAUNCH counters."""
+    snap = _snapshot({"Wi-Fi": (400_000, 500_000)})
+    snap["primary"] = "Wi-Fi"
+    state = _route_appears_later(snap)
+    # 600,000 / 1,500,000 closed window + every live byte from the launch counters on.
+    assert state.totals() == (632_000, 1_670_000)
+
+
+def test_bytes_before_the_first_primary_are_counted_not_dropped():
+    """D1: live polls before the primary first resolved aggregated to nothing in auto mode."""
+    state = _route_appears_later(None)
+    assert state.totals() == (32_000, 170_000)
+    # The odometer stays paired with the newest counters (never handed older ones afterwards).
+    assert state.add_kwargs[-1]["counters"]["Wi-Fi"].bytes_sent == 1_032_000
+
+
+def test_the_held_bytes_go_to_the_primary_only():
+    """The held bytes are charged with auto mode's selection: only the interface that became primary."""
+    state = FakeState()
+    c = _controller(state, mode="auto")
+    lookup = MagicMock(return_value=None)
+    with patch("netspeedtray.core.controller.get_primary_interface_name", lookup):
+        _poll(c, {"Wi-Fi": NetIO(0, 0), "Ethernet": NetIO(0, 0)}, 1000.0)
+        _poll(c, {"Wi-Fi": NetIO(10, 20), "Ethernet": NetIO(7_000, 8_000)}, 1001.0)
+        lookup.return_value = "Wi-Fi"
+        _poll(c, {"Wi-Fi": NetIO(15, 30), "Ethernet": NetIO(9_000, 9_000)}, 1020.0)
+    assert state.totals() == (15, 30)
+
+
+def test_a_quit_while_waiting_for_a_route_loses_nothing_at_the_next_launch():
+    """Review M1: while the reconcile waits for a route, the odometer must not be handed the live
+    counters - its 30 s persist would replace the previous session's snapshot, and a quit (or crash)
+    before the route appears would lose the closed window, the held bytes and the next recovery."""
+    snap = _snapshot({"Wi-Fi": (400_000, 500_000)})
+    snap["primary"] = "Wi-Fi"
+    s1 = FakeState(snap)
+    c1 = _controller(s1, mode="auto")
+    with patch("netspeedtray.core.controller.get_primary_interface_name", return_value=None), \
+            patch("netspeedtray.core.usage_snapshot.psutil.boot_time", return_value=BOOT + 0.6):
+        _poll(c1, {"Wi-Fi": NetIO(1_000_000, 2_000_000)}, 1000.0)
+        _poll(c1, {"Wi-Fi": NetIO(1_010_000, 2_050_000)}, 1001.0)
+        _poll(c1, {"Wi-Fi": NetIO(1_020_000, 2_090_000)}, 1002.0)
+    # The app quits here. What would have been persisted: the newest counters the odometer was given.
+    handed = [k for k in s1.add_kwargs if k.get("counters") is not None]
+    assert handed == [], "a held poll replaced the previous session's snapshot"
+    persisted = snap                                   # so the stored snapshot is still the old one
+    # Next launch, same boot, the route is up: the whole window since the OLD snapshot is recovered.
+    s2 = FakeState(persisted)
+    c2 = _controller(s2, mode="auto")
+    with patch("netspeedtray.core.controller.get_primary_interface_name", return_value="Wi-Fi"), \
+            patch("netspeedtray.core.usage_snapshot.psutil.boot_time", return_value=BOOT + 0.6):
+        _poll(c2, {"Wi-Fi": NetIO(1_030_000, 2_100_000)}, 2000.0)
+    total = tuple(a + b for a, b in zip(s1.totals(), s2.totals()))
+    assert total == (1_030_000 - 400_000, 2_100_000 - 500_000)
+
+
+def test_a_late_reconcile_never_repairs_the_odometer_to_the_launch_counters():
+    """Once live polls handed the odometer newer counters, the waited-for reconcile must not hand it
+    the launch counters (the next launch would recover the live window a second time)."""
+    snap = _snapshot({"Wi-Fi": (400_000, 500_000)})
+    snap["primary"] = "Wi-Fi"
+    state = _route_appears_later(snap)
+    sent = [k["counters"]["Wi-Fi"].bytes_sent for k in state.add_kwargs if k.get("counters")]
+    assert sent == sorted(sent)

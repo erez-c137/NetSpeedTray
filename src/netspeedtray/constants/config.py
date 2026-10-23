@@ -1,7 +1,7 @@
 """
 Constants for application configuration defaults and constraints.
 """
-from typing import Final, Dict, Any, List
+from typing import Final, Dict, Any, List, Tuple
 
 # --- IMPORT OTHER CONSTANTS TO CREATE A SINGLE SOURCE OF TRUTH ---
 from netspeedtray.constants.data import data
@@ -9,6 +9,7 @@ from netspeedtray.constants.network import network
 from netspeedtray.constants.app import app
 from netspeedtray.constants.color import color
 from netspeedtray.constants.fonts import fonts
+from netspeedtray.constants.lhm import lhm
 from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.constants.ui import ui as ui_constants
 from netspeedtray.constants.update_mode import UpdateMode
@@ -39,8 +40,17 @@ class ConfigConstants:
     # 1.2 (2.2): hardware_label_style split into style + hardware_label_color, update_rate snapped to
     # presets. The bump is what makes load() keep a `.bak.v1.1` of the 2.1.x file before migrating it;
     # 2.1.x leaves a newer version untouched (verified against the 2.1.7 tree).
-    CONFIG_SCHEMA_VERSION: Final[str] = "1.2"
-    
+    # 1.3 (2.2 rc.2): the colour scheme - every themed colour is a `<stem>_dark` / `<stem>_light` pair
+    # (THEMED_COLOR_STEMS) and the theme no longer writes the text colour into the file. The bump keeps a
+    # `.bak.v1.2`; the pre-1.3 colour keys stay in the file, inert, so rc.1 / 2.1.x still read them.
+    CONFIG_SCHEMA_VERSION: Final[str] = "1.3"
+    # A same-version field migration (e.g. dropping a beta's key) rewrites the file without a schema
+    # bump. The first `.bak.v<ver>.fields` copy is kept forever (the pristine one); each LATER such
+    # migration also snapshots the file as it was just before it, as `.fields.<timestamp>`, and only
+    # the newest few of those are kept - enough to undo the last few rewrites, bounded on disk
+    # (rc.2 D3). They are taken only when a migration is about to write, never on a plain launch.
+    FIELD_MIGRATION_SNAPSHOTS_KEPT: Final[int] = 3
+
     # --- Default Values for Individual Settings (referencing other constants) ---
     DEFAULT_UPDATE_RATE: Final[float] = 1.0
     DEFAULT_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
@@ -55,14 +65,47 @@ class ConfigConstants:
     # color languages (direction vs magnitude), which is a real design change, so it is off by
     # default and existing widgets render byte-identically after an upgrade (#168).
     DEFAULT_USE_CUSTOM_ARROW_COLORS: Final[bool] = False
+    # The colour defaults below are the DARK-taskbar ones (the pre-2.2 single values, so a dark widget
+    # is unchanged); each themed colour's light-taskbar default is in THEMED_COLOR_DEFAULTS.
     DEFAULT_ARROW_UP_COLOR: Final[str] = color.GREEN
     DEFAULT_ARROW_DOWN_COLOR: Final[str] = color.WHITE
     DEFAULT_COLOR: Final[str] = color.WHITE # Referencing color palette
     DEFAULT_COLOR_CODING: Final[bool] = False
     DEFAULT_HIGH_SPEED_THRESHOLD: Final[float] = 10.0
     DEFAULT_LOW_SPEED_THRESHOLD: Final[float] = 1.0
+    # Optional third level between Low and High (#9). 0 = Off: three bands, exactly as before.
+    DEFAULT_MEDIUM_SPEED_THRESHOLD: Final[float] = 0.0
     DEFAULT_HIGH_SPEED_COLOR: Final[str] = color.GREEN # Referencing color palette
+    DEFAULT_MEDIUM_SPEED_COLOR: Final[str] = color.AMBER
     DEFAULT_LOW_SPEED_COLOR: Final[str] = color.ORANGE # Referencing color palette
+
+    # --- The colour scheme (2.2 rc.2; #117, #332, #9) ---
+    # Every foreground colour the widget paints has a dark-taskbar and a light-taskbar value, stored as
+    # `<stem>_dark` / `<stem>_light`; utils/color_scheme.resolve() picks the half for the current WINDOWS
+    # mode (SystemUsesLightTheme - the taskbar's theme, not the app mode). The theme never writes the
+    # config. The stems are the pre-2.2 key names, so RenderConfig's field names did not change. The
+    # light defaults are readable on a light taskbar (constants/color.py has the contrast figures).
+    # Kept global, on purpose: background_color (a surface, usually transparent) and the custom CPU/GPU
+    # label colours (their Brand default already follows the taskbar).
+    THEME_SUFFIXES: Final[Tuple[str, str]] = ("dark", "light")
+    THEMED_COLOR_DEFAULTS: Final[Dict[str, Tuple[str, str]]] = {   # stem: (dark, light)
+        "default_color": (DEFAULT_COLOR, color.BLACK),
+        "high_speed_color": (DEFAULT_HIGH_SPEED_COLOR, color.HIGH_SPEED_LIGHT),
+        "medium_speed_color": (DEFAULT_MEDIUM_SPEED_COLOR, color.MEDIUM_SPEED_LIGHT),
+        "low_speed_color": (DEFAULT_LOW_SPEED_COLOR, color.LOW_SPEED_LIGHT),
+        "graph_upload_color": (color.UPLOAD_LINE_COLOR, color.UPLOAD_LINE_LIGHT),
+        "graph_download_color": (color.DOWNLOAD_LINE_COLOR, color.DOWNLOAD_LINE_LIGHT),
+        "arrow_up_color": (DEFAULT_ARROW_UP_COLOR, color.HIGH_SPEED_LIGHT),
+        "arrow_down_color": (DEFAULT_ARROW_DOWN_COLOR, color.BLACK),
+    }
+    THEMED_COLOR_STEMS: Final[Tuple[str, ...]] = tuple(THEMED_COLOR_DEFAULTS)
+    # The pre-1.3 single-value keys. No longer read or written: the 1.3 migration seeds the pairs from
+    # them, then they stay in the file untouched (and unvalidated) so a rollback to rc.1 / 2.1.x still
+    # finds the colours it had. test_color_scheme guards that no module reads them.
+    LEGACY_COLOR_KEYS: Final[Tuple[str, ...]] = (
+        "default_color", "color_is_automatic", "high_speed_color", "low_speed_color",
+        "arrow_up_color", "arrow_down_color",
+    )
     DEFAULT_BACKGROUND_COLOR: Final[str] = "#000000" # Black
     DEFAULT_BACKGROUND_OPACITY: Final[int] = 0 # Percentage (0-100), default transparent
     DEFAULT_GRAPH_ENABLED: Final[bool] = False
@@ -104,6 +147,12 @@ class ConfigConstants:
     # just works; a user can turn it off to keep the old primary-taskbar fallback (#188).
     DEFAULT_FREE_FLOAT: Final[bool] = True
     DEFAULT_KEEP_VISIBLE_FULLSCREEN: Final[bool] = False
+    # #24: on a native horizontal Win11 taskbar, hide while the app buttons reach the widget (the
+    # owner's "yield" choice, rc.2 W17). Off = the widget stays put and may cover them (pre-rc.2).
+    DEFAULT_HIDE_WHEN_APPS_COVER: Final[bool] = True
+    # "Show on all taskbars" (#229): a paint-only copy of the widget on every OTHER taskbar (Windows'
+    # "Show my taskbar on all displays"). Off by default - with it off no mirror code runs at all.
+    DEFAULT_SHOW_ON_ALL_TASKBARS: Final[bool] = False
     DEFAULT_FORCE_DECIMALS: Final[bool] = True
     # ON by default: a taskbar status widget people want always-present should come back after a reboot.
     # First launch reconciles this with the actual HKCU Run key (main.py → StartupManager.synchronize_startup_task),
@@ -111,6 +160,11 @@ class ConfigConstants:
     DEFAULT_START_WITH_WINDOWS: Final[bool] = True
     DEFAULT_TRAY_OFFSET_X: Final[int] = 0
     DEFAULT_TRAY_OFFSET_Y: Final[int] = 3
+    # Pre-1.3.0 tray_offset_x defaults (10 up to 1.2.0, then 1, then 3; 0 since 1.3.0). Every
+    # config those versions saved carries one of them although the user never moved the widget, so
+    # Reset position (shown only once the widget was moved) treats them as the default too (rc.2 W6).
+    # Not migrated: a value that later releases kept placing the widget with stays where it was.
+    LEGACY_DEFAULT_TRAY_OFFSETS_X: Final[frozenset] = frozenset({10, 1, 3})
     # A Win11 secondary-monitor taskbar has no tray/clock child HWND to hug, so on a preferred
     # secondary display we reserve this many logical px off the screen edge to clear its clock (#186).
     DEFAULT_SECONDARY_CLOCK_RESERVE_PX: Final[int] = 75
@@ -146,6 +200,15 @@ class ConfigConstants:
     DEFAULT_SHOW_MEMORY_LABELS: Final[bool] = False
     DEFAULT_SHOW_HARDWARE_TEMPS: Final[bool] = True
     DEFAULT_SHOW_HARDWARE_POWER: Final[bool] = False
+    # Temperature unit for every temperature the app SHOWS (taskbar, hover card, Monitor, Settings'
+    # throttle slider). Stored values stay Celsius everywhere - sensors, history DB, throttle_temp_c,
+    # the CSV/JSON export (a stable machine-readable unit, already labelled "°C") - and only the
+    # formatter converts (rc.2 F8; the v1.4.0 "Fahrenheit support is planned" promise, O6).
+    TEMPERATURE_UNIT_CHOICES: Final[List[str]] = ["celsius", "fahrenheit"]
+    DEFAULT_TEMPERATURE_UNIT: Final[str] = "celsius"
+    # GPU picker (#236): "" = Automatic (busiest engine on any adapter - the pre-picker readout), or
+    # the DXGI Description of the adapter to show. See constants.gpu.ADAPTER_AUTO.
+    DEFAULT_GPU_ADAPTER: Final[str] = ""
     DEFAULT_STACK_HARDWARE_STATS: Final[bool] = True
     # Side-taskbar design phase C: keep the taskbar widget to network speed and show the enabled
     # CPU/GPU/memory in the hover card instead. Off by default, so nobody's widget changes.
@@ -182,12 +245,9 @@ class ConfigConstants:
         "font_size": DEFAULT_FONT_SIZE,
         "font_weight": DEFAULT_FONT_WEIGHT,
         "color_coding": DEFAULT_COLOR_CODING,
-        "default_color": DEFAULT_COLOR,
-        "color_is_automatic": True,
         "high_speed_threshold": DEFAULT_HIGH_SPEED_THRESHOLD,
+        "medium_speed_threshold": DEFAULT_MEDIUM_SPEED_THRESHOLD,
         "low_speed_threshold": DEFAULT_LOW_SPEED_THRESHOLD,
-        "high_speed_color": DEFAULT_HIGH_SPEED_COLOR,
-        "low_speed_color": DEFAULT_LOW_SPEED_COLOR,
         "graph_enabled": DEFAULT_GRAPH_ENABLED,
         "history_minutes": DEFAULT_HISTORY_MINUTES,
         "graph_opacity": DEFAULT_GRAPH_OPACITY,
@@ -228,6 +288,7 @@ class ConfigConstants:
         "cpu_label_color": DEFAULT_CPU_LABEL_COLOR,
         "gpu_label_color": DEFAULT_GPU_LABEL_COLOR,
         "keep_visible_fullscreen": DEFAULT_KEEP_VISIBLE_FULLSCREEN,
+        "hide_when_apps_cover": DEFAULT_HIDE_WHEN_APPS_COVER,
         "force_decimals": DEFAULT_FORCE_DECIMALS,
         "unit_type": DEFAULT_UNIT_TYPE,
         "swap_upload_download": DEFAULT_SWAP_UPLOAD_DOWNLOAD,
@@ -262,8 +323,6 @@ class ConfigConstants:
         "arrow_font_weight": DEFAULT_ARROW_FONT_WEIGHT,
         # Custom arrow glyphs (#129). Empty = the native i18n arrow (the Windows default).
         "use_custom_arrow_colors": DEFAULT_USE_CUSTOM_ARROW_COLORS,
-        "arrow_up_color": DEFAULT_ARROW_UP_COLOR,
-        "arrow_down_color": DEFAULT_ARROW_DOWN_COLOR,
         "arrow_up_symbol": "",
         "arrow_down_symbol": "",
         "monitor_cpu_enabled": DEFAULT_MONITOR_CPU_ENABLED,
@@ -273,6 +332,15 @@ class ConfigConstants:
         "show_memory_labels": DEFAULT_SHOW_MEMORY_LABELS,
         "show_hardware_temps": DEFAULT_SHOW_HARDWARE_TEMPS,
         "show_hardware_power": DEFAULT_SHOW_HARDWARE_POWER,
+        "temperature_unit": DEFAULT_TEMPERATURE_UNIT,
+        "gpu_adapter": DEFAULT_GPU_ADAPTER,
+        # LibreHardwareMonitor web server (Settings > Hardware > LibreHardwareMonitor connection, G2/G3):
+        # the port LHM listens on, and the optional Basic-auth user name and password. The password is
+        # never stored in plain text - only as a per-user DPAPI blob (utils/secret_store.py), and the
+        # support bundle redacts both credential keys.
+        "lhm_port": lhm.HTTP_PORT,
+        "lhm_username": "",
+        "lhm_password_protected": "",
         # Settings > Advanced > "Record hardware history". Persists hardware samples to the history DB,
         # but ONLY for metrics the user monitors (CPU/GPU/RAM switches, temps/power switches) - see
         # controller.hardware_persist_allowed. Off = nothing hardware is written; live display (widget,
@@ -302,6 +370,11 @@ class ConfigConstants:
         "band_display": "always",          # always (neutral) | colored (by band) | alert_only (2.4G warning)
         "location_onboarding_dismissed": False,  # user permanently dismissed the SSID/Location explainer
         "widgets_overlap_nudge_shown": False,  # one-time #200 nudge: widget overlaps the Widgets/weather panel
+        "side_bar_no_room_notice_shown": False,  # one-time heads-up: a side taskbar's apps leave no free spot
+        "app_overlap_notice_shown": False,  # one-time heads-up: the widget stepped aside for app buttons (#24)
+        # The tray_offset_x the user dropped the widget at ON the app buttons (#24 drop baseline): the
+        # yield stays off for that spot, across restarts, until a probe sees it clear once. None = none.
+        "app_overlap_drop_offset": None,
         "cpu_load_high_threshold": DEFAULT_CPU_LOAD_HIGH_THRESHOLD,
         "cpu_load_low_threshold": DEFAULT_CPU_LOAD_LOW_THRESHOLD,
         "gpu_load_high_threshold": DEFAULT_GPU_LOAD_HIGH_THRESHOLD,
@@ -312,10 +385,11 @@ class ConfigConstants:
         "first_run_v2_seen": False,
         "first_run_ever": True,
         "tooltip_hint_shown_count": 0,     # gesture-hint tooltip fades after a few sessions
-        "pin_hint_shown_count": 0,         # "Click to keep this open" footer: first few hover cards
+        "pin_hint_shown_count": 0,         # "Click the widget to keep this open" footer: first few hover cards
         "history_upgrade_notice_shown": False,  # the one "history upgraded" flyout after v7 -> v8
         "temp_onboarding_dismissed": False,  # user opted out of the no-sensor temp explainer
         "preferred_monitor": None,
+        "show_on_all_taskbars": DEFAULT_SHOW_ON_ALL_TASKBARS,
         # --- Data-usage / data-cap ---
         "data_cap_enabled": False,
         "data_cap_gb": 0.0,                # the cap in GB (0 = unset)
@@ -330,6 +404,12 @@ class ConfigConstants:
         "metrics_endpoint_port": network.metrics.DEFAULT_PORT,
     }
     
+    # The 16 themed colour keys, generated from THEMED_COLOR_DEFAULTS.
+    # (Plain loops: a comprehension in a class body cannot see the class's other names.)
+    for _stem, _pair in THEMED_COLOR_DEFAULTS.items():
+        for _i, _suffix in enumerate(THEME_SUFFIXES):
+            DEFAULT_CONFIG[f"{_stem}_{_suffix}"] = _pair[_i]
+
     # --- Schema Definition for Modern Config Validation ---
     VALIDATION_SCHEMA: Final[Dict[str, Dict[str, Any]]] = {
         "config_version": {"type": str, "default": CONFIG_SCHEMA_VERSION},
@@ -342,12 +422,11 @@ class ConfigConstants:
         "font_size": {"type": int, "default": DEFAULT_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
         "font_weight": {"type": int, "default": DEFAULT_FONT_WEIGHT, "min": 1, "max": 1000},
         "color_coding": {"type": bool, "default": DEFAULT_COLOR_CODING},
-        "default_color": {"type": str, "default": DEFAULT_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
-        "color_is_automatic": {"type": bool, "default": True},
         "high_speed_threshold": {"type": (int, float), "default": DEFAULT_HIGH_SPEED_THRESHOLD, "min": 0, "max": ui_constants.sliders.SPEED_THRESHOLD_MAX_HIGH},
+        # 0 (Off) or strictly between Low and High - the cross-field rule in utils/config.py resets a
+        # misplaced Medium alone, never the user's High / Low.
+        "medium_speed_threshold": {"type": (int, float), "default": DEFAULT_MEDIUM_SPEED_THRESHOLD, "min": 0, "max": ui_constants.sliders.SPEED_THRESHOLD_MAX_LOW},
         "low_speed_threshold": {"type": (int, float), "default": DEFAULT_LOW_SPEED_THRESHOLD, "min": 0, "max": ui_constants.sliders.SPEED_THRESHOLD_MAX_LOW},
-        "high_speed_color": {"type": str, "default": DEFAULT_HIGH_SPEED_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
-        "low_speed_color": {"type": str, "default": DEFAULT_LOW_SPEED_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "graph_enabled": {"type": bool, "default": DEFAULT_GRAPH_ENABLED},
         "history_minutes": {"type": int, "default": DEFAULT_HISTORY_MINUTES, "min": 1, "max": 1440}, # Range from manual check
         # "coerce": accepted as int or float (older files / hand edits), stored as a rounded int - the
@@ -383,8 +462,6 @@ class ConfigConstants:
         "arrow_font_size": {"type": int, "default": DEFAULT_ARROW_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
         "arrow_font_weight": {"type": int, "default": DEFAULT_ARROW_FONT_WEIGHT, "min": 1, "max": 1000},
         "use_custom_arrow_colors": {"type": bool, "default": DEFAULT_USE_CUSTOM_ARROW_COLORS},
-        "arrow_up_color": {"type": str, "default": DEFAULT_ARROW_UP_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
-        "arrow_down_color": {"type": str, "default": DEFAULT_ARROW_DOWN_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "arrow_up_symbol": {"type": str, "default": ""},
         "arrow_down_symbol": {"type": str, "default": ""},
         "free_move": {"type": bool, "default": DEFAULT_FREE_MOVE},
@@ -396,6 +473,7 @@ class ConfigConstants:
         "cpu_label_color": {"type": str, "default": DEFAULT_CPU_LABEL_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "gpu_label_color": {"type": str, "default": DEFAULT_GPU_LABEL_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "keep_visible_fullscreen": {"type": bool, "default": DEFAULT_KEEP_VISIBLE_FULLSCREEN},
+        "hide_when_apps_cover": {"type": bool, "default": DEFAULT_HIDE_WHEN_APPS_COVER},
         "force_decimals": {"type": bool, "default": DEFAULT_FORCE_DECIMALS},
         "unit_type": {"type": str, "default": DEFAULT_UNIT_TYPE, "choices": ["bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"]},
         "swap_upload_download": {"type": bool, "default": DEFAULT_SWAP_UPLOAD_DOWNLOAD},
@@ -445,6 +523,12 @@ class ConfigConstants:
         "plan_up_mbps": {"type": (int, float), "default": 0, "min": 0, "max": 100000},
         "throttle_temp_c": {"type": (int, float), "default": 0, "min": 0, "max": 130},
         "show_hardware_power": {"type": bool, "default": DEFAULT_SHOW_HARDWARE_POWER},
+        "temperature_unit": {"type": str, "default": DEFAULT_TEMPERATURE_UNIT, "choices": TEMPERATURE_UNIT_CHOICES},
+        "gpu_adapter": {"type": str, "default": DEFAULT_GPU_ADAPTER},
+        "lhm_port": {"type": int, "default": lhm.HTTP_PORT, "min": lhm.MIN_PORT, "max": lhm.MAX_PORT},
+        "lhm_username": {"type": str, "default": ""},
+        # No regex on purpose: a failed format check logs the value, and this one must never be logged.
+        "lhm_password_protected": {"type": str, "default": ""},
         "stack_hardware_stats": {"type": bool, "default": DEFAULT_STACK_HARDWARE_STATS},
         "hardware_in_hover_card": {"type": bool, "default": DEFAULT_HARDWARE_IN_HOVER_CARD},
         "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},
@@ -455,6 +539,9 @@ class ConfigConstants:
         "band_display": {"type": str, "default": "always", "choices": ["always", "colored", "alert_only"]},
         "location_onboarding_dismissed": {"type": bool, "default": False},
         "widgets_overlap_nudge_shown": {"type": bool, "default": False},
+        "side_bar_no_room_notice_shown": {"type": bool, "default": False},
+        "app_overlap_notice_shown": {"type": bool, "default": False},
+        "app_overlap_drop_offset": {"type": (int, type(None)), "default": None},
         "cpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
         "cpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
         "gpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_GPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
@@ -471,6 +558,7 @@ class ConfigConstants:
         # QScreen.name() identifier (e.g. "\\.\DISPLAY1"). None = use primary.
         # If the saved screen isn't found at runtime, fall back to primary.
         "preferred_monitor": {"type": (str, type(None)), "default": None},
+        "show_on_all_taskbars": {"type": bool, "default": DEFAULT_SHOW_ON_ALL_TASKBARS},
         # --- Data-usage / data-cap ---
         "data_cap_enabled": {"type": bool, "default": False},
         "data_cap_gb": {"type": (int, float), "default": 0.0, "min": 0.0, "max": 1_000_000.0},
@@ -482,6 +570,12 @@ class ConfigConstants:
         "metrics_endpoint_port": {"type": int, "default": network.metrics.DEFAULT_PORT,
                                   "min": network.metrics.MIN_PORT, "max": network.metrics.MAX_PORT},
     }
+    # One #RRGGBB rule per themed colour key, so a bad hand edit resets that key, not the scheme.
+    for _stem, _pair in THEMED_COLOR_DEFAULTS.items():
+        for _i, _suffix in enumerate(THEME_SUFFIXES):
+            VALIDATION_SCHEMA[f"{_stem}_{_suffix}"] = {"type": str, "default": _pair[_i],
+                                                       "regex": r"#[0-9a-fA-F]{6}"}
+    del _stem, _pair, _i, _suffix
 
 
     def __init__(self) -> None:

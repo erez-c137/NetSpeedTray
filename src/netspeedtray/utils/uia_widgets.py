@@ -177,3 +177,270 @@ def _probe(ole32, oleaut32, hwnd: int) -> Optional[Tuple[int, int, int, int]]:
             _release(p.value)
         if bstr:
             oleaut32.SysFreeString(bstr)
+
+
+# --- Side-taskbar layout: the app-button span + the Widgets button (one FindAll pass) -------------
+_IEL_CURRENT_AUTOMATION_ID = 29
+_IEL_CURRENT_CLASS_NAME = 30
+
+# What counts as "the apps": every pinned/running app button plus the shell buttons that sit in the
+# same group (Start, Search, Task View). Matched on STABLE class names / AutomationIds, never on Name
+# (localized, and it carries window titles). Probed on Win11 26200 (2026-10-21): StartButton,
+# SearchButton, then one Taskbar.TaskListButtonAutomationPeer per app; tray icons are SystemTray.*,
+# and our own widget shows up as a descendant too (it is an owned window of the taskbar).
+_APP_BUTTON_CLASSES = frozenset({"Taskbar.TaskListButtonAutomationPeer"})
+_APP_GROUP_IDS = frozenset({"StartButton", "SearchButton", "TaskViewButton"})
+_WIDGETS_ID = "WidgetsButton"
+# Every OTHER button on the bar counts as occupied too (rc.1 live test B4, 2026-10-22: the "..." app
+# overflow button and any shell button a future build adds were invisible to the placement, so the
+# widget could be parked on them). Recognised generically - "Button" in the class name or the
+# AutomationId - except the tray's own icons (SystemTray.*, they ARE the tray end) and our own Qt
+# windows (AutomationId "QApplication.<...>"), which a walk from the taskbar root also reaches.
+_TRAY_CLASS_PREFIX = "SystemTray."
+_QT_ID_PREFIX = "QApplication."
+
+
+def _is_other_bar_button(cls: str, aid: str) -> bool:
+    cls, aid = cls or "", aid or ""
+    if cls.startswith(_TRAY_CLASS_PREFIX) or aid.startswith(_QT_ID_PREFIX) or aid == "SystemTrayIcon":
+        return False
+    return "button" in cls.lower() or "button" in aid.lower()
+
+
+def taskbar_layout_from_elements(elements) -> Tuple[Optional[Tuple[int, int, int, int]],
+                                                    Optional[Tuple[int, int, int, int]]]:
+    """Pure: ``(apps_rect, widgets_rect)`` from ``(class_name, automation_id, (l, t, r, b))`` triples.
+
+    apps_rect is the union of the app group's buttons PLUS every other non-tray button on the bar (the
+    "..." overflow button, Copilot, ...); widgets_rect the WidgetsButton's own box, kept apart because
+    where it sits (above the apps, or beside the tray with "Top"/left alignment) decides the free
+    spans. Empty / zero-size elements (collapsed or off-screen buttons) are ignored. Either may be
+    None."""
+    apps = None
+    widgets = None
+    for cls, aid, rect in elements:
+        try:
+            left, top, right, bottom = (int(v) for v in rect)
+        except Exception:
+            continue
+        if right <= left or bottom <= top:
+            continue
+        if aid == _WIDGETS_ID:
+            if widgets is None:
+                widgets = (left, top, right, bottom)
+        elif cls in _APP_BUTTON_CLASSES or aid in _APP_GROUP_IDS or _is_other_bar_button(cls, aid):
+            if apps is None:
+                apps = (left, top, right, bottom)
+            else:
+                apps = (min(apps[0], left), min(apps[1], top), max(apps[2], right), max(apps[3], bottom))
+    return apps, widgets
+
+
+# Two buttons belong to one contiguous run when the gap between them is at most this (physical px).
+# Win11's taskbar buttons sit edge to edge (44 px slots at 96 DPI, gap 0); the "..." overflow button
+# follows the last app directly. A button further away (a shell button a future build parks by the
+# tray, Widgets on the far side) is not part of the run.
+APP_GROUP_MAX_GAP_PX = 8
+
+
+def app_group_from_elements(elements, vertical: bool,
+                            max_gap: int = APP_GROUP_MAX_GAP_PX) -> Optional[Tuple[int, int, int, int]]:
+    """Pure: the CONTIGUOUS run of buttons that starts at Start - Start/Search/Task View, the app
+    buttons, and any other non-tray button touching the run (the "..." overflow) - as one
+    ``(l, t, r, b)`` rect in physical px, or None when there is no StartButton.
+
+    Unlike ``taskbar_layout_from_elements``' union, a button separated from the run by more than
+    ``max_gap`` along the bar is left out, so an unknown button far from the apps can't make the whole
+    bar look full. ``vertical`` picks the bar's axis (y for a left/right bar, x for top/bottom). The
+    run is extended from Start in both directions (a right-to-left layout puts Start at the far end)."""
+    buttons = []
+    start = None
+    for cls, aid, rect in elements:
+        try:
+            left, top, right, bottom = (int(v) for v in rect)
+        except Exception:
+            continue
+        if right <= left or bottom <= top or aid == _WIDGETS_ID:
+            continue
+        if not (cls in _APP_BUTTON_CLASSES or aid in _APP_GROUP_IDS or _is_other_bar_button(cls, aid)):
+            continue
+        r = (left, top, right, bottom)
+        lo, hi = (top, bottom) if vertical else (left, right)
+        buttons.append((lo, hi, r))
+        if aid == "StartButton" and start is None:
+            start = (lo, hi, r)
+    if start is None:
+        return None
+    lo, hi = start[0], start[1]
+    group = start[2]
+    remaining = [b for b in buttons if b is not start]
+    grew = True
+    while grew:
+        grew = False
+        for b in list(remaining):
+            if b[0] <= hi + max_gap and b[1] >= lo - max_gap:
+                lo, hi = min(lo, b[0]), max(hi, b[1])
+                r = b[2]
+                group = (min(group[0], r[0]), min(group[1], r[1]), max(group[2], r[2]), max(group[3], r[3]))
+                remaining.remove(b)
+                grew = True
+    return group
+
+
+def _bstr(element: int, index: int) -> str:
+    out = ctypes.c_void_p()
+    _method(element, index, ctypes.POINTER(ctypes.c_void_p))(element, ctypes.byref(out))
+    if not out.value:
+        return ""
+    try:
+        return ctypes.wstring_at(out.value)
+    finally:
+        ctypes.windll.oleaut32.SysFreeString(ctypes.c_void_p(out.value))
+
+
+# The taskbar's XAML island host. Walking from it (not from Shell_TrayWnd) keeps the search inside
+# the taskbar's own buttons: our widget is an OWNED window of the taskbar, so a walk from the root
+# also descends into it - asking a Qt window for its UIA tree switches Qt accessibility on in our
+# own process for the rest of the session, and adds every widget element to the walk.
+_XAML_HOST_CLASS = "Windows.UI.Composition.DesktopWindowContentBridge"
+
+
+def _layout_root_hwnds(taskbar_hwnd: int):
+    """The HWNDs to search from, best first: the XAML island host, then the taskbar root."""
+    try:
+        import win32gui
+        host = win32gui.FindWindowEx(int(taskbar_hwnd), 0, _XAML_HOST_CLASS, None)
+    except Exception:
+        host = 0
+    return [h for h in (host, int(taskbar_hwnd)) if h]
+
+
+def query_taskbar_layout(taskbar_hwnd: int):
+    """``(apps_rect, widgets_rect)`` in physical px for the taskbar ``taskbar_hwnd`` (Shell_TrayWnd),
+    or None when UIA is unavailable. Blocking (cross-process); background thread only. Never raises.
+    Searches the XAML island first; the whole taskbar only if that finds no app buttons."""
+    full = query_taskbar_layout_full(taskbar_hwnd)
+    return None if full is None else (full[0], full[1])
+
+
+def overflow_button_from_elements(elements, vertical: bool) -> Optional[Tuple[int, int, int, int]]:
+    """Pure: the app group's "..." overflow button (physical px), or None.
+
+    It is the only way to reach the apps Win11 hides when the bar is full, so the widget must never
+    cover it (rc.2 live test L2). Its class / AutomationId have not been probed live, so: an element
+    whose class or id says "overflow"; else the non-app button (not Start/Search/Task View/an app,
+    not Widgets, not the tray) that ENDS the contiguous Start-led run on the tray side."""
+    for cls, aid, rect in elements:
+        if "overflow" in (cls or "").lower() or "overflow" in (aid or "").lower():
+            r = _int_rect(rect)
+            if r is not None and _is_other_bar_button(cls, aid) and aid != _WIDGETS_ID:
+                return r
+    group = app_group_from_elements(elements, vertical)
+    if group is None:
+        return None
+    hi = group[3] if vertical else group[2]
+    best = None
+    for cls, aid, rect in elements:
+        r = _int_rect(rect)
+        if r is None or aid == _WIDGETS_ID or cls in _APP_BUTTON_CLASSES or aid in _APP_GROUP_IDS:
+            continue
+        if not _is_other_bar_button(cls, aid):
+            continue
+        end = r[3] if vertical else r[2]
+        inside = (r[1] >= group[1] and r[3] <= group[3]) if vertical else (r[0] >= group[0] and r[2] <= group[2])
+        if inside and end == hi:
+            best = r
+    return best
+
+
+def _int_rect(rect) -> Optional[Tuple[int, int, int, int]]:
+    try:
+        left, top, right, bottom = (int(v) for v in rect)
+    except Exception:
+        return None
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
+
+
+def _layout_from_elements_full(elements, vertical: Optional[bool]):
+    apps, widgets = taskbar_layout_from_elements(elements)
+    if vertical is None:   # infer the axis from the union: a left/right bar's run is taller than wide
+        vertical = apps is not None and (apps[3] - apps[1]) > (apps[2] - apps[0])
+    return (apps, widgets, app_group_from_elements(elements, vertical),
+            overflow_button_from_elements(elements, vertical))
+
+
+def query_taskbar_layout_full(taskbar_hwnd: int, vertical: Optional[bool] = None):
+    """``(apps_rect, widgets_rect, app_group_rect, overflow_rect)`` in physical px (see
+    ``app_group_from_elements`` / ``overflow_button_from_elements``),
+    or None when UIA is unavailable. Same cost and rules as ``query_taskbar_layout`` - ONE FindAll."""
+    ole32 = ctypes.oledll.ole32
+    initialized = False
+    try:
+        try:
+            ole32.CoInitializeEx(None, _COINIT_MULTITHREADED)
+            initialized = True
+        except OSError as e:
+            if getattr(e, "winerror", None) != _RPC_E_CHANGED_MODE:
+                raise
+        result = None
+        for root in _layout_root_hwnds(taskbar_hwnd):
+            elements = _probe_layout(ole32, root)
+            result = None if elements is None else _layout_from_elements_full(elements, vertical)
+            if result is not None and result[0] is not None:
+                return result
+        return result
+    except Exception as e:  # noqa: BLE001 - fail-safe
+        logger.debug("Taskbar layout UIA probe failed: %s", e)
+        return None
+    finally:
+        if initialized:
+            try:
+                ctypes.windll.ole32.CoUninitialize()
+            except Exception:
+                pass
+
+
+def _probe_layout(ole32, hwnd: int):
+    uia = ctypes.c_void_p()
+    root = ctypes.c_void_p()
+    true_cond = ctypes.c_void_p()
+    kids = ctypes.c_void_p()
+    try:
+        clsid, iid = _GUID.parse(_CLSID_CUIAutomation), _GUID.parse(_IID_IUIAutomation)
+        ole32.CoCreateInstance(ctypes.byref(clsid), None, _CLSCTX_INPROC_SERVER, ctypes.byref(iid),
+                               ctypes.byref(uia))
+        _method(uia.value, _IUIA_ELEMENT_FROM_HANDLE, wintypes.HWND, ctypes.POINTER(ctypes.c_void_p))(
+            uia.value, hwnd, ctypes.byref(root))
+        if not root.value:
+            return None
+        _method(uia.value, _IUIA_CREATE_TRUE_CONDITION, ctypes.POINTER(ctypes.c_void_p))(
+            uia.value, ctypes.byref(true_cond))
+        _method(root.value, _IEL_FIND_ALL, ctypes.c_int, ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_void_p))(root.value, _TREE_SCOPE_DESCENDANTS,
+                                                 true_cond.value, ctypes.byref(kids))
+        if not kids.value:
+            return None
+        n = ctypes.c_int(0)
+        _method(kids.value, _IARR_LENGTH, ctypes.POINTER(ctypes.c_int))(kids.value, ctypes.byref(n))
+        get = _method(kids.value, _IARR_GET, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))
+        elements = []
+        for i in range(n.value):
+            kid = ctypes.c_void_p()
+            try:
+                get(kids.value, i, ctypes.byref(kid))
+                if not kid.value:
+                    continue
+                r = _rect(kid.value)
+                elements.append((_bstr(kid.value, _IEL_CURRENT_CLASS_NAME),
+                                 _bstr(kid.value, _IEL_CURRENT_AUTOMATION_ID),
+                                 (r.left, r.top, r.right, r.bottom)))
+            except Exception:
+                continue
+            finally:
+                _release(kid.value)
+        return elements
+    finally:
+        for p in (kids, true_cond, root, uia):
+            _release(p.value)

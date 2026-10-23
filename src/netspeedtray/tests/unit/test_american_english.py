@@ -81,7 +81,8 @@ def test_ui_strings_are_american():
     assert not problems, "British spelling in en_US.json:\n  " + "\n  ".join(problems)
 
 
-@pytest.mark.parametrize("name", ["changelog.md", "README.md", "TRANSLATORS.md", "privacy.md"])
+@pytest.mark.parametrize("name", ["changelog.md", "README.md", "TRANSLATORS.md", "privacy.md",
+                                  "DEPLOYING.md", "DATABASE.md"])
 def test_public_markdown_is_american(name):
     path = _ROOT / name
     if not path.exists():

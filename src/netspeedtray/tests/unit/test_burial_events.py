@@ -80,8 +80,9 @@ def test_first_change_emits_at_once_burst_collapses_to_one_trailing(handler):
     with patch.object(se_mod.time, "monotonic", side_effect=clock.monotonic):
         handler._on_zorder_event(0x10010)
         assert slot.call_count == 1                              # leading edge: immediate
+        step = constants.timeouts.ZORDER_RECHECK_MIN_INTERVAL_MS / 1000.0 / 25
         for _ in range(20):                                      # a burst inside the window
-            clock.t += 0.002
+            clock.t += step
             handler._on_zorder_event(0x10010)
         assert slot.call_count == 1
         assert handler._zorder_trailing_timer.isActive()
@@ -100,6 +101,47 @@ def test_change_after_quiet_spell_emits_at_once(handler):
         handler._note_zorder_change()
     assert slot.call_count == 2
     assert not handler._zorder_trailing_timer.isActive()
+
+
+def _run_burst(handler, clock, event_offsets_ms, until_ms):
+    """Feed reorder events at the given offsets (ms) through the real coalescer on a 1 ms
+    simulated clock; the trailing QTimer is fired by hand when its interval has elapsed.
+    Returns the offsets (ms) at which zorder_changed was emitted."""
+    emits = []
+    handler.zorder_changed.connect(lambda: emits.append(round((clock.t - start) * 1000)))
+    start = clock.t
+    due = None
+    pending = sorted(event_offsets_ms)
+    for ms in range(until_ms + 1):
+        clock.t = start + ms / 1000.0
+        if due is not None and clock.t >= due - 1e-9:
+            handler._zorder_trailing_timer.stop()
+            handler._emit_zorder_changed()
+            due = None
+        while pending and pending[0] <= ms:
+            pending.pop(0)
+            handler._on_zorder_event(0x10010)
+            if due is None and handler._zorder_trailing_timer.isActive():
+                due = clock.t + handler._zorder_trailing_timer.interval() / 1000.0
+    handler._zorder_trailing_timer.stop()
+    return emits
+
+
+def test_burial_15ms_into_a_burst_is_rechecked_within_a_frame(handler):
+    """pasharm (PR #424, Win10): a maximize / restore fires 6-15 desktop reorders; the first is
+    checked at once, but the burial itself lands 10-20 ms in. At a 100 ms coalescer that burial
+    waited for the trailing edge (~80 ms visible blink). It must be rechecked within ~one frame."""
+    clock = _Clock()
+    burial_ms = 15
+    burst = [0, 3, 6, 9, 12, burial_ms, 18, 22, 27, 33]
+    with patch.object(se_mod.time, "monotonic", side_effect=clock.monotonic):
+        emits = _run_burst(handler, clock, burst, until_ms=300)
+    assert emits[0] == 0                                         # leading edge: immediate
+    after = [e for e in emits if e >= burial_ms]
+    assert after, emits
+    assert after[0] - burial_ms <= 16 + 2, emits                 # the burial is seen within a frame
+    assert emits[-1] >= burst[-1]                                # the final Z-order is checked
+    assert len(emits) <= 1 + (burst[-1] // 16) + 1, emits        # still at most one check a frame
 
 
 def test_paused_handler_emits_nothing(handler):

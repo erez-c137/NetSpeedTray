@@ -635,11 +635,13 @@ _FIGHT_S = pm_mod.constants.timeouts.BURIAL_FIGHT_WINDOW_MS / 1000.0
 
 def test_fight_window_constant_sits_between_the_coalescer_and_a_user_action():
     """It must outlast the Z-order coalescer (a 1-frame re-burial is checked at its trailing
-    edge, ~100 ms after our re-seat) plus the rc.1 0.2 s live probe, and stay well under
-    pasharm's ~420 ms user gap."""
+    edge, one coalescer interval after the shell's reorder) plus the rc.1 0.2 s live probe, and
+    stay under pasharm's shortest user gap: ~420 ms on rc.1, 0.30 s with the 16 ms coalescer
+    while toggling deliberately fast (PR #424)."""
     coalescer_s = pm_mod.constants.timeouts.ZORDER_RECHECK_MIN_INTERVAL_MS / 1000.0
-    assert coalescer_s + 0.05 < _FIGHT_S
-    assert 0.2 < _FIGHT_S < 0.42 - 0.1
+    assert coalescer_s <= 0.017                     # one frame at 60 Hz (PR #424)
+    assert 0.033 + coalescer_s + 0.05 < _FIGHT_S    # a 2-frame fight, checked late, is still a fight
+    assert 0.2 < _FIGHT_S < 0.30
 
 
 def test_pasharm_timeline_user_burials_after_the_fight_window_are_immediate_and_free():
@@ -698,6 +700,31 @@ def test_one_frame_fight_still_escalates_1_2_4_8_16():
         _bury(z)
         reseats = _run_fight(m, z, clock, rebury_after_s=0.016, check_every_s=0.1, duration_s=40)
         assert _gaps(start, reseats)[:6] == [0.0, 1.0, 2.0, 4.0, 8.0, 16.0], _gaps(start, reseats)
+
+
+def test_one_frame_fight_checked_every_frame_still_escalates():
+    """PR #424 follow-up: with the 16 ms coalescer the shell's 1-frame re-burial is checked a
+    frame later, not ~100 ms later - still deep inside the fight window, so it still escalates
+    and the backoff still bounds it."""
+    frame = pm_mod.constants.timeouts.ZORDER_RECHECK_MIN_INTERVAL_MS / 1000.0
+    with _env([TB, W]) as (m, z, _w, clock):
+        start = clock.t
+        _bury(z)
+        reseats = _run_fight(m, z, clock, rebury_after_s=0.016, check_every_s=frame, duration_s=40)
+        assert _gaps(start, reseats)[:6] == [0.0, 1.0, 2.0, 4.0, 8.0, 16.0], _gaps(start, reseats)
+
+
+def test_slow_periodic_reburier_checked_every_frame_still_decays():
+    """The rate cap does not depend on how often we check: a 260-400 ms re-burier seen by
+    frame-rate checks is capped and decays exactly as with 50 ms checks."""
+    frame = pm_mod.constants.timeouts.ZORDER_RECHECK_MIN_INTERVAL_MS / 1000.0
+    for rebury in (0.26, 0.3, 0.4):
+        with _env([TB, W]) as (m, z, _w, clock):
+            _bury(z)
+            reseats = _run_fight(m, z, clock, rebury_after_s=rebury, check_every_s=frame,
+                                 duration_s=120)
+            assert len(reseats) <= 25, (rebury, len(reseats))
+            assert reseats[-1] - reseats[-2] >= 16 - 0.1, (rebury, _gaps(reseats[0], reseats))
 
 
 def test_rc1_buryloop_probe_still_counts_as_a_fight():
@@ -921,3 +948,88 @@ def test_other_setwindowpos_errors_still_log_an_error(caplog):
         with caplog.at_level(logging.DEBUG, logger=pm_mod.logger.name):
             assert m.reseat_above_taskbar() is False
         assert [r for r in caplog.records if r.levelno == logging.ERROR]
+
+
+# --- rc.2 W8: the one INFO line is kept for a REAL burial -----------------------------------------
+
+
+def _recovery_infos(caplog):
+    return [r for r in caplog.records if r.levelno == logging.INFO and "recovered" in r.getMessage()]
+
+
+def _set_tray(m, tray):
+    """A docked bottom taskbar whose tray rect reads ``tray``; runs the ~1 s refresh's tray check."""
+    info = MagicMock()
+    info.hwnd = TB
+    info.rect = (0, 1032, 1920, 1080)
+    info.get_tray_rect.return_value = tray
+    info.get_screen.return_value = None
+    m._state.taskbar_info = info
+    assert m._tray_rect_ready() is True
+
+
+def test_burial_right_after_docking_does_not_use_up_the_info_line(caplog):
+    """Startup: the widget docks (owner set), the shell buries it once while it lays the taskbar out.
+    That recovery is DEBUG; the first real burial later still gets the INFO line."""
+    with _env([TB, W], owner=0) as (m, z, _w, clock):
+        with caplog.at_level(logging.DEBUG, logger=pm_mod.logger.name):
+            m.ensure_topmost()                       # first dock: owner set -> settle window
+            _bury(z)
+            clock.t += 1
+            assert m.reseat_above_taskbar() is True
+            assert _recovery_infos(caplog) == []
+            clock.t += 60                            # much later: a real burial
+            _bury(z)
+            assert m.reseat_above_taskbar() is True
+        assert len(_recovery_infos(caplog)) == 1
+
+
+def test_owner_reset_to_the_same_taskbar_is_not_a_new_dock(caplog):
+    """#440 review L4: Qt drops the owner across show / flag changes (after a fullscreen app) and it is
+    re-set to the SAME taskbar. That is no layout change: a burial right after it is real and logs
+    INFO. Only a dock to a different taskbar HWND starts the settle window."""
+    with _env([TB, W], owner=0) as (m, z, _w, clock):
+        with caplog.at_level(logging.DEBUG, logger=pm_mod.logger.name):
+            m.ensure_topmost()                       # first dock to TB: settle
+            clock.t += 60
+            m.ensure_topmost()                       # owner re-set to TB again (fullscreen exit)
+            _bury(z)
+            clock.t += 1
+            assert m.reseat_above_taskbar() is True
+        assert len(_recovery_infos(caplog)) == 1
+
+
+def test_tray_icon_arrival_hands_the_info_line_back(caplog):
+    """A tray icon arrives: the widget is buried first, the tray rect changes on the next refresh.
+    The INFO the arrival used is handed back, so the real burial after it logs at INFO too."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        with caplog.at_level(logging.DEBUG, logger=pm_mod.logger.name):
+            _set_tray(m, (1694, 1032, 1920, 1080))
+            clock.t += 30
+            _bury(z)
+            assert m.reseat_above_taskbar() is True           # the arrival's burial: INFO
+            clock.t += 0.8
+            _set_tray(m, (1670, 1032, 1920, 1080))            # ...and its wider tray
+            clock.t += 0.5
+            _bury(z)
+            assert m.reseat_above_taskbar() is True           # still settling: DEBUG
+            clock.t += 120
+            _bury(z)
+            assert m.reseat_above_taskbar() is True           # the real one: INFO again
+        assert len(_recovery_infos(caplog)) == 2
+
+
+def test_unchanged_tray_never_reopens_the_info_line(caplog):
+    """The settle window needs a real change: the 1 s refresh re-reading the same tray rect is not
+    one, so a fight keeps its single INFO line (#327)."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        with caplog.at_level(logging.DEBUG, logger=pm_mod.logger.name):
+            _set_tray(m, (1694, 1032, 1920, 1080))
+            clock.t += 30
+            for _ in range(4):
+                _bury(z)
+                m.reseat_above_taskbar()
+                clock.t += 1
+                _set_tray(m, (1694, 1032, 1920, 1080))
+                clock.t += 20
+        assert len(_recovery_infos(caplog)) == 1

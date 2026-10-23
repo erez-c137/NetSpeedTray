@@ -296,13 +296,12 @@ def _hw_rows_width(config: RenderConfig, fm: Any, stats: List[str], memory_below
     """Width of today's hardware rows as ``draw_hardware_stats`` lays them out (its ``seg_w``)."""
     if not stats:
         return 0
-    from netspeedtray.utils.helpers import memory_label_width
+    from netspeedtray.utils.helpers import memory_label_width, hw_suffix_reference
     style = config.hardware_label_style
     label_col = (_max_w(fm, stats) + 4) if style == "text" else 14
     pct_col = fm.horizontalAdvance("100%")
     temps, power = config.show_hardware_temps, config.show_hardware_power
-    suffix_ref = ("(99°C, 250.0W)" if temps and power else "(250.0W)" if power
-                  else "(99°C)" if temps else "")
+    suffix_ref = hw_suffix_reference(temps, power, config.temperature_unit)
     suffix_col = (fm.horizontalAdvance(" ") + fm.horizontalAdvance(suffix_ref)) if suffix_ref else 0
     any_mem = ("CPU" in stats and config.monitor_ram_enabled) or ("GPU" in stats and config.monitor_vram_enabled)
     mem_num = fm.horizontalAdvance(mem_ref) if any_mem else 0

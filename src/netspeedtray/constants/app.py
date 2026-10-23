@@ -25,6 +25,14 @@ class AppConstants:
     # use the guided (folder-copy) update flow instead of the Inno installer flow (#195). The installer
     # copy never contains it. NOTE: build.bat writes this literal name - keep the two in sync.
     PORTABLE_MARKER_FILENAME: Final[str] = "portable.marker"
+    # Machine policy (U1, rc.2): IT turns update checks off with a DWORD under the standard Policies
+    # key - where Group Policy, Intune (ADMX ingest / OMA-URI) or a plain `reg add` writes it. Nonzero
+    # = off: no automatic check, no "Check for Updates" menu item, the Settings toggle is locked.
+    # Read-only from the app (core/update_checker.update_check_disabled_by_policy): HKLM first, then
+    # HKCU (a user-scope GPO). Both live under Policies, which standard users cannot write. Documented
+    # in DEPLOYING.md - keep the two in sync.
+    POLICY_REGISTRY_KEY: Final[str] = r"SOFTWARE\Policies\NetSpeedTray"
+    POLICY_DISABLE_UPDATE_CHECK_VALUE: Final[str] = "DisableUpdateCheck"
     # Graceful-shutdown channel (core/shutdown_channel.py). The running app registers this window
     # message and quits through the same clean path as tray Exit when it arrives; the installer and
     # uninstaller post it from setup.iss's own [Code] before any taskkill (and `--shutdown` can, by
@@ -34,6 +42,11 @@ class AppConstants:
     # than editing them in place.
     SHUTDOWN_MESSAGE_NAME: Final[str] = "NetSpeedTray_Shutdown_v1"
     SHUTDOWN_WINDOW_PROP: Final[str] = "NetSpeedTray_ShutdownTarget_v1"
+    # Same channel, second message (#234, rc.2 W14): a second launch of this user's app posts it to
+    # the marked window instead of exiting silently, and the running widget shows itself again
+    # (un-hide, re-dock, re-seat above the taskbar, back to the docked spot if it is off-screen).
+    # App-to-app only - setup.iss never sends it. Same _vN rule.
+    ACTIVATE_MESSAGE_NAME: Final[str] = "NetSpeedTray_Activate_v1"
     # How long `--shutdown` waits for the app to exit (seconds) unless `--timeout N` overrides it.
     # A normal clean quit is ~1 s. The worst legitimate one lands mid v7 -> v8 migration: the latency
     # probe join (1.5 s) + the DB thread's bounded wait (timeouts.DB_SHUTDOWN_WAIT_MS, 15 s), after

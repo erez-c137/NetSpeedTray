@@ -82,7 +82,18 @@ class GeneralPage(QWidget):
 
         self.check_for_updates = Win11Toggle(label_text="")
         self.check_for_updates.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.CHECK_FOR_UPDATES_LABEL, control=self.check_for_updates))
+        # IT's DisableUpdateCheck policy (U1) locks the toggle off and says why. The user's own
+        # choice is kept untouched underneath (see get_settings), so lifting the policy restores it.
+        # The card always carries the "managed" line; _apply_update_policy_lock shows it only while
+        # the policy is set, and runs again on every load_settings (the dialog is cached).
+        self._updates_policy_locked = False
+        self._saved_check_for_updates = True
+        self._updates_card = SettingCard(
+            self.i18n.CHECK_FOR_UPDATES_LABEL,
+            description=getattr(self.i18n, "UPDATE_CHECK_POLICY_MANAGED", "Managed by your organization"),
+            control=self.check_for_updates)
+        layout.addWidget(self._updates_card)
+        self._apply_update_policy_lock()
 
         # (Preferred Monitor moved to the Widget page's Behavior section, 2.2 IA pass: it decides which
         # taskbar the widget docks to, and its dependent "Float on a display without a taskbar" is there.)
@@ -163,7 +174,10 @@ class GeneralPage(QWidget):
         
         # Other toggles
         self.start_with_windows.setChecked(is_startup_enabled)
-        self.check_for_updates.setChecked(config.get("check_for_updates", True))
+        self._apply_update_policy_lock()   # a policy added or removed since the dialog was built
+        self._saved_check_for_updates = bool(config.get("check_for_updates", True))
+        self.check_for_updates.setChecked(
+            False if self._updates_policy_locked else self._saved_check_for_updates)
         # free_move / keep_visible_fullscreen / tray_offset_x are loaded by the Widget page now.
         # preferred_monitor is loaded by the Widget page now (2.2 IA pass).
 
@@ -178,6 +192,23 @@ class GeneralPage(QWidget):
         self.power_display.setChecked(bool(config.get("power_display_enabled", False)))
         self.show_hover_tips.setChecked(bool(config.get("show_hover_tips", True)))
 
+    def _apply_update_policy_lock(self) -> None:
+        """Re-read the DisableUpdateCheck policy (U1) and lock or unlock the toggle to match.
+        setEnabled alone won't dim our fixed-color toggle (HardwarePage._set_card_enabled), so the
+        toggle - only the toggle, so the "managed" line stays readable - gets an opacity effect."""
+        from netspeedtray.core.update_checker import update_check_disabled_by_policy
+        locked = update_check_disabled_by_policy()
+        self._updates_policy_locked = locked
+        self.check_for_updates.setEnabled(not locked)
+        if locked:
+            from PyQt6.QtWidgets import QGraphicsOpacityEffect
+            dim = QGraphicsOpacityEffect(self.check_for_updates)
+            dim.setOpacity(0.4)
+            self.check_for_updates.setGraphicsEffect(dim)
+        else:
+            self.check_for_updates.setGraphicsEffect(None)
+        self._updates_card.setDescriptionVisible(locked)
+
     def _select_click_action(self, combo: Win11ComboBox, value: str) -> None:
         idx = combo.findData(value)
         combo.setCurrentIndex(idx if idx >= 0 else 0)
@@ -191,7 +222,9 @@ class GeneralPage(QWidget):
             "language": self.language_combo.currentData(),
             "update_rate": update_rate_value,
             "start_with_windows": self.start_with_windows.isChecked(),
-            "check_for_updates": self.check_for_updates.isChecked(),
+            # Under the policy the toggle shows "off" but the user's own setting is written back as-is.
+            "check_for_updates": (self._saved_check_for_updates if self._updates_policy_locked
+                                  else self.check_for_updates.isChecked()),
             "double_click_action": self.double_click_action.currentData(),
             "middle_click_action": self.middle_click_action.currentData(),
             "pause_in_menu": self.pause_in_menu.isChecked(),

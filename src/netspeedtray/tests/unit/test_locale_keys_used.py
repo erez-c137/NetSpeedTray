@@ -20,11 +20,7 @@ _DYNAMIC = (
 )
 
 # Unused today but kept on purpose - say why.
-_KEEP = {
-    # The Settings > Hardware grey-out explanations (opportunities review F8) reuse these.
-    "SHOW_HARDWARE_TEMPS_TOOLTIP",
-    "SHOW_HARDWARE_POWER_TOOLTIP",
-}
+_KEEP: set = set()   # (the Settings > Hardware tooltips once listed here are wired up - rc.2 G6)
 
 
 def _production_source() -> str:

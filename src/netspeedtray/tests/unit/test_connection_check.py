@@ -34,6 +34,12 @@ def q_app():
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def _no_real_network_details(monkeypatch):
+    """The worker reads the connection's details over WMI (#214): never this machine's in a test."""
+    monkeypatch.setattr(LP, "network_details", lambda: None)
+
+
 # --- the math, against fixed RTT lists ----------------------------------------------------------------
 
 def test_hop_stats_on_a_fixed_rtt_list():
@@ -333,6 +339,29 @@ def test_copy_text_is_localised(q_app):
 
 # --- cancel stops the worker: no echo after stop -----------------------------------------------------
 
+def _stamp_stops(monkeypatch, before=None):
+    """Record when each ConnectionCheck.stop() has SET its flag - the moment from which no new echo
+    may leave. ``before(worker)`` runs first, standing in for whatever delays the stop request (a
+    quit handler held off the GIL). Returns the list of monotonic stamps."""
+    stamps = []
+    real_stop = CC.ConnectionCheck.stop
+
+    def stop(self):
+        if before is not None:
+            before(self)
+        real_stop(self)
+        stamps.append(time.monotonic())
+    monkeypatch.setattr(CC.ConnectionCheck, "stop", stop)
+    return stamps
+
+
+def _wait_for_hops(log, hops, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not set(hops) <= set(log.ips()) and time.monotonic() < deadline:
+        time.sleep(0.005)
+    return set(hops) <= set(log.ips())
+
+
 def test_cancel_stops_the_worker_with_no_further_echoes(q_app, monkeypatch):
     log = _PingLog(delay=0.1)
     monkeypatch.setattr(LP, "icmp_ping_ms", log)
@@ -340,7 +369,8 @@ def test_cancel_stops_the_worker_with_no_further_echoes(q_app, monkeypatch):
     finished = []
     w.check_finished.connect(lambda s: finished.append(s), type=Qt.ConnectionType.DirectConnection)
     w.start()
-    time.sleep(0.4)
+    assert _wait_for_hops(log, {GW, ANCHOR})        # really mid-check, however slow the start
+    time.sleep(0.2)
     t_stop = time.monotonic()
     w.stop()
     assert w.wait(3000)
@@ -360,15 +390,17 @@ def test_closing_the_sheet_stops_the_check(q_app, monkeypatch):
     from netspeedtray.views.monitor.connection_check import ConnectionCheckSheet
     sheet = ConnectionCheckSheet({"latency_public_enabled": True, "latency_public_host": ANCHOR},
                                  I18nStrings("en_US"), gateway_ip=GW)
+    stops = _stamp_stops(monkeypatch)
     w = sheet._worker
-    time.sleep(0.3)
+    assert _wait_for_hops(log, {GW, ANCHOR})
     assert w.isRunning() and set(log.ips()) == {GW, ANCHOR}   # really mid-check
     t_close = time.monotonic()
     sheet.reject()
     assert not w.isRunning()
     assert time.monotonic() - t_close < 0.05 + 0.25
+    assert stops, "closing the sheet must stop the worker"
     with log.lock:
-        assert not [ip for t, ip in log.log if t >= t_close]
+        assert not [ip for t, ip in log.log if t >= stops[0]], "echo sent after stop()"
 
 
 def test_stop_button_marks_the_check_stopped(q_app, monkeypatch):
@@ -376,15 +408,16 @@ def test_stop_button_marks_the_check_stopped(q_app, monkeypatch):
     monkeypatch.setattr(LP, "icmp_ping_ms", log)
     from netspeedtray.views.monitor.connection_check import ConnectionCheckSheet
     sheet = ConnectionCheckSheet({}, I18nStrings("en_US"), gateway_ip=GW)
+    stops = _stamp_stops(monkeypatch)
     w = sheet._worker
     assert sheet._run_btn.text() == "Stop"
-    time.sleep(0.2)
+    assert _wait_for_hops(log, {GW})
     assert w.isRunning() and log.ips()
-    t_click = time.monotonic()
     sheet._run_btn.click()
     assert w.wait(1000)
+    assert stops, "Stop must stop the worker"
     with log.lock:
-        assert not [ip for t, ip in log.log if t >= t_click]
+        assert not [ip for t, ip in log.log if t >= stops[0]], "echo sent after stop()"
     assert sheet._state == "stopped" and sheet._run_btn.text() == "Check again"
     assert "Stopped" in sheet._cards[CC.HOP_GATEWAY].status.text()
     sheet.done(0)
@@ -567,23 +600,95 @@ def _drain_deletes():
 
 def test_app_quit_with_the_sheet_open_stops_and_waits_the_worker(q_app, monkeypatch):
     """Tray Exit while the modal sheet runs: exec() returns without done(). aboutToQuit must stop and
-    wait the worker - a QThread destroyed while running aborts the whole process."""
+    wait the worker - a QThread destroyed while running aborts the whole process - and no echo may
+    leave once the stop is requested.
+
+    Measured from the stop request, not from the aboutToQuit emit: on a loaded CI runner the GUI
+    thread can be held off the GIL for 0.1-0.25 s between the two (the details thread's gc.collect),
+    and the worker's first echoes - legitimately sent before any stop - then landed "after quit"
+    (the rc.2 flake, runs 39864614225 / 39887458798). The echoes are in flight before the quit here,
+    so the wait bound below covers exactly one slow echo."""
     from PyQt6.QtWidgets import QApplication
     from netspeedtray.views.monitor.connection_check import ConnectionCheckSheet
     log = _PingLog(delay=0.3)                       # a slow echo, like a dead link's 1 s timeouts
     monkeypatch.setattr(LP, "icmp_ping_ms", log)
+    stops = _stamp_stops(monkeypatch)
     sheet = ConnectionCheckSheet({"latency_public_enabled": True, "latency_public_host": ANCHOR},
                                  I18nStrings("en_US"), gateway_ip=GW)
     w = sheet._worker
-    time.sleep(0.1)
+    assert _wait_for_hops(log, {GW, ANCHOR}), "both hops' first echo must be in flight"
     assert w.isRunning()
     t_quit = time.monotonic()
     QApplication.instance().aboutToQuit.emit()
     assert not w.isRunning(), "aboutToQuit must stop and wait the check"
     assert time.monotonic() - t_quit < 0.3 + 0.3
+    assert stops, "aboutToQuit must stop the worker"
     with log.lock:
-        assert not [ip for t, ip in log.log if t >= t_quit]
+        assert not [ip for t, ip in log.log if t >= stops[0]], "echo sent after stop()"
+        assert sorted(ip for _, ip in log.log) == sorted([GW, ANCHOR])   # only the in-flight pair
     _drain_deletes()
+
+
+def test_echoes_sent_before_a_delayed_quit_stop_are_not_after_stop(q_app, monkeypatch):
+    """The CI flake, made deterministic: the quit handler's stop() is held off until the worker has
+    sent its first echo on both hops (as when the GUI thread waits for the GIL). Those echoes are after
+    the aboutToQuit emit but BEFORE the stop request - not a leak - and nothing may follow the stop."""
+    from PyQt6.QtWidgets import QApplication
+    from netspeedtray.views.monitor.connection_check import ConnectionCheckSheet
+    log = _PingLog(delay=0.3)
+    monkeypatch.setattr(LP, "icmp_ping_ms", log)
+    gate = threading.Event()
+    real_resolve = LP._resolve_ipv4
+
+    def held_resolve(host):
+        gate.wait(5)                                # the worker is starved until quit has begun
+        return real_resolve(host)
+    monkeypatch.setattr(LP, "_resolve_ipv4", held_resolve)
+
+    def stalled_quit_handler(_w):
+        if not gate.is_set():
+            gate.set()
+            assert _wait_for_hops(log, {GW, ANCHOR})
+    stops = _stamp_stops(monkeypatch, before=stalled_quit_handler)
+    sheet = ConnectionCheckSheet({"latency_public_enabled": True, "latency_public_host": ANCHOR},
+                                 I18nStrings("en_US"), gateway_ip=GW)
+    w = sheet._worker
+    time.sleep(0.05)
+    assert w.isRunning() and not log.ips()
+    t_quit = time.monotonic()
+    QApplication.instance().aboutToQuit.emit()
+    assert not w.isRunning()
+    with log.lock:
+        assert sorted(ip for t, ip in log.log if t >= t_quit) == sorted([GW, ANCHOR])
+        assert not [ip for t, ip in log.log if t >= stops[0]], "echo sent after stop()"
+    _drain_deletes()
+
+
+@pytest.mark.parametrize("anchor", [None, ANCHOR])
+def test_stop_while_a_hop_waits_to_send_its_first_echo_sends_nothing(q_app, monkeypatch, anchor):
+    """The critical point: a burst that has passed its entry check and is held (here: in the DNS
+    resolve, which can take seconds on a broken resolver) when stop() arrives must re-check the stop
+    flag right before the first send - no echo at all, to the router or the public host."""
+    log = _PingLog()
+    monkeypatch.setattr(LP, "icmp_ping_ms", log)
+    entered, release = threading.Event(), threading.Event()
+    real_resolve = LP._resolve_ipv4
+    held = []
+
+    def held_resolve(host):
+        held.append(host)
+        if len(held) == (2 if anchor else 1):
+            entered.set()
+        release.wait(5)
+        return real_resolve(host)
+    monkeypatch.setattr(LP, "_resolve_ipv4", held_resolve)
+    w = CC.ConnectionCheck(GW, anchor, count=5, spacing_ms=10, timeout_ms=1000, lookup_gateway=False)
+    w.start()
+    assert entered.wait(5), "every hop must reach its resolve"
+    w.stop()
+    release.set()
+    assert w.wait(3000)
+    assert not log.ips(), f"echo sent after stop(): {log.ips()}"
 
 
 def test_a_running_worker_outlives_its_dropped_sheet(q_app, monkeypatch):
@@ -635,3 +740,262 @@ def test_closed_sheets_and_finished_workers_are_released(q_app, fast_pings):
     sheet.done(0)
     _drain_deletes()
     assert sip.isdeleted(sheet), "a closed sheet must be deleted (WA_DeleteOnClose)"
+
+
+# --- #214: network details on the sheet --------------------------------------------------------------
+
+class _Nic:
+    def __init__(self, desc, ips, gws, dns):
+        self.Description, self.IPAddress, self.DefaultIPGateway, self.DNSServerSearchOrder = desc, ips, gws, dns
+
+
+def _fake_wmi(monkeypatch, nics):
+    import sys
+    import types
+    mod = types.ModuleType("wmi")
+
+    class _W:
+        def Win32_NetworkAdapterConfiguration(self, IPEnabled=True):
+            return list(nics)
+    mod.WMI = _W
+    monkeypatch.setitem(sys.modules, "wmi", mod)
+
+
+def test_network_details_reads_the_adapter_with_the_default_gateway(monkeypatch):
+    monkeypatch.undo()   # the real network_details, against a fake WMI
+    _fake_wmi(monkeypatch, [
+        _Nic("Hyper-V Virtual Ethernet Adapter", ("172.20.0.1",), None, None),     # no gateway
+        _Nic("Intel(R) Wi-Fi 6 AX201", ("192.168.1.23", "fe80::1c2:3%12", "2001:db8::23"),
+             ("fe80::1", "192.168.1.1"), ("192.168.1.1", "2001:db8::53")),
+    ])
+    d = LP.network_details()
+    assert d == LP.NetworkDetails(adapter="Intel(R) Wi-Fi 6 AX201", ipv4=("192.168.1.23",),
+                                  ipv6=("2001:db8::23",), gateway="192.168.1.1",
+                                  dns=("192.168.1.1", "2001:db8::53"))
+
+
+def test_network_details_none_without_a_gateway_or_wmi(monkeypatch):
+    monkeypatch.undo()
+    _fake_wmi(monkeypatch, [_Nic("Loopback", ("127.0.0.1",), None, None)])
+    assert LP.network_details() is None
+    import sys
+    monkeypatch.setitem(sys.modules, "wmi", None)       # import fails
+    assert LP.network_details() is None
+
+
+_DETAILS = LP.NetworkDetails(adapter="Intel(R) Wi-Fi 6 AX201", ipv4=("192.168.1.23",),
+                             ipv6=("2001:db8::23",), gateway=GW, dns=("192.168.1.1", "9.9.9.9"))
+
+
+def test_sheet_shows_the_network_details_and_copies_all_but_ipv6(q_app, fast_pings, monkeypatch):
+    monkeypatch.setattr(LP, "network_details", lambda: _DETAILS)
+    sheet = _run_sheet(q_app, {}, gateway=GW)
+    card = sheet._details_card
+    assert card.isVisibleTo(sheet)
+    assert card.values["adapter"].text() == "Intel(R) Wi-Fi 6 AX201"
+    assert card.values["ipv6"].text() == "2001:db8::23"
+    assert card.values["dns"].text() == "192.168.1.1, 9.9.9.9"
+    text = sheet.copy_text()
+    assert "Adapter: Intel(R) Wi-Fi 6 AX201" in text and "IPv4 address: 192.168.1.23" in text
+    assert "DNS servers: 192.168.1.1, 9.9.9.9" in text
+    assert "2001:db8::23" not in text          # a global IPv6 address identifies the household
+
+
+def test_a_public_ipv4_is_shown_but_never_copied(q_app, fast_pings, monkeypatch):
+    """Review L1: a PC straight on a modem (no NAT) holds a public IPv4 - as identifying as IPv6."""
+    monkeypatch.setattr(LP, "network_details", lambda: LP.NetworkDetails(
+        adapter="Realtek PCIe GbE", ipv4=("93.184.215.14", "10.0.0.5"), gateway=GW, dns=("9.9.9.9",)))
+    sheet = _run_sheet(q_app, {}, gateway=GW)
+    assert sheet._details_card.values["ipv4"].text() == "93.184.215.14, 10.0.0.5"
+    text = sheet.copy_text()
+    assert "93.184.215.14" not in text and "IPv4 address: 10.0.0.5" in text and "9.9.9.9" in text
+
+
+def test_the_details_gateway_is_pinged_when_the_probe_has_none(q_app, fast_pings, monkeypatch):
+    monkeypatch.setattr(LP, "network_details", lambda: _DETAILS)
+    monkeypatch.setattr(LP, "default_gateway_ip", lambda: "10.9.9.9")   # one query, not two
+    sheet = _run_sheet(q_app, {}, gateway=None)
+    assert sheet._resolved_gw == GW
+    assert set(fast_pings.ips()) == {GW}
+
+
+def test_a_hung_wmi_never_holds_a_check_with_a_known_router(q_app, fast_pings, monkeypatch):
+    """Review M2: the details read must not run before the pings. With the router known the bursts
+    start at once, and a WMI call that never returns is abandoned after CHECK_DETAILS_TIMEOUT_S - the
+    worker thread still ends (no live QThread for the quit wait to time out on)."""
+    release = threading.Event()
+    monkeypatch.setattr(LAT, "CHECK_DETAILS_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(LP, "network_details", lambda: release.wait(30) and None)
+    t0 = time.monotonic()
+    try:
+        w = CC.ConnectionCheck(GW, None, count=3, spacing_ms=0, timeout_ms=100)
+        got = []
+        w.check_finished.connect(lambda st: got.append(st))
+        w.start()
+        assert w.wait(5000), "the worker waited on the hung WMI call"
+        assert time.monotonic() - t0 < 3.0
+        assert set(fast_pings.ips()) == {GW}
+        # The pings started before the details wait, not after it.
+        assert fast_pings.log[0][0] - t0 < 0.25
+    finally:
+        release.set()
+
+
+def test_a_hung_wmi_with_no_router_known_ends_as_no_router(q_app, fast_pings, monkeypatch):
+    release = threading.Event()
+    monkeypatch.setattr(LAT, "CHECK_DETAILS_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(LP, "network_details", lambda: release.wait(30) and None)
+    calls = []
+    monkeypatch.setattr(LP, "default_gateway_ip", lambda: calls.append(1) or GW)
+    try:
+        w = CC.ConnectionCheck(None, None, count=3, spacing_ms=0, timeout_ms=100)
+        resolved = []
+        w.gateway_resolved.connect(lambda ip: resolved.append(ip))
+        w.start()
+        assert w.wait(5000)
+        q_app.processEvents()
+        assert resolved == [None] and not fast_pings.ips()
+        assert calls == [], "no second WMI query behind a failed one"
+    finally:
+        release.set()
+
+
+def test_no_details_hides_the_card(q_app, fast_pings):
+    sheet = _run_sheet(q_app, {}, gateway=GW)
+    assert not sheet._details_card.isVisibleTo(sheet)
+    assert "Adapter" not in sheet.copy_text()
+
+
+# --- the details thread releases WMI without a full GC (PR #442 flake finding) -----------------------
+
+def _cyclic_wmi(monkeypatch, nics, fail=False):
+    """A fake wmi module with the real one's reference cycle: the namespace caches each class it hands
+    out (``_classes_map``) and every class points back at its namespace. Returns a list that receives
+    a weakref to each namespace made."""
+    import sys
+    import types
+    import weakref
+    mod = types.ModuleType("wmi")
+    made = []
+
+    class _Class:
+        def __init__(self, ns):
+            self._namespace = ns
+
+        def __call__(self, IPEnabled=True):
+            if fail:
+                raise RuntimeError("WMI query failed")
+            return list(nics)
+
+    class _Namespace:
+        def __init__(self):
+            self._classes_map = {}
+            made.append(weakref.ref(self))
+
+        def __getattr__(self, name):
+            if name.startswith("_"):
+                raise AttributeError(name)
+            if name not in self._classes_map:
+                self._classes_map[name] = _Class(self)
+            return self._classes_map[name]
+    mod.WMI = _Namespace
+    monkeypatch.setitem(sys.modules, "wmi", mod)
+    return made
+
+
+_GW_NIC = [_Nic("Intel(R) Wi-Fi 6 AX201", ("192.168.1.23",), ("192.168.1.1",), ("192.168.1.1",))]
+
+
+@pytest.mark.parametrize("query", ["network_details", "default_gateway_ip"])
+@pytest.mark.parametrize("fail", [False, True], ids=["ok", "query_raises"])
+def test_a_wmi_query_is_released_by_refcount_alone(monkeypatch, query, fail):
+    """The WMI namespace (and the COM proxies it holds) must be freed the moment the query returns,
+    with the cyclic GC switched off - so the details thread can CoUninitialize with no gc.collect()."""
+    import gc
+    monkeypatch.undo()
+    made = _cyclic_wmi(monkeypatch, _GW_NIC, fail=fail)
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        result = getattr(LP, query)()
+        assert len(made) == 1
+        assert made[0]() is None, "the WMI connection outlived the query (left for the cyclic GC)"
+    finally:
+        if was_enabled:
+            gc.enable()
+    if fail:
+        assert result is None
+    else:
+        assert result == ("192.168.1.1" if query == "default_gateway_ip" else LP.NetworkDetails(
+            adapter="Intel(R) Wi-Fi 6 AX201", ipv4=("192.168.1.23",), gateway="192.168.1.1",
+            dns=("192.168.1.1",)))
+
+
+def test_the_details_thread_never_runs_a_full_gc(monkeypatch):
+    """A whole-heap gc.collect() on every check held the GIL 0.1-0.25 s on a loaded machine: a visible
+    GUI hitch, and it starved the check's own worker in CI."""
+    import gc
+    calls = []
+    real_collect = gc.collect
+
+    def spy(*args, **kwargs):
+        if threading.current_thread().name == "ConnectionCheckDetails":
+            calls.append((args, kwargs))
+        return real_collect(*args, **kwargs)
+    monkeypatch.setattr(gc, "collect", spy)
+    monkeypatch.setattr(LP, "network_details", lambda: _DETAILS)
+    w = CC.ConnectionCheck(GW, None)
+    pending = w._start_details()
+    assert pending is not None
+    t, box, done = pending
+    assert done.wait(5)
+    t.join(5)
+    assert box["details"] == _DETAILS
+    assert calls == [], f"the details thread ran gc.collect{calls}"
+
+
+def test_wmi_class_cache_attribute_exists_in_the_pinned_wmi():
+    """_wmi_connection() breaks the cycle by clearing a PRIVATE attribute of the real wmi module. A
+    wmi bump that renames it must fail here, not silently hand the proxies back to the cyclic GC."""
+    import inspect
+    import re
+    import wmi   # the real, pinned module (requirements.txt)
+    attr = LP.WMI_CLASS_CACHE_ATTR
+    ns = wmi._wmi_namespace(object(), False)    # find_classes=False: no COM call
+    assert isinstance(vars(ns).get(attr), dict), (
+        f"wmi {getattr(wmi, '__version__', '?')}: _wmi_namespace has no {attr} dict")
+    # ...and it is the cache that closes the cycle: each class stored there gets the namespace.
+    src = inspect.getsource(wmi._wmi_namespace._cached_classes)
+    assert re.search(rf"self\.{attr}\[class_name\]\s*=\s*_wmi_class\(self,", src), src
+
+
+def test_a_missing_class_cache_is_logged_once_at_debug(monkeypatch, caplog):
+    import logging
+    monkeypatch.undo()
+    _fake_wmi(monkeypatch, _GW_NIC)            # a namespace with no class cache at all
+    monkeypatch.setattr(LP, "_wmi_cache_missing_logged", False)
+    with caplog.at_level(logging.DEBUG, logger="NetSpeedTray.LatencyProbe"):
+        assert LP.default_gateway_ip() == "192.168.1.1"
+        assert LP.network_details() is not None
+    hits = [r for r in caplog.records if LP.WMI_CLASS_CACHE_ATTR in r.getMessage()]
+    assert len(hits) == 1 and hits[0].levelno == logging.DEBUG
+
+
+def test_preload_wmi_imports_on_the_calling_thread(monkeypatch):
+    import sys
+    monkeypatch.undo()
+    ms = LP.preload_wmi()
+    assert ms is not None and ms >= 0 and "wmi" in sys.modules
+    monkeypatch.setitem(sys.modules, "wmi", None)       # unavailable: no raise
+    assert LP.preload_wmi() is None
+
+
+def test_the_app_preloads_wmi_on_the_gui_thread_before_the_widget():
+    """The exit-time 'Win32 exception occurred releasing IUnknown': wmi's import-time COM object
+    belongs to whichever thread imports wmi first, so the GUI thread must, before any worker starts."""
+    from pathlib import Path
+    import netspeedtray
+    src = (Path(netspeedtray.__file__).resolve().parents[1] / "monitor.py").read_text(encoding="utf-8")
+    main = src[src.index("def main()"):]
+    assert "preload_wmi()" in main
+    assert main.index("preload_wmi()") < main.index("NetworkSpeedWidget(")

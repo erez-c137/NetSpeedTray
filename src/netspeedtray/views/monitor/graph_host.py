@@ -181,6 +181,7 @@ class GraphHost(QObject):
         self._current_request_id = 0
         self._last_processed_id = -1
         self._totals_reconstructed: Dict[int, bool] = {}   # sequence_id -> D5 flag (worker provenance)
+        self._graph_coverage: Dict[int, Dict[str, Any]] = {}   # sequence_id -> resolution + measured spans
         self.interface_filter = None          # None / "all" -> every interface
         self._show_loading_status = bool(config.get("show_loading", False))
         self._current_stat = "network"        # set per active tab via attach_to()
@@ -228,6 +229,7 @@ class GraphHost(QObject):
         self.worker = GraphDataWorker(self._main_widget.widget_state)
         self.worker.moveToThread(self._thread)
         self.worker.totals_provenance.connect(self._on_totals_provenance)
+        self.worker.graph_coverage.connect(self._on_graph_coverage)
         self.worker.data_ready.connect(self._on_data_ready)
         # A bound method, never a lambda capturing self: PyQt keeps a lambda slot alive with the
         # worker, and through it this host + its coordinator - one leaked pair per Monitor open (M7).
@@ -419,6 +421,23 @@ class GraphHost(QObject):
                 # The first stored record, so an empty range can say why it is empty (renderer).
                 "earliest": self._earliest_record()}
 
+    def _net_styles(self, sequence_id: Optional[int] = None) -> Dict[str, Any]:
+        """The network graph's styles: what ``_hw_styles`` carries (the renderer reads "earliest" from
+        it for the empty state) plus the user's speed unit (S2: the y axes follow unit_type like the
+        widget does) and the worker's coverage for reply ``sequence_id`` (S3: the stored resolution,
+        which names the statistic; S4: the measured spans, which tell idle from unmeasured time).
+        No coverage (the in-memory Session) leaves both None: the renderer then claims nothing."""
+        styles = self._hw_styles()
+        styles.update({
+            "unit_type": self.config.get("unit_type", "bits_decimal"),
+            "force_mega": self.config.get("speed_display_mode") == "always_mbps",
+            "resolution": None,
+            "measured": None,
+        })
+        if sequence_id is not None:
+            styles.update(self._graph_coverage.pop(int(sequence_id), None) or {})
+        return styles
+
     def _earliest_record(self):
         """The first stored record (cached). Re-read only while there is none yet - a fresh install's
         first rows arrive while the Monitor is open - so this is one UI-thread read in steady state."""
@@ -479,9 +498,11 @@ class GraphHost(QObject):
                 return
             if self._current_stat not in dict_stats and isinstance(data, dict):
                 return
+            styles = (self._net_styles(sequence_id) if self._current_stat == "network"
+                      else self._hw_styles())
             self.renderer.render(data, start, end, period_key,
                                  boot_time=self._cached_boot_time, stat_type=self._current_stat,
-                                 hw_styles=self._hw_styles())
+                                 hw_styles=styles)
             # Surface the worker's period totals to the Network header. For ranged periods these are
             # machine-wide (interface filter None sums every NIC); for SESSION they reflect the active
             # interface mode (auto/selected/...), mirroring the standalone graph's session aggregation.
@@ -491,6 +512,16 @@ class GraphHost(QObject):
                                                period_key, recon)
         except Exception as e:
             self.logger.error("GraphHost render error: %s", e, exc_info=True)
+
+    def _on_graph_coverage(self, sequence_id: int, coverage) -> None:
+        """Keep the worker's coverage for reply ``sequence_id`` until its data_ready arrives (emitted
+        first, from the same thread - delivered in order)."""
+        store = self._graph_coverage
+        if isinstance(coverage, dict):
+            store[int(sequence_id)] = {"resolution": coverage.get("resolution"),
+                                       "measured": coverage.get("measured")}
+        for old in [k for k in store if k < sequence_id - 16]:   # replies that were dropped
+            store.pop(old, None)
 
     def _on_totals_provenance(self, sequence_id: int, reconstructed: bool) -> None:
         """Remember whether the totals of reply ``sequence_id`` are partly estimated (D5) until its
@@ -530,6 +561,7 @@ class GraphHost(QObject):
             if self.worker is not None:
                 for sig, slot in ((self.worker.data_ready, self._on_data_ready),
                                   (self.worker.totals_provenance, self._on_totals_provenance),
+                                  (self.worker.graph_coverage, self._on_graph_coverage),
                                   (self.worker.error, self._on_worker_error),
                                   (self.request_data_processing, self.worker.process_data)):
                     try:

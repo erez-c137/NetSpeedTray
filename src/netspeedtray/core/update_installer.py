@@ -20,7 +20,16 @@ release's published checksums.txt (fetched over HTTPS) - i.e. the download is ex
 fetching that ZIP yourself from the release page. On a match it's extracted and staged: in the app's
 own update folder (update_applier.staging_root()) when the hands-off swap will apply it, else in the
 user's Downloads for them to copy over their folder. Settings live in %APPDATA%, so a folder replace
-never touches them. (Installer-grade signing of the portable bundle is a tracked hardening follow-up.)
+never touches them.
+
+Since 2.2.0 (U8) the extracted NetSpeedTray.exe must ALSO pass the installer's gate - WinVerifyTrust plus
+the SignPath publisher pin - before anything is staged. This is DEFENSE IN DEPTH against a swapped or
+unsigned exe, NOT proof against a swapped release: the signature covers the bootloader exe only. The
+`_internal/` payload (the upstream DLLs/.pyd, unsigned or signed by their own vendors, and
+base_library.zip, whose stdlib .pyc load at startup) is vouched for by checksums.txt alone, so someone
+able to replace both the ZIP and checksums.txt on the release could still alter a .pyd and keep the
+signed exe. Full coverage needs a signed manifest of every file (rc2 U8 follow-up). Either gate failing
+refuses the update and leaves the current version in place.
 """
 from __future__ import annotations
 
@@ -377,10 +386,13 @@ class _DownloadWorker(QObject):
     as trustworthy as fetching that ZIP yourself from the release page (#195). On a match the archive is
     extracted and the app folder is staged (moved) to its final Downloads location *here*, off the UI
     thread, and ``staged`` carries that final path; the caller only reveals it and shows instructions.
+    Before staging, the extracted EXE must pass ``verify_file`` too (U8); if it does not, ``untrusted``
+    fires instead and nothing is staged.
     """
     progress = pyqtSignal(int)
     verified = pyqtSignal(str, bool, str)  # installer path, trusted, reason
     staged = pyqtSignal(str)               # portable: final staged folder in Downloads
+    untrusted = pyqtSignal(str)            # portable: the extracted EXE failed the signature gate
     failed = pyqtSignal(str)
 
     def __init__(self, url: str, dest: str, *, portable: bool = False,
@@ -439,7 +451,20 @@ class _DownloadWorker(QObject):
             raise RuntimeError("checksum mismatch - the download may be corrupt or tampered")
         logger.info("Portable update checksum verified for %s", self._expected_name)
         _safe_extract(self._dest, self._extract_dir or "")
-        app_folder = os.path.dirname(_locate_portable_exe(self._extract_dir or ""))
+        new_exe = _locate_portable_exe(self._extract_dir or "")
+        # U8: the same Authenticode + SignPath-pin gate the installer passes, on the EXE that would
+        # run next (the hands-off swap launches it). Defense in depth against a swapped or unsigned
+        # exe only - `_internal/` is still covered by the checksum alone (module docstring). It is
+        # still in this run's private temp dir
+        # (mkdtemp, see SecureUpdater.start), checked right before the move. Fail closed: nothing is
+        # staged and the running version is untouched.
+        result = verify_file(new_exe)
+        if not result.trusted:
+            logger.warning("Portable update EXE failed the signature check: %s", result.reason)
+            self.untrusted.emit(result.reason)
+            return
+        logger.info("Portable update EXE signature verified (%s).", result.subject_cn)
+        app_folder = os.path.dirname(new_exe)
         hands_off = self._hands_off_possible(app_folder)
         target = self._staging_target if hands_off else self._ready_target
         if hands_off:
@@ -573,6 +598,7 @@ class SecureUpdater(QObject):
         self._worker.progress.connect(self._on_progress)
         self._worker.verified.connect(self._on_verified)
         self._worker.staged.connect(self._on_staged)
+        self._worker.untrusted.connect(self._on_untrusted)
         self._worker.failed.connect(self._on_failed)
         self._thread.start()
         self._progress.show()
@@ -607,7 +633,7 @@ class SecureUpdater(QObject):
         if not trusted:
             logger.warning("Downloaded update failed verification: %s", reason)
             self._cleanup_file()
-            self._fallback(f"signature check failed: {reason}")
+            self._fallback(f"signature check failed: {reason}", message=self._signature_message())
             return
         try:
             hwnd = 0
@@ -755,6 +781,23 @@ class SecureUpdater(QObject):
         self.launching.emit()
         return True
 
+    def _on_untrusted(self, reason: str) -> None:
+        """Portable update: the checksum matched but the extracted EXE is not signed by the pinned
+        publisher (U8). Nothing was staged; drop the download, keep this version, and say why."""
+        self._teardown_thread()
+        self._close_progress()
+        self._cleanup_file()
+        if self._user_cancelled:
+            self._finish()
+            return
+        self._fallback(f"signature check failed: {reason}", message=self._signature_message())
+
+    def _signature_message(self) -> str:
+        return getattr(self.i18n, "UPDATE_SIGNATURE_FAILED_MESSAGE",
+                       "The downloaded update could not be verified as signed by NetSpeedTray's "
+                       "publisher, so it was not installed. You are still on your current version. "
+                       "Opening the download page instead.")
+
     def _on_failed(self, reason: str) -> None:
         self._teardown_thread()
         self._close_progress()
@@ -803,13 +846,15 @@ class SecureUpdater(QObject):
         self._active = False
         self.deleteLater()
 
-    def _fallback(self, reason: str) -> None:
-        """Open the release page in the browser and tell the user why (non-fatal)."""
+    def _fallback(self, reason: str, message: Optional[str] = None) -> None:
+        """Open the release page in the browser and tell the user why (non-fatal). ``message``
+        replaces the generic text when there is a specific reason the user should hear."""
         logger.info("Falling back to the browser for update: %s", reason)
         self._close_progress()
         try:
-            msg = getattr(self.i18n, "UPDATE_FALLBACK_MESSAGE",
-                          "Couldn't complete the in-app update. Opening the download page instead.")
+            msg = message or getattr(
+                self.i18n, "UPDATE_FALLBACK_MESSAGE",
+                "Couldn't complete the in-app update. Opening the download page instead.")
             _info_box(self._parent, getattr(self.i18n, "UPDATE_AVAILABLE_TITLE", "Update"), msg)
         except Exception:
             pass

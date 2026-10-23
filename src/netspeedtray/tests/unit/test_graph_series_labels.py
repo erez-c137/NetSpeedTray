@@ -1,6 +1,6 @@
 """
 Every line the Monitor graph draws for a measured series carries a legend label, and every helper
-line (the dashed zero bridge across a gap) does not. The hover tooltip keys on exactly that:
+line does not (the dashed zero bridge across a gap was one, until rc.2 removed it). The hover keys on that:
 `GraphHoverTooltip._rows_at` reads `line.get_label()` and skips matplotlib's auto `_childN`. Until
 2.1.5 only the combined-hardware path passed `label=`, so the hover was dead on the Network tab and
 on the other two Hardware layouts - silently, because the tooltip simply never appeared.
@@ -71,9 +71,10 @@ def test_network_lines_are_labelled_download_and_upload(renderer):
     assert _measured(renderer.ax_upload) == [renderer.i18n.UPLOAD_LABEL]
 
 
-def test_gap_segments_are_labelled_and_the_bridge_is_not(renderer):
-    """Two chunks five minutes apart. Each measured segment carries the label; the dashed zero
-    bridge the renderer draws across the gap does not, so the hover can never report it."""
+def test_gap_segments_are_labelled_and_nothing_bridges_them(renderer):
+    """Two chunks five minutes apart. Each measured segment carries the label. The dashed zero bridge
+    the renderer used to draw across the gap is gone (rc.2 S4: unmeasured time is a gap, not a zero
+    - test_monitor_graph_truthfulness), so there is no helper line at all."""
     dts = _stamps(20) + _stamps(20, start=T0 + timedelta(minutes=5))
     renderer._plot_high_res(dts, np.full(40, 1.0), np.full(40, 10.0))
     lines = renderer.ax_download.get_lines()
@@ -81,8 +82,7 @@ def test_gap_segments_are_labelled_and_the_bridge_is_not(renderer):
     helpers = [line for line in lines if str(line.get_label()).startswith("_")]
     assert len(measured) >= 2
     assert {str(line.get_label()) for line in measured} == {renderer.i18n.DOWNLOAD_LABEL}
-    assert helpers, "the gap bridge should be drawn, unlabelled"
-    assert all(line.get_linestyle() == "--" for line in helpers)
+    assert helpers == []
 
 
 # ----------------------------------------------------------------------------- hardware

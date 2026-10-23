@@ -58,9 +58,23 @@ def test_preferred_with_taskbar_docks_normally(mock_qapp, mock_select, mock_all)
 def test_preferred_taskbarless_returns_that_screen(mock_qapp, mock_select, mock_all):
     scr = _screen("EDGE", QRect(1920, 0, 800, 600))
     mock_qapp.screens.return_value = [scr]
-    mock_all.return_value = []
+    mock_all.return_value = [MagicMock(hwnd=0x10)]   # the primary's taskbar, elsewhere
     mock_select.return_value = None          # no taskbar on EDGE -> float on it
     assert tu.get_free_float_screen("EDGE") is scr
+
+
+@pytest.mark.parametrize("found", [[], [tu.TaskbarInfo.create_primary_fallback_taskbar_info]])
+@patch.object(tu, "QApplication")
+def test_no_taskbar_anywhere_is_explorer_restarting_not_a_taskbarless_display(mock_qapp, found):
+    """#440 review M2: with NO taskbar at all (Explorer restarting; get_all_taskbar_info gives only
+    the hwnd-0 fallback) every connected preferred screen - even the primary - looked taskbar-less,
+    so the widget floated off the bar for the restart and W5's hold never applied."""
+    scr = _screen("\\\\.\\DISPLAY1", QRect(0, 0, 1920, 1080))
+    mock_qapp.screens.return_value = [scr]
+    taskbars = [f() for f in found]
+    assert all(tb.hwnd == 0 for tb in taskbars)
+    with patch.object(tu, "get_all_taskbar_info", return_value=taskbars):
+        assert tu.get_free_float_screen("\\\\.\\DISPLAY1") is None
 
 
 # --- is_floating() / refresh_float_state() -------------------------------------------

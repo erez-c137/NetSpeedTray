@@ -1,7 +1,7 @@
 """
 Constants specific to the network speed history graph window.
 """
-from typing import Final, Tuple
+from typing import Dict, Final, Tuple
 from netspeedtray.constants.app import app
 from netspeedtray.constants.color import color
 
@@ -50,6 +50,35 @@ class GraphConstants:
     VALUE_AXIS_CLIP_MARKER_SIZE: Final[float] = 22.0   # scatter area, points^2
     VALUE_AXIS_CLIP_PEAK_FONTSIZE: Final[float] = 8.0
     VALUE_AXIS_CLIP_PEAK_ALPHA: Final[float] = 0.75
+
+    # --- Speed axis unit (rc.2 S2) ---
+    # The network axes are plotted in Mbps internally (sticky limits, the 0.1 floor and the clip all
+    # work in Mbps); the TICKS and the axis label follow the user's unit_type with one unit for the
+    # whole axis, chosen from its top like the widget picks a unit from a value. Never the base unit
+    # (bps / B/s): the 0.1 Mbps floor is already 100 Kbps. tier: 1 kilo, 2 mega, 3 giga.
+    VALUE_AXIS_MIN_UNIT_TIER: Final[int] = 1
+    VALUE_AXIS_LOCATOR_BINS: Final[int] = 5
+    VALUE_AXIS_LOCATOR_STEPS: Final[Tuple[float, ...]] = (1, 2, 2.5, 5, 10)
+
+    # --- What the network line is, per stored resolution (rc.2 S3) ---
+    # Past 6 h the graph reads the roll-up tiers, and each point is the PEAK of its bucket, while the
+    # header shows the window's volume. A caption names the statistic so the two do not read as a
+    # contradiction. Raw resolution (<= 6 h, and the live Session) is the measured per-second rate:
+    # no caption. Keys are i18n string names.
+    NET_GRAPH_STAT_CAPTION_KEYS: Final[Dict[str, str]] = {
+        "minute": "GRAPH_CAPTION_PEAK_PER_MINUTE",
+        "hour": "GRAPH_CAPTION_PEAK_PER_HOUR",
+        "day": "GRAPH_CAPTION_PEAK_PER_DAY",
+    }
+    NET_GRAPH_CAPTION_FONTSIZE: Final[float] = 8.0
+    NET_GRAPH_CAPTION_ALPHA: Final[float] = 0.75
+
+    # --- Unmeasured time (rc.2 S4) ---
+    # Seconds one plotted point stands for at each resolution the history reader bins to. The renderer
+    # fills MEASURED silence (the app ran, nothing was stored: v8 writes no all-zero rows) with zeros
+    # one bin away from the neighbouring points, and breaks the line across UNMEASURED time (app off,
+    # PC asleep, before the first recorded session) instead of drawing it as zero.
+    RESOLUTION_BIN_SECONDS: Final[Dict[str, int]] = {"raw": 1, "minute": 60, "hour": 3600, "day": 86400}
 
     # --- Time (x) axis ticks (views/graph/time_axis.py) ---
     # The tick count follows the axis width: one label per this many points, clamped to [MIN, MAX].

@@ -75,6 +75,56 @@ ALSO
 
 ---
 
+## [2.2.0-rc.2] - October 23, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+A small follow-up to rc.1: the docked widget recovers almost instantly on Windows 10 when you
+maximize and restore windows, and the Turkish strings are corrected.
+
+> **Upgrading:** from rc.1 or any 2.2 beta, just install over it - the running app closes itself and
+> comes back. Nothing changes in your settings or history.
+
+### Fixed
+
+- **Windows 10: the widget no longer blinks out when you maximize and restore windows.** Each
+  maximize and restore puts the taskbar over the widget, and rc.1 counted every recovery toward its
+  "fighting the shell" backoff, so quick toggling left it hidden for 0.6 to 2.8 s. It now comes back
+  in a few milliseconds (6 ms median in a Windows 10 test). Windows 11 doesn't bury the widget on
+  maximize/restore, so nothing changes there - except that the widget is back about 0.1 s sooner
+  after Task View or Win+Tab. Windows 10 support is best-effort. ([#424], [#426], thanks
+  [@pasharm] for the diagnosis and the measurements)
+
+  *Under the hood: a burial counts toward the backoff only when it lands within 250 ms of our own
+  re-seat, which is what a real Z-order fight looks like; anything later is a fresh burial,
+  re-seated at once and free. More than 12 free re-seats in 15 s counts as a fight too, so an
+  unknown periodic re-burier still decays to the 1-60 s backoff. The Z-order recheck coalescer
+  went from 100 ms to 16 ms (one frame), because a maximize fires a burst of desktop
+  `EVENT_OBJECT_REORDER`s and the burial lands 10-20 ms in. When `SetWindowPos` is refused (error
+  5), the re-seat retries after the first window above the taskbar in the taskbar's own Z-band, and
+  logs that window's class and band once per episode.*
+
+### Localization
+
+- Turkish typos and wording fixed, with Windows' own term for network adapters. ([#423], thanks
+  [@lezgintekay])
+
+### Developer notes
+
+- Release notes now live in `.github/release-notes/vX.Y.Z.md`; CI publishes them exactly as before.
+  Proven with a throwaway tag that was cancelled before signing. ([#422])
+- 5,084 tests.
+
+[#422]: https://github.com/erez-c137/NetSpeedTray/pull/422
+[#423]: https://github.com/erez-c137/NetSpeedTray/pull/423
+[#424]: https://github.com/erez-c137/NetSpeedTray/pull/424
+[#426]: https://github.com/erez-c137/NetSpeedTray/pull/426
+[@pasharm]: https://github.com/pasharm
+[@lezgintekay]: https://github.com/lezgintekay
+
+---
+
 ## [2.2.0-rc.1] - October 22, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app

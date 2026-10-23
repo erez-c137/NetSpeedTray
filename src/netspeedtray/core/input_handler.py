@@ -115,6 +115,13 @@ class InputHandler(QObject):
                 self.widget._dragging = False
                 self._save_dragged_position()
                 self.logger.debug("Drag ended. Position saved: %s", self.widget.pos())
+                # #24: a drop onto the taskbar's app buttons is the user's choice - no yield for it.
+                note_drop = getattr(self.position_manager, "note_user_drop", None)
+                if callable(note_drop):
+                    try:
+                        note_drop()
+                    except Exception as e:
+                        self.logger.debug("drop note failed: %s", e)
             elif self._swallow_release:
                 self._swallow_release = False      # the tail of a double-click
             elif self._drag_start_pos is not None:

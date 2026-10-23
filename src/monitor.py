@@ -500,6 +500,14 @@ def main() -> int:
             app.setLayoutDirection(
                 Qt.LayoutDirection.RightToLeft if i18n_strings.is_rtl else Qt.LayoutDirection.LeftToRight)
 
+            # 4c. Import wmi HERE, on the GUI thread, before the widget starts any worker: the module
+            # owns a COM object from its import on, and a worker that imported it first would leave
+            # it to be released after that worker's CoUninitialize (an exit-time pywin32 error line).
+            from netspeedtray.core.latency_probe import preload_wmi
+            wmi_ms = preload_wmi()
+            if wmi_ms is not None:
+                logger.debug("wmi preloaded on the GUI thread in %.1f ms.", wmi_ms)
+
             # 5. Create and configure the main widget.
             taskbar_height = get_taskbar_height()
             widget = NetworkSpeedWidget(
@@ -556,7 +564,14 @@ def main() -> int:
             return app.exec()
 
     except AlreadyRunningError:
-        # A second instance - exit silently with a clean code, no dialog (logged in the checker above).
+        # A second instance: no dialog, exit 0 - but first ask the running widget to show itself
+        # (#234): a hidden or off-screen widget used to be recoverable only through Task Manager.
+        # A pre-2.2 instance (legacy mutex) does not listen; the post is then simply ignored.
+        try:
+            from netspeedtray.core.shutdown_channel import request_activate
+            request_activate()
+        except Exception as e:
+            logger.debug("Could not signal the running instance: %s", e)
         return 0
     except Exception as e:
         # This is a global catch-all for any critical error during startup.

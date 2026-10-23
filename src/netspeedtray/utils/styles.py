@@ -220,15 +220,6 @@ def read_system_uses_light_theme() -> Optional[int]:
         return None
 
 
-def shell_theme_text_color() -> Optional[str]:
-    """The automatic widget text colour for the current Windows mode (black on a light taskbar,
-    the default white on a dark one), or None when the theme can't be read."""
-    light = read_system_uses_light_theme()
-    if light is None:
-        return None
-    return color_constants.BLACK if light == 1 else color_constants.WHITE
-
-
 def get_accent_color() -> QColor:
     """Retrieve the user's Windows accent color as a QColor."""
     try:
@@ -414,37 +405,6 @@ def dialog_style() -> str:
         /* Scrollbars are intentionally NOT styled here - Settings inherits the native Windows
            scrollbar, identical to the Monitor window (which never styled it). One native scrollbar
            everywhere; a custom QSS bar read as "not native / too thick". */
-    """
-
-
-def collapsible_section_style() -> str:
-    """Style for CollapsibleSection header widget."""
-    dark_mode_active = is_dark_mode()
-    text_color = style_constants.DARK_MODE_TEXT_COLOR if dark_mode_active else style_constants.LIGHT_MODE_TEXT_COLOR
-    hover_bg = "rgba(255, 255, 255, 0.05)" if dark_mode_active else "rgba(0, 0, 0, 0.03)"
-
-    return f"""
-        QWidget#collapsibleHeader {{
-            background-color: transparent;
-            border: none;
-            padding: 4px 0px;
-        }}
-        QWidget#collapsibleHeader:hover {{
-            background-color: {hover_bg};
-            border-radius: 6px;
-        }}
-        QWidget#collapsibleHeader QLabel {{
-            color: {text_color};
-            font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
-            background-color: transparent;
-        }}
-        QWidget#collapsibleHeader QLabel#sectionTitle {{
-            font-size: 14px;
-            font-weight: 600;
-        }}
-        QWidget#collapsibleHeader QLabel#sectionChevron {{
-            font-size: 12px;
-        }}
     """
 
 

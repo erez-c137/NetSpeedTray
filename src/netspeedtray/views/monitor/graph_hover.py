@@ -31,6 +31,17 @@ _MAX_SNAP_FRAC = 0.04
 _PIXEL_SLACK = 1.5      # the cursor's pixel column plus half a pixel each side - what the eye reads
 
 
+def measured_xy(line) -> Tuple[np.ndarray, np.ndarray]:
+    """(x in date numbers, y in the axis unit) of the samples ``line`` was drawn from - the renderer's
+    `GraphRenderer.MEASURED_ATTR` - else the plotted data (``orig=False``: axis units)."""
+    from netspeedtray.views.graph.renderer import GraphRenderer
+    cached = getattr(line, GraphRenderer.MEASURED_ATTR, None)
+    if cached is not None:
+        return cached
+    return (np.asarray(line.get_xdata(orig=False), dtype=float),
+            np.asarray(line.get_ydata(orig=False), dtype=float))
+
+
 class GraphHoverTooltip(QObject):
     """Follows the cursor over the graph and shows the value(s) at the nearest sample."""
 
@@ -112,11 +123,14 @@ class GraphHoverTooltip(QObject):
         the peak, so the peak is the honest readout. Where nothing falls inside the column (sparse
         data) the nearest sample within the snap distance is used, as before.
 
-        Lines without a legend label (matplotlib's `_childN`) are helpers - crosshairs and the
-        renderer's dashed zero bridges across gaps - and are skipped, so the hover never reports a
-        synthesized zero as a measurement. The renderer draws one series as several segments when
-        the data has gaps; those share a label and collapse to ONE row. X is read in axis units
-        (`orig=False`), which is what `event.xdata` is in - the original data are datetimes.
+        Values are MEASURED samples (rc.2 S1): the renderer attaches the samples each line was drawn
+        from (`measured_xy`), because the plotted array is a spline (3 interpolated points per pair
+        at Week / short sessions) or a smoothed series - mostly values nobody measured. A line without
+        them (a foreign artist) falls back to its plotted data.
+
+        Lines without a legend label (matplotlib's `_childN`) are helpers and are skipped. The
+        renderer draws one series as several segments when the data has gaps; those share a label
+        and collapse to ONE row. X is in axis units (date numbers), which is what `event.xdata` is.
         """
         xmin, xmax = ax.get_xlim()
         span = (xmax - xmin) or 1.0
@@ -128,8 +142,7 @@ class GraphHoverTooltip(QObject):
             lbl = line.get_label()
             if not lbl or str(lbl).startswith("_"):
                 continue
-            xd = np.asarray(line.get_xdata(orig=False), dtype=float)
-            yd = np.asarray(line.get_ydata(orig=False), dtype=float)
+            xd, yd = measured_xy(line)
             if xd.size == 0 or yd.size != xd.size:
                 continue
             dist = np.abs(xd - x)

@@ -414,8 +414,9 @@ def test_get_speed_history_minute_resolution_never_returns_null_timestamp(manage
     now = datetime.now()
     start = now - timedelta(hours=6)
 
-    # No inserted data on purpose: query should return either empty+padding data,
-    # but it must never raise from datetime.fromtimestamp(None).
+    # No inserted data on purpose: the query must never raise from datetime.fromtimestamp(None).
+    # Since rc.2 (S4) an empty window is empty - no synthetic zero baseline (the graph then shows its
+    # empty-state note instead of a flat zero line nobody measured).
     results = state.get_speed_history(
         start_time=start,
         end_time=now,
@@ -423,7 +424,7 @@ def test_get_speed_history_minute_resolution_never_returns_null_timestamp(manage
         resolution="minute"
     )
 
-    assert results, "Expected padded timeline points for empty minute-resolution history."
+    assert results == []
     assert all(isinstance(ts, datetime) for ts, _, _ in results)
 
 

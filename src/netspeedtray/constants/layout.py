@@ -35,10 +35,6 @@ class LayoutConstants:
     INTERFACE_SCROLL_MAX_ITEMS: Final[int] = 7
     INTERFACE_SCROLL_MIN_HEIGHT: Final[int] = 80
     
-    # --- Collapsible Section ---
-    COLLAPSIBLE_HEADER_HEIGHT: Final[int] = 36
-    COLLAPSIBLE_SECTION_SPACING: Final[int] = 8
-
     # --- Monitor Window ---
     # One fixed-height command band sits at the very top of every Monitor tab (directly under the
     # pivot strip). Identical height + top origin on all tabs is what stops the timeline/NIC controls
@@ -49,6 +45,11 @@ class LayoutConstants:
     # It wraps to at most MAX_LINES inside the fixed band; anything longer ends in "…" (tooltip: all).
     MONITOR_HISTORY_NOTE_MIN_WIDTH: Final[int] = 160
     MONITOR_HISTORY_NOTE_MAX_WIDTH: Final[int] = 340
+    # Near the Monitor's 660 px minimum the note gives way instead of the controls: it narrows down to
+    # this floor (two clamped lines still read as a phrase), and below it hides - its text moves to the
+    # totals' tooltips. Holding 160 px there squeezed the timeline and Live pill to "Mu…" / "tempo r"
+    # in every locale (rc.2 S7).
+    MONITOR_HISTORY_NOTE_COMPACT_MIN_WIDTH: Final[int] = 96
     MONITOR_HISTORY_NOTE_MAX_LINES: Final[int] = 2
     MONITOR_BODY_MARGIN: Final[int] = 16
     # Gap between the right-cluster command-band controls (NIC / timeline / Live). Shared by every tab
@@ -74,6 +75,16 @@ class LayoutConstants:
     # Minimum gap (logical px) kept between the widget's tray-side edge and the tray boundary /
     # the "^" show-hidden-icons chevron, so the widget never abuts it and steals its clicks (#161 pt1).
     TRAY_EDGE_MIN_GAP_PX: Final[int] = 8
+    # Classic (Win10) taskbar toolbars (#324, find_toolbar_bands_rect): a ReBar band counts as "after
+    # the task list" when it starts no more than this many physical px before the task band's end
+    # (adjacent bands share the edge; slack for a gripper), and at most this many ReBar children are
+    # looked at (a real taskbar has a handful).
+    TOOLBAR_BAND_ADJACENCY_TOLERANCE_PX: Final[int] = 2
+    TOOLBAR_BAND_SCAN_LIMIT: Final[int] = 32
+    # One Win11 taskbar button slot along a horizontal bar, logical px (44 physical px at 96 DPI,
+    # scaled with the DPI; owner's probe 2026-10-22). Only an ESTIMATE for the #24 yield's "is the app
+    # group near the widget" poll gating - the collision itself always uses UIA's real rects.
+    APP_BUTTON_SLOT_PX: Final[int] = 44
 
     def __init__(self) -> None:
         self.validate()

@@ -6,11 +6,15 @@ data retention, hardware-history recording, "Delete all history", the app-wide r
 flag (also read by the Monitor window's hold-still logic), the opt-in local metrics endpoint
 (Integrations, 2.2 scope B), and reset affordances.
 """
+import logging
+import os
+from datetime import date
+from pathlib import Path
 from typing import Dict, Any, Callable, Optional
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QObject, QStandardPaths, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton, QGraphicsOpacityEffect, QSpinBox, QLineEdit,
-                             QApplication)
+                             QApplication, QFileDialog, QHBoxLayout, QMessageBox, QProgressBar)
 
 from netspeedtray import constants
 from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox, ReflowRow
@@ -19,19 +23,38 @@ from netspeedtray.utils import helpers
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 
+class _BackupSignals(QObject):
+    """Carries the backup thread's progress and result to the GUI thread (queued: emitted elsewhere)."""
+    progress = pyqtSignal(str)                 # history_backup.STEP_*
+    finished = pyqtSignal(object, str)         # (BackupResult or None, BackupError code)
+
+
 class AdvancedPage(QWidget):
     """Retention + reduce-motion + reset (C6)."""
 
     def __init__(self, i18n, on_change: Callable[[], None],
                  reset_page_callback: Optional[Callable[[], None]] = None,
                  reset_all_callback: Optional[Callable[[], None]] = None,
-                 delete_history_callback: Optional[Callable[[], None]] = None):
+                 delete_history_callback: Optional[Callable[[], None]] = None,
+                 history_path_callback: Optional[Callable[[], Optional[Path]]] = None,
+                 notify_callback: Optional[Callable[[str, str, Optional[str]], None]] = None):
+        """``history_path_callback``: the live history file (``WidgetState.history_db_path``), or None
+        when there is none - read by "Back up history" (#334), which never writes to it.
+        ``notify_callback(title, body, path_or_None)``: reports a backup that finishes while Settings is
+        closed, without taking focus (the widget's notice flyout; ``path`` adds "Open folder")."""
         super().__init__()
         self.i18n = i18n
         self.on_change = on_change
         self._reset_page_cb = reset_page_callback
         self._reset_all_cb = reset_all_callback
         self._delete_history_cb = delete_history_callback
+        self._history_path_cb = history_path_callback
+        self._notify_cb = notify_callback
+        self._backup_thread = None      # the running backup's threading.Thread
+        self._backup_signals = _BackupSignals(self)
+        self._backup_signals.progress.connect(self._on_backup_progress)
+        self._backup_signals.finished.connect(self._on_backup_finished)
+        self.logger = logging.getLogger("NetSpeedTray.AdvancedPage")
         self._days_map = constants.data.retention.DAYS_MAP  # {0:1, ..., 6:365}
         self._setup_ui()
 
@@ -68,6 +91,27 @@ class AdvancedPage(QWidget):
         layout.addWidget(SettingCard(self.i18n.DELETE_HISTORY_LABEL,
                                      description=self.i18n.DELETE_HISTORY_SUB,
                                      control=self.delete_history_btn))
+
+        # #334: a consistent copy of the history file to a file the user picks (moving to a new PC).
+        # Also an action: read-only on the live file, on a worker thread, progress in the card.
+        self.backup_history_btn = QPushButton(self.i18n.BACKUP_HISTORY_BUTTON)
+        self.backup_history_btn.setStyleSheet(style_utils.button_style())
+        self.backup_history_btn.clicked.connect(self._on_backup_clicked)
+        self.backup_history_btn.setEnabled(self._history_path_cb is not None)
+        self._backup_busy = QProgressBar()
+        self._backup_busy.setRange(0, 0)                 # indeterminate: VACUUM INTO reports no fraction
+        self._backup_busy.setTextVisible(False)
+        self._backup_busy.setFixedSize(96, 4)
+        self._backup_busy.setVisible(False)
+        backup_ctl = QWidget()
+        row = QHBoxLayout(backup_ctl)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        row.addWidget(self._backup_busy)
+        row.addWidget(self.backup_history_btn)
+        self._backup_card = SettingCard(self.i18n.BACKUP_HISTORY_LABEL,
+                                        description=self.i18n.BACKUP_HISTORY_SUB, control=backup_ctl)
+        layout.addWidget(self._backup_card)
 
         # --- Behavior ---
         layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
@@ -149,6 +193,116 @@ class AdvancedPage(QWidget):
         self._copied_timer.timeout.connect(
             lambda: self.metrics_copy_btn.setText(self.i18n.METRICS_COPY_BUTTON))
         self._refresh_metrics_rows()
+
+    # --- Back up history (#334) -------------------------------------------------------------------
+
+    # BackupError.code -> the sentence shown under "Could not back up history:" (the raw detail is
+    # logged, never shown: it holds full paths and English WinError text).
+    _BACKUP_REASON_KEYS = {
+        "refused": "BACKUP_HISTORY_ERR_REFUSED",
+        "no_file": "BACKUP_HISTORY_NO_FILE",
+        "read": "BACKUP_HISTORY_ERR_READ",
+        "verify": "BACKUP_HISTORY_ERR_VERIFY",
+        "io": "BACKUP_HISTORY_ERR_IO",
+        "busy": "BACKUP_HISTORY_ERR_BUSY",
+    }
+
+    def backup_running(self) -> bool:
+        return self._backup_thread is not None and self._backup_thread.is_alive()
+
+    def _on_backup_clicked(self) -> None:
+        from netspeedtray.core.db import history_backup
+        if self.backup_running():
+            return
+        src = self._history_path_cb() if self._history_path_cb else None
+        if src is None or not Path(src).is_file():
+            self._report_backup(None, "no_file")
+            return
+        folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation) or ""
+        suggested = os.path.join(folder, history_backup.default_backup_name(date.today()))
+        dest, _sel = QFileDialog.getSaveFileName(
+            self, self.i18n.BACKUP_HISTORY_SAVE, suggested, f"{self.i18n.BACKUP_HISTORY_FILTER} (*.db)")
+        if not dest:
+            return
+        if not dest.lower().endswith(".db"):
+            dest += ".db"
+        self.start_backup(Path(src), Path(dest))
+
+    def start_backup(self, src: Path, dest: Path) -> None:
+        """Run ``history_backup.backup_history`` on a daemon thread the app's quit can cancel
+        (``history_backup.cancel_all`` from the widget's cleanup): it interrupts the copy, which then
+        deletes its unfinished file. The live file is only ever read."""
+        from netspeedtray.core.db import history_backup
+        sig = self._backup_signals
+        log = self.logger
+
+        def emit(signal, *args) -> None:
+            # Settings may be gone entirely by now (the page's signal object deleted): the backup still
+            # finishes and logs its result; there is just nothing left to report it in.
+            try:
+                signal.emit(*args)
+            except RuntimeError:
+                pass
+
+        def work() -> None:
+            try:
+                res = history_backup.backup_history(src, dest, progress=lambda s: emit(sig.progress, s))
+            except history_backup.BackupError as e:
+                emit(sig.finished, None, e.code)
+            except Exception as e:      # never let the thread die silently: the card would stay busy
+                log.error("History backup crashed: %s", e, exc_info=True)
+                emit(sig.finished, None, history_backup.ERR_IO)
+            else:
+                emit(sig.finished, res, "")
+
+        self.backup_history_btn.setEnabled(False)
+        self._backup_busy.setVisible(True)
+        self._backup_card.set_description(self.i18n.BACKUP_HISTORY_COPYING)
+        self._backup_thread = history_backup.run_in_thread(work)
+
+    def _on_backup_progress(self, step: str) -> None:
+        from netspeedtray.core.db import history_backup
+        self._backup_card.set_description(self.i18n.BACKUP_HISTORY_VERIFYING
+                                          if step == history_backup.STEP_VERIFY
+                                          else self.i18n.BACKUP_HISTORY_COPYING)
+
+    def _on_backup_finished(self, result, code: str) -> None:
+        self._backup_thread = None
+        self._backup_busy.setVisible(False)
+        self.backup_history_btn.setEnabled(True)
+        self._backup_card.set_description(self.i18n.BACKUP_HISTORY_SUB)
+        if result is None and code == "cancelled":
+            return                      # the app is quitting: nothing to tell
+        self._report_backup(str(result.path) if result is not None else None, code)
+
+    def _report_backup(self, path: Optional[str], code: str) -> None:
+        """Success (``path``) or failure (``code``). While Settings is on screen: a message box over it.
+        Settings closed (it is hidden, not destroyed): the widget's notice flyout instead - an
+        application-modal box with no visible parent would steal focus and block the Monitor."""
+        if path is not None:
+            title, body = self.i18n.BACKUP_HISTORY_LABEL, f"{self.i18n.BACKUP_HISTORY_DONE}\n{os.path.basename(path)}"
+        else:
+            reason = getattr(self.i18n, self._BACKUP_REASON_KEYS.get(code, "BACKUP_HISTORY_ERR_IO"))
+            title, body = self.i18n.BACKUP_HISTORY_LABEL, f"{self.i18n.BACKUP_HISTORY_FAILED}\n{reason}"
+        win = self.window()
+        if win is None or not win.isVisible() or win.isMinimized():
+            if self._notify_cb is not None:
+                try:
+                    self._notify_cb(title, body, path)
+                except Exception as e:
+                    self.logger.error("Could not show the backup result: %s", e, exc_info=True)
+            return
+        if path is None:
+            QMessageBox.warning(self, title, body)
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle(title)
+        box.setText(body)
+        open_btn = box.addButton(self.i18n.STATS_DETAIL_OPEN_FOLDER, QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            helpers.reveal_in_explorer(path)
 
     def metrics_url_text(self) -> str:
         m = constants.network.metrics

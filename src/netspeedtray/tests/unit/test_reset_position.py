@@ -68,6 +68,12 @@ def test_widget_reset_persists_every_cleared_key():
     ({"tray_offset_y": 709}, True),
     ({"tray_offset_x": 120}, True),
     ({"position_x": 10, "position_y": 20}, True),
+    # rc.2 W6: pre-1.3.0 configs carry that release's default tray_offset_x - not a move.
+    ({"tray_offset_x": 10, "tray_offset_y": DEFAULTS.DEFAULT_TRAY_OFFSET_Y}, False),
+    ({"tray_offset_x": 1}, False),
+    ({"tray_offset_x": 3}, False),
+    ({"tray_offset_x": 4}, True),
+    ({"tray_offset_x": 10, "tray_offset_y": 709}, True),
 ])
 def test_has_custom_position(config, moved):
     assert _reset_fake(config).has_custom_position() is moved
