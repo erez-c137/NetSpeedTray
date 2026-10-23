@@ -47,12 +47,49 @@ def _is_hex(value: Any) -> bool:
             and all(c in "0123456789abcdefABCDEF" for c in value[1:]))
 
 
+def _relative_luminance(rgb) -> float:
+    def lin(c: float) -> float:
+        c /= 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (lin(c) for c in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _rgb(hex_code: str):
+    return tuple(int(hex_code[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def backdrop_is_light(config: Dict[str, Any], shell_light: Optional[bool] = None) -> bool:
+    """Which half of the scheme the widget's text sits on: the widget's own background colour,
+    composited at its opacity over the taskbar (the mode's reference colour), as DWM shows it.
+
+    At 0 % opacity this is the taskbar's Windows mode exactly - every default config. A mostly opaque
+    background decides by itself: an opaque #EEEEEE background on a dark taskbar used to get the
+    dark-taskbar (white) text, invisible, and an opaque #202020 one on a light taskbar black text.
+    Light when black text out-contrasts white on that backdrop (luminance above
+    BACKDROP_LUMINANCE_SPLIT, the WCAG crossover)."""
+    if shell_light is None:
+        shell_light = shell_is_light()
+    c = constants.color
+    taskbar = c.TASKBAR_REFERENCE_LIGHT if shell_light else c.TASKBAR_REFERENCE_DARK
+    try:
+        alpha = max(0.0, min(1.0, float(config.get("background_opacity", 0) or 0) / 100.0))
+    except (TypeError, ValueError):
+        alpha = 0.0
+    bg = config.get("background_color")
+    if alpha <= 0.0 or not _is_hex(bg):
+        return bool(shell_light)
+    seen = tuple(a * alpha + t * (1.0 - alpha) for a, t in zip(_rgb(bg), _rgb(taskbar)))
+    return _relative_luminance(seen) > constants.renderer.BACKDROP_LUMINANCE_SPLIT
+
+
 def resolve(config: Dict[str, Any], light: Optional[bool] = None) -> Dict[str, str]:
-    """``{stem: hex}`` for every themed colour on the given taskbar (default: the current Windows mode).
-    A missing or invalid value falls back to that taskbar's default - never to the other theme's value,
-    and never to the inert pre-1.3 key of the same stem."""
+    """``{stem: hex}`` for every themed colour on the given backdrop (default: ``backdrop_is_light`` -
+    the current Windows mode, unless the widget's own background is opaque enough to decide). A missing
+    or invalid value falls back to that half's default - never to the other half's value, and never to
+    the inert pre-1.3 key of the same stem."""
     if light is None:
-        light = shell_is_light()
+        light = backdrop_is_light(config)
     defaults = constants.config.defaults.THEMED_COLOR_DEFAULTS
     out: Dict[str, str] = {}
     for stem, (dark_default, light_default) in defaults.items():

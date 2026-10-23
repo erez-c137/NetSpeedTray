@@ -32,6 +32,11 @@ class ColorConstants:
     UPLOAD_LINE_LIGHT: Final[str] = "#2F6FDB"    # 3.88-4.75:1 (#4287F5 is 2.85:1 on #E8E8E8)
     DOWNLOAD_LINE_LIGHT: Final[str] = "#1A7F4E"  # 4.09-5.01:1 (#42B883 is 2.04:1)
 
+    # The taskbar each Windows mode paints (Windows 11 solid taskbars), used to composite a partly
+    # transparent widget background over it when choosing the dark / light half (utils/color_scheme).
+    TASKBAR_REFERENCE_DARK: Final[str] = "#202020"
+    TASKBAR_REFERENCE_LIGHT: Final[str] = "#EEEEEE"
+
     # The Settings preview strip's taskbar-like backdrop, per taskbar theme (dialog.py).
     PREVIEW_STRIP_DARK: Final[str] = "#2B2B2B"
     PREVIEW_STRIP_LIGHT: Final[str] = "#E8E8E8"

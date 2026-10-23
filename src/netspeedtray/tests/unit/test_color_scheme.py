@@ -588,3 +588,48 @@ def test_detailed_fill_blend_follows_the_backdrop(q_app, bg, opacity, mode):
     r.draw_mini_graph(painter, 120, 40, r.config, _metrics().net_history)
     modes = [c.args[0] for c in painter.setCompositionMode.call_args_list]
     assert modes[0] == getattr(QP.CompositionMode, f"CompositionMode_{mode}")
+
+
+# --- an opaque widget background picks its own half (review round 2; pre-existing on main) ---------
+
+@pytest.mark.parametrize("bg,opacity,shell_light,light", [
+    ("#EEEEEE", 100, False, True),     # opaque light background on a dark taskbar -> dark text
+    ("#202020", 100, True, False),     # opaque dark background on a light taskbar -> light text
+    ("#EEEEEE", 0, False, False),      # 0 % opacity: the taskbar's mode, exactly as before
+    ("#000000", 0, True, True),
+    ("#EEEEEE", 30, False, False),     # mostly the dark taskbar showing through
+    ("#EEEEEE", 50, False, True),
+    ("#808080", 100, False, True),     # mid grey: black reads better (5.3 vs 3.9:1)
+    ("nonsense", 100, True, True),     # unusable colour: the taskbar's mode
+])
+def test_the_backdrop_decides_the_half(bg, opacity, shell_light, light):
+    cfg = dict(D.DEFAULT_CONFIG, background_color=bg, background_opacity=opacity)
+    assert color_scheme.backdrop_is_light(cfg, shell_light) is light
+
+
+def test_the_split_is_where_black_and_white_contrast_equally():
+    split = constants.renderer.BACKDROP_LUMINANCE_SPLIT
+    assert (1.05 / (split + 0.05)) == pytest.approx((split + 0.05) / 0.05, rel=1e-3)
+    # The boundary itself: a grey just above it is light, just below it dark (opaque, either taskbar).
+    for shell_light in (False, True):
+        assert color_scheme.backdrop_is_light(dict(background_color="#767676", background_opacity=100),
+                                              shell_light) is True     # luminance 0.181
+        assert color_scheme.backdrop_is_light(dict(background_color="#757575", background_opacity=100),
+                                              shell_light) is False    # luminance 0.178
+
+
+@pytest.mark.parametrize("bg,shell,text", [("#EEEEEE", "dark", "#000000"), ("#202020", "light", "#FFFFFF")])
+def test_text_on_an_opaque_background_reads(shell, bg, text, monkeypatch):
+    monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1 if shell == "light" else 0)
+    color_scheme.refresh_shell_theme()
+    rc = RenderConfig.from_dict(dict(D.DEFAULT_CONFIG, background_color=bg, background_opacity=100))
+    assert rc.default_color == text
+    assert _contrast(rc.default_color, bg) >= 4.5
+
+
+def test_a_transparent_background_still_follows_the_taskbar(monkeypatch):
+    for value, text in ((0, "#FFFFFF"), (1, "#000000")):
+        monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda v=value: v)
+        color_scheme.refresh_shell_theme()
+        assert RenderConfig.from_dict(dict(D.DEFAULT_CONFIG, background_color="#EEEEEE",
+                                           background_opacity=0)).default_color == text
