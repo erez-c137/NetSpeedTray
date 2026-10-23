@@ -361,7 +361,7 @@ def test_the_preview_strip_follows_the_windows_mode_not_the_app_mode(qtbot, monk
     color_scheme.refresh_shell_theme()
     dlg, _ = _make(qtbot)
     assert constants.color.PREVIEW_STRIP_LIGHT in dlg._preview_strip.styleSheet()
-    assert dlg.preview_widget._renderer.config.default_color == "#000000"
+    assert dlg.preview_widget._renderer.config.default_color == "#1B1B1B"
     monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 0)   # the flip
     color_scheme.refresh_shell_theme()
     dlg.on_taskbar_theme_changed()

@@ -1,54 +1,41 @@
 """
-Byte-identical render guard for the 2.2 rc.2 colour scheme (design-color-scheme.md section 8.5).
+Render guard for the widget's paint (design-color-scheme.md section 8.5; re-based for the legibility
+package "L", 2.2 rc.2).
 
 Renders the widget - horizontal 48 px, small taskbar 32 px, a 48 px side bar; graph off / Detailed /
 Trend / split; color coding off / on - on a dark and a light taskbar, for three configs: the factory
 defaults, an rc.1 "automatic" config and an rc.1 config with custom colours (the #332 case, plus custom
-High / Low / arrow colours). On the new code the rc.1 configs go through the real 1.2 -> 1.3 migration.
+High / Low / arrow colours). The rc.1 configs go through the real 1.2 -> 1.4 migration, so a change in
+what an upgraded user sees shows up here too.
 
-The SAME scenarios run on the code before the scheme (main @ 02a86ff0), which wrote the golden file
-``color_scheme_render_golden.json`` next to this module:
+History: for PR #441 the golden came from the tree BEFORE the colour scheme and proved the scheme
+painted byte-identically except where it meant to. The legibility package changes every frame on
+purpose (the erasing halo, the bands, the font, the normal blend, the graph's scale floor), so the
+golden ``color_scheme_render_golden.json`` was re-written from the L branch after its visual review
+(the 170-scenario contrast renders and their contact sheets): from here on it pins THAT paint, and any
+later change to it has to be deliberate (re-write it, and say why, in the PR).
 
-    python <this file> --src <old tree>/src --write <json> [--png-dir DIR]
+    python <this file> --write <json> [--png-dir DIR]
 
-For each scenario the golden holds two hashes of the painted RGBA bytes:
-- ``literal``: the old code as it was (on a light taskbar the old theme manager had set an automatic
-  text colour to black - that is reproduced).
-- ``expected``: the old code given the new LIGHT-taskbar defaults where the old value was the factory
-  one (High / Low / both arrows / the two graph colours; TUNED_LIGHT below). These are the only colours
-  the scheme changes on purpose; everything else must paint exactly as before.
+Each scenario holds the hash of its painted RGBA bytes; every scenario with a graph also holds the frame
+as a PNG, compared per pixel within TOLERANCE levels when the hash differs - the gradient fills and the
+halo's smooth-scaled stamps round differently on some raster paths (on GitHub's runner the old additive
+fills already did). Font rendering differs between machines, so the golden also carries a calibration
+hash; the test skips (it does not fail) when it differs.
 
-test_color_scheme_render_guard.py checks the new code against ``expected`` for every scenario, and that
-``literal == expected`` for every dark-taskbar scenario and every custom-colour one - so the dark
-widget and every user-chosen colour are literally unchanged. Font rendering differs between machines,
-so the golden also carries a calibration hash; the test skips (it does not fail) when it differs.
-
-Not a test module itself (no ``test_`` prefix): it must import on the old tree too.
+Not a test module itself (no ``test_`` prefix).
 """
 import argparse
 import hashlib
-import importlib.util
 import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from PyQt6.QtCore import QRect, Qt
-from PyQt6.QtGui import QColor, QFont, QImage, QPainter
+from PyQt6.QtGui import QColor, QImage, QPainter
 
-# The light-taskbar defaults the scheme introduces where the old (single) value was the factory one.
-# Hard-coded because the old tree has no such constants; the test asserts they match the new ones.
-TUNED_LIGHT = {
-    "high_speed_color": "#007A00",
-    "low_speed_color": "#A84600",
-    "arrow_up_color": "#007A00",
-    "arrow_down_color": "#000000",
-    "graph_upload_color": "#2F6FDB",
-    "graph_download_color": "#1A7F4E",
-}
-OLD_FACTORY = {"high_speed_color": "#00FF00", "low_speed_color": "#FFA500", "arrow_up_color": "#00FF00",
-               "arrow_down_color": "#FFFFFF", "graph_upload_color": "#4287F5",
-               "graph_download_color": "#42B883"}
+BASELINE = "legibility-L"
 
 LAYOUTS = ("bar48", "bar32", "side48")
 GRAPHS = {
@@ -64,9 +51,9 @@ RC1_CUSTOM = {"color_is_automatic": False, "default_color": "#151618", "high_spe
               "low_speed_color": "#33CCFF", "use_custom_arrow_colors": True,
               "arrow_up_color": "#FFAA00", "arrow_down_color": "#00AAFF"}
 
-
-def has_scheme() -> bool:
-    return importlib.util.find_spec("netspeedtray.utils.color_scheme") is not None
+# Per-channel tolerance (0-255) for the frames with a graph - far below any real change (a 0.25 px
+# thicker stroke or a different colour moves pixels by tens of levels).
+TOLERANCE = 4
 
 
 def scenario_names():
@@ -87,81 +74,57 @@ def _metrics():
 
 
 def _legacy_base():
-    """A 1.2-schema (rc.1) config with factory values."""
+    """A 1.2-schema (rc.1 / 2.1.7) file with factory values, as that build wrote it."""
     from netspeedtray import constants
     d = constants.config.defaults
     cfg = dict(d.DEFAULT_CONFIG)
-    if has_scheme():   # build the 1.2 shape from the 1.3 defaults: drop the pairs, add the old keys
-        for stem in d.THEMED_COLOR_STEMS:
-            cfg.pop(f"{stem}_dark", None)
-            cfg.pop(f"{stem}_light", None)
-        cfg.pop("medium_speed_threshold", None)
-        cfg.update({"default_color": "#FFFFFF", "color_is_automatic": True, "high_speed_color": "#00FF00",
-                    "low_speed_color": "#FFA500", "arrow_up_color": "#00FF00", "arrow_down_color": "#FFFFFF"})
+    for stem in d.THEMED_COLOR_STEMS:
+        cfg.pop(f"{stem}_dark", None)
+        cfg.pop(f"{stem}_light", None)
+    cfg.pop("medium_speed_threshold", None)
+    cfg.update({"default_color": "#FFFFFF", "color_is_automatic": True, "high_speed_color": "#00FF00",
+                "low_speed_color": "#FFA500", "arrow_up_color": "#00FF00", "arrow_down_color": "#FFFFFF",
+                "font_family": "Segoe UI", "arrow_font_family": "Segoe UI", "use_separate_arrow_font": True,
+                "arrow_font_size": 10, "arrow_font_weight": 600})
     cfg["config_version"] = "1.2"
     return cfg
 
 
-def build_config(kind: str, theme: str, overrides: dict, substitute: bool):
-    """(config dict for the renderer, stems substituted). On the old tree it is the config the old app
-    paints from on that taskbar; on the new tree, the factory 1.3 defaults or the migrated rc.1 file."""
+def build_config(kind: str, theme: str, overrides: dict):
+    """The config the renderer paints from: the factory defaults, or the migrated rc.1 file."""
     from netspeedtray import constants
     light = theme == "light"
-    if has_scheme():
-        if kind == "factory":
-            cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
-        else:
-            from netspeedtray.utils.config import ConfigManager
-            legacy = _legacy_base()
-            if kind == "rc1_custom":
-                legacy.update(RC1_CUSTOM)
-            elif light:
-                legacy["default_color"] = "#000000"   # what the old startup sync persisted on a light bar
-            if kind == "rc1_auto":
-                legacy["use_custom_arrow_colors"] = True
-            cm = ConfigManager(config_path=Path("unused-config.json"))
-            cfg = cm._validate_config(cm._migrate_config(legacy))
-        cfg.update(overrides)
-        return cfg, []
-    # --- the old tree ---
-    cfg = _legacy_base()
-    if kind == "rc1_custom":
-        cfg.update(RC1_CUSTOM)
-    if kind == "rc1_auto":
-        cfg["use_custom_arrow_colors"] = True
-    if light and cfg.get("color_is_automatic", True):
-        cfg["default_color"] = "#000000"   # the old theme manager's automatic text colour
+    if kind == "factory":
+        cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
+    else:
+        from netspeedtray.utils.config import ConfigManager
+        legacy = _legacy_base()
+        if kind == "rc1_custom":
+            legacy.update(RC1_CUSTOM)
+        elif light:
+            legacy["default_color"] = "#000000"   # what the old startup sync persisted on a light bar
+        if kind == "rc1_auto":
+            legacy["use_custom_arrow_colors"] = True
+        cm = ConfigManager(config_path=Path("unused-config.json"))
+        cfg = cm._validate_config(cm._migrate_config(legacy))
     cfg.update(overrides)
-    subst = []
-    if light and substitute:
-        for stem, tuned in TUNED_LIGHT.items():
-            if stem.startswith("graph_"):
-                subst.append(stem)   # applied to the constants in render()
-            elif str(cfg.get(stem, "")).upper() == OLD_FACTORY[stem]:
-                cfg[stem] = tuned
-                subst.append(stem)
-    return cfg, subst
+    return cfg
 
 
-def render_image(name: str, substitute: bool = True) -> QImage:
+def render_image(name: str) -> QImage:
     """The scenario's frame (RGBA8888, transparent background - what the widget's layered window holds)."""
-    from netspeedtray import constants
     from netspeedtray.constants.i18n import I18nStrings
+    from netspeedtray.utils import color_scheme
+    from netspeedtray.utils.taskbar_appearance import PLAIN
     from netspeedtray.utils.widget_paint import font_from_config, render_widget
     from netspeedtray.utils.widget_renderer import WidgetRenderer
     lay, graph, coding, kind, theme = name.split("/")
     overrides = dict(GRAPHS[graph], **CODING[coding], widget_display_mode="network_only",
                      background_opacity=0, high_speed_threshold=10.0, low_speed_threshold=1.0)
-    cfg, subst = build_config(kind, theme, overrides, substitute)
-    saved = {}
-    if has_scheme():
-        from netspeedtray.utils import color_scheme
-        saved["light"] = color_scheme._shell_light
-        color_scheme._shell_light = theme == "light"
-    elif "graph_upload_color" in subst:
-        saved["graph"] = (constants.graph.UPLOAD_LINE_COLOR, constants.graph.DOWNLOAD_LINE_COLOR)
-        constants.graph.UPLOAD_LINE_COLOR = TUNED_LIGHT["graph_upload_color"]
-        constants.graph.DOWNLOAD_LINE_COLOR = TUNED_LIGHT["graph_download_color"]
+    cfg = build_config(kind, theme, overrides)
+    saved = (color_scheme._shell_light, color_scheme._appearance)
+    color_scheme._shell_light = theme == "light"
+    color_scheme._appearance = PLAIN          # no High Contrast / accent bar, whatever this machine has
     try:
         if lay == "side48":
             from netspeedtray.tests.unit import test_side_taskbar_compact as side
@@ -179,10 +142,7 @@ def render_image(name: str, substitute: bool = True) -> QImage:
         finally:
             p.end()
     finally:
-        if "light" in saved:
-            color_scheme._shell_light = saved["light"]
-        if "graph" in saved:
-            constants.graph.UPLOAD_LINE_COLOR, constants.graph.DOWNLOAD_LINE_COLOR = saved["graph"]
+        color_scheme._shell_light, color_scheme._appearance = saved
     return img.convertToFormat(QImage.Format.Format_RGBA8888)
 
 
@@ -192,8 +152,8 @@ def _hash(img: QImage) -> str:
     return hashlib.sha256(f"{img.width()}x{img.height()}".encode() + bytes(ptr)).hexdigest()
 
 
-def render(name: str, substitute: bool = True, png_dir=None) -> str:
-    img = render_image(name, substitute)
+def render(name: str, png_dir=None) -> str:
+    img = render_image(name)
     if png_dir:
         out = Path(png_dir) / (name.replace("/", "__") + ".png")
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -201,16 +161,8 @@ def render(name: str, substitute: bool = True, png_dir=None) -> str:
     return _hash(img)
 
 
-# The Detailed graph's gradient fills are drawn with CompositionMode_Plus, and how a raster engine rounds
-# a premultiplied gradient through an additive blend differs between machines (on GitHub's runner
-# exactly these 18 light Detailed scenarios failed the hash, rc.2 review). Those scenarios therefore also
-# carry the expected frame as a PNG and are compared per pixel within PLUS_TOLERANCE levels - far below
-# any real change (a 0.25 px thicker stroke or a different colour moves pixels by tens of levels).
-PLUS_TOLERANCE = 4
-
-
-def uses_plus_blend(name: str) -> bool:
-    return name.split("/")[1] == "detailed"
+def uses_tolerance(name: str) -> bool:
+    return name.split("/")[1] != "graph_off"
 
 
 def png_b64(img: QImage) -> str:
@@ -239,41 +191,19 @@ def max_pixel_difference(img: QImage, expected_b64: str) -> int:
     return int(np.abs(arr(img) - arr(ref)).max())
 
 
-def plus_probe() -> str:
-    """The Detailed graph's raster path alone - vertical gradients through CompositionMode_Plus in the
-    four series colours - so a machine whose additive blending rounds differently is recognisable."""
-    from PyQt6.QtCore import QPointF
-    from PyQt6.QtGui import QBrush, QLinearGradient, QPolygonF
-    img = QImage(64, 32, QImage.Format.Format_ARGB32_Premultiplied)
-    img.fill(QColor(0, 0, 0, 0))
-    p = QPainter(img)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setOpacity(0.66)
-    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
-    p.setPen(Qt.PenStyle.NoPen)
-    for i, hex_code in enumerate(("#4287F5", "#42B883", "#2F6FDB", "#1A7F4E")):
-        grad = QLinearGradient(0, 0, 0, 32)
-        c = QColor(hex_code)
-        c.setAlpha(120)
-        grad.setColorAt(0.0, c)
-        c.setAlpha(0)
-        grad.setColorAt(1.0, c)
-        p.setBrush(QBrush(grad))
-        p.drawPolygon(QPolygonF([QPointF(i * 12, 32), QPointF(i * 12 + 6, 3.5 + i), QPointF(i * 12 + 30, 9.25),
-                                 QPointF(i * 12 + 30, 32)]))
-    p.end()
-    return _hash(img.convertToFormat(QImage.Format.Format_RGBA8888))
-
-
 def calibration() -> str:
-    """A plain text render that depends only on the platform's fonts - the guard's environment check."""
+    """A plain text render that depends only on the platform's fonts - the guard's environment check.
+    In the widget's default face (Segoe UI Variable Text, or its Segoe UI fallback) and in Segoe UI."""
+    from netspeedtray.utils.widget_renderer import make_widget_font
     img = QImage(200, 40, QImage.Format.Format_ARGB32)
     img.fill(QColor(0, 0, 0, 0))
     p = QPainter(img)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setFont(QFont("Segoe UI", 9))
     p.setPen(QColor("#FFFFFF"))
-    p.drawText(QRect(0, 0, 200, 40), Qt.AlignmentFlag.AlignCenter, "↑ 888.8 Mbps ↓ 12.4")
+    for i, font in enumerate((make_widget_font("Segoe UI Variable Text", 9, 400),
+                              make_widget_font("Segoe UI", 9, 400))):
+        p.setFont(font)
+        p.drawText(QRect(0, i * 20, 200, 20), Qt.AlignmentFlag.AlignCenter, "↑ 888.8 Mbps ↓ 12.4")
     p.end()
     img = img.convertToFormat(QImage.Format.Format_RGBA8888)
     ptr = img.constBits()
@@ -285,20 +215,16 @@ def main(argv=None) -> int:
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     ap = argparse.ArgumentParser()
-    ap.add_argument("--write", help="write the golden JSON here (run on the OLD tree)")
+    ap.add_argument("--write", help="write the golden JSON here")
     ap.add_argument("--png-dir")
-    ap.add_argument("--src", help="the tree's src directory to import netspeedtray from")
     args = ap.parse_args(argv)
-    if args.src:
-        sys.path.insert(0, str(Path(args.src).resolve()))
     from PyQt6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    out = {"calibration": calibration(), "plus_probe": plus_probe(), "has_scheme": has_scheme(),
-           "scenarios": {}}
+    out = {"calibration": calibration(), "baseline": BASELINE, "scenarios": {}}
     for name in scenario_names():
-        entry = {"expected": render(name, True, args.png_dir), "literal": render(name, False)}
-        if uses_plus_blend(name):
-            entry["expected_png"] = png_b64(render_image(name, True))
+        entry = {"expected": render(name, args.png_dir)}
+        if uses_tolerance(name):
+            entry["expected_png"] = png_b64(render_image(name))
         out["scenarios"][name] = entry
     if args.write:
         Path(args.write).write_text(json.dumps(out, indent=1, sort_keys=True), encoding="utf-8")

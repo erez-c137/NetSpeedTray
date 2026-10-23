@@ -22,7 +22,18 @@ class FontConstants:
         WEIGHT_LIGHT, WEIGHT_NORMAL, WEIGHT_DEMIBOLD, WEIGHT_BOLD
     ]
 
-    DEFAULT_FONT: Final[str] = 'Segoe UI'
+    # 7a (2.2 rc.2 "L"): the taskbar clock's face. "Segoe UI Variable Text" is the Text optical size of
+    # the variable font Windows 11 ships (Qt lists the family as "Segoe UI Variable", with an opsz axis);
+    # utils/widget_renderer.make_widget_font maps the name to that family + VARIABLE_OPSZ, and falls back
+    # to FALLBACK_FONT where the variable font is missing (Windows 10).
+    DEFAULT_FONT: Final[str] = 'Segoe UI Variable Text'
+    FALLBACK_FONT: Final[str] = 'Segoe UI'
+    LEGACY_DEFAULT_FONT: Final[str] = 'Segoe UI'     # the default up to config schema 1.3
+    VARIABLE_FAMILY: Final[str] = 'Segoe UI Variable'
+    # Named optical sizes of Segoe UI Variable -> its opsz axis value (Microsoft's named instances).
+    VARIABLE_OPSZ: Final[Dict[str, float]] = {
+        'Segoe UI Variable Small': 8.0, 'Segoe UI Variable Text': 10.5, 'Segoe UI Variable Display': 36.0,
+    }
     NOTE_FONT_SIZE: Final[int] = 8
 
     # This map points numeric font weights to their corresponding i18n translation keys.

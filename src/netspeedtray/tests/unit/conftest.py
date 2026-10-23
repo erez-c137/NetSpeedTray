@@ -129,3 +129,8 @@ def _pin_windows_theme(monkeypatch):
     light = os.environ.get("NST_TEST_WINDOWS_THEME", "dark").strip().lower() == "light"
     monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1 if light else 0)
     monkeypatch.setattr(color_scheme, "_shell_light", None)
+    # ...and no High Contrast / accent taskbar (legibility "L"): a dev PC with an accent bar must not
+    # change what the suite paints. Tests of those states patch read_taskbar_appearance themselves.
+    from netspeedtray.utils.taskbar_appearance import PLAIN
+    monkeypatch.setattr(color_scheme, "read_taskbar_appearance", lambda shell_light=False: PLAIN)
+    monkeypatch.setattr(color_scheme, "_appearance", None)

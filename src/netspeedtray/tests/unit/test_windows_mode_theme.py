@@ -165,7 +165,7 @@ def test_theme_manager_recolours_from_the_windows_mode(monkeypatch):
     assert widget.renderer.config.default_color == WHITE
     monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1)
     WidgetThemeManager(widget).on_theme_changed()
-    assert widget.renderer.config.default_color == BLACK
+    assert widget.renderer.config.default_color == constants.color.TEXT_LIGHT
     assert widget.config == constants.config.defaults.DEFAULT_CONFIG   # nothing written
     widget.update.assert_called_once()
 
