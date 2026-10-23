@@ -952,3 +952,50 @@ def test_the_details_thread_never_runs_a_full_gc(monkeypatch):
     t.join(5)
     assert box["details"] == _DETAILS
     assert calls == [], f"the details thread ran gc.collect{calls}"
+
+
+def test_wmi_class_cache_attribute_exists_in_the_pinned_wmi():
+    """_wmi_connection() breaks the cycle by clearing a PRIVATE attribute of the real wmi module. A
+    wmi bump that renames it must fail here, not silently hand the proxies back to the cyclic GC."""
+    import inspect
+    import re
+    import wmi   # the real, pinned module (requirements.txt)
+    attr = LP.WMI_CLASS_CACHE_ATTR
+    ns = wmi._wmi_namespace(object(), False)    # find_classes=False: no COM call
+    assert isinstance(vars(ns).get(attr), dict), (
+        f"wmi {getattr(wmi, '__version__', '?')}: _wmi_namespace has no {attr} dict")
+    # ...and it is the cache that closes the cycle: each class stored there gets the namespace.
+    src = inspect.getsource(wmi._wmi_namespace._cached_classes)
+    assert re.search(rf"self\.{attr}\[class_name\]\s*=\s*_wmi_class\(self,", src), src
+
+
+def test_a_missing_class_cache_is_logged_once_at_debug(monkeypatch, caplog):
+    import logging
+    monkeypatch.undo()
+    _fake_wmi(monkeypatch, _GW_NIC)            # a namespace with no class cache at all
+    monkeypatch.setattr(LP, "_wmi_cache_missing_logged", False)
+    with caplog.at_level(logging.DEBUG, logger="NetSpeedTray.LatencyProbe"):
+        assert LP.default_gateway_ip() == "192.168.1.1"
+        assert LP.network_details() is not None
+    hits = [r for r in caplog.records if LP.WMI_CLASS_CACHE_ATTR in r.getMessage()]
+    assert len(hits) == 1 and hits[0].levelno == logging.DEBUG
+
+
+def test_preload_wmi_imports_on_the_calling_thread(monkeypatch):
+    import sys
+    monkeypatch.undo()
+    ms = LP.preload_wmi()
+    assert ms is not None and ms >= 0 and "wmi" in sys.modules
+    monkeypatch.setitem(sys.modules, "wmi", None)       # unavailable: no raise
+    assert LP.preload_wmi() is None
+
+
+def test_the_app_preloads_wmi_on_the_gui_thread_before_the_widget():
+    """The exit-time 'Win32 exception occurred releasing IUnknown': wmi's import-time COM object
+    belongs to whichever thread imports wmi first, so the GUI thread must, before any worker starts."""
+    from pathlib import Path
+    import netspeedtray
+    src = (Path(netspeedtray.__file__).resolve().parents[1] / "monitor.py").read_text(encoding="utf-8")
+    main = src[src.index("def main()"):]
+    assert "preload_wmi()" in main
+    assert main.index("preload_wmi()") < main.index("NetworkSpeedWidget(")

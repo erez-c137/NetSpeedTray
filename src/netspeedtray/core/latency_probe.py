@@ -33,6 +33,7 @@ import logging
 import socket
 import statistics
 import struct
+import sys
 import threading
 import time
 from collections import deque
@@ -318,6 +319,29 @@ def icmp_burst(host: str, count: int = constants.network.latency.BURST_SIZE,
     return BurstResult(tuple(rtts), count)
 
 
+# The wmi module's (1.5.1, pinned) per-namespace class cache - the attribute _wmi_connection() clears.
+# Private: test_wmi_class_cache_attribute_exists_in_the_pinned_wmi fails CI if a bump renames it.
+WMI_CLASS_CACHE_ATTR = "_classes_map"
+_wmi_cache_missing_logged = False
+
+
+def preload_wmi() -> Optional[float]:
+    """Import the wmi module on the CALLING thread (the GUI thread, at startup); the import time in
+    ms, or None when wmi is unavailable. ``import wmi`` itself makes a COM object
+    (``wmi.obj = GetObject("winmgmts:")``) that lives as long as the module. Whichever thread imports
+    wmi first owns it, and when that is a worker that later calls CoUninitialize (the stats thread,
+    the probe, a Check connection's details thread), the object is released at interpreter exit after
+    its apartment is gone and pywin32 prints "Win32 exception occurred releasing IUnknown". The GUI
+    thread's apartment lasts the whole run. Measured ~11-15 ms once, after the app's own imports."""
+    t0 = time.perf_counter()
+    try:
+        import wmi  # noqa: F401  (already a dependency)
+    except Exception:
+        logger.debug("wmi not preloaded on the GUI thread.", exc_info=True)
+        return None
+    return (time.perf_counter() - t0) * 1000.0
+
+
 @contextlib.contextmanager
 def _wmi_connection() -> Iterator[Any]:
     """A ``wmi.WMI()`` connection whose COM proxies are all released by plain reference counting, on
@@ -334,11 +358,17 @@ def _wmi_connection() -> Iterator[Any]:
     try:
         yield conn
     finally:
+        global _wmi_cache_missing_logged
         try:
             # vars(): the namespace's __getattr__ forwards unknown names to COM.
-            classes = vars(conn).get("_classes_map")
+            classes = vars(conn).get(WMI_CLASS_CACHE_ATTR)
             if isinstance(classes, dict):
                 classes.clear()
+            elif not _wmi_cache_missing_logged:
+                _wmi_cache_missing_logged = True
+                logger.debug("wmi namespace has no %s dict (wmi %s): WMI proxies are left for the "
+                             "cyclic GC.", WMI_CLASS_CACHE_ATTR, getattr(sys.modules.get("wmi"),
+                                                                       "__version__", "?"))
         except Exception:
             pass
 
