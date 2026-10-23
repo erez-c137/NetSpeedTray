@@ -19,7 +19,8 @@ from PyQt6.QtWidgets import QApplication
 from netspeedtray import constants
 from netspeedtray.core import app_overlap_yield as aoy
 from netspeedtray.core.app_overlap_yield import (
-    BUSY, AppOverlapYield, OverlapContext, YieldHysteresis, group_reaches_widget, group_span,
+    BUSY, NO_TASKBAR, AppOverlapYield, OverlapContext, YieldHysteresis, group_reaches_widget, group_span,
+    predict_group,
 )
 from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.utils import taskbar_utils, uia_widgets
@@ -123,24 +124,39 @@ def layout():
 class Rig:
     """An AppOverlapYield on a fake bottom bar; the clock and the widget's x are the test's."""
 
-    def __init__(self, layout, widget_x, *, dpi=1.0, width=WIDGET_W):
+    def __init__(self, layout, widget_x, *, dpi=1.0, width=WIDGET_W, centered=None, drop_key=None,
+                 saved_drop=None, enabled=True):
         self.layout = layout
         self.widget_x = widget_x
         self.width = width
         self.dpi = dpi
         self.busy = False
         self.eligible = True
+        self.no_taskbar = False
+        self.hwnd = HWND
+        self.centered = centered
+        self.drop_key = drop_key
+        self.saved_drop = saved_drop
+        self.persisted = []
         self.now = 1000.0
         self.changes = 0
         self.firsts = 0
-        self.y = AppOverlapYield(self._ctx, self._changed, self._first, clock=lambda: self.now)
+        self.y = AppOverlapYield(self._ctx, self._changed, self._first, clock=lambda: self.now,
+                                 on_persist_drop=self._persist, enabled=enabled)
 
     def _ctx(self):
         if not self.eligible:
-            return None
+            return "the setting is off"
+        if self.no_taskbar:
+            return NO_TASKBAR
         if self.busy:
             return BUSY
-        return OverlapContext(hwnd=HWND, dpi=self.dpi, widget=(self.widget_x, self.widget_x + self.width))
+        return OverlapContext(hwnd=self.hwnd, dpi=self.dpi, widget=(self.widget_x, self.widget_x + self.width),
+                              centered=self.centered, drop_key=self.drop_key, saved_drop=self.saved_drop)
+
+    def _persist(self, value):
+        self.persisted.append(value)
+        self.saved_drop = value
 
     def _changed(self):
         self.changes += 1
@@ -507,16 +523,17 @@ def _pm(edge=BOTTOM, tasklist=None, config=None, x=1380):
 def test_position_manager_context_only_for_native_horizontal_bars(q_app):
     pm, tb, widget = _pm()
     pm._app_overlap_info = tb
-    ctx = pm._app_overlap_context()
-    assert ctx == OverlapContext(hwnd=HWND, dpi=1.0, widget=(1380.0, 1380.0 + WIDGET_W))
+    with patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=1):
+        ctx = pm._app_overlap_context()
+    assert ctx == OverlapContext(hwnd=HWND, dpi=1.0, widget=(1380.0, 1380.0 + WIDGET_W), centered=True)
     tb.get_edge_position.return_value = RIGHT
-    assert pm._app_overlap_context() is None                       # side bars: #406's watcher
+    assert isinstance(pm._app_overlap_context(), str)              # side bars: #406's watcher
     tb.get_edge_position.return_value = BOTTOM
     tb.tasklist_rect = (0, Y0, 1200, Y1)
-    assert pm._app_overlap_context() is None                       # ExplorerPatcher / Win10
+    assert isinstance(pm._app_overlap_context(), str)              # ExplorerPatcher / Win10
     tb.tasklist_rect = None
     pm._state.config["free_move"] = True
-    assert pm._app_overlap_context() is None
+    assert isinstance(pm._app_overlap_context(), str)
     pm._state.config["free_move"] = False
     widget._dragging = True
     assert pm._app_overlap_context() == BUSY
@@ -614,13 +631,15 @@ def test_not_yielded_is_todays_behaviour(refresh):
 
 def test_first_yield_notice_is_the_non_activating_flyout_once_ever(q_app):
     from netspeedtray.views.widget import main as main_mod
-    stub = types.SimpleNamespace(config={}, logger=MagicMock(), update_config=MagicMock(),
-                                 i18n=types.SimpleNamespace(SIDE_BAR_NO_ROOM_TITLE="t", APP_OVERLAP_YIELD_BODY="b"),
+    i18n = types.SimpleNamespace(SIDE_BAR_NO_ROOM_TITLE="t", APP_OVERLAP_YIELD_BODY="b {setting}",
+                                 HIDE_WHEN_APPS_COVER_LABEL="S", SETTINGS_WINDOW_TITLE="W", WIDGET_SETTINGS_GROUP="P")
+    stub = types.SimpleNamespace(config={}, logger=MagicMock(), update_config=MagicMock(), i18n=i18n,
                                  _show_notice_flyout=MagicMock())
+    stub._app_overlap_text = lambda t: main_mod.NetworkSpeedWidget._app_overlap_text(stub, t)
     with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
         main_mod.NetworkSpeedWidget._maybe_show_app_overlap_notice(stub)
         main_mod.NetworkSpeedWidget._maybe_show_app_overlap_notice(stub)
-    stub._show_notice_flyout.assert_called_once_with("t", "b")
+    stub._show_notice_flyout.assert_called_once_with("t", "b S")
     stub.update_config.assert_called_once_with({"app_overlap_notice_shown": True})
 
 
@@ -629,3 +648,286 @@ def test_notice_flag_is_kept_by_reset_all_and_validated():
     assert "app_overlap_notice_shown" in SettingsDialog.RESET_ALL_KEEPS
     assert constants.config.defaults.DEFAULT_CONFIG["app_overlap_notice_shown"] is False
     assert constants.config.defaults.VALIDATION_SCHEMA["app_overlap_notice_shown"]["type"] is bool
+
+# --- rc.2 review of #438: a way back (H1) ---------------------------------------------------------
+
+def test_the_setting_off_means_no_yield_and_ends_a_yield(rig):
+    r = rig(1380)
+    r.start(left_aligned(28, overflow=True))
+    assert r.y.yielded
+    r.eligible = False                           # Settings > Widget > Hide while app buttons cover...
+    r.y.sync()
+    assert not r.y.yielded and r.y.attached_hwnd == 0
+
+
+def test_position_manager_reads_the_setting_default_on(q_app):
+    pm, tb, _w = _pm()
+    pm._app_overlap_info = tb
+    assert isinstance(pm._app_overlap_context(), OverlapContext)   # absent key = the default, on
+    pm._state.config["hide_when_apps_cover"] = False
+    assert "setting" in pm._app_overlap_context()
+    assert constants.config.defaults.DEFAULT_CONFIG["hide_when_apps_cover"] is True
+    assert constants.config.defaults.VALIDATION_SCHEMA["hide_when_apps_cover"]["type"] is bool
+
+
+def test_settings_widget_page_has_the_switch(q_app):
+    from netspeedtray.constants.i18n import I18nStrings
+    from netspeedtray.views.settings.pages.widget import WidgetPage
+    page = WidgetPage(I18nStrings(), lambda: None)
+    page.load_settings({"hide_when_apps_cover": False})
+    assert page.get_settings()["hide_when_apps_cover"] is False
+    page.load_settings({})
+    assert page.get_settings()["hide_when_apps_cover"] is True
+
+
+def test_second_launch_suspends_the_yield_for_the_session(rig):
+    r = rig(1380)
+    r.start(left_aligned(28, overflow=True))
+    assert r.y.yielded
+    assert r.y.suspend_for_session() is True
+    assert not r.y.yielded and r.y.suspended
+    for _ in range(5):                           # nothing re-attaches or probes for this session
+        r.now += 5.0
+        r.y.sync()
+        r.y.note_foreground_change()
+        assert not r.pending_probe() and not r.y.yielded
+    assert r.y.suspend_for_session() is False    # a second one: it was not yielded
+
+
+def _activate_stub(was_yielded):
+    from netspeedtray.views.widget import main as main_mod
+    i18n = types.SimpleNamespace(SIDE_BAR_NO_ROOM_TITLE="t", APP_OVERLAP_ACTIVATE_BODY="a {setting} {settings} {page}",
+                                 HIDE_WHEN_APPS_COVER_LABEL="S", SETTINGS_WINDOW_TITLE="W", WIDGET_SETTINGS_GROUP="P")
+    stub = types.SimpleNamespace(logger=MagicMock(), i18n=i18n, _show_notice_flyout=MagicMock(),
+                                 _execute_refresh=MagicMock(),
+                                 _ACTIVATE_FLYOUT_DELAY_MS=main_mod.NetworkSpeedWidget._ACTIVATE_FLYOUT_DELAY_MS)
+    stub.position_manager = MagicMock()
+    stub.position_manager.suspend_app_yield.return_value = was_yielded
+    stub._app_overlap_text = lambda t: main_mod.NetworkSpeedWidget._app_overlap_text(stub, t)
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        main_mod.NetworkSpeedWidget._app_yield_on_second_launch(stub)
+    return stub
+
+
+def test_second_launch_shows_the_widget_and_explains_when_it_had_yielded(q_app):
+    stub = _activate_stub(True)
+    stub.position_manager.suspend_app_yield.assert_called_once()
+    stub._execute_refresh.assert_called_once()
+    stub._show_notice_flyout.assert_called_once_with("t", "a S W P")
+    quiet = _activate_stub(False)
+    quiet._execute_refresh.assert_called_once()
+    quiet._show_notice_flyout.assert_not_called()
+
+
+def test_second_launch_message_reaches_the_yield_without_being_consumed(monkeypatch):
+    import ctypes
+    from netspeedtray.views.widget import main as main_mod
+    monkeypatch.setattr(main_mod, "_WM_NST_ACTIVATE_FOR_YIELD", 0xC123)
+    fake = types.SimpleNamespace(logger=MagicMock(), _app_yield_on_second_launch=MagicMock())
+    m = main_mod._NativeMSG()
+    m.message = 0xC123
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        result = main_mod.NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", ctypes.addressof(m))
+    fake._app_yield_on_second_launch.assert_called_once()
+    assert result == (False, 0)                  # #440's own handler still sees it
+
+
+def test_notices_say_how_to_get_the_widget_back_in_every_locale():
+    import json
+    import pathlib
+    folder = pathlib.Path(constants.__file__).parent / "locales"
+    en = json.loads((folder / "en_US.json").read_text(encoding="utf-8"))
+    assert "start NetSpeedTray again" in en["APP_OVERLAP_YIELD_BODY"]
+    for f in folder.glob("*.json"):
+        d = json.loads(f.read_text(encoding="utf-8"))
+        for key in ("APP_OVERLAP_YIELD_BODY", "APP_OVERLAP_ACTIVATE_BODY"):
+            text = d[key].format(setting="<S>", settings="<W>", page="<P>")
+            assert "<S>" in text and "<W>" in text and "<P>" in text, (f.name, key)
+
+
+# --- H2: the drop baseline survives a restart -------------------------------------------------------
+
+def test_a_drop_on_the_buttons_is_saved_and_kept_after_a_restart(rig):
+    r = rig(900, drop_key=-500)
+    r.start(left_aligned(5))
+    r.y.note_user_drop()
+    r.probe(left_aligned(20), advance=1.0)       # on the buttons, by choice
+    assert not r.y.yielded and r.persisted == [-500]
+    r.close()
+    # Restart: a fresh watcher, the saved offset still matches the user's offset.
+    again = rig(900, drop_key=-500, saved_drop=-500)
+    again.start(left_aligned(20))
+    assert not again.y.yielded                   # no instant hide on launch (live: x 905)
+    # Seen clear once (apps closed): the baseline is spent and cleared from the config.
+    again.y.note_foreground_change()
+    again.probe(left_aligned(3), advance=1.0)
+    assert again.persisted[-1] is None
+    while not again.pending_probe():             # apps opening again, one foreground change each
+        again.now += 2.0
+        again.y.note_foreground_change()
+    again.probe(left_aligned(20), advance=1.0)
+    assert again.y.yielded
+
+
+def test_a_different_offset_than_the_saved_drop_is_not_suppressed(rig):
+    r = rig(900, drop_key=-480, saved_drop=-500)  # dragged elsewhere since
+    r.start(left_aligned(20))
+    assert r.y.yielded
+
+
+def test_reset_position_clears_the_saved_drop(rig):
+    r = rig(900, drop_key=-500, saved_drop=-500)
+    r.start(left_aligned(20))
+    r.y.note_position_reset()
+    assert r.persisted[-1] is None
+
+
+def test_position_manager_persists_the_drop_through_the_widget(q_app):
+    pm, _tb, _w = _pm()
+    saved = []
+    pm.on_app_yield_persist = saved.append
+    pm._persist_app_drop(-500)
+    assert pm._state.config["app_overlap_drop_offset"] == -500 and saved == [{"app_overlap_drop_offset": -500}]
+    from netspeedtray.views.settings.dialog import SettingsDialog
+    assert "app_overlap_drop_offset" in SettingsDialog.RESET_ALL_KEEPS
+    schema = constants.config.defaults.VALIDATION_SCHEMA["app_overlap_drop_offset"]
+    assert schema["type"] == (int, type(None)) and schema["default"] is None
+
+
+def test_position_manager_context_carries_the_drop_key_and_saved_drop(q_app):
+    pm, tb, _w = _pm(config={"tray_offset_x": -500, "app_overlap_drop_offset": -500})
+    pm._app_overlap_info = tb
+    ctx = pm._app_overlap_context()
+    assert ctx.drop_key == -500 and ctx.saved_drop == -500
+    pm._state.config["tray_offset_x"] = constants.config.defaults.DEFAULT_TRAY_OFFSET_X
+    assert pm._app_overlap_context().drop_key is None
+
+
+# --- H3: a hidden widget is judged where it WOULD be ------------------------------------------------
+
+def test_hidden_widget_is_judged_at_its_computed_position(q_app):
+    from netspeedtray.core.position_manager import ScreenPosition
+    pm, tb, widget = _pm(x=1227)                  # the stale window spot (live: 1255 -> 1227)
+    pm._app_overlap_info = tb
+    widget.isVisible.return_value = False
+    with patch.object(pm._calculator, "calculate_position", return_value=ScreenPosition(1255, Y0)) as calc:
+        ctx = pm._app_overlap_context()
+    assert ctx.widget == (1255.0, 1255.0 + WIDGET_W)
+    calc.assert_called_once()
+    widget.isVisible.return_value = True          # shown: its real position
+    assert pm._app_overlap_context().widget[0] == 1227.0
+
+
+def test_a_stale_hidden_spot_does_not_keep_it_hidden(rig):
+    r = rig(1227)
+    r.start(CENTERED)                             # group ends 1247: the stale spot overlaps
+    assert r.y.yielded
+    r.widget_x = 1255                             # the would-be spot: clear (exactly GAP)
+    r.now += T.SIDE_BAR_NEAR_RECHECK_MS / 1000.0
+    r.y.sync()
+    r.probe(CENTERED)
+    r.probe(CENTERED, advance=0.5)
+    assert not r.y.yielded
+
+
+# --- M4: mirrors don't yield --------------------------------------------------------------------------
+
+def test_a_disabled_yield_never_probes_or_hides(rig):
+    r = rig(1380, enabled=False)
+    for _ in range(5):
+        r.y.sync()
+        r.y.note_foreground_change()
+        r.now += 5.0
+    assert not r.pending_probe() and not r.y.yielded and r.y.attached_hwnd == 0
+
+
+def test_position_manager_can_be_built_without_the_yield(q_app):
+    tb = _pm()[1]
+    widget = MagicMock()
+    pm = PositionManager(WindowState(config={}, widget=widget, taskbar_info=tb), app_yield_enabled=False)
+    pm.sync_app_overlap(tb)
+    assert pm.is_yielding_to_apps() is False and pm._app_yield.attached_hwnd == 0
+
+
+# --- lows --------------------------------------------------------------------------------------------
+
+def test_explorer_restart_keeps_a_yield_instead_of_flashing(rig):
+    r = rig(1380)
+    r.start(left_aligned(28, overflow=True))
+    assert r.y.yielded and r.changes == 1
+    r.no_taskbar = True                           # Explorer gone
+    for _ in range(3):
+        r.now += 1.0
+        r.y.sync()
+        assert r.y.yielded
+    r.no_taskbar = False
+    r.hwnd = HWND + 1                             # the re-created taskbar
+    r.y.sync()
+    assert r.y.yielded and r.y.attached_hwnd == HWND + 1
+    r.probe(fail=True, advance=0.5)               # its first probe sees no buttons yet (live C5)
+    assert r.y.yielded and r.pending_probe()
+    r.probe(left_aligned(28, overflow=True), advance=1.0)
+    assert r.y.yielded and r.changes == 1         # never shown in between
+
+
+def test_explorer_gone_for_too_long_gives_up_the_yield(rig):
+    r = rig(1380)
+    r.start(left_aligned(28, overflow=True))
+    r.no_taskbar = True
+    r.y.sync()
+    r.now += T.APP_YIELD_TASKBAR_GONE_HOLD_MS / 1000.0 + 0.1
+    r.y.sync()
+    assert not r.y.yielded
+
+
+def test_unknown_after_the_hold_shows_it(rig):
+    r = rig(1380)
+    r.start(left_aligned(28, overflow=True))
+    r.hwnd = HWND + 1
+    r.y.sync()
+    r.now += T.APP_YIELD_TASKBAR_GONE_HOLD_MS / 1000.0 + 1
+    r.probe(fail=True)
+    assert not r.y.yielded
+
+
+def test_yielded_backoff_is_capped_at_10s(rig):
+    r = rig(1380)
+    r.start(left_aligned(28, overflow=True))
+    assert r.y.yielded
+    for _ in range(8):
+        r.now += 30.0
+        r.y.sync()
+        r.probe(left_aligned(28, overflow=True))
+    assert r.y._near_interval_ms == T.APP_YIELD_YIELDED_RECHECK_MAX_MS == 10000
+
+
+def test_centred_prediction_grows_half_a_slot_at_each_end():
+    slot = constants.layout.APP_BUTTON_SLOT_PX
+    assert predict_group((674.0, 1247.0), 2, True) == (674.0 - slot, 1247.0 + slot)
+    assert predict_group((12.0, 981.0), 2, False) == (12.0, 981.0 + 2 * slot)
+    assert predict_group((12.0, 981.0), 1, None) == (12.0 - slot, 981.0 + slot)
+
+
+def test_owner_centred_bar_with_alignment_needs_more_changes_before_a_probe(rig):
+    r = rig(OWNER_WIDGET_X, centered=True)
+    r.start(CENTERED)
+    n = 0
+    while not r.pending_probe():
+        r.now += 2.0
+        r.y.note_foreground_change()
+        n += 1
+        assert n < 20
+    assert n == 6                                 # 249 px clear, 22 px per change; was 3 at a whole slot
+
+
+def test_shutdown_and_restart_log_their_own_reason(rig, caplog):
+    import logging
+    r = rig(1380)
+    r.start(left_aligned(28, overflow=True))
+    with caplog.at_level(logging.INFO, logger="NetSpeedTray.AppOverlapYield"):
+        r.hwnd = HWND + 1                         # Explorer restart: no "off" line at all
+        r.y.sync()
+        assert not [x for x in caplog.messages if "yield off" in x]
+        r.y.detach("shutting down")
+    assert any("shutting down" in x for x in caplog.messages)
+    assert not any("no longer" in x for x in caplog.messages)

@@ -129,6 +129,13 @@ class TimeoutConstants:
     # (The probe rate limit, SIDE_BAR_MIN_PROBE_INTERVAL_MS, makes the real spacing >= 500 ms.) The
     # yield reuses the side-bar cadence above: foreground follow-up, near re-check + back-off, slots.
     APP_YIELD_SHOW_CONFIRM_MS: Final[int] = 300
+    # While yielded the near re-check backs off only up to this (not SIDE_BAR_NEAR_RECHECK_MAX_MS): an
+    # app closed in the background (no foreground change) must bring the widget back within seconds.
+    APP_YIELD_YIELDED_RECHECK_MAX_MS: Final[int] = 10000
+    # An Explorer restart: a yielded widget stays aside this long while the taskbar is missing and
+    # while the new taskbar reports no buttons yet (rc.2 live test C5: the first probe of the new bar
+    # found nothing, the buttons came ~3 s later), instead of flashing up for those seconds.
+    APP_YIELD_TASKBAR_GONE_HOLD_MS: Final[int] = 15000
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
     # Explorer restart (rc.2 W5): between the old taskbar going away and the new one existing there

@@ -111,6 +111,9 @@ class ConfigConstants:
     # just works; a user can turn it off to keep the old primary-taskbar fallback (#188).
     DEFAULT_FREE_FLOAT: Final[bool] = True
     DEFAULT_KEEP_VISIBLE_FULLSCREEN: Final[bool] = False
+    # #24: on a native horizontal Win11 taskbar, hide while the app buttons reach the widget (the
+    # owner's "yield" choice, rc.2 W17). Off = the widget stays put and may cover them (pre-rc.2).
+    DEFAULT_HIDE_WHEN_APPS_COVER: Final[bool] = True
     DEFAULT_FORCE_DECIMALS: Final[bool] = True
     # ON by default: a taskbar status widget people want always-present should come back after a reboot.
     # First launch reconciles this with the actual HKCU Run key (main.py → StartupManager.synchronize_startup_task),
@@ -249,6 +252,7 @@ class ConfigConstants:
         "cpu_label_color": DEFAULT_CPU_LABEL_COLOR,
         "gpu_label_color": DEFAULT_GPU_LABEL_COLOR,
         "keep_visible_fullscreen": DEFAULT_KEEP_VISIBLE_FULLSCREEN,
+        "hide_when_apps_cover": DEFAULT_HIDE_WHEN_APPS_COVER,
         "force_decimals": DEFAULT_FORCE_DECIMALS,
         "unit_type": DEFAULT_UNIT_TYPE,
         "swap_upload_download": DEFAULT_SWAP_UPLOAD_DOWNLOAD,
@@ -334,6 +338,9 @@ class ConfigConstants:
         "widgets_overlap_nudge_shown": False,  # one-time #200 nudge: widget overlaps the Widgets/weather panel
         "side_bar_no_room_notice_shown": False,  # one-time heads-up: a side taskbar's apps leave no free spot
         "app_overlap_notice_shown": False,  # one-time heads-up: the widget stepped aside for app buttons (#24)
+        # The tray_offset_x the user dropped the widget at ON the app buttons (#24 drop baseline): the
+        # yield stays off for that spot, across restarts, until a probe sees it clear once. None = none.
+        "app_overlap_drop_offset": None,
         "cpu_load_high_threshold": DEFAULT_CPU_LOAD_HIGH_THRESHOLD,
         "cpu_load_low_threshold": DEFAULT_CPU_LOAD_LOW_THRESHOLD,
         "gpu_load_high_threshold": DEFAULT_GPU_LOAD_HIGH_THRESHOLD,
@@ -428,6 +435,7 @@ class ConfigConstants:
         "cpu_label_color": {"type": str, "default": DEFAULT_CPU_LABEL_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "gpu_label_color": {"type": str, "default": DEFAULT_GPU_LABEL_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "keep_visible_fullscreen": {"type": bool, "default": DEFAULT_KEEP_VISIBLE_FULLSCREEN},
+        "hide_when_apps_cover": {"type": bool, "default": DEFAULT_HIDE_WHEN_APPS_COVER},
         "force_decimals": {"type": bool, "default": DEFAULT_FORCE_DECIMALS},
         "unit_type": {"type": str, "default": DEFAULT_UNIT_TYPE, "choices": ["bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"]},
         "swap_upload_download": {"type": bool, "default": DEFAULT_SWAP_UPLOAD_DOWNLOAD},
@@ -495,6 +503,7 @@ class ConfigConstants:
         "widgets_overlap_nudge_shown": {"type": bool, "default": False},
         "side_bar_no_room_notice_shown": {"type": bool, "default": False},
         "app_overlap_notice_shown": {"type": bool, "default": False},
+        "app_overlap_drop_offset": {"type": (int, type(None)), "default": None},
         "cpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
         "cpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
         "gpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_GPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
