@@ -418,9 +418,10 @@ class NetworkSpeedWidget(QWidget):
             )
             self.position_manager = PositionManager(window_state, parent=self)
             self.position_manager.on_side_no_room = self._maybe_show_side_no_room_notice
-            # #24: the app buttons reached the widget (or left it) - re-run the visibility gate.
-            self.position_manager.on_app_yield_changed = self._on_app_yield_changed
-            self.position_manager.on_app_yield_first = self._maybe_show_app_overlap_notice
+            # #24: the app buttons reached the widget (or left it) - re-run the visibility gate. Late
+            # bound (looked up when called), like the persist hook below.
+            self.position_manager.on_app_yield_changed = lambda: self._on_app_yield_changed()
+            self.position_manager.on_app_yield_first = lambda: self._maybe_show_app_overlap_notice()
             self.position_manager.on_app_yield_persist = lambda updates: self.update_config(updates)
             # Note: InputHandler is initialized in _init_ui_components() after tray_manager is created
             
@@ -2210,7 +2211,12 @@ class NetworkSpeedWidget(QWidget):
             self.logger.info("Another launch asked the widget to show itself (visible=%s).", self.isVisible())
             # #24, first: the app-button yield stands down for this session (it would hide the widget
             # again on the refresh below). Also under a fullscreen app - it comes back when that ends.
-            was_yielded = self._stand_down_app_yield()
+            # Its own try: nothing about the yield may stop the widget coming back.
+            was_yielded = False
+            try:
+                was_yielded = self._stand_down_app_yield() is True
+            except Exception as e:
+                self.logger.debug("app-yield stand-down skipped: %s", e)
             handler = getattr(self, "system_event_handler", None)
             if (handler is not None and handler.is_fullscreen_active()
                     and not self.config.get("keep_visible_fullscreen", False)):

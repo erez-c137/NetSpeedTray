@@ -43,9 +43,13 @@ sees the widget clear once. That choice survives a restart: the dropped ``tray_o
 (``app_overlap_drop_offset``) while it is in force, and the same offset on the next attach is the
 same choice (rc.2 live test H2).
 
-An Explorer restart keeps a yielded widget hidden (the taskbar is missing, then reappears with a new
-HWND whose first probes may find no buttons yet) for up to ``APP_YIELD_TASKBAR_GONE_HOLD_MS``, instead
-of flashing it for the seconds the new taskbar takes to fill.
+An Explorer restart keeps a yielded widget hidden. While the taskbar is MISSING, #440's hold owns it
+(``PositionManager.holding_for_taskbar``: ``_execute_refresh`` hides the widget and returns before
+the yield is even synced, up to ``TASKBAR_ABSENT_HOLD_MS``); the yield adds no hold of its own there,
+and if #440's hold runs out (still no taskbar) the yield simply lets go. Once the NEW taskbar (a new
+HWND) exists, its first probes may find no buttons yet (live C5: ~3 s): a yield is kept through those
+unknown readings for up to ``APP_YIELD_NEW_TASKBAR_HOLD_MS`` - one bounded hold per phase, never two
+at once - instead of flashing the widget for the seconds the new taskbar takes to fill.
 
 Fail-safe: no UIA, a failed / timed-out probe, a bar without a StartButton, an ExplorerPatcher /
 Win10 bar (``tasklist_rect`` set), a side bar, Free Move or free-float -> never yield (today's
@@ -70,8 +74,8 @@ logger = logging.getLogger("NetSpeedTray.AppOverlapYield")
 Span = Tuple[float, float]   # (left, right) along the bar, logical px, right exclusive
 
 # Context sentinels. BUSY: the widget is dragged / its menu is open - nothing is decided (a mid-drag
-# position is not where the user will leave it). NO_TASKBAR: no taskbar right now (Explorer
-# restarting) - a yielded widget holds its state for a bounded time.
+# position is not where the user will leave it). NO_TASKBAR: no taskbar right now - only seen once
+# #440's missing-taskbar hold has run out (it returns before syncing while it holds): let go.
 BUSY = "busy"
 NO_TASKBAR = "no_taskbar"
 
@@ -199,7 +203,6 @@ class AppOverlapYield(QObject):
         self._first_yield_done = False
         self._suspended = False                  # a second launch asked for the widget: off this session
         self._hold_until = 0.0                   # unknown readings keep a yield until then (Explorer restart)
-        self._gone_since: Optional[float] = None
         self._persisted_drop: Optional[int] = None
         self._probe_timer = self._timer(0, self._fire_probe)
         self._poll_timer = self._timer(t.SIDE_BAR_PROBE_POLL_MS, self._poll_probe)
@@ -240,7 +243,6 @@ class AppOverlapYield(QObject):
         self._changes = 0
         self._inflight = False
         self._again = False
-        self._gone_since = None
         self._hold_until = 0.0
         self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
 
@@ -259,9 +261,9 @@ class AppOverlapYield(QObject):
             return
         ctx = self._raw_context()
         if ctx == NO_TASKBAR:
-            self._hold_without_taskbar()
+            if self._hwnd:
+                self.detach("no taskbar after the missing-taskbar hold")
             return
-        self._gone_since = None
         if ctx == BUSY:
             return
         if not isinstance(ctx, OverlapContext):   # None, or the reason it must not yield (a string)
@@ -297,28 +299,14 @@ class AppOverlapYield(QObject):
         self._hwnd = int(ctx.hwnd)
         if keep:
             self._state.yielded = True
-            self._hold_until = self._clock() + constants.timeouts.APP_YIELD_TASKBAR_GONE_HOLD_MS / 1000.0
+            self._hold_until = self._clock() + constants.timeouts.APP_YIELD_NEW_TASKBAR_HOLD_MS / 1000.0
             logger.debug("App-button yield: the taskbar was re-created (%s); staying aside until it is "
                          "probed.", self._hwnd)
         if suppressed or (ctx.saved_drop is not None and ctx.saved_drop == ctx.drop_key):
             self._state.suppressed = True
             self._persisted_drop = ctx.saved_drop
-        self._gone_since = None
         logger.debug("App-button yield watching taskbar %s.", self._hwnd)
         self._schedule(0)
-
-    def _hold_without_taskbar(self) -> None:
-        """No taskbar (Explorer restarting): keep a yield for a bounded time, then give up on it."""
-        if not self._hwnd:
-            return
-        now = self._clock()
-        if self._gone_since is None:
-            self._gone_since = now
-            for timer in (self._probe_timer, self._poll_timer, self._followup_timer):
-                timer.stop()
-            self._inflight = False
-        if not self._state.yielded or (now - self._gone_since) * 1000.0 >= constants.timeouts.APP_YIELD_TASKBAR_GONE_HOLD_MS:
-            self.detach("the taskbar went away")
 
     # --- inputs ------------------------------------------------------------------------------
 

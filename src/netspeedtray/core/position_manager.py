@@ -1404,8 +1404,9 @@ class PositionManager(QObject):
     def _app_overlap_context(self):
         """The yield's view of the widget. A string when it must not yield (the reason, for the log):
         not a native Win11 TOP/BOTTOM bar (side bars, ExplorerPatcher / Win10 bars with a real task
-        list), floating, or the user turned the setting off; NO_TASKBAR while there is no taskbar
-        (Explorer restarting); BUSY while the widget is dragged or its menu is open."""
+        list), floating, or the user turned the setting off; NO_TASKBAR with no taskbar at all (only
+        reached once holding_for_taskbar's own hold has run out - _execute_refresh returns before it);
+        BUSY while the widget is dragged or its menu is open."""
         from netspeedtray.core.app_overlap_yield import BUSY, NO_TASKBAR, OverlapContext
         if not self._state.config.get("hide_when_apps_cover", constants.config.defaults.DEFAULT_HIDE_WHEN_APPS_COVER):
             return "the 'Hide while app buttons cover the widget' setting is off"

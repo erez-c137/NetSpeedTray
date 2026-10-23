@@ -694,42 +694,99 @@ def test_second_launch_suspends_the_yield_for_the_session(rig):
     assert r.y.suspend_for_session() is False    # a second one: it was not yielded
 
 
-def _activate_stub(was_yielded):
+def _second_launch_widget(pm, *, fullscreen=False, visible=False):
+    """A stand-in widget running the REAL second-launch methods (#440's show_from_second_launch and the
+    #24 stand-down / explanation), recording the order things happen in."""
     from netspeedtray.views.widget import main as main_mod
+    W = main_mod.NetworkSpeedWidget
+    order = []
     i18n = types.SimpleNamespace(SIDE_BAR_NO_ROOM_TITLE="t", APP_OVERLAP_ACTIVATE_BODY="a {setting} {settings} {page}",
                                  HIDE_WHEN_APPS_COVER_LABEL="S", SETTINGS_WINDOW_TITLE="W", WIDGET_SETTINGS_GROUP="P")
-    stub = types.SimpleNamespace(logger=MagicMock(), i18n=i18n, _show_notice_flyout=MagicMock(),
-                                 _execute_refresh=MagicMock(),
-                                 _ACTIVATE_FLYOUT_DELAY_MS=main_mod.NetworkSpeedWidget._ACTIVATE_FLYOUT_DELAY_MS)
-    stub.position_manager = MagicMock()
-    stub.position_manager.suspend_app_yield.return_value = was_yielded
-    stub._app_overlap_text = lambda t: main_mod.NetworkSpeedWidget._app_overlap_text(stub, t)
-    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
-        main_mod.NetworkSpeedWidget._app_yield_on_second_launch(stub)
-    return stub
+    w = types.SimpleNamespace(logger=MagicMock(), i18n=i18n, config={}, position_manager=pm,
+                              _taskbar_lost_count=3, _ACTIVATE_FLYOUT_DELAY_MS=W._ACTIVATE_FLYOUT_DELAY_MS)
+    shown = {"v": visible}
+    w.isVisible = lambda: shown["v"]
+    w.setVisible = lambda v: (order.append(("setVisible", v)), shown.update(v=v))
+    w._is_off_screen = lambda: False
+    w._execute_refresh = lambda *a: order.append(("refresh", pm.is_yielding_to_apps()))
+    w._show_notice_flyout = lambda title, body: order.append(("flyout", title, body))
+    w.system_event_handler = types.SimpleNamespace(is_fullscreen_active=lambda: fullscreen)
+    for name in ("show_from_second_launch", "_stand_down_app_yield", "_explain_app_yield_stand_down",
+                 "_app_overlap_text"):
+        setattr(w, name, getattr(W, name).__get__(w))
+    return w, order
 
 
-def test_second_launch_shows_the_widget_and_explains_when_it_had_yielded(q_app):
-    stub = _activate_stub(True)
-    stub.position_manager.suspend_app_yield.assert_called_once()
-    stub._execute_refresh.assert_called_once()
-    stub._show_notice_flyout.assert_called_once_with("t", "a S W P")
-    quiet = _activate_stub(False)
-    quiet._execute_refresh.assert_called_once()
-    quiet._show_notice_flyout.assert_not_called()
+def _yielded_pm(layout):
+    pm, tb, _widget = _pm()
+    pm.sync_app_overlap(tb)
+    pm._app_yield._probe_timer.stop()
+    pm._app_yield._fire_probe()
+    layout.land(left_aligned(28, overflow=True))
+    pm._app_yield._poll_probe()
+    assert pm.is_yielding_to_apps() is True
+    for name in ("reset_reseat_state", "update_position", "ensure_topmost", "reseat_above_taskbar"):
+        setattr(pm, name, MagicMock(name=name))
+    pm.is_buried_behind_taskbar = MagicMock(return_value=False)
+    return pm, tb
 
 
-def test_second_launch_message_reaches_the_yield_without_being_consumed(monkeypatch):
-    import ctypes
+def test_second_launch_un_yields_first_then_shows_then_explains(layout, q_app):
     from netspeedtray.views.widget import main as main_mod
-    monkeypatch.setattr(main_mod, "_WM_NST_ACTIVATE_FOR_YIELD", 0xC123)
-    fake = types.SimpleNamespace(logger=MagicMock(), _app_yield_on_second_launch=MagicMock())
-    m = main_mod._NativeMSG()
-    m.message = 0xC123
+    pm, _tb = _yielded_pm(layout)
+    pm.update_position.side_effect = lambda *a, **k: order.append(("update_position", pm.is_yielding_to_apps()))
+    w, order = _second_launch_widget(pm)
     with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
-        result = main_mod.NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", ctypes.addressof(m))
-    fake._app_yield_on_second_launch.assert_called_once()
-    assert result == (False, 0)                  # #440's own handler still sees it
+        w.show_from_second_launch()
+    # 1. the yield is off before anything is shown; 2. #440's show + re-place; 3. the flyout, last.
+    assert order[0] == ("setVisible", True)
+    assert ("update_position", False) in order and ("refresh", False) in order
+    assert order[-1] == ("flyout", "t", "a S W P")
+    assert pm._app_yield.suspended and pm.is_yielding_to_apps() is False
+
+
+def test_second_launch_without_a_yield_shows_no_flyout(layout, q_app):
+    from netspeedtray.views.widget import main as main_mod
+    pm, tb, _widget = _pm()
+    for name in ("reset_reseat_state", "update_position", "ensure_topmost", "reseat_above_taskbar"):
+        setattr(pm, name, MagicMock(name=name))
+    pm.is_buried_behind_taskbar = MagicMock(return_value=False)
+    w, order = _second_launch_widget(pm)
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch()
+    assert ("setVisible", True) in order
+    assert not [o for o in order if o[0] == "flyout"]
+    assert pm._app_yield.suspended                 # still off for the session (cheap, consistent)
+
+
+def test_second_launch_under_fullscreen_stands_down_but_shows_nothing(layout, q_app):
+    from netspeedtray.views.widget import main as main_mod
+    pm, _tb = _yielded_pm(layout)
+    w, order = _second_launch_widget(pm, fullscreen=True)
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch()
+    assert order == []                             # no show, no flyout over the fullscreen app
+    assert pm.is_yielding_to_apps() is False       # but it comes back when the fullscreen app ends
+
+
+def test_the_real_activate_message_runs_the_real_second_launch_path(layout, q_app):
+    """End to end: the REAL registered NetSpeedTray_Activate_v1 atom through nativeEvent into the real
+    show_from_second_launch, which un-yields the real AppOverlapYield."""
+    import ctypes
+    from netspeedtray.core import shutdown_channel
+    from netspeedtray.views.widget import main as main_mod
+    atom = shutdown_channel.activate_message_id()
+    assert atom and atom == main_mod._WM_NST_ACTIVATE
+    assert atom >= 0xC000                          # a RegisterWindowMessage atom, not a fixed WM_*
+    pm, _tb = _yielded_pm(layout)
+    w, order = _second_launch_widget(pm)
+    msg = main_mod._NativeMSG()
+    msg.message = atom
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        result = main_mod.NetworkSpeedWidget.nativeEvent(w, b"windows_generic_MSG", ctypes.addressof(msg))
+    assert result == (True, 0)                     # #440 consumes its own message
+    assert pm.is_yielding_to_apps() is False and pm._app_yield.suspended
+    assert order[0] == ("setVisible", True) and order[-1][0] == "flyout"
 
 
 def test_notices_say_how_to_get_the_widget_back_in_every_locale():
@@ -855,12 +912,9 @@ def test_explorer_restart_keeps_a_yield_instead_of_flashing(rig):
     r = rig(1380)
     r.start(left_aligned(28, overflow=True))
     assert r.y.yielded and r.changes == 1
-    r.no_taskbar = True                           # Explorer gone
-    for _ in range(3):
-        r.now += 1.0
-        r.y.sync()
-        assert r.y.yielded
-    r.no_taskbar = False
+    # Explorer gone: #440's holding_for_taskbar hides the widget and _execute_refresh returns
+    # BEFORE syncing the yield - so nothing reaches it for those seconds (no second hold).
+    r.now += 3.0
     r.hwnd = HWND + 1                             # the re-created taskbar
     r.y.sync()
     assert r.y.yielded and r.y.attached_hwnd == HWND + 1
@@ -870,14 +924,29 @@ def test_explorer_restart_keeps_a_yield_instead_of_flashing(rig):
     assert r.y.yielded and r.changes == 1         # never shown in between
 
 
-def test_explorer_gone_for_too_long_gives_up_the_yield(rig):
+def test_no_taskbar_after_440s_hold_lets_go_at_once(rig):
+    """The yield only sees NO_TASKBAR once #440's missing-taskbar hold has run out (15 s): it must not
+    start a second 15 s hold of its own."""
     r = rig(1380)
     r.start(left_aligned(28, overflow=True))
     r.no_taskbar = True
     r.y.sync()
-    r.now += T.APP_YIELD_TASKBAR_GONE_HOLD_MS / 1000.0 + 0.1
-    r.y.sync()
-    assert not r.y.yielded
+    assert not r.y.yielded and r.y.attached_hwnd == 0
+
+
+def test_execute_refresh_never_syncs_the_yield_while_440_holds(monkeypatch):
+    from netspeedtray.views.widget import main as widget_main
+    monkeypatch.setattr(widget_main, "get_taskbar_info", lambda preferred_screen_name=None: types.SimpleNamespace(hwnd=0))
+    monkeypatch.setattr(widget_main.win32gui, "GetForegroundWindow", lambda: 0)
+    w = MagicMock()
+    w.config = {"preferred_monitor": None, "free_move": False, "keep_visible_fullscreen": False}
+    w._is_context_menu_visible = w._dragging = False
+    w._taskbar_lost_count = 0
+    w._no_taskbar_ticks = 0
+    w.position_manager.refresh_float_state.return_value = None
+    w.position_manager.holding_for_taskbar.return_value = True
+    widget_main.NetworkSpeedWidget._execute_refresh(w)
+    w.position_manager.sync_app_overlap.assert_not_called()
 
 
 def test_unknown_after_the_hold_shows_it(rig):
@@ -885,7 +954,7 @@ def test_unknown_after_the_hold_shows_it(rig):
     r.start(left_aligned(28, overflow=True))
     r.hwnd = HWND + 1
     r.y.sync()
-    r.now += T.APP_YIELD_TASKBAR_GONE_HOLD_MS / 1000.0 + 1
+    r.now += T.APP_YIELD_NEW_TASKBAR_HOLD_MS / 1000.0 + 1
     r.probe(fail=True)
     assert not r.y.yielded
 
