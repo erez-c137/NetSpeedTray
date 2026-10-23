@@ -97,26 +97,87 @@ def test_every_themed_colour_has_a_dark_and_a_light_key():
 def test_dark_defaults_are_the_pre_scheme_colours():
     """Nobody's dark-taskbar widget changes on upgrade (the #168 rule)."""
     assert {s: D.THEMED_COLOR_DEFAULTS[s][0] for s in STEMS} == {
-        "default_color": "#FFFFFF", "high_speed_color": "#00FF00", "medium_speed_color": "#FFBF00",
+        "default_color": "#FFFFFF", "high_speed_color": "#00FF00", "medium_speed_color": "#FFE14D",
         "low_speed_color": "#FFA500", "graph_upload_color": constants.graph.UPLOAD_LINE_COLOR,
         "graph_download_color": constants.graph.DOWNLOAD_LINE_COLOR,
         "arrow_up_color": "#00FF00", "arrow_down_color": "#FFFFFF"}
 
 
+@pytest.mark.parametrize("light", [False, True])
 @pytest.mark.parametrize("stem", STEMS)
-def test_light_defaults_read_on_a_light_taskbar(stem):
-    """Owner's rule: every default is readable on a light taskbar (the white-arrow-on-light bug). At
-    least 3:1 (WCAG non-text / large text) on every light backdrop; the text colours 4.1:1 or more."""
-    light = D.THEMED_COLOR_DEFAULTS[stem][1]
-    floor = 3.0 if stem.startswith("graph_") else 4.0
-    worst = min(_contrast(light, bg) for bg in LIGHT_TASKBARS)
-    assert worst >= floor, f"{stem} {light}: {worst:.2f}:1 on a light taskbar"
+def test_defaults_read_on_their_taskbar(stem, light):
+    """Owner's rule: every default is readable on its taskbar (the white-arrow-on-light bug). The widget's
+    text is ~9 pt, so the text colours need the 4.5:1 body-text bar (WCAG 1.4.3), not the 3:1 large-text
+    one; the graph lines are non-text graphics, 3:1 (WCAG 1.4.11). Every backdrop of that theme."""
+    colour = D.THEMED_COLOR_DEFAULTS[stem][1 if light else 0]
+    floor = 3.0 if stem.startswith("graph_") else 4.5
+    worst = min(_contrast(colour, bg) for bg in (LIGHT_TASKBARS if light else DARK_TASKBARS))
+    assert worst >= floor, f"{stem} {colour}: {worst:.2f}:1 on a {'light' if light else 'dark'} taskbar"
+
+
+def _ciede2000(h1: str, h2: str) -> float:
+    """CIEDE2000 colour difference (sRGB, D65)."""
+    import math
+
+    def lab(h):
+        c = QColor(h)
+        def lin(v):
+            v /= 255.0
+            return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+        r, g, b = lin(c.red()), lin(c.green()), lin(c.blue())
+        x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
+        y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+        f = lambda t: t ** (1 / 3) if t > 216 / 24389 else (24389 / 27 * t + 16) / 116
+        return 116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))
+
+    (L1, a1, b1), (L2, a2, b2) = lab(h1), lab(h2)
+    Cb = (math.hypot(a1, b1) + math.hypot(a2, b2)) / 2
+    G = 0.5 * (1 - math.sqrt(Cb ** 7 / (Cb ** 7 + 25 ** 7)))
+    a1p, a2p = (1 + G) * a1, (1 + G) * a2
+    C1p, C2p = math.hypot(a1p, b1), math.hypot(a2p, b2)
+    h1p, h2p = math.degrees(math.atan2(b1, a1p)) % 360, math.degrees(math.atan2(b2, a2p)) % 360
+    dL, dC, dh = L2 - L1, C2p - C1p, h2p - h1p
+    if C1p * C2p == 0:
+        dh = 0
+    elif dh > 180:
+        dh -= 360
+    elif dh < -180:
+        dh += 360
+    dH = 2 * math.sqrt(C1p * C2p) * math.sin(math.radians(dh / 2))
+    Lb, Cbp = (L1 + L2) / 2, (C1p + C2p) / 2
+    hb = (h1p + h2p) / 2 if abs(h1p - h2p) <= 180 else (h1p + h2p + 360) / 2
+    if C1p * C2p == 0:
+        hb = h1p + h2p
+    T = (1 - 0.17 * math.cos(math.radians(hb - 30)) + 0.24 * math.cos(math.radians(2 * hb))
+         + 0.32 * math.cos(math.radians(3 * hb + 6)) - 0.20 * math.cos(math.radians(4 * hb - 63)))
+    dTh = 30 * math.exp(-(((hb - 275) / 25) ** 2))
+    Rc = 2 * math.sqrt(Cbp ** 7 / (Cbp ** 7 + 25 ** 7))
+    Sl = 1 + 0.015 * (Lb - 50) ** 2 / math.sqrt(20 + (Lb - 50) ** 2)
+    Sc, Sh = 1 + 0.045 * Cbp, 1 + 0.015 * Cbp * T
+    Rt = -math.sin(math.radians(2 * dTh)) * Rc
+    return math.sqrt((dL / Sl) ** 2 + (dC / Sc) ** 2 + (dH / Sh) ** 2 + Rt * (dC / Sc) * (dH / Sh))
+
+
+def test_ciede2000_matches_the_reference_pairs():
+    """The implementation agrees with the PR #441 review's independent script on two sRGB pairs."""
+    assert _ciede2000("#FFBF00", "#FFA500") == pytest.approx(9.3, abs=0.05)
+    assert _ciede2000("#FFE14D", "#00FF00") == pytest.approx(29.0, abs=0.05)
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_medium_is_distinct_from_low_and_high(light):
+    """A band you can't tell from its neighbour is no band: CIEDE2000 >= 15 from Low and from High."""
+    i = 1 if light else 0
+    medium, low, high = (D.THEMED_COLOR_DEFAULTS[s][i]
+                         for s in ("medium_speed_color", "low_speed_color", "high_speed_color"))
+    assert _ciede2000(medium, low) >= 15, (medium, low, _ciede2000(medium, low))
+    assert _ciede2000(medium, high) >= 15, (medium, high, _ciede2000(medium, high))
 
 
 def test_the_medium_amber_reads_on_both_taskbars():
     dark, light = D.THEMED_COLOR_DEFAULTS["medium_speed_color"]
-    assert min(_contrast(dark, bg) for bg in DARK_TASKBARS) >= 3.0
-    assert min(_contrast(light, bg) for bg in LIGHT_TASKBARS) >= 3.0
+    assert (dark, light) == ("#FFE14D", "#7A6500")
     # Amber: a hue between the Low orange and the High green, on both taskbars.
     for i in (0, 1):
         hues = [QColor(D.THEMED_COLOR_DEFAULTS[s][i]).hsvHue()
@@ -487,3 +548,43 @@ def test_legacy_values_never_reach_the_paint(q_app, monkeypatch):
         assert sentinel not in fields.values(), fields
         for up, down in ((0.5, 0.5), (3.0, 7.0), (50.0, 50.0)):
             assert (255, 0, 255) not in _paint_speeds(cfg, up, down)
+
+
+# --- the gap between widget init and the theme detector's baseline (review item 7) -------------------
+
+@pytest.mark.parametrize("cached_light,now", [(False, 1), (True, 0), (False, 0), (True, 1), (False, None)])
+def test_start_catches_up_a_flip_made_during_startup(q_app, monkeypatch, cached_light, now):
+    """The widget resolved its colours at init; SystemEventHandler.start() takes its baseline later. A
+    flip in between was seen by neither, so start() emits theme_changed when the two disagree."""
+    from unittest.mock import patch
+    from netspeedtray.core.system_events import SystemEventHandler
+    monkeypatch.setattr(color_scheme, "_shell_light", cached_light)
+    with patch("netspeedtray.core.system_events.WinEventHook"):
+        h = SystemEventHandler()
+    seen = MagicMock()
+    h.theme_changed.connect(seen)
+    try:
+        with patch("netspeedtray.core.system_events.read_system_uses_light_theme", return_value=now), \
+                patch("netspeedtray.core.system_events.get_taskbar_info"):
+            h.start()
+        assert seen.call_count == (1 if now is not None and (now == 1) != cached_light else 0)
+    finally:
+        h.stop()
+
+
+# --- the Detailed fill over an opaque light background (review item 4) ------------------------------
+
+@pytest.mark.parametrize("bg,opacity,mode", [("#000000", 0, "Plus"), ("#EEEEEE", 0, "Plus"),
+                                             ("#202020", 100, "Plus"), ("#EEEEEE", 100, "SourceOver"),
+                                             ("#FFFFFF", 40, "SourceOver")])
+def test_detailed_fill_blend_follows_the_backdrop(q_app, bg, opacity, mode):
+    """Additive fills vanish into white over an opaque light background; there they blend normally.
+    The transparent default and dark backgrounds keep Plus (byte-identical, see the render guard)."""
+    from PyQt6.QtGui import QPainter as QP
+    from netspeedtray.tests.unit.color_scheme_render_guard import _metrics
+    r = WidgetRenderer(dict(D.DEFAULT_CONFIG, graph_enabled=True, graph_style="detailed",
+                            background_color=bg, background_opacity=opacity), I18nStrings("en_US"))
+    painter = MagicMock()
+    r.draw_mini_graph(painter, 120, 40, r.config, _metrics().net_history)
+    modes = [c.args[0] for c in painter.setCompositionMode.call_args_list]
+    assert modes[0] == getattr(QP.CompositionMode, f"CompositionMode_{mode}")

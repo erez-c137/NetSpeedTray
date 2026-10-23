@@ -54,6 +54,7 @@ def mock_i18n():
     i18n.MEDIUM_SPEED_THRESHOLD_LABEL = "Medium"
     i18n.MEDIUM_SPEED_COLOR_LABEL = "Medium Color"
     i18n.MEDIUM_SPEED_COLOR_TOOLTIP = "Select Medium Color"
+    i18n.MEDIUM_SPEED_RANGE_HINT = "Set Medium between Low and High"
     i18n.CONN_PLAN_OFF = "Off"
     i18n.THEME_DARK_TASKBAR = "Dark taskbar"
     i18n.THEME_LIGHT_TASKBAR = "Light taskbar"

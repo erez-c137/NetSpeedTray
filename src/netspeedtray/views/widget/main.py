@@ -1032,7 +1032,13 @@ class NetworkSpeedWidget(QWidget):
         # An open card (pinned ones last for minutes) keeps the old theme's colours: close it; the
         # next hover builds it in the new theme.
         self.dismiss_hover_card()
-        self.theme_manager.on_theme_changed()
+        self.theme_manager.on_theme_changed()   # refreshes the Windows-mode flag first
+        dialog = getattr(self, "settings_dialog", None)
+        if dialog is not None:
+            try:
+                dialog.on_taskbar_theme_changed()   # preview strip backdrop + colours
+            except Exception as e:
+                self.logger.debug("Settings preview theme refresh failed: %s", e)
 
 
 

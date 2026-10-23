@@ -169,6 +169,20 @@ def get_machine_id() -> str:
         return uuid.uuid4().hex
 
 
+def threshold_units_per_mbps(unit_type: str) -> float:
+    """How many of the user's mega-position units (Mbps, MB/s, Mibps, MiB/s) make one decimal Mbps.
+
+    The speed thresholds are STORED in decimal Mbps - the unit _speed_band compares in, always - and the
+    Settings boxes show them in the user's own unit (rc.2: they used to show the Mbps number under a
+    MB/s label, so "5 MB/s" banded at 5 Mbps = 0.625 MB/s). Display = stored * this; stored = shown / this.
+    """
+    units = constants.network.units
+    per_unit_bits = units.MEBI_DIVISOR if str(unit_type).endswith("_binary") else units.MEGA_DIVISOR
+    if str(unit_type).startswith("bytes"):
+        per_unit_bits *= units.BITS_PER_BYTE
+    return units.MEGA_DIVISOR / per_unit_bits
+
+
 def get_unit_labels_for_type(i18n, unit_type: str, short_labels: bool = False) -> List[str]:
     """
     Returns a list of translated unit labels [base, kilo, mega, giga] for the given unit type.

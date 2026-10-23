@@ -40,7 +40,7 @@ from PyQt6.QtGui import QColor, QFont, QImage, QPainter
 # Hard-coded because the old tree has no such constants; the test asserts they match the new ones.
 TUNED_LIGHT = {
     "high_speed_color": "#007A00",
-    "low_speed_color": "#B04A00",
+    "low_speed_color": "#A84600",
     "arrow_up_color": "#007A00",
     "arrow_down_color": "#000000",
     "graph_upload_color": "#2F6FDB",
@@ -143,7 +143,8 @@ def build_config(kind: str, theme: str, overrides: dict, substitute: bool):
     return cfg, subst
 
 
-def render(name: str, substitute: bool = True, png_dir=None) -> str:
+def render_image(name: str, substitute: bool = True) -> QImage:
+    """The scenario's frame (RGBA8888, transparent background - what the widget's layered window holds)."""
     from netspeedtray import constants
     from netspeedtray.constants.i18n import I18nStrings
     from netspeedtray.utils.widget_paint import font_from_config, render_widget
@@ -182,14 +183,86 @@ def render(name: str, substitute: bool = True, png_dir=None) -> str:
             color_scheme._shell_light = saved["light"]
         if "graph" in saved:
             constants.graph.UPLOAD_LINE_COLOR, constants.graph.DOWNLOAD_LINE_COLOR = saved["graph"]
-    img = img.convertToFormat(QImage.Format.Format_RGBA8888)
+    return img.convertToFormat(QImage.Format.Format_RGBA8888)
+
+
+def _hash(img: QImage) -> str:
+    ptr = img.constBits()
+    ptr.setsize(img.sizeInBytes())
+    return hashlib.sha256(f"{img.width()}x{img.height()}".encode() + bytes(ptr)).hexdigest()
+
+
+def render(name: str, substitute: bool = True, png_dir=None) -> str:
+    img = render_image(name, substitute)
     if png_dir:
         out = Path(png_dir) / (name.replace("/", "__") + ".png")
         out.parent.mkdir(parents=True, exist_ok=True)
         img.save(str(out))
-    ptr = img.constBits()
-    ptr.setsize(img.sizeInBytes())
-    return hashlib.sha256(f"{w}x{h}".encode() + bytes(ptr)).hexdigest()
+    return _hash(img)
+
+
+# The Detailed graph's gradient fills are drawn with CompositionMode_Plus, and how a raster engine rounds
+# a premultiplied gradient through an additive blend differs between machines (on GitHub's runner
+# exactly these 18 light Detailed scenarios failed the hash, rc.2 review). Those scenarios therefore also
+# carry the expected frame as a PNG and are compared per pixel within PLUS_TOLERANCE levels - far below
+# any real change (a 0.25 px thicker stroke or a different colour moves pixels by tens of levels).
+PLUS_TOLERANCE = 4
+
+
+def uses_plus_blend(name: str) -> bool:
+    return name.split("/")[1] == "detailed"
+
+
+def png_b64(img: QImage) -> str:
+    import base64
+    from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
+    data = QByteArray()
+    buf = QBuffer(data)
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    img.save(buf, "PNG")
+    buf.close()
+    return base64.b64encode(bytes(data)).decode("ascii")
+
+
+def max_pixel_difference(img: QImage, expected_b64: str) -> int:
+    """Largest per-channel difference (0-255) between ``img`` and the golden PNG; 255 if the sizes differ."""
+    import base64
+    import numpy as np
+    ref = QImage.fromData(base64.b64decode(expected_b64), "PNG").convertToFormat(QImage.Format.Format_RGBA8888)
+    if (ref.width(), ref.height()) != (img.width(), img.height()):
+        return 255
+
+    def arr(i):
+        ptr = i.constBits()
+        ptr.setsize(i.sizeInBytes())
+        return np.frombuffer(bytes(ptr), dtype=np.uint8).astype(int)
+    return int(np.abs(arr(img) - arr(ref)).max())
+
+
+def plus_probe() -> str:
+    """The Detailed graph's raster path alone - vertical gradients through CompositionMode_Plus in the
+    four series colours - so a machine whose additive blending rounds differently is recognisable."""
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QBrush, QLinearGradient, QPolygonF
+    img = QImage(64, 32, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(QColor(0, 0, 0, 0))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setOpacity(0.66)
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
+    p.setPen(Qt.PenStyle.NoPen)
+    for i, hex_code in enumerate(("#4287F5", "#42B883", "#2F6FDB", "#1A7F4E")):
+        grad = QLinearGradient(0, 0, 0, 32)
+        c = QColor(hex_code)
+        c.setAlpha(120)
+        grad.setColorAt(0.0, c)
+        c.setAlpha(0)
+        grad.setColorAt(1.0, c)
+        p.setBrush(QBrush(grad))
+        p.drawPolygon(QPolygonF([QPointF(i * 12, 32), QPointF(i * 12 + 6, 3.5 + i), QPointF(i * 12 + 30, 9.25),
+                                 QPointF(i * 12 + 30, 32)]))
+    p.end()
+    return _hash(img.convertToFormat(QImage.Format.Format_RGBA8888))
 
 
 def calibration() -> str:
@@ -220,10 +293,13 @@ def main(argv=None) -> int:
         sys.path.insert(0, str(Path(args.src).resolve()))
     from PyQt6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    out = {"calibration": calibration(), "has_scheme": has_scheme(), "scenarios": {}}
+    out = {"calibration": calibration(), "plus_probe": plus_probe(), "has_scheme": has_scheme(),
+           "scenarios": {}}
     for name in scenario_names():
-        out["scenarios"][name] = {"expected": render(name, True, args.png_dir),
-                                  "literal": render(name, False)}
+        entry = {"expected": render(name, True, args.png_dir), "literal": render(name, False)}
+        if uses_plus_blend(name):
+            entry["expected_png"] = png_b64(render_image(name, True))
+        out["scenarios"][name] = entry
     if args.write:
         Path(args.write).write_text(json.dumps(out, indent=1, sort_keys=True), encoding="utf-8")
     print(f"{len(out['scenarios'])} scenarios; calibration {out['calibration'][:12]}")

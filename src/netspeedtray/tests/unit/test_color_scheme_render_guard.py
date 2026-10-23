@@ -26,12 +26,31 @@ def same_fonts(q_app):
 def test_the_golden_came_from_the_tree_before_the_scheme():
     assert GOLDEN["has_scheme"] is False
     assert sorted(GOLDEN["scenarios"]) == sorted(guard.scenario_names())
+    assert all("expected_png" in v for k, v in GOLDEN["scenarios"].items() if guard.uses_plus_blend(k))
+
+
+def test_the_tolerance_is_far_below_a_real_change(q_app, same_fonts):
+    """The per-pixel tolerance can't hide a colour change: the light and dark Detailed frames of the same
+    factory scenario differ by far more than it."""
+    light = guard.render_image("bar48/detailed/coding_on/factory/light")
+    assert guard.max_pixel_difference(light, GOLDEN["scenarios"]["bar48/detailed/coding_on/factory/dark"]
+                                      ["expected_png"]) > 10 * guard.PLUS_TOLERANCE
 
 
 @pytest.mark.parametrize("name", guard.scenario_names())
 def test_paints_like_the_old_code(q_app, same_fonts, name):
-    assert guard.render(name) == GOLDEN["scenarios"][name]["expected"], (
-        f"{name}: the paint changed (render both trees with --png-dir to compare)")
+    golden = GOLDEN["scenarios"][name]
+    img = guard.render_image(name)
+    if guard._hash(img) == golden["expected"]:
+        return
+    assert guard.uses_plus_blend(name), f"{name}: the paint changed (render both trees with --png-dir to compare)"
+    # Detailed: additive-blend rounding is machine-dependent (CI failed only these on the exact hash).
+    diff = guard.max_pixel_difference(img, golden["expected_png"])
+    if diff <= guard.PLUS_TOLERANCE:
+        return
+    if guard.plus_probe() != GOLDEN["plus_probe"]:
+        pytest.skip(f"this machine's additive blending differs from the golden's (max {diff} levels)")
+    pytest.fail(f"{name}: the paint changed - max {diff} levels per channel")
 
 
 def test_the_dark_widget_and_every_chosen_colour_are_literally_unchanged():

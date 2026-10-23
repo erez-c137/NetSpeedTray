@@ -1408,7 +1408,14 @@ class WidgetRenderer:
                 painter.drawLine(QPointF(float(graph_rect.left()), ceiling_y),
                                  QPointF(float(graph_rect.right()), ceiling_y))
 
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
+            # Additive fills: on the usual transparent widget (DWM composites it over the taskbar) and on
+            # a dark background they read as a glow. Over an opaque LIGHT background, adding colour to a
+            # near-white backdrop saturates to white and the fill vanishes (PR #441 review renders), so
+            # there the fill is blended normally. Transparent / dark output is unchanged.
+            bg = QColor(config.background_color)
+            light_backdrop = config.background_opacity > 0 and bg.isValid() and bg.lightnessF() >= 0.5
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver if light_backdrop
+                                       else QPainter.CompositionMode.CompositionMode_Plus)
 
             from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF
 

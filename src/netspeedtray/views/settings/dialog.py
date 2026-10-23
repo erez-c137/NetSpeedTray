@@ -33,6 +33,7 @@ from netspeedtray.utils.window_state import (restore_window_position, save_windo
                                              set_window_always_on_top)
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path, reveal_in_explorer
 from netspeedtray.utils.styles import is_dark_mode
+from netspeedtray.utils import color_scheme
 from netspeedtray.utils.support_bundle import build_support_bundle
 from netspeedtray.utils.dwm import apply_win11_chrome
 
@@ -373,9 +374,10 @@ class SettingsDialog(QDialog):
                 self.preview_widget = PreviewWidget(self.config, self.i18n, width=300, height=40)
                 ps_layout.addWidget(self.preview_widget)
                 ps_layout.addStretch(1)
-                # A subtle taskbar-ish backdrop so the preview reads as "on the taskbar".
-                c = "#2b2b2b" if is_dark_mode() else "#e8e8e8"
-                preview_strip.setStyleSheet(f"#previewStrip {{ background: {c}; border-radius: 6px; }}")
+                # A subtle taskbar-ish backdrop so the preview reads as "on the taskbar" - in the
+                # TASKBAR's theme (the Windows mode the colours resolve for), not the app mode.
+                self._preview_strip = preview_strip
+                self._paint_preview_backdrop()
                 content_layout.addWidget(preview_strip)
             except Exception as e:
                 self.logger.error("Could not build settings live-preview: %s", e, exc_info=True)
@@ -657,6 +659,27 @@ class SettingsDialog(QDialog):
                 self.appearance_page.set_font_family(font)
             else:
                 self.appearance_page.set_arrow_font_family(font)
+
+    def _paint_preview_backdrop(self) -> None:
+        """The preview strip's backdrop follows the Windows (taskbar) mode, like the colours drawn on
+        it: with Windows dark and apps light (a common Win11 'Custom' mode), an app-mode backdrop put
+        the dark-taskbar colours on a light strip."""
+        strip = getattr(self, "_preview_strip", None)
+        if strip is None:
+            return
+        c = constants.color.PREVIEW_STRIP_LIGHT if color_scheme.shell_is_light() else constants.color.PREVIEW_STRIP_DARK
+        strip.setStyleSheet(f"#previewStrip {{ background: {c}; border-radius: 6px; }}")
+
+    def on_taskbar_theme_changed(self) -> None:
+        """A Windows Light/Dark flip (called by the widget after the theme manager refreshed the flag):
+        repaint the preview strip in the new taskbar theme and its colours."""
+        self._paint_preview_backdrop()
+        preview = getattr(self, "preview_widget", None)
+        if preview is not None:
+            try:
+                preview.set_config(self.get_settings() or self.config)   # re-resolves the colour pairs
+            except Exception as e:
+                self.logger.debug("Preview refresh after a theme flip failed: %s", e)
 
     def _color_pages(self) -> list:
         """The sections that hold colour fields, most specific first (Appearance's get_settings also

@@ -262,3 +262,121 @@ def test_swatch_pairs_fit_without_a_theme_selector(tmp_path):
     assert len(seen) == 8 and all(int(ln.split()[3]) == 8 for ln in seen), seen   # all 8 rows, both widths
     problems = [ln for ln in out if not ln.startswith("#seen")]
     assert problems == [], "\n".join(problems)
+
+
+# --- the thresholds are shown and entered in the user's unit (PR #441 review item 5) -----------------
+# Stored in decimal Mbps (what _speed_band compares in) - the boxes used to show that Mbps number under
+# the user's unit label, so "5 MB/s" banded at 5 Mbps = 0.625 MB/s. No migration: the stored values
+# always meant Mbps and still do; only what the boxes show changes.
+
+UNITS = [("bits_decimal", 1.0, "Mbps"), ("bytes_decimal", 1 / 8, "MB/s"),
+         ("bits_binary", 1e6 / 2 ** 20, "Mibps"), ("bytes_binary", 1e6 / (8 * 2 ** 20), "MiB/s")]
+
+
+@pytest.mark.parametrize("unit,per_mbps,label", UNITS)
+def test_threshold_boxes_show_the_stored_mbps_in_the_users_unit(qtbot, unit, per_mbps, label):
+    from netspeedtray.utils.helpers import threshold_units_per_mbps
+    assert threshold_units_per_mbps(unit) == pytest.approx(per_mbps)
+    dlg, _ = _make(qtbot, dict(D.DEFAULT_CONFIG, unit_type=unit, color_coding=True,
+                               high_speed_threshold=80.0, medium_speed_threshold=40.0, low_speed_threshold=8.0))
+    c = dlg.colors_page
+    for band, mbps in (("high_speed", 80.0), ("medium_speed", 40.0), ("low_speed", 8.0)):
+        spin = getattr(c, f"{band}_threshold")
+        assert spin.value() == pytest.approx(mbps * per_mbps, abs=0.001), band
+        assert spin.suffix().strip() == label
+    # An untouched Save returns the stored values exactly - no unit round-trip drift.
+    s = dlg.get_settings()
+    assert (s["high_speed_threshold"], s["medium_speed_threshold"], s["low_speed_threshold"]) == (80.0, 40.0, 8.0)
+
+
+@pytest.mark.parametrize("unit,per_mbps,label", UNITS)
+def test_a_threshold_typed_in_the_users_unit_bands_at_that_speed(qtbot, unit, per_mbps, label):
+    """'5' in the user's unit means 5 of that unit: just under it is Low, at it is High."""
+    from netspeedtray.utils.widget_renderer import RenderConfig, WidgetRenderer
+    dlg, main = _make(qtbot, dict(D.DEFAULT_CONFIG, unit_type=unit, color_coding=True))
+    dlg.colors_page.high_speed_threshold.setValue(5.0)
+    _flush(dlg)
+    stored = main.config["high_speed_threshold"]
+    assert stored == pytest.approx(5.0 / per_mbps)
+    rc = RenderConfig.from_dict(main.config)
+    bytes_per_unit = 1e6 / 8 / per_mbps     # bytes/s in one displayed unit
+    assert WidgetRenderer._speed_band(4.99 * bytes_per_unit, rc.high_speed_threshold, rc.low_speed_threshold) == "low"
+    assert WidgetRenderer._speed_band(5.0 * bytes_per_unit, rc.high_speed_threshold, rc.low_speed_threshold) == "high"
+
+
+def test_changing_the_unit_reshows_the_thresholds_and_keeps_them(qtbot):
+    dlg, _ = _make(qtbot, dict(D.DEFAULT_CONFIG, unit_type="bits_decimal", color_coding=True,
+                               high_speed_threshold=80.0))
+    c = dlg.colors_page
+    c.set_unit_type("bytes_decimal")
+    assert c.high_speed_threshold.value() == pytest.approx(10.0)
+    assert c.high_speed_threshold.suffix().strip() == "MB/s"
+    assert dlg.get_settings()["high_speed_threshold"] == 80.0
+    c.set_unit_type("bits_decimal")
+    assert c.high_speed_threshold.value() == pytest.approx(80.0)
+
+
+def test_the_box_range_never_exceeds_what_validation_keeps(qtbot):
+    sliders = constants.ui.sliders
+    dlg, _ = _make(qtbot, dict(D.DEFAULT_CONFIG, unit_type="bytes_binary"))
+    c = dlg.colors_page
+    per = 1e6 / (8 * 2 ** 20)
+    assert c.high_speed_threshold.maximum() == pytest.approx(sliders.SPEED_THRESHOLD_MAX_HIGH * per, abs=0.001)
+    assert c.low_speed_threshold.maximum() == pytest.approx(sliders.SPEED_THRESHOLD_MAX_LOW * per, abs=0.001)
+
+
+# --- a misplaced Medium is flagged in Settings, not silently zeroed (review item 6) ------------------
+
+@pytest.mark.parametrize("medium,shown", [(0.0, False), (5.0, False), (1.0, True), (0.5, True), (10.0, True),
+                                          (20.0, True)])
+def test_the_medium_range_hint(qtbot, medium, shown):
+    dlg, _ = _make(qtbot, dict(D.DEFAULT_CONFIG, color_coding=True))
+    c = dlg.colors_page
+    c.medium_speed_threshold.setValue(medium)
+    assert c.medium_range_hint.isVisibleTo(c) is shown
+    assert c.medium_range_hint.text() == dlg.i18n.MEDIUM_SPEED_RANGE_HINT
+    c.high_speed_threshold.setValue(50.0)            # moving High can make it valid again
+    assert c.medium_range_hint.isVisibleTo(c) is (medium > 0 and not (1.0 < medium < 50.0))
+
+
+@pytest.mark.parametrize("locale", sorted(I18nStrings.LANGUAGE_MAP))
+def test_the_medium_tooltip_states_the_range(locale):
+    """Every locale has its own hint and a tooltip that states the range (translated, so not English)."""
+    en = I18nStrings("en_US")
+    i18n = I18nStrings(locale)
+    assert "between the low and high" in en.MEDIUM_SPEED_THRESHOLD_TOOLTIP
+    assert i18n.MEDIUM_SPEED_RANGE_HINT.strip()
+    if locale != "en_US":
+        assert i18n.MEDIUM_SPEED_RANGE_HINT != en.MEDIUM_SPEED_RANGE_HINT
+        assert i18n.MEDIUM_SPEED_THRESHOLD_TOOLTIP != en.MEDIUM_SPEED_THRESHOLD_TOOLTIP
+
+
+# --- the preview strip follows the TASKBAR theme (review item 3) ------------------------------------
+
+def test_the_preview_strip_follows_the_windows_mode_not_the_app_mode(qtbot, monkeypatch):
+    from netspeedtray.utils import color_scheme
+    from netspeedtray.views.settings import dialog as D_mod
+    monkeypatch.setattr(D_mod, "is_dark_mode", lambda: True)          # apps dark...
+    monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1)   # ...taskbar light
+    color_scheme.refresh_shell_theme()
+    dlg, _ = _make(qtbot)
+    assert constants.color.PREVIEW_STRIP_LIGHT in dlg._preview_strip.styleSheet()
+    assert dlg.preview_widget._renderer.config.default_color == "#000000"
+    monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 0)   # the flip
+    color_scheme.refresh_shell_theme()
+    dlg.on_taskbar_theme_changed()
+    assert constants.color.PREVIEW_STRIP_DARK in dlg._preview_strip.styleSheet()
+    assert dlg.preview_widget._renderer.config.default_color == "#FFFFFF"
+
+
+def test_the_widget_forwards_a_flip_to_an_open_settings_dialog():
+    from unittest.mock import MagicMock
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    fake = MagicMock()
+    calls = []
+    fake.theme_manager.on_theme_changed.side_effect = lambda: calls.append("theme")
+    fake.settings_dialog.on_taskbar_theme_changed.side_effect = lambda: calls.append("dialog")
+    NetworkSpeedWidget._on_theme_changed(fake)
+    assert calls == ["theme", "dialog"]       # the flag is refreshed before the dialog re-resolves
+    fake.settings_dialog = None
+    NetworkSpeedWidget._on_theme_changed(fake)   # no dialog yet: nothing to forward

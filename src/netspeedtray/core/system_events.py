@@ -23,6 +23,7 @@ from netspeedtray.utils.taskbar_utils import (
     get_taskbar_info, is_taskbar_obstructed, TaskbarInfo
 )
 from netspeedtray.utils.styles import read_system_uses_light_theme
+from netspeedtray.utils import color_scheme
 from netspeedtray.utils.win_event_hook import (
     EVENT_OBJECT_REORDER,
     EVENT_SYSTEM_FOREGROUND,
@@ -158,6 +159,13 @@ class SystemEventHandler(QObject):
         self._connect_color_scheme_signal()
         if self._last_shell_light is None:   # the baseline survives Explorer-restart stop()/start()
             self._last_shell_light = read_system_uses_light_theme()
+            # The widget resolved its colours from the Windows mode it read at init (color_scheme's
+            # cached flag); a flip between then and this baseline would be seen by neither, leaving
+            # the widget on the old theme until the next flip. Catch it up now.
+            if self._last_shell_light is not None and \
+                    (self._last_shell_light == 1) != color_scheme.shell_is_light():
+                self.logger.info("Windows mode changed during startup; re-applying the theme.")
+                self.theme_changed.emit()
         if self._last_taskbar_alignment is None:
             self._last_taskbar_alignment = read_taskbar_alignment()
         self._install_theme_filter()
