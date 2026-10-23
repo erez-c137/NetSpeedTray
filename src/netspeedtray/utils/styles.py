@@ -220,15 +220,6 @@ def read_system_uses_light_theme() -> Optional[int]:
         return None
 
 
-def shell_theme_text_color() -> Optional[str]:
-    """The automatic widget text colour for the current Windows mode (black on a light taskbar,
-    the default white on a dark one), or None when the theme can't be read."""
-    light = read_system_uses_light_theme()
-    if light is None:
-        return None
-    return color_constants.BLACK if light == 1 else color_constants.WHITE
-
-
 def get_accent_color() -> QColor:
     """Retrieve the user's Windows accent color as a QColor."""
     try:

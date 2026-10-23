@@ -18,6 +18,8 @@ from netspeedtray import constants
 from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.utils.widget_renderer import WidgetRenderer
 from netspeedtray.utils.widget_paint import WidgetMetrics, render_widget, font_from_config
+from netspeedtray.utils import color_scheme
+from netspeedtray.tests.color_helpers import themed
 
 W, H = 360, 44
 MBPS = 125_000
@@ -27,7 +29,7 @@ def _cfg(**over):
     cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
     cfg.update({"widget_display_mode": "network_only", "hide_arrows": False})
     cfg.update(over)
-    return cfg
+    return themed(cfg)   # a colour given by its stem paints on either taskbar (2.2 rc.2 scheme)
 
 
 def _render(cfg, up_mbps=5.0, down_mbps=5.0) -> set:
@@ -76,7 +78,7 @@ class TestEnabledColorsTheArrowsOnly:
     def test_the_number_keeps_the_default_pen(self, q_app):
         """THE trap. If the arrow's pen is not restored, the number inherits it and the arrow color
         silently becomes the whole line's color."""
-        default_color = constants.config.defaults.DEFAULT_CONFIG["default_color"]
+        default_color = color_scheme.resolve(constants.config.defaults.DEFAULT_CONFIG)["default_color"]
         colors = _render(_cfg(use_custom_arrow_colors=True, color_coding=False,
                               arrow_up_color="#FF0000", arrow_down_color="#0000FF"))
         assert _rgb(default_color) in colors, \
@@ -115,7 +117,8 @@ class TestConfigPlumbing:
         assert rc.arrow_up_color == "#123456"
         assert rc.arrow_down_color == "#654321"
 
-    @pytest.mark.parametrize("key", ["use_custom_arrow_colors", "arrow_up_color", "arrow_down_color"])
+    @pytest.mark.parametrize("key", ["use_custom_arrow_colors", "arrow_up_color_dark", "arrow_up_color_light",
+                                     "arrow_down_color_dark", "arrow_down_color_light"])
     def test_keys_are_in_both_config_structures(self, key):
         """ConfigConstants.validate() raises on any mismatch, so a key missing from either dict
         stops the app from starting."""
@@ -128,5 +131,5 @@ class TestConfigPlumbing:
         sentinel would be silently reset on every load, which is why the feature is gated by a bool
         rather than by a magic empty value."""
         import re
-        schema = constants.config.defaults.VALIDATION_SCHEMA["arrow_up_color"]
+        schema = constants.config.defaults.VALIDATION_SCHEMA["arrow_up_color_light"]
         assert re.fullmatch(schema["regex"], bad) is None

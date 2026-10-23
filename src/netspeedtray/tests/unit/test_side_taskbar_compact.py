@@ -32,6 +32,7 @@ from PyQt6.QtCore import QRect
 from PyQt6.QtGui import QColor, QFontMetrics, QImage, QPainter
 
 from netspeedtray import constants
+from netspeedtray.tests.color_helpers import themed
 from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.utils import taskbar_utils
 from netspeedtray.utils.helpers import compact_speed_reference_strings, format_speed_compact
@@ -73,7 +74,7 @@ def _config(**overrides):
     cfg.update({"free_float": False, "graph_enabled": False, "background_opacity": 0,
                 "hardware_label_style": "icons"})
     cfg.update(overrides)
-    return cfg
+    return themed(cfg)
 
 
 def _taskbar(edge, thickness, *, inset=None, dpi=1.0, screen_w=1920, screen_h=1080, slide=0):

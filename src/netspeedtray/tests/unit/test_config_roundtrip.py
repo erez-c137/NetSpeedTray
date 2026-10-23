@@ -171,7 +171,8 @@ def test_load_returns_every_schema_key(tmp_path):
         ("color_coding", "yes", DEFAULTS.DEFAULT_COLOR_CODING),
         ("font_size", "big", DEFAULTS.DEFAULT_FONT_SIZE),
         # Bad regex (color must be #RRGGBB) -> default.
-        ("default_color", "not-a-color", DEFAULTS.DEFAULT_COLOR),
+        ("default_color_dark", "not-a-color", DEFAULTS.DEFAULT_COLOR),
+        ("arrow_down_color_light", "#FFF", DEFAULTS.DEFAULT_CONFIG["arrow_down_color_light"]),
     ],
 )
 def test_invalid_value_reset_to_default(tmp_path, key, bad_value, expected_default):

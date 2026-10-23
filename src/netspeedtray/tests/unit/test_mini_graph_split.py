@@ -20,6 +20,7 @@ from PyQt6.QtCore import QRect
 from PyQt6.QtGui import QColor, QImage, QPainter, QFont, QFontMetrics
 
 from netspeedtray import constants
+from netspeedtray.tests.color_helpers import themed
 from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.core.widget_state import AggregatedSpeedData
 from netspeedtray.utils.widget_paint import (SPLIT_PHASES, WidgetMetrics, _resolve_mode, font_from_config,
@@ -44,9 +45,11 @@ HISTORY = [AggregatedSpeedData(upload=(3.0 + 1.5 * ((i % 20) / 10 - 1)) * MBPS_I
 
 def _config(**overrides):
     cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
-    cfg.update({"graph_enabled": True, "graph_opacity": 100, "widget_display_mode": "network_only"})
+    cfg.update({"graph_enabled": True, "graph_opacity": 100, "widget_display_mode": "network_only",
+                "graph_upload_color": constants.graph.UPLOAD_LINE_COLOR,   # the series colours UP_RGB / DOWN_RGB
+                "graph_download_color": constants.graph.DOWNLOAD_LINE_COLOR})
     cfg.update(overrides)
-    return cfg
+    return themed(cfg)
 
 
 def _metrics(**extra):

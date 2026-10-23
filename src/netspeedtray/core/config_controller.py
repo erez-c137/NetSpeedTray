@@ -8,7 +8,6 @@ handling loading, saving, application, and rollback of settings.
 import logging
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
-from PyQt6.QtGui import QColor
 
 from netspeedtray import constants
 from netspeedtray.utils.window_state import set_window_always_on_top
@@ -213,11 +212,6 @@ class ConfigController:
             if w.widget_state:
                 self.logger.debug("Applying widget state config...")
                 w.widget_state.apply_config(w.config)
-
-            self.logger.debug("Synchronizing internal QColor objects.")
-            w.default_color = QColor(w.config.get("default_color", constants.config.defaults.DEFAULT_COLOR))
-            w.high_color = QColor(w.config.get("high_speed_color", constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR))
-            w.low_color = QColor(w.config.get("low_speed_color", constants.config.defaults.DEFAULT_LOW_SPEED_COLOR))
 
             # If the user disables temperature/power display, clear any stale values
             # so layout calculation and rendering immediately reflect the change.

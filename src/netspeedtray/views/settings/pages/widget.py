@@ -28,10 +28,12 @@ class WidgetPage(QWidget):
 
     layout_changed = pyqtSignal()
 
-    def __init__(self, i18n, on_change: Callable[[], None]):
+    def __init__(self, i18n, on_change: Callable[[], None],
+                 color_dialog_callback: Optional[Callable[[str], None]] = None):
         super().__init__()
         self.i18n = i18n
         self.on_change = on_change
+        self._color_dialog_callback = color_dialog_callback   # the Mini graph colour swatches
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -127,7 +129,7 @@ class WidgetPage(QWidget):
 
         # --- Mini Graph (moved from Appearance, 2.2 IA pass) - LAST on the page, so its fixed-scale
         # reveal grows at the bottom and shifts nothing above it.
-        self.mini_graph_section = MiniGraphSection(self.i18n, self.on_change)
+        self.mini_graph_section = MiniGraphSection(self.i18n, self.on_change, self._color_dialog_callback)
         self.mini_graph_section.layout_changed.connect(self.layout_changed)
         layout.addWidget(self.mini_graph_section)
 

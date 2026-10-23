@@ -17,6 +17,7 @@ from PyQt6.QtGui import QColor, QImage, QPainter
 from netspeedtray import constants
 from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.utils.widget_renderer import WidgetRenderer
+from netspeedtray.tests.color_helpers import themed
 
 # draw_network_speeds takes bytes/sec; 1 Mbps == 125_000 bytes/s.
 MBPS_IN_BYTES = 125_000
@@ -40,7 +41,7 @@ def renderer(q_app):
         "default_color": "#0000FF",
         "hide_unit_suffix": False,
     })
-    return WidgetRenderer(cfg, I18nStrings("en_US"))
+    return WidgetRenderer(themed(cfg), I18nStrings("en_US"))
 
 
 def _solid_rgb_counts(renderer, up_bytes, dw_bytes, w=280, h=52) -> Counter:
@@ -96,7 +97,7 @@ def test_color_coding_off_uses_default_color(q_app):
         "color_coding": False,
         "high_speed_color": "#FF0000", "low_speed_color": "#00FF00", "default_color": "#0000FF",
     })
-    r = WidgetRenderer(cfg, I18nStrings("en_US"))
+    r = WidgetRenderer(themed(cfg), I18nStrings("en_US"))
     counts = _solid_rgb_counts(r, 50 * MBPS_IN_BYTES, 50 * MBPS_IN_BYTES)
     assert _dominant(counts) == DEFAULT, f"expected default (blue) with coding off; top: {counts.most_common(3)}"
 

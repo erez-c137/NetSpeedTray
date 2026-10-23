@@ -32,6 +32,7 @@ from netspeedtray.core.widget_state import WidgetState as CoreWidgetState
 from netspeedtray.utils.config import ConfigManager as CoreConfigManager
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils.styles import set_app_reduce_motion
+from netspeedtray.utils import color_scheme
 from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.core.input_handler import InputHandler
 from netspeedtray.utils.taskbar_utils import (
@@ -169,8 +170,10 @@ class NetworkSpeedWidget(QWidget):
         self.current_font: QFont = None
         self.current_metrics: QFontMetrics = None
 
+        # Read the Windows (taskbar) mode before anything builds a RenderConfig, so the first frame
+        # paints in the right theme's colours. Nothing is written: the config holds both themes.
+        color_scheme.refresh_shell_theme()
         self._init_managers() # Initialize managers first
-        self.theme_manager.apply_theme_aware_defaults()
 
         # --- Declare all instance attributes for clarity ---
         self.widget_state: CoreWidgetState
