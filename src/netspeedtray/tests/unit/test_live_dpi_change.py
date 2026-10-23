@@ -200,3 +200,25 @@ def test_a_resize_reruns_when_qts_scale_for_the_widget_catches_up():
         assert check(tb) is True
         assert w.layout_manager.resize_widget_for_font.call_count == 1
         assert check(tb) is False                      # once
+
+
+def test_a_mirror_resizes_when_qts_scale_for_it_catches_up():
+    """The #434 mirrors share the layout manager but had their own dock check: after a live scale
+    change on a mirror's display it kept the size measured at Qt's old ratio. Same rule as the main
+    widget - re-size once when Qt's ratio moves, and only once."""
+    import types
+    from netspeedtray.views.widget.mirror import MirrorWidget
+    tb = _info(1.0)
+    with patch.object(TaskbarInfo, "get_edge_position", return_value=constants.taskbar.edge.BOTTOM):
+        sig = dock_signature(tb)
+        qt = {"dpr": 1.5}
+        m = types.SimpleNamespace(logger=MagicMock(), layout_manager=MagicMock(), _tag="mirror test",
+                                  _dock_sig_seen=sig, _identity_sig_seen="id", _qt_scale_seen=1.5,
+                                  _main_identity_signature=lambda: "id",
+                                  devicePixelRatioF=lambda: qt["dpr"])
+        check = types.MethodType(MirrorWidget._resize_if_needed, m)
+        assert check(tb) is False
+        qt["dpr"] = 1.0
+        assert check(tb) is True
+        assert m.layout_manager.resize_widget_for_font.call_count == 1
+        assert check(tb) is False
