@@ -563,15 +563,52 @@ class TestRealMirror:
                      if img.pixelColor(x, y).alpha() > 40)
         assert opaque > 20      # text was painted, not just the 1-alpha hit-test layer
 
-    def test_renderer_follows_the_main_renderer(self, real_mirror):
-        # NOTE #441 (colour scheme): it removes default_color's effect. Whichever of #434 / #441 merges
-        # second switches this test to default_color_dark / default_color_light.
+    @staticmethod
+    def _windows_mode(monkeypatch, light):
+        """Flip the Windows mode the way WidgetThemeManager.on_theme_changed sees it (#441)."""
+        from netspeedtray.utils import color_scheme
+        monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1 if light else 0)
+        color_scheme.refresh_shell_theme()
+
+    def test_renderer_follows_the_main_renderer(self, real_mirror, monkeypatch):
+        """#441: the text colour is a per-theme pair; the mirror picks up an edit of the CURRENT
+        half through the main renderer's rebuild."""
+        self._windows_mode(monkeypatch, light=False)
         main, m = real_mirror.main, real_mirror.mirror
         assert m.renderer is not main.renderer
-        main.config["default_color"] = "#123456"
+        main.config["default_color_dark"] = "#123456"
+        main.config["default_color_light"] = "#654321"
         main.renderer.update_config(main.config)
         m._sync_renderer()
         assert m.renderer.config.default_color.lower() == "#123456"
+
+    def test_theme_flip_repaints_the_mirror_in_the_new_half(self, real_mirror, monkeypatch):
+        """A Light/Dark flip: the theme manager rebuilds the MAIN renderer only; the mirror's next paint
+        re-resolves the scheme from main.config in the new mode - the same colours as the main widget."""
+        self._windows_mode(monkeypatch, light=False)
+        main, m = real_mirror.main, real_mirror.mirror
+        main.config["default_color_dark"] = "#EEEEEE"
+        main.config["default_color_light"] = "#111111"
+        main.renderer.update_config(main.config)
+        m._sync_renderer()
+        assert m.renderer.config.default_color.lower() == "#eeeeee"
+        self._windows_mode(monkeypatch, light=True)
+        main.renderer.update_config(main.config)          # what on_theme_changed does
+        m._sync_renderer()                                # what the mirror's paint does
+        assert m.renderer.config.default_color.lower() == "#111111"
+        assert m.renderer.config.default_color == main.renderer.config.default_color
+
+    def test_opaque_background_picks_its_own_half_on_the_mirror_too(self, real_mirror, monkeypatch):
+        """#441 backdrop_is_light: an opaque light background on a DARK taskbar takes the light half
+        (dark text) - on every copy, not only the main widget."""
+        self._windows_mode(monkeypatch, light=False)
+        main, m = real_mirror.main, real_mirror.mirror
+        main.config.update({"default_color_dark": "#FFFFFF", "default_color_light": "#000000",
+                            "background_color": "#EEEEEE", "background_opacity": 100})
+        main.renderer.update_config(main.config)
+        m._sync_renderer()
+        assert main.renderer.config.default_color.lower() == "#000000"
+        assert m.renderer.config.default_color == main.renderer.config.default_color
 
     def test_never_armed_as_the_shutdown_target(self, real_mirror):
         m = real_mirror.mirror
