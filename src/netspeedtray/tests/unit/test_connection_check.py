@@ -339,6 +339,29 @@ def test_copy_text_is_localised(q_app):
 
 # --- cancel stops the worker: no echo after stop -----------------------------------------------------
 
+def _stamp_stops(monkeypatch, before=None):
+    """Record when each ConnectionCheck.stop() has SET its flag - the moment from which no new echo
+    may leave. ``before(worker)`` runs first, standing in for whatever delays the stop request (a
+    quit handler held off the GIL). Returns the list of monotonic stamps."""
+    stamps = []
+    real_stop = CC.ConnectionCheck.stop
+
+    def stop(self):
+        if before is not None:
+            before(self)
+        real_stop(self)
+        stamps.append(time.monotonic())
+    monkeypatch.setattr(CC.ConnectionCheck, "stop", stop)
+    return stamps
+
+
+def _wait_for_hops(log, hops, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not set(hops) <= set(log.ips()) and time.monotonic() < deadline:
+        time.sleep(0.005)
+    return set(hops) <= set(log.ips())
+
+
 def test_cancel_stops_the_worker_with_no_further_echoes(q_app, monkeypatch):
     log = _PingLog(delay=0.1)
     monkeypatch.setattr(LP, "icmp_ping_ms", log)
@@ -346,7 +369,8 @@ def test_cancel_stops_the_worker_with_no_further_echoes(q_app, monkeypatch):
     finished = []
     w.check_finished.connect(lambda s: finished.append(s), type=Qt.ConnectionType.DirectConnection)
     w.start()
-    time.sleep(0.4)
+    assert _wait_for_hops(log, {GW, ANCHOR})        # really mid-check, however slow the start
+    time.sleep(0.2)
     t_stop = time.monotonic()
     w.stop()
     assert w.wait(3000)
@@ -366,15 +390,17 @@ def test_closing_the_sheet_stops_the_check(q_app, monkeypatch):
     from netspeedtray.views.monitor.connection_check import ConnectionCheckSheet
     sheet = ConnectionCheckSheet({"latency_public_enabled": True, "latency_public_host": ANCHOR},
                                  I18nStrings("en_US"), gateway_ip=GW)
+    stops = _stamp_stops(monkeypatch)
     w = sheet._worker
-    time.sleep(0.3)
+    assert _wait_for_hops(log, {GW, ANCHOR})
     assert w.isRunning() and set(log.ips()) == {GW, ANCHOR}   # really mid-check
     t_close = time.monotonic()
     sheet.reject()
     assert not w.isRunning()
     assert time.monotonic() - t_close < 0.05 + 0.25
+    assert stops, "closing the sheet must stop the worker"
     with log.lock:
-        assert not [ip for t, ip in log.log if t >= t_close]
+        assert not [ip for t, ip in log.log if t >= stops[0]], "echo sent after stop()"
 
 
 def test_stop_button_marks_the_check_stopped(q_app, monkeypatch):
@@ -382,15 +408,16 @@ def test_stop_button_marks_the_check_stopped(q_app, monkeypatch):
     monkeypatch.setattr(LP, "icmp_ping_ms", log)
     from netspeedtray.views.monitor.connection_check import ConnectionCheckSheet
     sheet = ConnectionCheckSheet({}, I18nStrings("en_US"), gateway_ip=GW)
+    stops = _stamp_stops(monkeypatch)
     w = sheet._worker
     assert sheet._run_btn.text() == "Stop"
-    time.sleep(0.2)
+    assert _wait_for_hops(log, {GW})
     assert w.isRunning() and log.ips()
-    t_click = time.monotonic()
     sheet._run_btn.click()
     assert w.wait(1000)
+    assert stops, "Stop must stop the worker"
     with log.lock:
-        assert not [ip for t, ip in log.log if t >= t_click]
+        assert not [ip for t, ip in log.log if t >= stops[0]], "echo sent after stop()"
     assert sheet._state == "stopped" and sheet._run_btn.text() == "Check again"
     assert "Stopped" in sheet._cards[CC.HOP_GATEWAY].status.text()
     sheet.done(0)
@@ -573,23 +600,95 @@ def _drain_deletes():
 
 def test_app_quit_with_the_sheet_open_stops_and_waits_the_worker(q_app, monkeypatch):
     """Tray Exit while the modal sheet runs: exec() returns without done(). aboutToQuit must stop and
-    wait the worker - a QThread destroyed while running aborts the whole process."""
+    wait the worker - a QThread destroyed while running aborts the whole process - and no echo may
+    leave once the stop is requested.
+
+    Measured from the stop request, not from the aboutToQuit emit: on a loaded CI runner the GUI
+    thread can be held off the GIL for 0.1-0.25 s between the two (the details thread's gc.collect),
+    and the worker's first echoes - legitimately sent before any stop - then landed "after quit"
+    (the rc.2 flake, runs 39864614225 / 39887458798). The echoes are in flight before the quit here,
+    so the wait bound below covers exactly one slow echo."""
     from PyQt6.QtWidgets import QApplication
     from netspeedtray.views.monitor.connection_check import ConnectionCheckSheet
     log = _PingLog(delay=0.3)                       # a slow echo, like a dead link's 1 s timeouts
     monkeypatch.setattr(LP, "icmp_ping_ms", log)
+    stops = _stamp_stops(monkeypatch)
     sheet = ConnectionCheckSheet({"latency_public_enabled": True, "latency_public_host": ANCHOR},
                                  I18nStrings("en_US"), gateway_ip=GW)
     w = sheet._worker
-    time.sleep(0.1)
+    assert _wait_for_hops(log, {GW, ANCHOR}), "both hops' first echo must be in flight"
     assert w.isRunning()
     t_quit = time.monotonic()
     QApplication.instance().aboutToQuit.emit()
     assert not w.isRunning(), "aboutToQuit must stop and wait the check"
     assert time.monotonic() - t_quit < 0.3 + 0.3
+    assert stops, "aboutToQuit must stop the worker"
     with log.lock:
-        assert not [ip for t, ip in log.log if t >= t_quit]
+        assert not [ip for t, ip in log.log if t >= stops[0]], "echo sent after stop()"
+        assert sorted(ip for _, ip in log.log) == sorted([GW, ANCHOR])   # only the in-flight pair
     _drain_deletes()
+
+
+def test_echoes_sent_before_a_delayed_quit_stop_are_not_after_stop(q_app, monkeypatch):
+    """The CI flake, made deterministic: the quit handler's stop() is held off until the worker has
+    sent its first echo on both hops (as when the GUI thread waits for the GIL). Those echoes are after
+    the aboutToQuit emit but BEFORE the stop request - not a leak - and nothing may follow the stop."""
+    from PyQt6.QtWidgets import QApplication
+    from netspeedtray.views.monitor.connection_check import ConnectionCheckSheet
+    log = _PingLog(delay=0.3)
+    monkeypatch.setattr(LP, "icmp_ping_ms", log)
+    gate = threading.Event()
+    real_resolve = LP._resolve_ipv4
+
+    def held_resolve(host):
+        gate.wait(5)                                # the worker is starved until quit has begun
+        return real_resolve(host)
+    monkeypatch.setattr(LP, "_resolve_ipv4", held_resolve)
+
+    def stalled_quit_handler(_w):
+        if not gate.is_set():
+            gate.set()
+            assert _wait_for_hops(log, {GW, ANCHOR})
+    stops = _stamp_stops(monkeypatch, before=stalled_quit_handler)
+    sheet = ConnectionCheckSheet({"latency_public_enabled": True, "latency_public_host": ANCHOR},
+                                 I18nStrings("en_US"), gateway_ip=GW)
+    w = sheet._worker
+    time.sleep(0.05)
+    assert w.isRunning() and not log.ips()
+    t_quit = time.monotonic()
+    QApplication.instance().aboutToQuit.emit()
+    assert not w.isRunning()
+    with log.lock:
+        assert sorted(ip for t, ip in log.log if t >= t_quit) == sorted([GW, ANCHOR])
+        assert not [ip for t, ip in log.log if t >= stops[0]], "echo sent after stop()"
+    _drain_deletes()
+
+
+@pytest.mark.parametrize("anchor", [None, ANCHOR])
+def test_stop_while_a_hop_waits_to_send_its_first_echo_sends_nothing(q_app, monkeypatch, anchor):
+    """The critical point: a burst that has passed its entry check and is held (here: in the DNS
+    resolve, which can take seconds on a broken resolver) when stop() arrives must re-check the stop
+    flag right before the first send - no echo at all, to the router or the public host."""
+    log = _PingLog()
+    monkeypatch.setattr(LP, "icmp_ping_ms", log)
+    entered, release = threading.Event(), threading.Event()
+    real_resolve = LP._resolve_ipv4
+    held = []
+
+    def held_resolve(host):
+        held.append(host)
+        if len(held) == (2 if anchor else 1):
+            entered.set()
+        release.wait(5)
+        return real_resolve(host)
+    monkeypatch.setattr(LP, "_resolve_ipv4", held_resolve)
+    w = CC.ConnectionCheck(GW, anchor, count=5, spacing_ms=10, timeout_ms=1000, lookup_gateway=False)
+    w.start()
+    assert entered.wait(5), "every hop must reach its resolve"
+    w.stop()
+    release.set()
+    assert w.wait(3000)
+    assert not log.ips(), f"echo sent after stop(): {log.ips()}"
 
 
 def test_a_running_worker_outlives_its_dropped_sheet(q_app, monkeypatch):
