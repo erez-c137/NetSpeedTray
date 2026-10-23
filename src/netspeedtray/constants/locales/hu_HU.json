@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "Elsődleges (automatikus)",
     "PREFERRED_MONITOR_ITEM": "{index}. monitor: {width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(elsődleges)",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "Megjelenítés az összes tálcán",
+    "SHOW_ON_ALL_TASKBARS_DESC": "A widget egy-egy példánya minden tálcán. Ehhez a Windows „Tálca megjelenítése az összes kijelzőn” beállítása szükséges.",
     "SETTINGS_NOT_CONNECTED_TAG": "(nincs csatlakoztatva)",
     "UPDATE_AVAILABLE_TITLE": "Frissítés érhető el",
     "UPDATE_DOWNLOADING_TITLE": "Frissítés letöltése",

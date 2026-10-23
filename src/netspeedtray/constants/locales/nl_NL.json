@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "Primair (automatisch)",
     "PREFERRED_MONITOR_ITEM": "Beeldscherm {index}: {width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(primair)",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "Op alle taakbalken weergeven",
+    "SHOW_ON_ALL_TASKBARS_DESC": "Een kopie van de widget op elke taakbalk. Vereist ‘Mijn taakbalk weergeven op alle beeldschermen’ in Windows.",
     "SETTINGS_NOT_CONNECTED_TAG": "(niet verbonden)",
     "UPDATE_AVAILABLE_TITLE": "Update beschikbaar",
     "UPDATE_DOWNLOADING_TITLE": "Update downloaden",

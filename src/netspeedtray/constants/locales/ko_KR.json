@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "기본 (자동)",
     "PREFERRED_MONITOR_ITEM": "모니터 {index}: {width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(기본)",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "모든 작업 표시줄에 표시",
+    "SHOW_ON_ALL_TASKBARS_DESC": "모든 작업 표시줄에 위젯을 하나씩 표시합니다. Windows의 '모든 디스플레이에 작업 표시줄 표시'가 켜져 있어야 합니다.",
     "SETTINGS_NOT_CONNECTED_TAG": "(연결 안 됨)",
     "UPDATE_AVAILABLE_TITLE": "업데이트 가능",
     "UPDATE_DOWNLOADING_TITLE": "업데이트 다운로드 중",

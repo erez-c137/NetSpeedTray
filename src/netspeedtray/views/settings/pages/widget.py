@@ -2,8 +2,8 @@
 Widget Settings Page (2.0 IA).
 
 Everything about the on-taskbar widget itself - how its stats are laid out (display mode + order),
-where it sits and how it behaves on the taskbar (preferred monitor, free-move, free-float,
-keep-visible-in-fullscreen), and the mini graph. These controls used to be scattered across the
+where it sits and how it behaves on the taskbar (preferred monitor, show on all taskbars, free-move,
+free-float, keep-visible-in-fullscreen), and the mini graph. These controls used to be scattered across the
 General page (behavior, preferred monitor), the Hardware page (layout) and the Appearance page (mini
 graph); the 2.0 IA and the 2.2 IA pass gather them here so "the widget" is one place.
 
@@ -95,6 +95,14 @@ class WidgetPage(QWidget):
             f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
         self.monitor_note.setVisible(False)
         layout.addWidget(self.monitor_note)
+
+        # "Show on all taskbars" (#229): a copy of the widget on every other taskbar. Right under
+        # Preferred Monitor, which still picks where the main widget (the one you can drag) docks.
+        self.show_on_all_taskbars = Win11Toggle(label_text="")
+        self.show_on_all_taskbars.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.SHOW_ON_ALL_TASKBARS_LABEL,
+                                     description=self.i18n.SHOW_ON_ALL_TASKBARS_DESC,
+                                     control=self.show_on_all_taskbars))
 
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
@@ -320,6 +328,8 @@ class WidgetPage(QWidget):
         idx = self.preferred_monitor_combo.findData(preferred_name)
         self.preferred_monitor_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
+        self.show_on_all_taskbars.setChecked(
+            config.get("show_on_all_taskbars", constants.config.defaults.DEFAULT_SHOW_ON_ALL_TASKBARS))
         self.free_move.setChecked(config.get("free_move", False))
         self.free_float.setChecked(config.get("free_float", True))
         self._sync_monitor_note()
@@ -340,6 +350,7 @@ class WidgetPage(QWidget):
                                     else getattr(self, "_stack_loaded", False),
             "widget_display_order": order,
             "preferred_monitor": self.preferred_monitor_combo.currentData(),
+            "show_on_all_taskbars": self.show_on_all_taskbars.isChecked(),
             "free_move": self.free_move.isChecked(),
             "free_float": self.free_float.isChecked(),
             "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
