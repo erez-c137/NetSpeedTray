@@ -396,9 +396,9 @@ def test_detailed_polylines_match_mains_algorithm(q_app, case, w, h):
 
 @pytest.mark.parametrize("is_hw", [False, True])
 def test_detailed_issues_mains_draw_calls(q_app, is_hw):
-    """Portable half, the painting: a recording painter must see main's sequence - opacity, Plus
-    composition for an alpha-120 -> 0 vertical gradient fill per series, then SourceOver and 1.5 px
-    round-join pens in the series colours (upload before download)."""
+    """Portable half, the painting: a recording painter must see main's sequence - opacity, SourceOver
+    composition (legibility "L" 2a: no additive glow) for an alpha-80 -> 0 vertical gradient fill per
+    series, then SourceOver and 1.5 px round-join pens in the series colours (upload before download)."""
     from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QPainter as QP
     hist, hw = _pinned_data()
@@ -413,7 +413,7 @@ def test_detailed_issues_mains_draw_calls(q_app, is_hw):
     names = [c[0] for c in painter.method_calls]
     painter.setOpacity.assert_called_once_with(pytest.approx(0.40))
     modes = [c.args[0] for c in painter.setCompositionMode.call_args_list]
-    assert modes == [QP.CompositionMode.CompositionMode_Plus, QP.CompositionMode.CompositionMode_SourceOver]
+    assert modes == [QP.CompositionMode.CompositionMode_SourceOver, QP.CompositionMode.CompositionMode_SourceOver]
     # Fills: one gradient polygon per series, drawn between the two composition-mode switches.
     plus_at, over_at = [i for i, n in enumerate(names) if n == "setCompositionMode"]
     assert [i for i, n in enumerate(names) if n == "drawPolygon"] and \
@@ -424,7 +424,7 @@ def test_detailed_issues_mains_draw_calls(q_app, is_hw):
     assert len(brushes) == len(colors)
     for brush, color in zip(brushes, colors):
         (p0, c0), (p1, c1) = brush.gradient().stops()
-        assert (p0, p1) == (0.0, 1.0) and (c0.alpha(), c1.alpha()) == (120, 0)
+        assert (p0, p1) == (0.0, 1.0) and (c0.alpha(), c1.alpha()) == (constants.renderer.DETAILED_FILL_ALPHA, 0)             == (80, 0)
         assert c0.name().lower() == color.lower()
     # Lines: drawn after SourceOver, one 1.5 px round-join pen per series, then restore.
     assert painter.drawPolyline.call_count == len(colors)

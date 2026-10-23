@@ -17,6 +17,20 @@ from netspeedtray.views.settings.pages._fluent import (
 from netspeedtray.views.settings.pages.units import UnitsPage
 from netspeedtray.views.settings.pages.colors import ColorsPage
 
+
+def _qt_family(family: str) -> str:
+    """The family Qt knows a configured font name by. The default is the family "Segoe UI Variable"
+    (7a) itself; a pre-release "Segoe UI Variable Text" (an optical size, not a family) resolves to it -
+    QFontDatabase lists no styles for the optical size (the weight slider went dead and every Apply saved
+    weight 400), and QFontDialog opened on Tahoma. Without the variable font (Windows 10) it is the
+    Segoe UI the widget really draws. Every other name is returned unchanged."""
+    try:
+        from netspeedtray.utils.widget_renderer import make_widget_font
+        return make_widget_font(family, 9, int(constants.fonts.WEIGHT_NORMAL)).family() or family
+    except Exception:
+        return family
+
+
 class AppearancePage(QWidget):
     layout_changed = pyqtSignal()
 
@@ -198,7 +212,7 @@ class AppearancePage(QWidget):
         # Main Font
         fam = config.get("font_family", constants.config.defaults.DEFAULT_FONT_FAMILY)
         self.font_family_label.setText(fam)
-        self.current_font.setFamily(fam)
+        self.current_font.setFamily(_qt_family(fam))
         self.font_size.setValue(int(config.get("font_size", constants.config.defaults.DEFAULT_FONT_SIZE)))
         self._update_weight_options(fam)
         self._set_slider_weight(config.get("font_weight", constants.fonts.WEIGHT_DEMIBOLD))
@@ -221,7 +235,7 @@ class AppearancePage(QWidget):
         self.use_separate_arrow_font.setChecked(bool(config.get("use_separate_arrow_font", False)))
         a_fam = config.get("arrow_font_family", fam) # Fallback to main
         self.arrow_font_family_label.setText(a_fam)
-        self.current_arrow_font.setFamily(a_fam)
+        self.current_arrow_font.setFamily(_qt_family(a_fam))
         
         main_size = int(config.get("font_size", constants.config.defaults.DEFAULT_FONT_SIZE))
         self.arrow_font_size.setValue(int(config.get("arrow_font_size", main_size)))
@@ -306,6 +320,7 @@ class AppearancePage(QWidget):
         self.on_change()
 
     def _update_weight_options(self, family: str):
+        family = _qt_family(family)
         styles = QFontDatabase.styles(family)
         weights = []
         name_map = {}

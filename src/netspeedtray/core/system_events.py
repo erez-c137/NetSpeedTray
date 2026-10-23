@@ -34,6 +34,12 @@ from netspeedtray.utils.win_event_hook import (
 _WM_SETTINGCHANGE = 0x001A
 # lParam of the WM_SETTINGCHANGE Windows broadcasts when the Light/Dark (or accent) theme changes.
 _IMMERSIVE_COLOR_SET = "ImmersiveColorSet"
+# High Contrast on/off and a contrast-theme switch (legibility "L", 4a): WM_SETTINGCHANGE with this
+# wParam, plus WM_SYSCOLORCHANGE for the new system colours. The accent colour itself (5a) also sends
+# WM_DWMCOLORIZATIONCOLORCHANGED. Each just triggers the deduped re-check (check_shell_theme).
+_SPI_SETHIGHCONTRAST = 0x0043
+_WM_SYSCOLORCHANGE = 0x0015
+_WM_DWMCOLORIZATIONCOLORCHANGED = 0x0320
 # Taskbar icon alignment (Settings > Personalization > Taskbar > Taskbar behaviors): 0 left/top,
 # 1 center (Win11's default when the value is absent).
 _EXPLORER_ADVANCED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
@@ -81,10 +87,14 @@ class _ImmersiveColorSetFilter(QAbstractNativeEventFilter):
             if eventType in (b"windows_generic_MSG", "windows_generic_MSG") and message is not None:
                 msg = _NativeMSG.from_address(int(message))
                 if msg.message == _WM_SETTINGCHANGE:
-                    if msg.lParam and ctypes.wstring_at(msg.lParam, len(_IMMERSIVE_COLOR_SET) + 1) == _IMMERSIVE_COLOR_SET + "\0":
+                    if msg.wParam == _SPI_SETHIGHCONTRAST or (
+                            msg.lParam and ctypes.wstring_at(msg.lParam, len(_IMMERSIVE_COLOR_SET) + 1)
+                            == _IMMERSIVE_COLOR_SET + "\0"):
                         self._on_change()
                     if self._on_any_setting is not None:
                         self._on_any_setting()
+                elif msg.message in (_WM_SYSCOLORCHANGE, _WM_DWMCOLORIZATIONCOLORCHANGED):
+                    self._on_change()
         except Exception:
             pass
         return False, 0
@@ -148,6 +158,8 @@ class SystemEventHandler(QObject):
         self._theme_signal_connected = False
         self._was_fullscreen = False  # last polled fullscreen state (edge detection)
         self._last_shell_light: Optional[int] = None  # last seen SystemUsesLightTheme (edge detection)
+        # Last seen High Contrast / accent-taskbar snapshot (utils/taskbar_appearance), same edge detection.
+        self._last_appearance = None
         self._theme_filter: Optional[_ImmersiveColorSetFilter] = None
         self._last_taskbar_alignment: Optional[int] = None  # last seen TaskbarAl (edge detection)
 
@@ -159,11 +171,14 @@ class SystemEventHandler(QObject):
         self._connect_color_scheme_signal()
         if self._last_shell_light is None:   # the baseline survives Explorer-restart stop()/start()
             self._last_shell_light = read_system_uses_light_theme()
+            self._last_appearance = color_scheme.read_taskbar_appearance(self._last_shell_light == 1)
             # The widget resolved its colours from the Windows mode it read at init (color_scheme's
             # cached flag); a flip between then and this baseline would be seen by neither, leaving
-            # the widget on the old theme until the next flip. Catch it up now.
-            if self._last_shell_light is not None and \
-                    (self._last_shell_light == 1) != color_scheme.shell_is_light():
+            # the widget on the old theme until the next flip. Catch it up now. Same for a High
+            # Contrast / accent-taskbar change in that window.
+            if (self._last_shell_light is not None and
+                    (self._last_shell_light == 1) != color_scheme.shell_is_light()) or \
+                    self._last_appearance != color_scheme.appearance():
                 self.logger.info("Windows mode changed during startup; re-applying the theme.")
                 self.theme_changed.emit()
         if self._last_taskbar_alignment is None:
@@ -527,13 +542,19 @@ class SystemEventHandler(QObject):
         if self._is_paused:
             return
         value = read_system_uses_light_theme()
-        if value is None or value == self._last_shell_light:
+        # High Contrast / the accent taskbar ride on the same check (legibility "L"): either one changing
+        # is a theme change too (a different text colour, graph hidden or not, a different bar colour).
+        appearance = color_scheme.read_taskbar_appearance(value == 1)
+        appearance_changed = self._last_appearance is not None and appearance != self._last_appearance
+        self._last_appearance = appearance
+        shell_changed = value is not None and value != self._last_shell_light
+        first = shell_changed and self._last_shell_light is None
+        if value is not None:
+            self._last_shell_light = value
+        if not appearance_changed and (not shell_changed or first):
             return
-        first = self._last_shell_light is None
-        self._last_shell_light = value
-        if first:
-            return
-        self.logger.info("Windows-mode theme changed (SystemUsesLightTheme=%s); emitting theme_changed.", value)
+        self.logger.info("Windows theme changed (SystemUsesLightTheme=%s, %s); emitting theme_changed.",
+                         value, appearance)
         self.theme_changed.emit()
 
     def check_taskbar_alignment(self) -> None:

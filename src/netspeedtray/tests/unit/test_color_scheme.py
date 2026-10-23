@@ -94,13 +94,24 @@ def test_every_themed_colour_has_a_dark_and_a_light_key():
         assert legacy not in D.DEFAULT_CONFIG, f"{legacy} is inert since 1.3"
 
 
-def test_dark_defaults_are_the_pre_scheme_colours():
-    """Nobody's dark-taskbar widget changes on upgrade (the #168 rule)."""
+def test_dark_defaults_are_the_pre_scheme_colours_but_the_legibility_ones():
+    """The dark-taskbar defaults are the pre-2.2 colours (the #168 rule), except where the legibility
+    package changed them on purpose: the High band (#00FF00 -> mint, migrated only from the factory
+    value), the unshipped Medium, and the muted upload line (7d)."""
     assert {s: D.THEMED_COLOR_DEFAULTS[s][0] for s in STEMS} == {
-        "default_color": "#FFFFFF", "high_speed_color": "#00FF00", "medium_speed_color": "#FFE14D",
-        "low_speed_color": "#FFA500", "graph_upload_color": constants.graph.UPLOAD_LINE_COLOR,
+        "default_color": "#FFFFFF", "high_speed_color": "#8CF2C3", "medium_speed_color": "#FFFF80",
+        "low_speed_color": "#FFA500", "graph_upload_color": "#6F86A6",
         "graph_download_color": constants.graph.DOWNLOAD_LINE_COLOR,
         "arrow_up_color": "#00FF00", "arrow_down_color": "#FFFFFF"}
+    # The Monitor window keeps its own (bright) upload colour.
+    assert constants.graph.UPLOAD_LINE_COLOR == "#4287F5"
+
+
+def test_light_defaults_are_the_legibility_ones():
+    assert {s: D.THEMED_COLOR_DEFAULTS[s][1] for s in STEMS} == {
+        "default_color": "#1B1B1B", "high_speed_color": "#145252", "medium_speed_color": "#764B0A",
+        "low_speed_color": "#57190F", "graph_upload_color": "#6A7FA3", "graph_download_color": "#1A7F4E",
+        "arrow_up_color": "#007A00", "arrow_down_color": "#1B1B1B"}
 
 
 @pytest.mark.parametrize("light", [False, True])
@@ -165,31 +176,72 @@ def test_ciede2000_matches_the_reference_pairs():
     assert _ciede2000("#FFE14D", "#00FF00") == pytest.approx(29.0, abs=0.05)
 
 
+# Machado, Oliveira & Fernandes 2009, severity 1.0, applied to linear RGB - the simulation the UI/UX
+# review used to pick the legibility package's bands.
+_CVD = {
+    "deuteranopia": ((0.367322, 0.860646, -0.227968), (0.280085, 0.672501, 0.047413),
+                     (-0.011820, 0.042940, 0.968881)),
+    "protanopia": ((0.152286, 1.052583, -0.204868), (0.114503, 0.786281, 0.099216),
+                   (-0.003882, -0.048116, 1.051998)),
+}
+
+
+def _simulate(hex_code: str, kind: str) -> str:
+    """``hex_code`` as a viewer with ``kind`` colour vision deficiency sees it."""
+    c = QColor(hex_code)
+    def lin(v):
+        v /= 255.0
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+    def enc(v):
+        v = max(0.0, min(1.0, v))
+        return 12.92 * v if v <= 0.0031308 else 1.055 * v ** (1 / 2.4) - 0.055
+    rgb = (lin(c.red()), lin(c.green()), lin(c.blue()))
+    out = [enc(sum(m * x for m, x in zip(row, rgb))) for row in _CVD[kind]]
+    return "#%02X%02X%02X" % tuple(round(v * 255) for v in out)
+
+
+_BANDS = ("low_speed_color", "medium_speed_color", "high_speed_color")
+
+
+@pytest.mark.parametrize("vision", ["normal", "deuteranopia", "protanopia"])
 @pytest.mark.parametrize("light", [False, True])
-def test_medium_is_distinct_from_low_and_high(light):
-    """A band you can't tell from its neighbour is no band: CIEDE2000 >= 15 from Low and from High."""
+def test_band_palette_stays_apart_for_every_viewer(light, vision):
+    """Legibility package "L": the three speed bands are pairwise CIEDE2000 >= 14 apart with normal
+    vision AND as deuteranopes / protanopes see them (the old light trio became one olive under
+    deuteranopia; dark Medium and High merged for red-green deficiency)."""
+    import itertools
     i = 1 if light else 0
-    medium, low, high = (D.THEMED_COLOR_DEFAULTS[s][i]
-                         for s in ("medium_speed_color", "low_speed_color", "high_speed_color"))
-    assert _ciede2000(medium, low) >= 15, (medium, low, _ciede2000(medium, low))
-    assert _ciede2000(medium, high) >= 15, (medium, high, _ciede2000(medium, high))
+    bands = [D.THEMED_COLOR_DEFAULTS[s][i] for s in _BANDS]
+    if vision != "normal":
+        bands = [_simulate(b, vision) for b in bands]
+    for a, b in itertools.combinations(bands, 2):
+        assert _ciede2000(a, b) >= 14, (vision, a, b, round(_ciede2000(a, b), 1))
 
 
-def test_the_medium_amber_reads_on_both_taskbars():
-    dark, light = D.THEMED_COLOR_DEFAULTS["medium_speed_color"]
-    assert (dark, light) == ("#FFE14D", "#7A6500")
-    # Amber: a hue between the Low orange and the High green, on both taskbars.
-    for i in (0, 1):
-        hues = [QColor(D.THEMED_COLOR_DEFAULTS[s][i]).hsvHue()
-                for s in ("low_speed_color", "medium_speed_color", "high_speed_color")]
-        assert hues[0] < hues[1] < hues[2], hues
-        assert 40 <= hues[1] <= 50
+@pytest.mark.parametrize("light", [False, True])
+def test_band_palette_reads_on_the_gate_backdrops(light):
+    """Every band >= 4.5:1 (body text) on #202020 / #2B2B2B (dark) or #EEEEEE / #E8E8E8 (light)."""
+    i = 1 if light else 0
+    for stem in _BANDS:
+        colour = D.THEMED_COLOR_DEFAULTS[stem][i]
+        for bg in (("#EEEEEE", "#E8E8E8") if light else ("#202020", "#2B2B2B")):
+            assert _contrast(colour, bg) >= 4.5, (stem, colour, bg, round(_contrast(colour, bg), 2))
 
 
-def test_the_render_guard_knows_the_new_light_defaults():
-    from netspeedtray.tests.unit.color_scheme_render_guard import TUNED_LIGHT, OLD_FACTORY
-    for stem, tuned in TUNED_LIGHT.items():
-        assert D.THEMED_COLOR_DEFAULTS[stem] == (OLD_FACTORY[stem], tuned), stem
+def test_band_palette_is_the_decided_one():
+    assert [D.THEMED_COLOR_DEFAULTS[s] for s in _BANDS] == [
+        ("#FFA500", "#57190F"), ("#FFFF80", "#764B0A"), ("#8CF2C3", "#145252")]
+
+
+def test_the_cvd_simulation_matches_the_review_script():
+    """Spot values from the UI/UX review's palette script (pal.py): it also passed the old light trio,
+    which it shows collapsing under deuteranopia - the reason for the change."""
+    assert _ciede2000(_simulate("#FFFF80", "deuteranopia"), _simulate("#8CF2C3", "deuteranopia")) \
+        == pytest.approx(19.8, abs=0.5)   # pal.py rounds the simulated sRGB differently
+    assert _ciede2000(_simulate("#57190F", "deuteranopia"), _simulate("#764B0A", "deuteranopia")) \
+        == pytest.approx(14.1, abs=0.5)
+    old_light = ("#A84600", "#7A6500", "#007A00")
+    assert _ciede2000(_simulate(old_light[1], "deuteranopia"), _simulate(old_light[2], "deuteranopia")) < 14
 
 
 # --------------------------------------------------------------------------- resolver
@@ -227,7 +279,7 @@ def test_a_missing_or_invalid_value_falls_back_to_that_themes_default(light, bad
 
 def test_the_light_override_ignores_the_cached_flag(shell):
     shell("dark")
-    assert color_scheme.resolve(D.DEFAULT_CONFIG, light=True)["arrow_down_color"] == "#000000"
+    assert color_scheme.resolve(D.DEFAULT_CONFIG, light=True)["arrow_down_color"] == "#1B1B1B"
     assert color_scheme.resolve(D.DEFAULT_CONFIG, light=False)["arrow_down_color"] == "#FFFFFF"
 
 
@@ -248,7 +300,7 @@ def test_the_first_render_config_on_a_light_taskbar_is_light(monkeypatch):
     monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1)
     monkeypatch.setattr(color_scheme, "_shell_light", None)
     rc = RenderConfig.from_dict(D.DEFAULT_CONFIG)
-    assert (rc.default_color, rc.arrow_down_color) == ("#000000", "#000000")
+    assert (rc.default_color, rc.arrow_down_color) == ("#1B1B1B", "#1B1B1B")
 
 
 def test_the_widget_reads_the_windows_mode_before_it_builds_a_renderer():
@@ -266,7 +318,7 @@ def test_an_automatic_text_colour_becomes_white_and_black(stored):
     """The flag decides, not the stored hex: an automatic user on a light taskbar has #000000 on disk
     (the old startup sync wrote it); copying it would make the dark-taskbar text black."""
     out = _migrate(_legacy(default_color=stored, color_is_automatic=True))
-    assert (out["default_color_dark"], out["default_color_light"]) == ("#FFFFFF", "#000000")
+    assert (out["default_color_dark"], out["default_color_light"]) == ("#FFFFFF", "#1B1B1B")
 
 
 @pytest.mark.parametrize("flag", [None, "yes", 1])
@@ -278,7 +330,7 @@ def test_a_missing_or_non_bool_automatic_flag_counts_as_automatic(flag):
     else:
         cfg["color_is_automatic"] = flag
     out = _migrate(cfg)
-    assert (out["default_color_dark"], out["default_color_light"]) == ("#FFFFFF", "#000000")
+    assert (out["default_color_dark"], out["default_color_light"]) == ("#FFFFFF", "#1B1B1B")
 
 
 def test_a_fixed_text_colour_is_kept_on_both_taskbars():
@@ -302,7 +354,7 @@ def test_factory_colours_take_the_readable_light_defaults():
     out = _migrate(_legacy())
     for stem in ("high_speed_color", "low_speed_color", "arrow_up_color", "arrow_down_color"):
         assert (out[f"{stem}_dark"], out[f"{stem}_light"]) == D.THEMED_COLOR_DEFAULTS[stem], stem
-    assert out["arrow_down_color_light"] == "#000000"
+    assert out["arrow_down_color_light"] == "#1B1B1B"
 
 
 def test_new_colours_and_medium_get_their_defaults():
@@ -318,7 +370,7 @@ def test_legacy_keys_stay_in_the_file_untouched_for_a_rollback():
     out = _migrate(before)
     for key in D.LEGACY_COLOR_KEYS:
         assert out[key] == before[key], key
-    assert out["config_version"] == "1.3"
+    assert out["config_version"] == D.CONFIG_SCHEMA_VERSION == "1.4"
 
 
 def test_the_migration_is_idempotent_and_keeps_newer_pairs():
@@ -340,7 +392,7 @@ def test_load_backs_up_the_1_2_file_once_and_persists_the_migration(tmp_path):
     bak = tmp_path / "NetSpeedTray_Config.json.bak.v1.2"
     assert bak.exists() and json.loads(bak.read_text(encoding="utf-8")) == original
     on_disk = json.loads(path.read_text(encoding="utf-8"))
-    assert on_disk["config_version"] == "1.3" and on_disk["default_color_light"] == "#151618"
+    assert on_disk["config_version"] == "1.4" and on_disk["default_color_light"] == "#151618"
     assert on_disk["default_color"] == "#151618" and on_disk["color_is_automatic"] is False
     assert loaded["default_color_dark"] == "#151618"
     bak.write_text("pristine", encoding="utf-8")
@@ -497,8 +549,8 @@ def test_a_windows_mode_flip_repaints_without_touching_the_config(q_app, shell, 
     assert widget.renderer.config.default_color == "#FFFFFF"
     monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1)   # the flip
     WidgetThemeManager(widget).on_theme_changed()
-    assert widget.renderer.config.default_color == "#000000"
-    assert widget.renderer._cached_pens["default"].color().name() == "#000000"
+    assert widget.renderer.config.default_color == "#1B1B1B"
+    assert widget.renderer._cached_pens["default"].color().name() == "#1b1b1b"
     assert config == snapshot, "the theme wrote into the config"
     widget.config_manager.save.assert_not_called()
     widget.update.assert_called()
@@ -574,12 +626,12 @@ def test_start_catches_up_a_flip_made_during_startup(q_app, monkeypatch, cached_
 
 # --- the Detailed fill over an opaque light background (review item 4) ------------------------------
 
-@pytest.mark.parametrize("bg,opacity,mode", [("#000000", 0, "Plus"), ("#EEEEEE", 0, "Plus"),
-                                             ("#202020", 100, "Plus"), ("#EEEEEE", 100, "SourceOver"),
+@pytest.mark.parametrize("bg,opacity,mode", [("#000000", 0, "SourceOver"), ("#EEEEEE", 0, "SourceOver"),
+                                             ("#202020", 100, "SourceOver"), ("#EEEEEE", 100, "SourceOver"),
                                              ("#FFFFFF", 40, "SourceOver")])
 def test_detailed_fill_blend_follows_the_backdrop(q_app, bg, opacity, mode):
-    """Additive fills vanish into white over an opaque light background; there they blend normally.
-    The transparent default and dark backgrounds keep Plus (byte-identical, see the render guard)."""
+    """Legibility package "L" (2a): the Detailed fill blends normally on every backdrop. The additive
+    (Plus) glow it had brightened the area behind white text and vanished over a light background."""
     from PyQt6.QtGui import QPainter as QP
     from netspeedtray.tests.unit.color_scheme_render_guard import _metrics
     r = WidgetRenderer(dict(D.DEFAULT_CONFIG, graph_enabled=True, graph_style="detailed",
@@ -618,7 +670,7 @@ def test_the_split_is_where_black_and_white_contrast_equally():
                                               shell_light) is False    # luminance 0.178
 
 
-@pytest.mark.parametrize("bg,shell,text", [("#EEEEEE", "dark", "#000000"), ("#202020", "light", "#FFFFFF")])
+@pytest.mark.parametrize("bg,shell,text", [("#EEEEEE", "dark", "#1B1B1B"), ("#202020", "light", "#FFFFFF")])
 def test_text_on_an_opaque_background_reads(shell, bg, text, monkeypatch):
     monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1 if shell == "light" else 0)
     color_scheme.refresh_shell_theme()
@@ -628,7 +680,7 @@ def test_text_on_an_opaque_background_reads(shell, bg, text, monkeypatch):
 
 
 def test_a_transparent_background_still_follows_the_taskbar(monkeypatch):
-    for value, text in ((0, "#FFFFFF"), (1, "#000000")):
+    for value, text in ((0, "#FFFFFF"), (1, "#1B1B1B")):
         monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda v=value: v)
         color_scheme.refresh_shell_theme()
         assert RenderConfig.from_dict(dict(D.DEFAULT_CONFIG, background_color="#EEEEEE",

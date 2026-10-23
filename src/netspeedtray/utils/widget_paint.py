@@ -17,10 +17,11 @@ a `RenderConfig`, and the snapshot, and draws. That keeps it trivially testable 
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
-from PyQt6.QtCore import QRect, QRectF, Qt
+from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QImage
 
 from netspeedtray import constants
@@ -78,7 +79,8 @@ def font_from_config(config: Dict[str, Any]) -> QFont:
             weight_val.lower(), QFont.Weight.Normal)
     else:
         weight = QFont.Weight.Normal
-    return QFont(family, int(size), weight)
+    from netspeedtray.utils.widget_renderer import make_widget_font
+    return make_widget_font(family, int(size), weight)
 
 
 def demo_metrics() -> WidgetMetrics:
@@ -212,7 +214,7 @@ def stacked_segment_height(key: str, line_height: int, ram_enabled: bool, vram_e
 # A side taskbar is as narrow as its thickness (44 px inside the margins on Win11's Default 48 px bar,
 # 28 on Small). Today's classic readout needs ~83 px, so instead of a "side bar" switch the widget
 # climbs down a ladder until its content fits the measured width:
-#   T0 classic (today's layout, unchanged)        T1 arrow + compact number + short unit inline
+#   T0 classic (today's layout, unchanged)        T1 arrow + compact number + unit inline
 #   T2 arrow + compact number per row + unit row  T3 T2 with whole numbers from 10 up
 #   T4 no arrows                                  T5 nothing fits: T4 clipped (logged once)
 # ONE pure function decides it, from font metrics and reference strings only, for both the layout's
@@ -229,7 +231,10 @@ class SideBarFit(NamedTuple):
     tier: int                 # TIER_* for the network readout
     hw_full_fits: bool        # today's hardware rows (with temps/power/memory) fit the width
     hw_inline: bool           # compact CPU/GPU rows: icon + percent on one row (else icon over value)
-    unit_short: bool          # the shared unit row uses the short labels (the configured ones don't fit)
+    # Always False since 2.2 rc.2 (7e): "49 Mb" read as megabits OR megabytes, so the compact readout
+    # keeps the configured (unambiguous) label and the unit row steps its font down instead. Kept so a
+    # SideBarFit still unpacks the same.
+    unit_short: bool
     classic: bool             # today's layout fits as a whole - draw exactly what 2.2 did
     hides_hardware: bool      # enabled hardware (or its memory/temps/power) is off the bar -> hover card
     hides_identity: bool      # the Wi-Fi identity badge is off the bar -> hover card
@@ -335,7 +340,6 @@ def side_bar_fit(config: RenderConfig, metrics: Any, arrow_metrics: Any, i18n: A
     # T0: today's two-row readout (draw_network_speeds) - same columns it pins.
     from netspeedtray.utils.helpers import get_reference_value_string, compact_speed_reference_strings
     labels = _unit_labels(i18n, config.unit_type, config.short_unit_labels)
-    short_labels = _unit_labels(i18n, config.unit_type, True)
     classic_w = (arrow_w + (constants.renderer.ARROW_NUMBER_GAP if show_arrows else 0)
                  + fm.horizontalAdvance(get_reference_value_string(False, config.decimal_places, config.unit_type))
                  + ((constants.renderer.VALUE_UNIT_GAP + _max_w(fm, labels)) if show_units else 0)
@@ -345,7 +349,8 @@ def side_bar_fit(config: RenderConfig, metrics: Any, arrow_metrics: Any, i18n: A
     num_dec = _max_w(fm, compact_speed_reference_strings(config.decimal_places, False, sep))
     num_whole = _max_w(fm, compact_speed_reference_strings(config.decimal_places, True, sep))
     ag = constants.renderer.COMPACT_ARROW_GAP_PX if show_arrows else 0
-    inline_unit_w = (constants.renderer.COMPACT_UNIT_GAP_PX + _max_w(fm, short_labels)) if show_units else 0
+    # The configured label, never the short one (7e): inline only when "Mbps" / "MB/s" itself fits.
+    inline_unit_w = (constants.renderer.COMPACT_UNIT_GAP_PX + _max_w(fm, labels)) if show_units else 0
     if classic_w <= inner:
         tier = TIER_CLASSIC
     elif arrow_w + ag + num_dec + inline_unit_w <= inner:
@@ -358,7 +363,7 @@ def side_bar_fit(config: RenderConfig, metrics: Any, arrow_metrics: Any, i18n: A
         tier = TIER_NO_ARROWS
     else:
         tier = TIER_CLIP
-    unit_short = bool(show_units and not config.short_unit_labels and _max_w(fm, labels) > inner)
+    unit_short = False   # 7e: see SideBarFit.unit_short
 
     # Hardware: today's rows as the side bar stacks them, else compact "[icon] 37%" rows.
     mem_ref = _mem_reference(mem_totals)
@@ -503,7 +508,8 @@ def _draw_side_compact(painter: QPainter, renderer: WidgetRenderer, width: int, 
             painter.restore()
             renderer.draw_network_compact(painter, up_bytes, dw_bytes, width, rect.height(), config,
                                           fit, y_offset=rect.y(), only_upload=is_up, unit_row=False)
-        renderer.draw_split_divider(painter, rects, config)
+        with renderer.graph_layer(painter) as gp:
+            renderer.draw_split_divider(gp, rects, config)
         if unit_rows:
             renderer.draw_network_compact(painter, up_bytes, dw_bytes, width, line + 2 * m, config, fit,
                                           y_offset=rects[1].bottom() + 1, unit_only=True)
@@ -783,11 +789,170 @@ def _render_widget_content(painter: QPainter, rect: QRect, renderer: WidgetRende
         network_width: width of the network segment for side_by_side graph scoping.
         font: font to apply before drawing foreground text.
     """
+    renderer.reset_content_bounds()   # accumulate this paint's segment union for menu centering
+    # The background goes straight onto the target, before and apart from the layers below: the halo
+    # only ever erases the GRAPH, never the widget's own background (opacity > 0).
+    renderer.draw_background(painter, rect, config)
+
+    layers = _HaloLayers.begin(painter, renderer) if _halo_wanted(config) else None
+    if layers is None:
+        _draw_content(painter, rect, renderer, config, metrics, layout_mode=layout_mode,
+                      cycle_mode=cycle_mode, network_width=network_width, font=font)
+        return
+    renderer._graph_painter = layers.graph_painter
+    try:
+        _draw_content(layers.text_painter, rect, renderer, config, metrics, layout_mode=layout_mode,
+                      cycle_mode=cycle_mode, network_width=network_width, font=font)
+    finally:
+        renderer._graph_painter = None
+        layers.finish(painter)
+
+
+def _halo_wanted(config: RenderConfig) -> bool:
+    """Layers (and so the erasing halo) only when a graph can sit under the text; never in High
+    Contrast, where the graph is hidden anyway."""
+    return bool(config.graph_enabled) and not getattr(config, "high_contrast", False)
+
+
+class _HaloLayers:
+    """The erasing halo (legibility package "L", item 1).
+
+    While a frame is painted, the mini graph (renderer.graph_layer) goes into GRAPH and everything else -
+    text, arrows, units, icons, badges - into TEXT: two transparent premultiplied images the size of the
+    target in device pixels (device-pixel-ratio aware, so the halo scales with the display). ``finish``
+    then erases a soft outline of the text from GRAPH (CompositionMode_DestinationOut) and draws GRAPH,
+    then TEXT, onto the target. The taskbar itself shows through around every glyph, whatever its colour
+    (solid, Mica, accent), so no colour has to be guessed - and nothing is erased from the widget's own
+    background, which the caller drew onto the target first.
+
+    The outline comes from the text exactly as it was rasterised (TEXT's alpha), not from glyph paths:
+    every run - including the hardware icons, the identity badge and a stepped-down unit row - is covered
+    without each call site reporting it, and the halo can never drift from the hinted glyph it surrounds.
+    Each frame's text differs (the numbers), so there is nothing worth caching but the two images, which
+    are reused while the target size and pixel ratio stay the same.
+    """
+
+    def __init__(self, graph: QImage, text: QImage, mask: QImage, ring: QImage,
+                 gp: QPainter, tp: QPainter) -> None:
+        self.graph_image, self.text_image, self.mask_image, self.ring_image = graph, text, mask, ring
+        self.graph_painter, self.text_painter = gp, tp
+
+    @classmethod
+    def begin(cls, painter: QPainter, renderer: WidgetRenderer) -> Optional["_HaloLayers"]:
+        try:
+            dev = painter.device()
+            if dev is None:
+                return None
+            w, h, dpr = int(dev.width()), int(dev.height()), float(dev.devicePixelRatioF() or 1.0)
+            if w <= 0 or h <= 0:
+                return None
+            key = (w, h, dpr)
+            cached = getattr(renderer, "_halo_images", None)
+            if cached is None or cached[0] != key:
+                def make() -> QImage:
+                    img = QImage(max(1, math.ceil(w * dpr)), max(1, math.ceil(h * dpr)),
+                                 QImage.Format.Format_ARGB32_Premultiplied)
+                    img.setDevicePixelRatio(dpr)
+                    return img
+                cached = (key, make(), make(), make(), make())
+                renderer._halo_images = cached
+            _key, graph, text, mask, ring = cached
+            graph.fill(Qt.GlobalColor.transparent)
+            text.fill(Qt.GlobalColor.transparent)
+            gp, tp = QPainter(graph), QPainter(text)
+            for p in (gp, tp):
+                p.setRenderHints(painter.renderHints())
+                p.setWorldTransform(painter.worldTransform())
+                p.setFont(painter.font())
+            return cls(graph, text, mask, ring, gp, tp)
+        except Exception:
+            return None
+
+    def finish(self, painter: QPainter) -> None:
+        for p in (self.graph_painter, self.text_painter):
+            if p.isActive():
+                p.end()
+        try:
+            _erase_halo(self.graph_image, halo_mask(self.text_image, self.mask_image, self.ring_image))
+        except Exception:
+            pass   # a failed erase still paints the frame - without the halo, as before 2.2
+        _composite_layers(painter, self.graph_image, self.text_image)
+
+
+def _halo_rings() -> List[Tuple[float, float]]:
+    """(radius px, strength) of the stamped rings: fully erased out to HALO_RADIUS_PX, then fading over
+    HALO_FEATHER_PX (strength 1 -> ~0)."""
+    r, f = constants.renderer.HALO_RADIUS_PX, constants.renderer.HALO_FEATHER_PX
+    return [(r * 0.5, 1.0), (r, 1.0), (r + f * 0.5, 0.6), (r + f, 0.3)]
+
+
+def halo_mask(text: QImage, mask: Optional[QImage] = None, ring: Optional[QImage] = None) -> QImage:
+    """The halo's coverage for ``text`` (a transparent premultiplied image of the frame's text): its
+    alpha dilated by HALO_RADIUS_PX at full strength, then feathered over HALO_FEATHER_PX. A union of
+    copies of the text stamped around circles (premultiplied source-over saturates towards 1), so it is
+    exactly as soft as the antialiased glyph edges it grows from."""
+    def blank() -> QImage:
+        img = QImage(text.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        img.setDevicePixelRatio(text.devicePixelRatio())
+        return img
+    mask = mask if mask is not None and mask.size() == text.size() else blank()
+    ring = ring if ring is not None and ring.size() == text.size() else blank()
+    mask.setDevicePixelRatio(text.devicePixelRatio())
+    ring.setDevicePixelRatio(text.devicePixelRatio())
+    mask.fill(Qt.GlobalColor.transparent)
+    n = max(4, int(constants.renderer.HALO_DIRECTIONS))
+    dirs = [(math.cos(2 * math.pi * k / n), math.sin(2 * math.pi * k / n)) for k in range(n)]
+    mp = QPainter(mask)
+    mp.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    mp.drawImage(QPointF(0, 0), text)
+    for radius, strength in _halo_rings():
+        if strength >= 1.0:
+            target = mp
+        else:
+            ring.fill(Qt.GlobalColor.transparent)
+            target = QPainter(ring)
+            target.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        for dx, dy in dirs:
+            target.drawImage(QPointF(dx * radius, dy * radius), text)
+        if target is not mp:
+            target.end()
+            # Under what is already covered: the inner (stronger) rings keep their strength.
+            mp.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOver)
+            mp.setOpacity(strength)
+            mp.drawImage(QPointF(0, 0), ring)
+            mp.setOpacity(1.0)
+            mp.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+    mp.end()
+    return mask
+
+
+def _erase_halo(graph: QImage, mask: QImage) -> None:
+    """Erase ``mask`` (halo_mask of the frame's text) from ``graph``, in place."""
+    p = QPainter(graph)
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
+    p.drawImage(QPointF(0, 0), mask)
+    p.end()
+
+
+def _composite_layers(painter: QPainter, graph: QImage, text: QImage) -> None:
+    """Draw the haloed graph, then the text, onto the target (its own opacity - the paused dimming -
+    applies to both, as it did when they were painted straight onto it)."""
+    painter.save()
+    try:
+        painter.resetTransform()
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        painter.drawImage(QPointF(0, 0), graph)
+        painter.drawImage(QPointF(0, 0), text)
+    finally:
+        painter.restore()
+
+
+def _draw_content(painter: QPainter, rect: QRect, renderer: WidgetRenderer, config: RenderConfig,
+                  metrics: WidgetMetrics, *, layout_mode: str, cycle_mode: str,
+                  network_width: Optional[int], font: Optional[QFont]) -> None:
+    """Everything over the background: the mini graph (to renderer.graph_layer) and the foreground."""
     width, height = rect.width(), rect.height()
     mode = _resolve_mode(config, cycle_mode)
-
-    renderer.reset_content_bounds()   # accumulate this paint's segment union for menu centering
-    renderer.draw_background(painter, rect, config)
 
     if layout_mode == "vertical":
         # A side taskbar is only as wide as the bar: climb down the "fits" ladder when today's layout
@@ -819,6 +984,8 @@ def _render_widget_content(painter: QPainter, rect: QRect, renderer: WidgetRende
     # throwaway surface (the mini-graph's point cache, keyed by data, is simply warmed by it).
     align_dx = 0
     if (mode == "side_by_side" or config.widget_display_mode == "cycle") and layout_mode != "vertical" and width > 0:
+        stashed_graph_painter = getattr(renderer, "_graph_painter", None)
+        renderer._graph_painter = None   # the probe measures text only: no graph into the live layer
         try:
             probe = QImage(max(1, width), max(1, height), QImage.Format.Format_ARGB32_Premultiplied)
             mp = QPainter(probe)
@@ -841,6 +1008,7 @@ def _render_widget_content(painter: QPainter, rect: QRect, renderer: WidgetRende
         except Exception:
             align_dx = 0
         finally:
+            renderer._graph_painter = stashed_graph_painter
             renderer.reset_content_bounds()
 
     if align_dx > 0:
