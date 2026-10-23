@@ -176,3 +176,27 @@ def test_a_timed_out_probe_while_yielded_keeps_the_yield(rig, layout):
                       return_value=taskbar_utils._layout_state["started"] + 99):
         r.y._poll_probe()                             # "re-check timed out after 5 s"
     assert r.y.yielded and r.changes == 1 and r.pending_probe()
+
+
+# --- bug 2, second half: Qt catches up with the OS after the re-size --------------------------------
+
+def test_a_resize_reruns_when_qts_scale_for_the_widget_catches_up():
+    """The OS scale (the dock signature) and Qt's device pixel ratio for the widget change at
+    different moments; a re-size in between measured the text at the old scale (VM: 87 px at 100%
+    after 100 -> 150 -> 100, fresh start 85). Once Qt's ratio moves, re-size once more - and only once."""
+    import types
+    from netspeedtray.views.widget import main as widget_main
+    tb = _info(1.0)
+    with patch.object(TaskbarInfo, "get_edge_position", return_value=constants.taskbar.edge.BOTTOM):
+        sig = dock_signature(tb)
+        qt = {"dpr": 1.5}                              # Qt still on 150% when the OS said 100%
+        w = types.SimpleNamespace(logger=MagicMock(), layout_manager=MagicMock(), position_manager=MagicMock(),
+                                  _dock_sig_seen=sig, _qt_scale_seen=1.5,
+                                  devicePixelRatioF=lambda: qt["dpr"])
+        w.position_manager.is_free_float_active.return_value = False
+        check = types.MethodType(widget_main.NetworkSpeedWidget._resize_if_dock_changed, w)
+        assert check(tb) is False                      # nothing moved
+        qt["dpr"] = 1.0                                # Qt catches up
+        assert check(tb) is True
+        assert w.layout_manager.resize_widget_for_font.call_count == 1
+        assert check(tb) is False                      # once

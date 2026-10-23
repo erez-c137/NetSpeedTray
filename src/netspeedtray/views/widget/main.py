@@ -139,6 +139,16 @@ def hover_hint_text(i18n, config: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def widget_qt_scale(widget: Any) -> Optional[float]:
+    """Qt's device pixel ratio for ``widget``'s window right now, rounded (None when it can't be read).
+    What the font metrics the layout measures with follow - not always in step with the OS scale."""
+    try:
+        fn = getattr(widget, "devicePixelRatioF", None)
+        return round(float(fn()), 3) if callable(fn) else None
+    except Exception:
+        return None
+
+
 class NetworkSpeedWidget(QWidget):
     """Main widget for displaying network speeds near the Windows system tray."""
 
@@ -187,6 +197,7 @@ class NetworkSpeedWidget(QWidget):
         self.monitor_thread: StatsMonitorThread
         self._cached_layout_mode: str = 'horizontal'  # taskbar-edge orientation; updated on taskbar changes
         self._dock_sig_seen: Optional[tuple] = None  # last taskbar dock_signature seen (#322)
+        self._qt_scale_seen: Optional[float] = None  # Qt's device pixel ratio the size was measured at
         self.monitor_window = None  # unified Monitor (Overview / Network / Hardware), lazy
         self.update_checker: Optional[UpdateChecker] = None
         self.app_icon: QIcon
@@ -2752,8 +2763,22 @@ class NetworkSpeedWidget(QWidget):
             if self.position_manager is not None and self.position_manager.is_free_float_active():
                 return False   # a free-floating widget isn't sized to a taskbar (#188)
             sig = dock_signature(taskbar_info)
-            if sig is None or sig == self._dock_sig_seen:
-                return False   # fallback taskbar now, or nothing changed
+            if sig is None:
+                return False   # fallback taskbar now
+            qt_scale = widget_qt_scale(self)
+            if sig == self._dock_sig_seen:
+                # Same dock - but a live display-scale change reaches the OS (the signature) and Qt (the
+                # widget's own device pixel ratio, which the font metrics follow) at different moments: a
+                # re-size run in between measured the text at the old scale (rc.2 live run: 87 px wide
+                # at 100% after 100 -> 150 -> 100, a fresh start is 85). Re-size once Qt catches up.
+                seen = getattr(self, "_qt_scale_seen", None)
+                if qt_scale is None or seen is None or abs(qt_scale - seen) < 1e-3:
+                    return False   # nothing changed
+                self._qt_scale_seen = qt_scale   # a failed resize can't retry every tick
+                self.logger.info("Display scale for the widget changed %s -> %s; re-sizing the widget.",
+                                 seen, qt_scale)
+                self.layout_manager.resize_widget_for_font()   # ends with update_position()
+                return True
             prev, self._dock_sig_seen = self._dock_sig_seen, sig   # a failed resize can't retry every tick
             self.logger.info("Taskbar dock geometry changed %s -> %s; re-sizing the widget.", prev, sig)
             self.layout_manager.resize_widget_for_font()   # ends with update_position()
