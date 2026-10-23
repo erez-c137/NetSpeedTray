@@ -112,6 +112,11 @@ try:
     _WM_NST_SHUTDOWN = shutdown_channel.shutdown_message_id()
 except Exception:
     _WM_NST_SHUTDOWN = 0
+# A second launch's "show yourself" (#234, rc.2 W14) - same channel, same 0 guard.
+try:
+    _WM_NST_ACTIVATE = shutdown_channel.activate_message_id()
+except Exception:
+    _WM_NST_ACTIVATE = 0
 
 
 # double_click_action -> the i18n key of its Settings label (the same words the user picked it by).
@@ -249,6 +254,7 @@ class NetworkSpeedWidget(QWidget):
         self._is_context_menu_visible: bool = False
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         self._taskbar_lost_count: int = 0
+        self._no_taskbar_ticks: int = 0   # consecutive refreshes holding for a missing taskbar (W5)
         self._will_quit_app: bool = False # Flag to distinguish hide vs exit
         self._shutdown_armed_hwnd: int = 0  # HWND the --shutdown channel was armed on
         
@@ -400,8 +406,10 @@ class NetworkSpeedWidget(QWidget):
             self.layout_manager.init_font()
 
         try:
-            # Position Manager
-            taskbar_info = get_taskbar_info()
+            # Position Manager. The widget's OWN taskbar from the start (preferred monitor, #72): a bare
+            # get_taskbar_info() seeded the primary's, which the owner fallback and every read of
+            # _state.taskbar_info before the first refresh then used (rc.2 W12).
+            taskbar_info = get_taskbar_info(preferred_screen_name=self.config.get("preferred_monitor"))
             window_state = WindowState(
                 config=self.config,
                 widget=self,
@@ -480,6 +488,21 @@ class NetworkSpeedWidget(QWidget):
 
             # #188: is the preferred monitor a taskbar-less display we should free-float on?
             free_float_active = self.position_manager.refresh_float_state() is not None
+
+            # No taskbar at all (Explorer restarting, rc.2 W5): hide and keep the last position until
+            # the new taskbar exists, rather than float at the screen-fallback spot. Bounded - past
+            # TASKBAR_ABSENT_HOLD_MS the old fallback applies. `is True`: a mocked manager is not.
+            # Debounced (#440 review L5): the first no-taskbar tick only holds the position; the widget
+            # hides from the second consecutive one, so one transient failed lookup can't flicker it.
+            if not free_float_active and self.position_manager.holding_for_taskbar(taskbar_info) is True:
+                ticks = getattr(self, "_no_taskbar_ticks", 0)
+                ticks = (ticks if isinstance(ticks, int) else 0) + 1
+                self._no_taskbar_ticks = ticks
+                if ticks >= constants.timeouts.TASKBAR_ABSENT_HIDE_AFTER_TICKS and self.isVisible():
+                    self.dismiss_hover_card()
+                    self.setVisible(False)
+                return
+            self._no_taskbar_ticks = 0
 
             # Allow user override to keep widget visible even when a fullscreen window is present
             keep_visible = self.config.get("keep_visible_fullscreen", False)
@@ -2065,6 +2088,10 @@ class NetworkSpeedWidget(QWidget):
                     self.logger.info("Shutdown requested by another process (installer/--shutdown) - exiting cleanly.")
                     QTimer.singleShot(0, self.fully_exit_application)
                     return True, 0
+                if _WM_NST_ACTIVATE and msg.message == _WM_NST_ACTIVATE:
+                    # A second launch (#234): deferred out of the native dispatch like the shutdown.
+                    QTimer.singleShot(0, self.show_from_second_launch)
+                    return True, 0
                 if msg.message == _WM_QUERYENDSESSION or (msg.message == _WM_ENDSESSION and msg.wParam):
                     # Logoff / shutdown / restart. The normal quit path (closeEvent -> cleanup) never
                     # runs: Windows terminates us soon after WM_ENDSESSION returns, so the essential
@@ -2153,13 +2180,63 @@ class NetworkSpeedWidget(QWidget):
                             'tray_offset_x': defaults.DEFAULT_TRAY_OFFSET_X,
                             'tray_offset_y': defaults.DEFAULT_TRAY_OFFSET_Y})
 
+    def show_from_second_launch(self) -> None:
+        """
+        The app was launched again while running (#234, rc.2 W14; the second process posts
+        ACTIVATE_MESSAGE_NAME and exits). Bring the widget back however it was lost: hidden -> shown;
+        re-placed and re-docked to the current taskbar; still off-screen -> the docked spot for this
+        session (nothing saved is cleared); re-seated above the taskbar if it was buried, with the
+        burial backoff forgotten so nothing defers it. The 1 s refresh then applies the usual rules
+        (an auto-hidden taskbar still hides it). A fullscreen app keeps it hidden, as always - unless
+        Keep visible in fullscreen is on. Never opens a window: a duplicate Run-key start at sign-in
+        must stay invisible.
+        """
+        try:
+            pm = getattr(self, "position_manager", None)
+            if pm is None:
+                return
+            self.logger.info("Another launch asked the widget to show itself (visible=%s).", self.isVisible())
+            handler = getattr(self, "system_event_handler", None)
+            if (handler is not None and handler.is_fullscreen_active()
+                    and not self.config.get("keep_visible_fullscreen", False)):
+                self.logger.info("A fullscreen app is active - the widget comes back when it ends.")
+                return
+            self._taskbar_lost_count = 0
+            if not self.isVisible():
+                self.setVisible(True)
+            pm.reset_reseat_state()
+            pm.update_position()   # a saved spot on a monitor that is gone already falls back here
+            if self._is_off_screen():
+                # Still nowhere visible: the docked spot for THIS session only. Nothing saved is
+                # cleared - a duplicate start at sign-in can beat a slow monitor that holds the
+                # saved Free Move spot (#440 review L3); Reset position stays the explicit choice.
+                self.logger.info("The widget was off-screen - showing it at its docked spot for now.")
+                pm.move_to_default_for_session()
+            pm.ensure_topmost()
+            if pm.is_buried_behind_taskbar():
+                pm.reseat_above_taskbar()
+            QTimer.singleShot(0, self._execute_refresh)
+        except Exception as e:
+            self.logger.error("Bringing the widget back for a second launch failed: %s", e, exc_info=True)
+
+    def _is_off_screen(self) -> bool:
+        """True when the widget's centre is on no connected screen (e.g. a saved spot on an unplugged
+        monitor, or a stray position from elsewhere)."""
+        try:
+            return QApplication.screenAt(self.frameGeometry().center()) is None
+        except Exception:
+            return False
+
     def has_custom_position(self) -> bool:
         """Whether the widget sits where the user put it (a drag, or a saved free-move spot) - the
         tray menu offers Reset position only then."""
         defaults = constants.config.defaults
         cfg = self.config or {}
+        offset_x = cfg.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X)
+        # An older release's default offset (10 / 1 / 3) is not a move the user made (rc.2 W6).
+        default_x = offset_x == defaults.DEFAULT_TRAY_OFFSET_X or offset_x in defaults.LEGACY_DEFAULT_TRAY_OFFSETS_X
         return (cfg.get('position_x') is not None or cfg.get('position_y') is not None
-                or cfg.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X) != defaults.DEFAULT_TRAY_OFFSET_X
+                or not default_x
                 or cfg.get('tray_offset_y', defaults.DEFAULT_TRAY_OFFSET_Y) != defaults.DEFAULT_TRAY_OFFSET_Y)
 
     def _maybe_show_side_no_room_notice(self) -> None:

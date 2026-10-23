@@ -84,8 +84,12 @@ def _set_click_through(widget: QWidget, through: bool) -> bool:
         if new != ex:
             user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, new)
             # SetWindowLongW's return value can't tell failure from a previous style of 0: read back.
-            if bool(user32.GetWindowLongW(hwnd, _GWL_EXSTYLE) & _WS_EX_TRANSPARENT) != bool(through):
-                _warn_click_through_failed(through, f"style still 0x{ex & 0xFFFFFFFF:08X}")
+            after = user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+            if bool(after & _WS_EX_TRANSPARENT) != bool(through):
+                # The style read back AFTER the call (rc.2 W7: this logged the value from before it,
+                # which hid what the window really ended up with), next to what was asked for.
+                _warn_click_through_failed(
+                    through, f"style 0x{after & 0xFFFFFFFF:08X} after asking for 0x{new & 0xFFFFFFFF:08X}")
                 return False
         return True
     except Exception as e:

@@ -108,6 +108,48 @@ def find_tasklist_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]
         return None
 
 
+def find_toolbar_bands_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
+    """
+    Physical-px union of the classic taskbar toolbars (Desktop, Links, Address, a folder toolbar) that
+    sit AFTER the task list - between the app buttons and the tray - or None (#324, rc.2 F12;
+    best-effort, Windows 10). Each toolbar is a ReBarWindow32 band beside the MSTaskSwWClass one; the
+    widget hugs the tray, so it was drawn over them.
+
+    Windows 11 has no taskbar toolbars: its ReBarWindow32 holds MSTaskSwWClass only (probed on
+    26200), so this is None there and nothing changes. A band before the task list (dragged to the
+    start of the bar) is left out: the widget never sits there.
+    """
+    try:
+        rebar = win32gui.FindWindowEx(taskbar_hwnd, 0, "ReBarWindow32", None)
+        if not rebar:
+            return None
+        tasksw = win32gui.FindWindowEx(rebar, 0, "MSTaskSwWClass", None)
+        if not tasksw:
+            return None
+        task = valid_rect(tuple(win32gui.GetWindowRect(tasksw)))
+        if task is None:
+            return None
+        vertical = (task[3] - task[1]) > (task[2] - task[0])
+        tol = constants.layout.TOOLBAR_BAND_ADJACENCY_TOLERANCE_PX
+        bands = []
+        child = win32gui.FindWindowEx(rebar, 0, None, None)
+        for _ in range(constants.layout.TOOLBAR_BAND_SCAN_LIMIT):
+            if not child:
+                break
+            if child != tasksw and win32gui.IsWindowVisible(child):
+                r = valid_rect(tuple(win32gui.GetWindowRect(child)))
+                if r is not None and ((r[1] >= task[3] - tol) if vertical else (r[0] >= task[2] - tol)):
+                    bands.append(r)
+            child = win32gui.FindWindowEx(rebar, child, None, None)
+        if not bands:
+            return None
+        return (min(b[0] for b in bands), min(b[1] for b in bands),
+                max(b[2] for b in bands), max(b[3] for b in bands))
+    except Exception as e:
+        logger.debug("Toolbar band scan failed for taskbar HWND %s: %s", taskbar_hwnd, e)
+        return None
+
+
 def valid_rect(rect: Any) -> Optional[Tuple[int, int, int, int]]:
     """``rect`` as a ``(left, top, right, bottom)`` tuple when it is a real, non-empty rect, else None.
 
@@ -487,6 +529,9 @@ class TaskbarInfo:
     # The Widgets button's full rect from the same layout probe (independent of the #200 nudge's
     # widgets_rect, which stops probing once the nudge has been shown).
     widgets_extent: Optional[Tuple[int, int, int, int]] = None
+    # Physical-pixel union of the classic toolbars (Desktop / Links / ...) between the task list and
+    # the tray, or None - always None on Windows 11 (find_toolbar_bands_rect, #324).
+    toolbars_rect: Optional[Tuple[int, int, int, int]] = None
 
     def __post_init__(self) -> None:
         """Basic validation of critical attributes after initialization."""
@@ -939,6 +984,7 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
                 apps_extent=apps_extent,
                 apps_extent_source=apps_source,
                 widgets_extent=widgets_extent,
+                toolbars_rect=find_toolbar_bands_rect(hwnd),
             )
         except win32gui.error as e:
             if e.winerror != 0:
@@ -1053,9 +1099,10 @@ def _log_preferred_monitor_fallback(
         )
     logger.info(
         "Preferred monitor '%s' did not match any of %d taskbar(s); using primary. "
-        "Enumerated taskbars: %s. If the preferred monitor has no taskbar of its own, "
-        "enabling 'Show taskbar on all displays' is the current workaround (a no-taskbar "
-        "fallback is tracked in #166).",
+        "Enumerated taskbars: %s. If the preferred monitor is connected but has no taskbar of "
+        "its own, 'Float on a display without a taskbar' (free_float) keeps the widget on it, or "
+        "turn on Windows' 'Show my taskbar on all displays' (Settings shows this under Preferred "
+        "Monitor, rc.2 W13).",
         preferred_screen_name,
         len(taskbars),
         " ".join(details) if details else "(none)",
@@ -1078,6 +1125,11 @@ def get_free_float_screen(preferred_screen_name: Optional[str]) -> Optional[QScr
         if screen is None:
             return None  # preferred monitor not connected -> the primary-taskbar fallback is correct
         taskbars = get_all_taskbar_info()
+        if not any(getattr(tb, "hwnd", 0) for tb in taskbars):
+            # NO taskbar anywhere (only the hwnd-0 fallback, or nothing): Explorer is restarting, not
+            # a taskbar-less display. Floating now would put the widget off the bar for the restart;
+            # the docked path's hold keeps it hidden at its last spot instead (rc.2 W5, #440 M2).
+            return None
         if _select_taskbar_for_screen(taskbars, preferred_screen_name) is not None:
             return None  # it has a taskbar of its own -> dock to it normally
         return screen    # present but taskbar-less -> free-float on it
@@ -1204,6 +1256,27 @@ def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
         return False
 
 
+def is_rdp_client_covering_monitor(hwnd: int, class_name: str,
+                                   monitor_rect: Optional[Tuple[int, int, int, int]]) -> bool:
+    """
+    True when ``hwnd`` is a full-screen Remote Desktop client window (no caption) whose rect
+    contains the whole ``monitor_rect`` - the multi-monitor RDP session ("Use all my monitors"), one
+    window spanning every monitor, that the window == monitor fullscreen test misses (#132). A
+    windowed session (caption on, even maximized) and any other window class are never matched.
+    """
+    try:
+        if class_name not in constants.shell.shell.RDP_CLIENT_WINDOW_CLASSES or not monitor_rect:
+            return False
+        style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+        if (style & win32con.WS_CAPTION) == win32con.WS_CAPTION:
+            return False
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        m_left, m_top, m_right, m_bottom = monitor_rect
+        return left <= m_left and top <= m_top and right >= m_right and bottom >= m_bottom
+    except Exception:
+        return False
+
+
 def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo], hwnd_to_check: int) -> bool:
     """
     Checks if the taskbar is obstructed by a specific window.
@@ -1235,6 +1308,12 @@ def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo], hwnd_to_check: in
         try:
             fg_monitor = win32api.MonitorFromWindow(hwnd_to_check, MONITOR_DEFAULTTONEAREST)
             tb_monitor = win32api.MonitorFromWindow(taskbar_info.hwnd, MONITOR_DEFAULTTONEAREST)
+            # A multi-monitor RDP session is one window across all monitors - "its" monitor may be
+            # another one - so it is judged against the taskbar's monitor before that check (#132).
+            if class_name in constants.shell.shell.RDP_CLIENT_WINDOW_CLASSES and \
+                    is_rdp_client_covering_monitor(hwnd_to_check, class_name,
+                                                   win32api.GetMonitorInfo(tb_monitor).get('Monitor')):
+                return True
             if fg_monitor != tb_monitor:
                 return False
 

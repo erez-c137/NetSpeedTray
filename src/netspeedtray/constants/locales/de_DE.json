@@ -113,6 +113,7 @@
     "START_WITH_WINDOWS_LABEL": "Mit Windows starten",
     "FREE_MOVE_LABEL": "Frei beweglich (kein Einrasten)",
     "FREE_FLOAT_LABEL": "Auf einem Monitor ohne Taskleiste frei schweben",
+    "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Dieser Monitor hat keine Taskleiste, daher sitzt NetSpeedTray auf der Taskleiste des Hauptbildschirms. Aktivieren Sie „{option}“, damit es auf diesem Monitor bleibt.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Im Vollbild sichtbar halten",
     "FONT_SIZE_LABEL": "Schriftgröße",
     "FONT_FAMILY_LABEL": "Schriftart",

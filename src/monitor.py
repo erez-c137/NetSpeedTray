@@ -556,7 +556,14 @@ def main() -> int:
             return app.exec()
 
     except AlreadyRunningError:
-        # A second instance - exit silently with a clean code, no dialog (logged in the checker above).
+        # A second instance: no dialog, exit 0 - but first ask the running widget to show itself
+        # (#234): a hidden or off-screen widget used to be recoverable only through Task Manager.
+        # A pre-2.2 instance (legacy mutex) does not listen; the post is then simply ignored.
+        try:
+            from netspeedtray.core.shutdown_channel import request_activate
+            request_activate()
+        except Exception as e:
+            logger.debug("Could not signal the running instance: %s", e)
         return 0
     except Exception as e:
         # This is a global catch-all for any critical error during startup.

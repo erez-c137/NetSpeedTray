@@ -42,6 +42,11 @@ class AppConstants:
     # than editing them in place.
     SHUTDOWN_MESSAGE_NAME: Final[str] = "NetSpeedTray_Shutdown_v1"
     SHUTDOWN_WINDOW_PROP: Final[str] = "NetSpeedTray_ShutdownTarget_v1"
+    # Same channel, second message (#234, rc.2 W14): a second launch of this user's app posts it to
+    # the marked window instead of exiting silently, and the running widget shows itself again
+    # (un-hide, re-dock, re-seat above the taskbar, back to the docked spot if it is off-screen).
+    # App-to-app only - setup.iss never sends it. Same _vN rule.
+    ACTIVATE_MESSAGE_NAME: Final[str] = "NetSpeedTray_Activate_v1"
     # How long `--shutdown` waits for the app to exit (seconds) unless `--timeout N` overrides it.
     # A normal clean quit is ~1 s. The worst legitimate one lands mid v7 -> v8 migration: the latency
     # probe join (1.5 s) + the DB thread's bounded wait (timeouts.DB_SHUTDOWN_WAIT_MS, 15 s), after

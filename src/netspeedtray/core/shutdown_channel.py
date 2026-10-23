@@ -14,6 +14,9 @@ so executing ``{app}\\NetSpeedTray.exe`` there would hand admin to whoever repla
 QApplication, no mutex. It enumerates top-level windows for the marked one (targeted, never
 HWND_BROADCAST), posts the message and waits for that process to exit.
 
+A second message on the same marked window, ``ACTIVATE_MESSAGE_NAME`` (#234): a second launch of
+the app posts it (``request_activate``) so the running widget shows itself again, then exits 0.
+
 Exit codes: 0 = nothing running, or every instance exited in time; 1 = an instance is still running
 (post refused or timed out - the caller should fall back); 2 = unexpected error.
 
@@ -81,6 +84,7 @@ _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 _kernel32.CloseHandle.restype = wintypes.BOOL
 
 _message_id: Optional[int] = None
+_activate_id: Optional[int] = None
 
 
 def shutdown_message_id() -> int:
@@ -89,6 +93,14 @@ def shutdown_message_id() -> int:
     if not _message_id:
         _message_id = int(_user32.RegisterWindowMessageW(constants.app.SHUTDOWN_MESSAGE_NAME))
     return _message_id
+
+
+def activate_message_id() -> int:
+    """The system-wide atom for ACTIVATE_MESSAGE_NAME ("show yourself", #234). 0 on failure."""
+    global _activate_id
+    if not _activate_id:
+        _activate_id = int(_user32.RegisterWindowMessageW(constants.app.ACTIVATE_MESSAGE_NAME))
+    return _activate_id
 
 
 # --- Win32 seams (patched in unit tests) -----------------------------------------------------------
@@ -160,7 +172,12 @@ def arm_window(hwnd: int) -> bool:
     marked = _set_prop(hwnd)
     msg = shutdown_message_id()
     allowed = _allow_through_uipi(hwnd, msg) if msg else False
-    logger.debug("Shutdown channel armed on HWND %s (marked=%s, uipi_allowed=%s).", hwnd, marked, allowed)
+    # The second launch's "show yourself" (#234): an unelevated second launch must reach an elevated
+    # instance too. It can only make the widget visible - nothing a same-user process can't ask for.
+    act = activate_message_id()
+    act_allowed = _allow_through_uipi(hwnd, act) if act else False
+    logger.debug("Shutdown channel armed on HWND %s (marked=%s, uipi_allowed=%s, activate_allowed=%s).",
+                 hwnd, marked, allowed, act_allowed)
     return marked
 
 
@@ -206,6 +223,64 @@ def request_shutdown(timeout: float) -> int:
             logger.warning("Shutdown: pid %s still running after %.0f s.", pid, timeout)
             result = EXIT_TIMEOUT
     return result
+
+
+def _other_user_pids() -> Optional[set]:
+    """PIDs of processes that provably belong to ANOTHER user: WTSEnumerateProcesses reported a SID and
+    it is not ours. A process it reports with NO SID (a token it could not open - an ELEVATED instance
+    of this very user, seen from an unelevated second launch) is not in the set: dropping those made
+    the second launch miss an elevated widget (#440 review M1). None when nothing can be listed."""
+    try:
+        import win32api
+        import win32con
+        import win32security
+        import win32ts
+        token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+        try:
+            me = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+        finally:
+            token.Close()
+        my_sid = win32security.ConvertSidToStringSid(me)
+        return {int(pid) for _session, pid, _name, sid in win32ts.WTSEnumerateProcesses(
+                    win32ts.WTS_CURRENT_SERVER_HANDLE, 1, 0)
+                if sid is not None and win32security.ConvertSidToStringSid(sid) != my_sid}
+    except Exception as e:
+        logger.debug("Could not list this user's processes: %s", e)
+        return None
+
+
+def request_activate() -> bool:
+    """
+    A second launch (the per-user instance mutex is taken, #234): ask THIS user's running widget to show
+    itself again - un-hide, re-dock, re-seat above the taskbar, back to its docked spot if off-screen -
+    instead of exiting silently. EnumWindows only sees our own desktop, and a marked window of a process
+    known to be another user's (a "Run as different user" copy) is skipped, matching the per-user
+    mutex; one whose owner can't be told (an elevated instance of ours, or no listing at all) is
+    asked anyway - it can only become visible.
+
+    True if a running instance was signalled. Never waits: the second process exits right after.
+    """
+    msg = activate_message_id()
+    if not msg:
+        logger.warning("RegisterWindowMessageW(%s) failed.", constants.app.ACTIVATE_MESSAGE_NAME)
+        return False
+    targets = find_running_instances()
+    if targets:
+        others = _other_user_pids()
+        if others:
+            targets = [(hwnd, pid) for hwnd, pid in targets if pid not in others]
+    if not targets:
+        logger.info("Second launch: no running widget of this user on this desktop to bring back.")
+        return False
+    sent = False
+    for hwnd, pid in targets:
+        if _post(hwnd, msg):
+            logger.info("Second launch: asked the running widget (pid %s) to show itself.", pid)
+            sent = True
+        else:
+            logger.warning("Second launch: PostMessage to HWND %s (pid %s) failed (err %s).",
+                           hwnd, pid, ctypes.get_last_error())
+    return sent
 
 
 def _parse_timeout(argv: Sequence[str]) -> float:

@@ -18,6 +18,7 @@ from PyQt6.QtCore import QAbstractNativeEventFilter, QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QGuiApplication
 
 from netspeedtray.constants import timeouts
+from netspeedtray.constants.shell import shell as shell_constants
 from netspeedtray.utils.taskbar_utils import (
     get_taskbar_info, is_taskbar_obstructed, TaskbarInfo
 )
@@ -335,8 +336,12 @@ class SystemEventHandler(QObject):
                 return False
             window_rect = win32gui.GetWindowRect(hwnd)
             monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromWindow(hwnd))
-            if window_rect != monitor_info.get('Monitor'):
-                return False  # not fullscreen on its monitor - no taskbar query needed
+            if window_rect != monitor_info.get('Monitor') and \
+                    win32gui.GetClassName(hwnd) not in shell_constants.shell.RDP_CLIENT_WINDOW_CLASSES:
+                # Not fullscreen on its monitor - no taskbar query needed. The exception is a
+                # multi-monitor Remote Desktop session (#132): one window spanning every monitor,
+                # judged against our taskbar's monitor by is_taskbar_obstructed below.
+                return False
             # Check obstruction against the widget's OWN taskbar (preferred monitor), not
             # always the primary - otherwise a fullscreen app on another monitor would
             # wrongly hide the widget.

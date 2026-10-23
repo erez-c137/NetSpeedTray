@@ -113,6 +113,7 @@
     "START_WITH_WINDOWS_LABEL": "Avvia con Windows",
     "FREE_MOVE_LABEL": "Movimento libero (senza aggancio)",
     "FREE_FLOAT_LABEL": "Fluttua su uno schermo senza barra delle applicazioni",
+    "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Questo schermo non ha la barra delle applicazioni, quindi NetSpeedTray si trova sulla barra delle applicazioni dello schermo principale. Attiva \"{option}\" per tenerlo su questo schermo.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Mantieni visibile a schermo intero",
     "FONT_SIZE_LABEL": "Dimensione carattere",
     "FONT_FAMILY_LABEL": "Carattere",

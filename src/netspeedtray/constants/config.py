@@ -118,6 +118,11 @@ class ConfigConstants:
     DEFAULT_START_WITH_WINDOWS: Final[bool] = True
     DEFAULT_TRAY_OFFSET_X: Final[int] = 0
     DEFAULT_TRAY_OFFSET_Y: Final[int] = 3
+    # Pre-1.3.0 tray_offset_x defaults (10 up to 1.2.0, then 1, then 3; 0 since 1.3.0). Every
+    # config those versions saved carries one of them although the user never moved the widget, so
+    # Reset position (shown only once the widget was moved) treats them as the default too (rc.2 W6).
+    # Not migrated: a value that later releases kept placing the widget with stays where it was.
+    LEGACY_DEFAULT_TRAY_OFFSETS_X: Final[frozenset] = frozenset({10, 1, 3})
     # A Win11 secondary-monitor taskbar has no tray/clock child HWND to hug, so on a preferred
     # secondary display we reserve this many logical px off the screen edge to clear its clock (#186).
     DEFAULT_SECONDARY_CLOCK_RESERVE_PX: Final[int] = 75

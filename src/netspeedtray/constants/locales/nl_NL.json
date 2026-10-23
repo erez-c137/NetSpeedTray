@@ -113,6 +113,7 @@
     "START_WITH_WINDOWS_LABEL": "Starten met Windows",
     "FREE_MOVE_LABEL": "Vrij bewegen (geen uitlijning)",
     "FREE_FLOAT_LABEL": "Zweven op een beeldscherm zonder taakbalk",
+    "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Deze monitor heeft geen taakbalk, dus NetSpeedTray staat op de taakbalk van de primaire monitor. Zet '{option}' aan om het op deze monitor te houden.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Zichtbaar houden in volledig scherm",
     "FONT_SIZE_LABEL": "Lettergrootte",
     "FONT_FAMILY_LABEL": "Lettertype",

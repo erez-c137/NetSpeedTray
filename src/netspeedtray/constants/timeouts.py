@@ -76,6 +76,13 @@ class TimeoutConstants:
     # A tick-only fight trips it after ~12 s, a 300 ms re-burier after ~4 s.
     BURIAL_FRESH_RATE_MAX: Final[int] = 12
     BURIAL_FRESH_RATE_WINDOW_MS: Final[int] = 15000
+    # The one INFO "recovered from taskbar burial" line per episode is meant for a REAL burial
+    # (#327 note, rc.2 W8). The widget is also buried for a moment when it first docks (startup,
+    # an Explorer restart) and when a tray icon arrives - the shell re-lays the taskbar and the
+    # tray rect changes within the next ~1 s refresh. A recovery within this long of either is
+    # logged at DEBUG and leaves the INFO line for a later burial; an INFO line logged this close
+    # BEFORE a tray change is handed back the same way.
+    BURIAL_LOG_SETTLE_MS: Final[int] = 5000
     # Side-taskbar re-placement (core/side_bar_watcher, rc.2 W1/W2). Live data, Win11 26200 right bar
     # (scratchpad p406live/b2_right_center.txt): opening an app moves the legacy Start window to its
     # FINAL spot at once; UI Automation reports the new button 15-30 ms later and then animates it for
@@ -114,6 +121,17 @@ class TimeoutConstants:
     SIDE_BAR_NEAR_SLOTS: Final[int] = 3
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
+    # Explorer restart (rc.2 W5): between the old taskbar going away and the new one existing there
+    # is NO taskbar at all, and the widget used to float at the screen-fallback spot (bottom-right,
+    # off the bar) for ~2 s. A docked widget that has had a real taskbar hides and keeps its last
+    # position for up to this long instead; the new taskbar re-shows it (#419 then places it from the
+    # last good tray geometry). Past it (Explorer gone for good, a replacement shell) the old
+    # behaviour applies: shown at the fallback spot. A restart takes ~2-5 s; a crashed Explorer that
+    # Windows relaunches can take longer.
+    TASKBAR_ABSENT_HOLD_MS: Final[int] = 15000
+    # ...and it hides only from this many CONSECUTIVE no-taskbar refreshes (~1 s apart): the first one
+    # just holds the position, so a single transient failed lookup can't flicker it (#440 review L5).
+    TASKBAR_ABSENT_HIDE_AFTER_TICKS: Final[int] = 2
 
     # Widget / UI Delays (milliseconds)
     WIDGET_INIT_DELAY_MS: Final[int] = 500
