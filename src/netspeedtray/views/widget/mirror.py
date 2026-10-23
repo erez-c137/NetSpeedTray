@@ -24,6 +24,8 @@ Known v1 limits (accepted):
 - A mirror on a secondary SIDE taskbar does not get #406's side-bar watcher (W1-W4: re-placing as app
   buttons come and go, the live alignment flip): its PositionManager is built with
   side_watcher_enabled=False, so no hook thread exists per mirror. It keeps the static placement.
+- A mirror does not yield to app buttons (#438, #24 "Hide while app buttons cover the widget"): its
+  PositionManager is built with app_yield_enabled=False, so it never probes and never hides for them.
 - Fullscreen is judged from the FOREGROUND window, as for the main widget: a fullscreen app on a
   monitor that is not in the foreground (a video left playing on monitor 2 while you work on 1)
   leaves that monitor's mirror showing.
@@ -156,7 +158,7 @@ class MirrorWidget(QWidget):
         # screen loses its taskbar; the manager's tick does that job from the enumeration instead.
         self.position_manager = PositionManager(
             WindowState(config=self.config, widget=self, taskbar_info=taskbar_info),
-            parent=self, log_tag=self._tag, side_watcher_enabled=False)
+            parent=self, log_tag=self._tag, side_watcher_enabled=False, app_yield_enabled=False)
         self.layout_manager.set_font(resize=True)   # sizes for ITS bar, ends in update_position()
         self._dock_sig_seen = dock_signature(taskbar_info)
         logger.info("Mirror created on %s (taskbar HWND %s).", self._tag, self.taskbar_hwnd)
@@ -602,9 +604,12 @@ class MirrorManager(QObject):
         try:
             # #406's side-bar watcher (a hook thread) must never outlive its mirror. Mirrors never
             # attach it (side_watcher_enabled=False); stop it anyway, in case that ever changes.
+            # Same for #438's app-button yield (built inert for mirrors: app_yield_enabled=False).
             pm = getattr(mirror, "position_manager", None)
             if pm is not None and hasattr(pm, "stop_side_watcher"):
                 pm.stop_side_watcher()
+            if pm is not None and hasattr(pm, "stop_app_overlap"):
+                pm.stop_app_overlap()
             if not getattr(mirror, "dead", False):
                 # Unlink from the taskbar FIRST, so its teardown cannot destroy our window under Qt.
                 mirror.detach_owner()

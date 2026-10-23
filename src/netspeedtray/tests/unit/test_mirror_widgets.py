@@ -762,6 +762,24 @@ class TestSideWatcherNeverPerMirror:
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
         assert side_bar_hooks.hooks == {"made": 0, "live": 0}
 
+    def test_mirror_never_attaches_the_app_button_yield(self, real_mirror):
+        """#438's #24 yield is the main widget's: a mirror's PositionManager is built with it inert,
+        so even asked to sync on its (horizontal) bar it never attaches, probes or hides."""
+        pm = real_mirror.mirror.position_manager
+        assert pm._app_yield._enabled is False
+        for _ in range(3):
+            pm.sync_app_overlap(real_mirror.tb)
+            pm.note_foreground_change()
+        assert pm._app_yield.attached_hwnd == 0 and pm.is_yielding_to_apps() is False
+
+    def test_destroy_stops_the_app_yield(self):
+        mgr, _ = _manager([_tb(100, "PRIMARY", True), _tb(200, "B")])
+        mgr.tick()
+        b = mgr.mirrors["B"]
+        b.position_manager = MagicMock()
+        mgr.shutdown()
+        b.position_manager.stop_app_overlap.assert_called_once()
+
     def test_destroy_stops_a_side_watcher(self):
         mgr, _ = _manager([_tb(100, "PRIMARY", True), _tb(200, "B")])
         mgr.tick()
