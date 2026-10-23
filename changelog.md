@@ -80,7 +80,7 @@ ALSO
 *A release candidate, for testers. It's a manual download from the release page - the in-app
 updater, WinGet and the Store never offer prereleases.*
 
-rc.2 was meant to be a small follow-up, and then 2.2.0 got a month as Latest ahead of it - so it
+rc.2 was meant to be a small follow-up, but I expect 2.2.x to be around for a long time - so it
 became the last full pass: every open defect and promise I could find, plus the smaller feature
 requests. One color scheme for dark and light taskbars, the widget on every taskbar, usage by day,
 a widget that steps aside for your app buttons, a second launch that brings a lost widget back, and
