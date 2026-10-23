@@ -75,6 +75,12 @@ class LayoutConstants:
     # Minimum gap (logical px) kept between the widget's tray-side edge and the tray boundary /
     # the "^" show-hidden-icons chevron, so the widget never abuts it and steals its clicks (#161 pt1).
     TRAY_EDGE_MIN_GAP_PX: Final[int] = 8
+    # A Win11 SECONDARY side (left/right) taskbar has no TrayNotifyWnd, so before (or without) a UIA
+    # probe of its clock, this many logical px at the bar's bottom are kept for it - the vertical twin
+    # of DEFAULT_SECONDARY_CLOCK_RESERVE_PX. Probed live (VM, Win11 26300, 100 %, 2026-10-23): the
+    # clock button spans 1036..1072 on a 1080 px bar, so 44 = its top; equal to the probe, the widget
+    # does not move when the real clock rect lands.
+    SECONDARY_SIDE_CLOCK_RESERVE_PX: Final[int] = 44
     # Classic (Win10) taskbar toolbars (#324, find_toolbar_bands_rect): a ReBar band counts as "after
     # the task list" when it starts no more than this many physical px before the task band's end
     # (adjacent bands share the edge; slack for a gripper), and at most this many ReBar children are

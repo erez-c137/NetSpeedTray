@@ -243,6 +243,30 @@ class SidePlacement:
 _FROM_INFO = object()
 
 
+def _secondary_side_clock_top(taskbar_info: TaskbarInfo, rect: Optional[Tuple[int, int, int, int]],
+                              scale: float, bar_top: float, bar_bottom: float) -> float:
+    """Where the tray end starts (logical y) on a side bar with no tray rect - a Win11 SECONDARY
+    taskbar (Shell_SecondaryTrayWnd has no TrayNotifyWnd), or a main bar whose tray is not ready.
+
+    Its clock still sits at the bottom (rc.2 final VM session: the #434 mirrors were painted over
+    it, because the tray end used to be the bar's bottom edge). Prefer the clock UIA last saw on
+    THIS bar - only when it lies inside the bar's current rect, in its lower half, so a rect probed
+    on an older layout of the same HWND can't be used - else reserve
+    SECONDARY_SIDE_CLOCK_RESERVE_PX, the horizontal path's clock-width reserve turned on end."""
+    try:
+        probed = taskbar_utils.valid_rect(
+            taskbar_utils.probed_tray_rect(getattr(taskbar_info, "hwnd", None)))
+    except Exception:
+        probed = None
+    if probed is not None and rect is not None:
+        inside = (probed[0] >= rect[0] and probed[2] <= rect[2]
+                  and probed[1] >= rect[1] and probed[3] <= rect[3])
+        top = probed[1] / scale
+        if inside and top > (bar_top + bar_bottom) / 2.0:
+            return top
+    return max(bar_top, bar_bottom - constants.layout.SECONDARY_SIDE_CLOCK_RESERVE_PX)
+
+
 def side_bar_geometry(taskbar_info: TaskbarInfo, dpi_scale: float, *, apps: Any = _FROM_INFO,
                       widgets: Any = _FROM_INFO, overflow: Any = None) -> Optional[SideBarGeometry]:
     """The spans the side-bar placement and drag limits work from, or None when this is not a NATIVE
@@ -262,7 +286,10 @@ def side_bar_geometry(taskbar_info: TaskbarInfo, dpi_scale: float, *, apps: Any 
     bar_top = rect[1] / scale if rect else float(full.top())
     bar_bottom = rect[3] / scale if rect else float(full.bottom() + 1)
     tray = taskbar_utils.valid_rect(taskbar_info.get_tray_rect())
-    tray_top = tray[1] / scale if tray else bar_bottom
+    if tray:
+        tray_top = tray[1] / scale
+    else:
+        tray_top = _secondary_side_clock_top(taskbar_info, rect, scale, bar_top, bar_bottom)
 
     if apps is _FROM_INFO:
         apps = getattr(taskbar_info, "apps_extent", None)
