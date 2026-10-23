@@ -267,6 +267,24 @@ def test_kill_at_every_point_then_relaunch(point, hot_db, tmp_path):
     assert state == ("v7" if before_swap else "v8"), f"{point}: recovered to {state}"
 
 
+# A migrate() that ends in one of these exits 2, and the next launch's recover() finishes the swap.
+_SAFE_DEFERRALS = ("SwapDeferred", "SwapIncomplete")
+
+
+def _rmtree_retrying(path: Path, budget_s: float = 10.0) -> None:
+    """rmtree that rides out a sharing violation: right after a migrator exits, an AV scanner or the
+    indexer can hold one of the files it just wrote for a moment (WinError 32 / 5)."""
+    deadline = time.monotonic() + budget_s
+    while True:
+        try:
+            shutil.rmtree(path)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
+
+
 @pytest.mark.parametrize("seed", range(5))
 def test_kill_at_a_random_moment_then_relaunch(seed, hot_db, hot_template, tmp_path):
     # Calibrated on identical copies: `start` = interpreter + imports + recover() (a --recover-only
@@ -274,31 +292,58 @@ def test_kill_at_a_random_moment_then_relaunch(seed, hot_db, hot_template, tmp_p
     cal = tmp_path / "calibrate"
     shutil.copytree(hot_db, cal)
     t = time.perf_counter()
-    assert _migrator(cal, "--recover-only").returncode == 0
+    p = _migrator(cal, "--recover-only")
+    assert p.returncode == 0, f"calibration recover failed: {p.stdout}\n{p.stderr}"
     start = time.perf_counter() - t
-    shutil.rmtree(cal)
+    _rmtree_retrying(cal)
     shutil.copytree(hot_db, cal)
     t = time.perf_counter()
-    assert _migrator(cal).returncode == 0
+    p = _migrator(cal)
+    assert p.returncode == 0, f"calibration migration failed: {p.stdout}\n{p.stderr}"
     full = time.perf_counter() - t
     rng = random.Random(1000 + seed)
-    delay = rng.uniform(start, max(start, 0.8 * full))
-    for attempt in range(4):
+    # Where inside the run the kill lands, as a fraction of a whole run: past the start-up share,
+    # at most 80 % in - i.e. inside migrate(). Kept as a FRACTION so a retry can re-scale it to the
+    # speed the machine has right now: the calibration is one sample each, and under a loaded
+    # full-tree run a slow calibration followed by a fast real run put every delay past the end
+    # (the "kill never landed" flake).
+    lo = min(start / full, 0.8) if full > 0 else 0.0
+    frac = rng.uniform(lo, 0.8)
+    delay = frac * full
+    for attempt in range(6):
+        out_path = tmp_path / f"random_attempt{attempt}.log"
+        out = open(out_path, "w", encoding="utf-8")
         proc = subprocess.Popen([sys.executable, "-I", "-c", _BOOT.format(src=SRC), str(hot_db)],
-                                env=_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(delay)
-        proc.kill()                   # Popen.kill on Windows IS TerminateProcess(handle, 1)
-        rc = proc.wait(timeout=60)
+                                env=_env(), stdout=out, stderr=subprocess.STDOUT)
+        t = time.perf_counter()
+        try:
+            rc = proc.wait(timeout=delay)     # returns early only if the child finished first
+            took = time.perf_counter() - t
+        except subprocess.TimeoutExpired:
+            proc.kill()                       # Popen.kill on Windows IS TerminateProcess(handle, 1)
+            rc = proc.wait(timeout=60)
+            took = time.perf_counter() - t    # it finished just as the kill was due
+        out.close()
         if rc == 1:
             break
-        # The child finished before the kill landed - this run tested nothing. Start over from the
-        # hot template with a shorter delay; never count it as a pass.
-        assert rc == 0, f"migrator failed on its own (rc={rc})"
-        shutil.rmtree(hot_db)
+        log = out_path.read_text(encoding="utf-8", errors="replace")
+        if rc == 2 and any(f'"error_type": "{e}"' in log for e in _SAFE_DEFERRALS):
+            # Not killed, but the swap was refused by a file another process held past
+            # RENAME_RETRY_SECONDS (Defender / the indexer on a loaded host): a designed, recoverable
+            # state. It must still pass the whole crash-safety cycle - then retry the kill itself.
+            _assert_full_cycle(hot_db, tmp_path, f"random{seed}_deferred{attempt}")
+        else:
+            # The child finished before the kill was due - this run tested nothing; never count it
+            # as a pass. Its own duration is an exact measure of a whole run under the CURRENT load,
+            # so start over with the same fraction of THAT (shrinking a little each time).
+            assert rc == 0, (f"migrator failed on its own (rc={rc}, attempt {attempt}, "
+                             f"delay {delay:.2f}s):\n" + log[-4000:])
+        _rmtree_retrying(hot_db)
         hot_db.mkdir()
         for f in hot_template.iterdir():
             shutil.copy2(f, hot_db / f.name)
-        delay = start + (delay - start) * 0.5
+        frac = max(lo, frac * 0.8)
+        delay = frac * took
     else:
         pytest.fail(f"seed {seed}: the kill never landed before the migrator finished "
                     f"(start={start:.2f}s full={full:.2f}s last delay={delay:.2f}s)")

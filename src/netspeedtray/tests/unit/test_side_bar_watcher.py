@@ -679,9 +679,22 @@ def test_m2_idle_near_rechecks_back_off_to_a_minute_and_reset_on_a_hook_event(ri
 def test_l1_the_first_placement_waits_for_the_probe_and_appears_once(layout):
     """Live: tray end first (lagging HWND rect), then the top gap ~1 s later."""
     import threading
+    import time as _time
     pm, tb, _w = _pm(widget_top=0)
-    with patch.object(taskbar_utils, "find_apps_rect", return_value=(X0, 231, X1, 716)):
-        timer = threading.Timer(0.03, lambda: layout.land((232, 849), widgets=(10, 54)))
+    # The probe lands 30 ms after it was REQUESTED, while the placement waits for it. (A fixed 30 ms
+    # timer from before the call raced the request itself under load: the land ran first, found no
+    # worker, and the request then waited out its bound - the full-tree flake.) The wait ends the
+    # moment the probe lands, so a generous bound costs nothing; the shipped bound is pinned by
+    # test_l1_wait_gives_up_after_its_bound.
+    def land_once_requested():
+        deadline = _time.monotonic() + 10
+        while not layout.workers and _time.monotonic() < deadline:
+            _time.sleep(0.002)
+        _time.sleep(0.03)
+        layout.land((232, 849), widgets=(10, 54))
+    with patch.object(taskbar_utils, "find_apps_rect", return_value=(X0, 231, X1, 716)), \
+            patch.object(constants.timeouts, "SIDE_BAR_FIRST_LAYOUT_WAIT_MS", 10_000):
+        timer = threading.Thread(target=land_once_requested, daemon=True)
         timer.start()
         placement = pm._side_placement_for(tb, 56)
         timer.join()
