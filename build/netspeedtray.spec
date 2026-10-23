@@ -1,6 +1,39 @@
 # NetSpeedTray.spec
 import os
 
+
+def _remove_path_entries_shadowing_windows_icu():
+    """Keep foreign ICU DLLs out of PyInstaller's Qt dependency search.
+
+    Qt can import the Windows ICU forwarders by their unversioned names. A tool
+    such as Poppler may put incompatible DLLs with those names on PATH, which
+    PyInstaller then freezes into the app. QtCore fails to import on the target
+    machine ("The specified procedure could not be found"). Only exclude an
+    entry when System32 provides the same DLL, and never exclude System32 itself.
+    This affects the build process only, not the user's persistent PATH.
+    """
+    system32 = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32')
+    icu_names = tuple(
+        name for name in ('icuuc.dll', 'icuin.dll')
+        if os.path.isfile(os.path.join(system32, name))
+    )
+    if not icu_names:
+        return
+
+    kept = []
+    for entry in os.environ.get('PATH', '').split(os.pathsep):
+        candidate = entry.strip('"')
+        is_system32 = os.path.normcase(os.path.abspath(candidate)) == os.path.normcase(system32)
+        shadows_icu = any(os.path.isfile(os.path.join(candidate, name)) for name in icu_names)
+        if shadows_icu and not is_system32:
+            print(f'[netspeedtray.spec] Ignoring PATH entry with shadowing ICU DLLs: {entry}')
+            continue
+        kept.append(entry)
+    os.environ['PATH'] = os.pathsep.join(kept)
+
+
+_remove_path_entries_shadowing_windows_icu()
+
 block_cipher = None
 
 # version_info.txt is GENERATED (build.bat / build-exe-only.bat run create_version_info.py first) and
@@ -315,6 +348,16 @@ for _need in _required_runtime_libs:
             f"broken). Check _drop_unused_qt_artifacts() and `my_excludes`."
         )
 print('[netspeedtray.spec] SSL runtime libs present: OpenSSL + _ssl/_hashlib OK.')
+
+# Regression guard (#425): Qt6Core.dll imports icuuc.dll/icuin.dll by bare name and must get
+# Windows' own copies from System32. PyInstaller never bundles those, so any ICU DLL in the
+# bundle came from a foreign PATH entry (e.g. Poppler) and would shadow System32 at runtime.
+_foreign_icu = sorted(n for n in _bundled_basenames if n in ('icuuc.dll', 'icuin.dll'))
+if _foreign_icu:
+    raise SystemExit(
+        f"[netspeedtray.spec] FATAL: foreign ICU DLL(s) bundled: {_foreign_icu}. QtCore would load "
+        f"them instead of System32's and fail at startup. Remove the PATH entry that provides them."
+    )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

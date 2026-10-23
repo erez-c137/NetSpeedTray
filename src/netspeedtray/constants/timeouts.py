@@ -137,6 +137,12 @@ class TimeoutConstants:
     # still reports no buttons (rc.2 live test C5: its first probe found nothing, the buttons came ~3 s
     # later), instead of flashing up for those seconds. Sequential with #440's hold, never stacked.
     APP_YIELD_NEW_TASKBAR_HOLD_MS: Final[int] = 10000
+    # A yielded widget keeps the yield this long through UNKNOWN readings on the same taskbar (a failed /
+    # timed-out probe, no StartButton reported): a window storm on a full bar made UIA time out, the
+    # widget flashed up for ~5 s, then yielded again (rc.2 live run, 2026-10-23). Re-probed every
+    # ~1 s meanwhile; past this a still-unknown layout shows the widget (it is the app's only surface).
+    # Covers three 5 s probe timeouts. Never stacked with APP_YIELD_NEW_TASKBAR_HOLD_MS.
+    APP_YIELD_UNKNOWN_HOLD_MS: Final[int] = 15000
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
     # Explorer restart (rc.2 W5): between the old taskbar going away and the new one existing there

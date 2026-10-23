@@ -277,10 +277,21 @@ class MirrorWidget(QWidget):
     def _resize_if_needed(self, tb: Any) -> bool:
         """Re-size on a dock-signature change (Default <-> Small bar, edge, DPI - #322/#390) or a new
         identity-badge reserve (the main widget re-lays out on a network change). True if resized."""
+        from netspeedtray.views.widget.main import widget_qt_scale   # deferred: main imports this module
         sig = dock_signature(tb)
         ident = self._main_identity_signature()
-        if sig is None or (sig == self._dock_sig_seen and ident == self._identity_sig_seen):
+        if sig is None:
             return False
+        if sig == self._dock_sig_seen and ident == self._identity_sig_seen:
+            # Same dock - but after a live scale change Qt's ratio for this window can lag the OS one,
+            # so a re-size in between measured at the old scale (main._resize_if_dock_changed). Once.
+            qt_scale, seen = widget_qt_scale(self), getattr(self, "_qt_scale_seen", None)
+            if qt_scale is None or seen is None or abs(qt_scale - seen) < 1e-3:
+                return False
+            self._qt_scale_seen = qt_scale   # a failed resize can't retry every tick
+            self.logger.info("[%s] display scale changed %s -> %s; re-sizing.", self._tag, seen, qt_scale)
+            self.layout_manager.resize_widget_for_font()
+            return True
         self._identity_sig_seen = ident
         self.layout_manager.resize_widget_for_font()   # ends with update_position() from self._tb
         # Record the signature of the bar we were HANDED: the layout manager's own lookup can fall

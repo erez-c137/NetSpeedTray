@@ -49,7 +49,14 @@ the yield is even synced, up to ``TASKBAR_ABSENT_HOLD_MS``); the yield adds no h
 and if #440's hold runs out (still no taskbar) the yield simply lets go. Once the NEW taskbar (a new
 HWND) exists, its first probes may find no buttons yet (live C5: ~3 s): a yield is kept through those
 unknown readings for up to ``APP_YIELD_NEW_TASKBAR_HOLD_MS`` - one bounded hold per phase, never two
-at once - instead of flashing the widget for the seconds the new taskbar takes to fill.
+at once - instead of flashing the widget for the seconds the new taskbar takes to fill. On the SAME
+taskbar a transient unknown reading (a window storm timing UIA out) keeps a yield too, for up to
+``APP_YIELD_UNKNOWN_HOLD_MS`` (rc.2 live run: "yield over (layout unknown)", shown ~5 s, yielded again).
+
+Units: the UIA group is physical px, the widget span logical px; ``group_span`` converts with the
+context's ``dpi``, which PositionManager reads from the taskbar's monitor at the moment of judging (a
+live scale change: BUSY until its taskbar snapshot agrees, never two scales in one judgement). A scale
+change drops the measured group (logical px at the old scale) and re-probes at once.
 
 Fail-safe: no UIA, a failed / timed-out probe, a bar without a StartButton, an ExplorerPatcher /
 Win10 bar (``tasklist_rect`` set), a side bar, Free Move or free-float -> never yield (today's
@@ -125,7 +132,8 @@ def predict_group(model: Span, changes: int, centered: Optional[bool],
 class YieldHysteresis:
     """Pure yield state: hide on the first reading that reaches the widget, show only after two
     clear readings ``confirm_ms`` apart, never yield while suppressed by a user drop, and drop the
-    yield on an unknown reading (today's behaviour)."""
+    yield on an unknown reading (AppOverlapYield holds a yield through a bounded run of unknowns
+    first: APP_YIELD_NEW_TASKBAR_HOLD_MS / APP_YIELD_UNKNOWN_HOLD_MS)."""
 
     def __init__(self, confirm_ms: int = constants.timeouts.APP_YIELD_SHOW_CONFIRM_MS) -> None:
         self.confirm_ms = confirm_ms
@@ -202,7 +210,8 @@ class AppOverlapYield(QObject):
         self._near_interval_ms = t.SIDE_BAR_NEAR_RECHECK_MS
         self._first_yield_done = False
         self._suspended = False                  # a second launch asked for the widget: off this session
-        self._hold_until = 0.0                   # unknown readings keep a yield until then (Explorer restart)
+        self._hold_until = 0.0                   # unknown readings keep a yield until then (0: no hold yet)
+        self._model_dpi: Optional[float] = None  # the scale ``_model`` was converted at
         self._persisted_drop: Optional[int] = None
         self._probe_timer = self._timer(0, self._fire_probe)
         self._poll_timer = self._timer(t.SIDE_BAR_PROBE_POLL_MS, self._poll_probe)
@@ -244,6 +253,7 @@ class AppOverlapYield(QObject):
         self._inflight = False
         self._again = False
         self._hold_until = 0.0
+        self._model_dpi = None
         self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
 
     def suspend_for_session(self) -> bool:
@@ -273,6 +283,17 @@ class AppOverlapYield(QObject):
         if int(ctx.hwnd) != self._hwnd:
             self._attach(ctx)
             return
+        if self._model_known and self._model_dpi is not None and abs(ctx.dpi - self._model_dpi) > 1e-6:
+            # A live display-scale change: the measured group is logical px at the OLD scale (and the
+            # widget is being re-sized / re-placed for the new one) - forget it and judge afresh now.
+            logger.debug("App-button yield: display scale %.3g -> %.3g; re-probing.", self._model_dpi, ctx.dpi)
+            self._model = None
+            self._model_known = False
+            self._model_dpi = None
+            self._changes = 0
+            self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
+            self._schedule(0)
+            return
         if self._inflight or self._probe_timer.isActive():
             return
         # No group known yet (or the last probe found none): retry on the backed-off interval, so a
@@ -296,6 +317,8 @@ class AppOverlapYield(QObject):
         self._inflight = False
         self._again = False
         self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
+        self._model_dpi = None
+        self._hold_until = 0.0
         self._hwnd = int(ctx.hwnd)
         if keep:
             self._state.yielded = True
@@ -434,13 +457,19 @@ class AppOverlapYield(QObject):
                                       if same else t.SIDE_BAR_NEAR_RECHECK_MS)
             self._model = span
             self._model_known = True
+            self._model_dpi = ctx.dpi
             self._changes = 0
         reaches = group_reaches_widget(span, ctx.widget)
-        if reaches is None and self._state.yielded and self._clock() < self._hold_until:
-            # A re-created taskbar with no buttons reported yet: stay aside, ask again shortly.
-            self._finish()
-            self._schedule(constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS // 3)
-            return
+        if reaches is None and self._state.yielded:
+            if not self._hold_until:
+                # A transient unknown on this taskbar (window storm, UIA timed out): one bounded hold,
+                # never a second one after the new-taskbar hold ran out (that one is still set).
+                self._hold_until = self._clock() + constants.timeouts.APP_YIELD_UNKNOWN_HOLD_MS / 1000.0
+            if self._clock() < self._hold_until:
+                # No buttons reported (a re-created taskbar, or a busy one): stay aside, ask again shortly.
+                self._finish()
+                self._schedule(constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS // 3)
+                return
         if reaches is not None:
             self._hold_until = 0.0
         suppressed_before = self._state.suppressed

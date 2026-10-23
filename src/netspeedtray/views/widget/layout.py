@@ -143,6 +143,11 @@ class WidgetLayoutManager:
                 self.widget._dock_sig_seen = None if float_screen is not None else dock_signature(taskbar_info)
             except Exception:
                 self.widget._dock_sig_seen = None
+            # ... and the display scale Qt measures the text at (NetworkSpeedWidget re-sizes when it moves).
+            try:
+                self.widget._qt_scale_seen = round(float(self.widget.devicePixelRatioF()), 3)
+            except Exception:
+                self.widget._qt_scale_seen = None
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
             if float_screen is not None:
                 edge = constants.TaskbarEdge.BOTTOM   # nominal; free-float doesn't dock to an edge
