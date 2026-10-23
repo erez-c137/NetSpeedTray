@@ -1,0 +1,545 @@
+{
+"entries": {
+"cycle_all_labels|bottom32_small|cpu_only": [
+374,
+32,
+"b25afc638eb6c546"
+],
+"cycle_all_labels|bottom32_small|gpu_only": [
+374,
+32,
+"8e7a3f9e2913e03a"
+],
+"cycle_all_labels|bottom32_small|network_only": [
+374,
+32,
+"295e26bc329d15dc"
+],
+"cycle_all_labels|bottom48_100|cpu_only": [
+374,
+48,
+"d08d17bb38181fab"
+],
+"cycle_all_labels|bottom48_100|gpu_only": [
+374,
+48,
+"22b4afcae3f1a89c"
+],
+"cycle_all_labels|bottom48_100|network_only": [
+374,
+48,
+"6b1734e7b9ac9b65"
+],
+"cycle_all_labels|bottom48_125|cpu_only": [
+374,
+48,
+"d08d17bb38181fab"
+],
+"cycle_all_labels|bottom48_125|gpu_only": [
+374,
+48,
+"22b4afcae3f1a89c"
+],
+"cycle_all_labels|bottom48_125|network_only": [
+374,
+48,
+"6b1734e7b9ac9b65"
+],
+"cycle_all_labels|bottom48_150|cpu_only": [
+374,
+48,
+"d08d17bb38181fab"
+],
+"cycle_all_labels|bottom48_150|gpu_only": [
+374,
+48,
+"22b4afcae3f1a89c"
+],
+"cycle_all_labels|bottom48_150|network_only": [
+374,
+48,
+"6b1734e7b9ac9b65"
+],
+"cycle_all_labels|right32|cpu_only": [
+32,
+46,
+"67d03428b0967bd4"
+],
+"cycle_all_labels|right32|gpu_only": [
+32,
+46,
+"6c3469361a3de91d"
+],
+"cycle_all_labels|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"cycle_all_labels|right48|cpu_only": [
+48,
+46,
+"5cf86ab42264d35c"
+],
+"cycle_all_labels|right48|gpu_only": [
+48,
+46,
+"2ee5f9a47adc955b"
+],
+"cycle_all_labels|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"cycle_cpu_ram|bottom32_small|cpu_only": [
+314,
+32,
+"21a36238457b7814"
+],
+"cycle_cpu_ram|bottom32_small|gpu_only": [
+314,
+32,
+"8a213ee36c342ec2"
+],
+"cycle_cpu_ram|bottom32_small|network_only": [
+314,
+32,
+"1aa8bf36d3785dce"
+],
+"cycle_cpu_ram|bottom48_100|cpu_only": [
+314,
+48,
+"303668afe6cd1f90"
+],
+"cycle_cpu_ram|bottom48_100|gpu_only": [
+314,
+48,
+"9e28d028d190520e"
+],
+"cycle_cpu_ram|bottom48_100|network_only": [
+314,
+48,
+"048f4f0003a725a6"
+],
+"cycle_cpu_ram|bottom48_125|cpu_only": [
+314,
+48,
+"303668afe6cd1f90"
+],
+"cycle_cpu_ram|bottom48_125|gpu_only": [
+314,
+48,
+"9e28d028d190520e"
+],
+"cycle_cpu_ram|bottom48_125|network_only": [
+314,
+48,
+"048f4f0003a725a6"
+],
+"cycle_cpu_ram|bottom48_150|cpu_only": [
+314,
+48,
+"303668afe6cd1f90"
+],
+"cycle_cpu_ram|bottom48_150|gpu_only": [
+314,
+48,
+"9e28d028d190520e"
+],
+"cycle_cpu_ram|bottom48_150|network_only": [
+314,
+48,
+"048f4f0003a725a6"
+],
+"cycle_cpu_ram|right32|cpu_only": [
+32,
+46,
+"67d03428b0967bd4"
+],
+"cycle_cpu_ram|right32|gpu_only": [
+32,
+46,
+"6c3469361a3de91d"
+],
+"cycle_cpu_ram|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"cycle_cpu_ram|right48|cpu_only": [
+48,
+46,
+"5cf86ab42264d35c"
+],
+"cycle_cpu_ram|right48|gpu_only": [
+48,
+46,
+"2ee5f9a47adc955b"
+],
+"cycle_cpu_ram|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"default|bottom32_small|network_only": [
+162,
+32,
+"17728953fc413dcd"
+],
+"default|bottom48_100|network_only": [
+148,
+48,
+"583b64dcc0a4fc5a"
+],
+"default|bottom48_125|network_only": [
+148,
+48,
+"583b64dcc0a4fc5a"
+],
+"default|bottom48_150|network_only": [
+148,
+48,
+"583b64dcc0a4fc5a"
+],
+"default|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"default|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"graph|bottom32_small|network_only": [
+162,
+32,
+"17728953fc413dcd"
+],
+"graph|bottom48_100|network_only": [
+148,
+48,
+"583b64dcc0a4fc5a"
+],
+"graph|bottom48_125|network_only": [
+148,
+48,
+"583b64dcc0a4fc5a"
+],
+"graph|bottom48_150|network_only": [
+148,
+48,
+"583b64dcc0a4fc5a"
+],
+"graph|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"graph|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"hover_card_all|bottom32_small|network_only": [
+160,
+32,
+"fc9f05535d818f77"
+],
+"hover_card_all|bottom48_100|network_only": [
+146,
+48,
+"c5c1f2c0186c11f1"
+],
+"hover_card_all|bottom48_125|network_only": [
+146,
+48,
+"c5c1f2c0186c11f1"
+],
+"hover_card_all|bottom48_150|network_only": [
+146,
+48,
+"c5c1f2c0186c11f1"
+],
+"hover_card_all|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"hover_card_all|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"sbs_all_graph|bottom32_small|network_only": [
+488,
+32,
+"e8336a5b434db674"
+],
+"sbs_all_graph|bottom48_100|network_only": [
+474,
+48,
+"6328c02e65abc8a1"
+],
+"sbs_all_graph|bottom48_125|network_only": [
+474,
+48,
+"6328c02e65abc8a1"
+],
+"sbs_all_graph|bottom48_150|network_only": [
+474,
+48,
+"6328c02e65abc8a1"
+],
+"sbs_all_graph|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"sbs_all_graph|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"sbs_all_stacked|bottom32_small|network_only": [
+488,
+32,
+"e8336a5b434db674"
+],
+"sbs_all_stacked|bottom48_100|network_only": [
+474,
+48,
+"6328c02e65abc8a1"
+],
+"sbs_all_stacked|bottom48_125|network_only": [
+474,
+48,
+"6328c02e65abc8a1"
+],
+"sbs_all_stacked|bottom48_150|network_only": [
+474,
+48,
+"6328c02e65abc8a1"
+],
+"sbs_all_stacked|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"sbs_all_stacked|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"sbs_all_temps_power_labels|bottom32_small|network_only": [
+644,
+32,
+"3dfe45fdf0ef219c"
+],
+"sbs_all_temps_power_labels|bottom48_100|network_only": [
+630,
+48,
+"57e77fec72bcba66"
+],
+"sbs_all_temps_power_labels|bottom48_125|network_only": [
+630,
+48,
+"57e77fec72bcba66"
+],
+"sbs_all_temps_power_labels|bottom48_150|network_only": [
+630,
+48,
+"57e77fec72bcba66"
+],
+"sbs_all_temps_power_labels|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"sbs_all_temps_power_labels|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"sbs_all|bottom32_small|network_only": [
+488,
+32,
+"e8336a5b434db674"
+],
+"sbs_all|bottom48_100|network_only": [
+474,
+48,
+"6328c02e65abc8a1"
+],
+"sbs_all|bottom48_125|network_only": [
+474,
+48,
+"6328c02e65abc8a1"
+],
+"sbs_all|bottom48_150|network_only": [
+474,
+48,
+"6328c02e65abc8a1"
+],
+"sbs_all|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"sbs_all|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"sbs_cpu_ram_gpu|bottom32_small|network_only": [
+488,
+32,
+"85ce4ea02e4851c5"
+],
+"sbs_cpu_ram_gpu|bottom48_100|network_only": [
+474,
+48,
+"f86387be9821e648"
+],
+"sbs_cpu_ram_gpu|bottom48_125|network_only": [
+474,
+48,
+"f86387be9821e648"
+],
+"sbs_cpu_ram_gpu|bottom48_150|network_only": [
+474,
+48,
+"f86387be9821e648"
+],
+"sbs_cpu_ram_gpu|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"sbs_cpu_ram_gpu|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"sbs_cpu_ram_text|bottom32_small|network_only": [
+522,
+32,
+"c87c60487966fd24"
+],
+"sbs_cpu_ram_text|bottom48_100|network_only": [
+508,
+48,
+"05392f51da7a2d0e"
+],
+"sbs_cpu_ram_text|bottom48_125|network_only": [
+508,
+48,
+"05392f51da7a2d0e"
+],
+"sbs_cpu_ram_text|bottom48_150|network_only": [
+508,
+48,
+"05392f51da7a2d0e"
+],
+"sbs_cpu_ram_text|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"sbs_cpu_ram_text|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"sbs_cpu_ram|bottom32_small|network_only": [
+488,
+32,
+"b119240e5af5d1b5"
+],
+"sbs_cpu_ram|bottom48_100|network_only": [
+474,
+48,
+"098f047e85b83afe"
+],
+"sbs_cpu_ram|bottom48_125|network_only": [
+474,
+48,
+"098f047e85b83afe"
+],
+"sbs_cpu_ram|bottom48_150|network_only": [
+474,
+48,
+"098f047e85b83afe"
+],
+"sbs_cpu_ram|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"sbs_cpu_ram|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"sbs_cpu|bottom32_small|network_only": [
+332,
+32,
+"3e129b2477eae1c2"
+],
+"sbs_cpu|bottom48_100|network_only": [
+318,
+48,
+"5580fca50d82ff63"
+],
+"sbs_cpu|bottom48_125|network_only": [
+318,
+48,
+"5580fca50d82ff63"
+],
+"sbs_cpu|bottom48_150|network_only": [
+318,
+48,
+"5580fca50d82ff63"
+],
+"sbs_cpu|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"sbs_cpu|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+],
+"sbs_gpu_vram|bottom32_small|network_only": [
+464,
+32,
+"7b15522e28b336b3"
+],
+"sbs_gpu_vram|bottom48_100|network_only": [
+450,
+48,
+"a5638f654671b05a"
+],
+"sbs_gpu_vram|bottom48_125|network_only": [
+450,
+48,
+"a5638f654671b05a"
+],
+"sbs_gpu_vram|bottom48_150|network_only": [
+450,
+48,
+"a5638f654671b05a"
+],
+"sbs_gpu_vram|right32|network_only": [
+32,
+46,
+"7d6e59e47dd1b235"
+],
+"sbs_gpu_vram|right48|network_only": [
+48,
+46,
+"6660fe3153d66a14"
+]
+},
+"font": "49ec36588fb87112:108"
+}
