@@ -106,6 +106,15 @@ def _no_real_lhm_web_server(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _backups_not_quitting(monkeypatch):
+    """A widget ``cleanup()`` under test calls ``history_backup.cancel_all`` (the app is quitting), which
+    refuses every later backup for the rest of the process - right for the app, wrong for the next
+    test (#334). Each test starts with backups allowed."""
+    from netspeedtray.core.db import history_backup
+    monkeypatch.setattr(history_backup, "_cancelled", False)
+
+
+@pytest.fixture(autouse=True)
 def _pin_windows_theme(monkeypatch):
     """Pin the Windows (taskbar) theme the automatic text colour follows, so no test depends on the
     machine running it. Settings' live preview / Save / Cancel substitute the current theme's colour

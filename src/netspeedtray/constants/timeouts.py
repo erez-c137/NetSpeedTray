@@ -26,6 +26,10 @@ class TimeoutConstants:
     DB_BACKUP_RETRY_MAX_ATTEMPTS: Final[int] = 8
     # How long Settings waits for the worker's answer before giving the Delete button back.
     DB_DELETE_HISTORY_UI_TIMEOUT_MS: Final[int] = 120000
+    # Quitting while Settings > Advanced > Back up history runs (#334): its SQLite statement is
+    # interrupted and its thread gets this long to delete the unfinished copy (+ -journal) and end.
+    # A copy is read-only on the live file, so a thread still running past this loses nothing.
+    HISTORY_BACKUP_CANCEL_WAIT_MS: Final[int] = 1500
     # Opening the history file at startup: how long one attempt waits for a write lock another process
     # holds. Five attempts (backing off) bound a held lock at ~12 s before the session goes read-only;
     # once open, normal writes wait the usual 5 s.

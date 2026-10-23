@@ -322,6 +322,8 @@ class SettingsDialog(QDialog):
                 reset_page_callback=self._reset_advanced_page,
                 reset_all_callback=self._reset_all_to_defaults,
                 delete_history_callback=self._delete_all_history,
+                history_path_callback=self._history_db_path,
+                notify_callback=self._notify_backup_result,
             )
             # The Record-hardware-history card greys out live as CPU/GPU monitoring is switched.
             # The battery hover toggle counts too (#323) - see _sync_record_card.
@@ -854,6 +856,17 @@ class SettingsDialog(QDialog):
         if box.clickedButton() is not delete_btn:
             return None
         return usage.isChecked()
+
+    def _history_db_path(self):
+        """The live history file for Settings > Advanced > Back up history (#334), or None."""
+        ws = getattr(self.parent_widget, "widget_state", None)
+        return getattr(ws, "history_db_path", None) if ws is not None else None
+
+    def _notify_backup_result(self, title: str, body: str, path) -> None:
+        """A backup that finished while Settings was closed: the widget's non-focus flyout (#334)."""
+        notify = getattr(self.parent_widget, "show_backup_notice", None)
+        if notify is not None:
+            notify(title, body, path)
 
     def _delete_all_history(self) -> None:
         """Settings > Advanced > Delete all history (2.2 item C). Immediate - not deferred to Save."""

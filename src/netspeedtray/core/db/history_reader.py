@@ -44,7 +44,7 @@ import sqlite3
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
@@ -80,6 +80,18 @@ class VolumeResult:
     down_bytes: float
     exact_up_bytes: float
     exact_down_bytes: float
+    reconstructed: bool
+
+
+@dataclass(frozen=True)
+class DayVolume:
+    """Bytes moved on one LOCAL calendar day (#334's usage table). ``day`` is the local date,
+    ``start_ts`` its first instant (local midnight, DST-correct - ``_local_day_start``).
+    ``reconstructed``: part of the day was estimated from stored rates (``VolumeResult`` D5)."""
+    day: date
+    start_ts: int
+    up_bytes: float
+    down_bytes: float
     reconstructed: bool
 
 
@@ -210,6 +222,17 @@ class HistoryReader(ABC):
         """``metered_volume`` for decisions that move the odometer: None when history cannot answer (a
         failed read; a backend without adapter metadata) - ``metered_volume`` turns every error into
         zeros, which a re-key would take for "nothing moved"."""
+        return None
+
+    #: Whether ``daily_volume`` can answer (v8). The v7 backend - a 2.1 file whose upgrade is deferred
+    #: to a later start - cannot, and the usage table says it will be there after the upgrade.
+    SUPPORTS_DAILY_VOLUME = False
+
+    def daily_volume(self, start_time: Optional[datetime], end_time: datetime,
+                     scope: Optional["MeteredScope"]) -> Optional[List["DayVolume"]]:
+        """``metered_volume`` split by LOCAL calendar day, oldest first (#334's usage table): one entry
+        per day that holds history, each exactly what ``metered_volume`` returns for that day's own
+        window. None when this backend cannot answer (v7: the table waits for the upgrade)."""
         return None
 
     def interface_names(self) -> Optional[List[str]]:
@@ -1030,6 +1053,7 @@ class V8HistoryReader(_ReaderBase):
     watermarks are scalar subqueries of the statements they bound, so a roll-up that commits mid-read
     (rows + watermark in one transaction, per the contract) can neither drop nor double-count."""
 
+    SUPPORTS_DAILY_VOLUME = True
     _NET = (S8.NET_RAW, S8.NET_MINUTE, S8.NET_HOUR)
     _HW = (S8.HW_RAW, S8.HW_MINUTE, S8.HW_HOUR)
     # (raw, minute) watermark keys per tier family: they roll up independently (the migration folds
@@ -1418,6 +1442,47 @@ class V8HistoryReader(_ReaderBase):
         finally:
             if conn is not None:
                 self._end_snapshot(conn, began)
+
+    def daily_volume(self, start_time: Optional[datetime], end_time: datetime,
+                     scope: Optional[MeteredScope]) -> Optional[List[DayVolume]]:
+        """``_volume_run``'s three per-tier queries - same watermark bounds, same ``_tier_bytes``, same
+        scope filter - grouped by LOCAL day number (``_local_bin_sql``: DST-correct, one 'localtime'
+        per row) and merged across tiers in Python. A row lands wholly in the day its own ``ts`` falls
+        in, exactly as ``metered_volume`` over that day's window counts it, so a day's figure here IS
+        that call's; an hour bucket straddling local midnight (a +5:30 zone) is never split or doubled.
+        One read transaction (``_snapshot_call``), so a roll-up committing mid-read cannot move a slice
+        between tiers under it. None on a failed read."""
+        if scope is not None and scope.names is not None and not scope.names:
+            return []                                    # nothing selected / no eligible adapter
+        scope_sql, scope_p = self._scope_filter(scope)
+        st = int(start_time.timestamp()) if start_time else 0
+        et = int(end_time.timestamp())
+        day_sql = _local_bin_sql("n.ts", 86400)
+
+        def run(cur):
+            bounds = self._tier_bounds(self._NET, "n")
+            acc: Dict[int, List[float]] = {}
+            for k, table in enumerate(self._NET):
+                if k == 0:
+                    cols = "SUM(n.up_bytes), SUM(n.down_bytes), 0"
+                else:
+                    cols = (f"SUM({self._tier_bytes('up', k)}), SUM({self._tier_bytes('down', k)}), "
+                            "SUM(n.up_bytes IS NULL OR n.down_bytes IS NULL)")
+                cur.execute(f"SELECT {day_sql} AS d, {cols} FROM {table} n {self._IFACE_JOIN} "
+                            f"WHERE n.ts BETWEEN ? AND ?{bounds[k][0]}{scope_sql} GROUP BY d",
+                            (st, et) + bounds[k][1] + scope_p)
+                for d, up, down, recon in cur.fetchall():
+                    if d is None:
+                        continue
+                    a = acc.setdefault(int(d), [0.0, 0.0, 0])
+                    a[0] += float(up or 0.0)
+                    a[1] += float(down or 0.0)
+                    a[2] += int(recon or 0)
+            epoch = date(1970, 1, 1)
+            return [DayVolume(epoch + timedelta(days=d), int(_bin_start(d, 86400)), a[0], a[1], a[2] > 0)
+                    for d, a in sorted(acc.items())]
+
+        return self._snapshot_call(run, lambda: None)
 
     def interface_names(self) -> Optional[List[str]]:
         try:

@@ -410,6 +410,7 @@ class UsageTile(QFrame):
     progress bar when a cap is set (or a one-click "set a monthly limit" hint when it isn't)."""
 
     set_cap_requested = pyqtSignal()   #: the "set a limit" hint was clicked (no cap configured yet)
+    usage_history_requested = pyqtSignal()   #: "Usage by day" was clicked (#334's table)
 
     def __init__(self, i18n, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -474,7 +475,23 @@ class UsageTile(QFrame):
             Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
         self._cap_hint.setAccessibleName(hint)
         self._cap_hint.linkActivated.connect(lambda _: self.set_cap_requested.emit())
-        lay.addWidget(self._cap_hint)
+        # #334: the per-day / month / year table, always offered (with or without a cap).
+        hist = self._tr("USAGE_HISTORY_LINK", "Usage by day")
+        self._history_link = QLabel(f"<a href='#' style='color:{c['accent']}; text-decoration:none;'>{hist} →</a>")
+        self._history_link.setFont(su.font(tokens.TYPE_CAPTION))
+        self._history_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._history_link.setStyleSheet("background: transparent;")
+        self._history_link.setTextInteractionFlags(
+            Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+        self._history_link.setAccessibleName(hist)
+        self._history_link.linkActivated.connect(lambda _: self.usage_history_requested.emit())
+        links = QHBoxLayout()
+        links.setContentsMargins(0, 0, 0, 0)
+        links.setSpacing(12)
+        links.addWidget(self._cap_hint)
+        links.addStretch(1)
+        links.addWidget(self._history_link)
+        lay.addLayout(links)
         lay.addStretch(1)   # keep rows top-aligned; fill the rest of the (taller) card
 
     def _make_row(self, label: str, c: dict) -> Tuple[QHBoxLayout, QLabel]:
