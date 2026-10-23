@@ -14,6 +14,7 @@ from typing import Optional, Tuple
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from netspeedtray import constants
+from netspeedtray.utils import https
 
 logger = logging.getLogger(f"{constants.app.APP_NAME}.UpdateChecker")
 
@@ -158,7 +159,7 @@ class _CheckWorker(QThread):
                 headers={"Accept": "application/vnd.github.v3+json",
                          "User-Agent": f"NetSpeedTray/{constants.app.VERSION}"}
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with https.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
 
             tag = data.get("tag_name", "")

@@ -6,16 +6,17 @@ a configurable RenderConfig derived from the main application configuration. Thi
 supports multiple layouts (e.g., vertical, horizontal) to adapt to different UI constraints.
 """
 
+import contextlib
 import logging
 import math
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, Iterator, List, NamedTuple, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
 from netspeedtray.utils.helpers import (has_dedicated_vram, format_speed, calculate_monotone_cubic_interpolation,
                                         memory_label_width, effective_display_mode, format_temperature,
                                         hw_suffix_reference, temperature_unit)
-from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath
+from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath, QFontDatabase
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
@@ -60,6 +61,44 @@ def identity_layout(fm, ssid, band):
     return 0, {"mode": "none", "w": 0, "h": h}
 
 logger = logging.getLogger("NetSpeedTray.WidgetRenderer")
+
+_variable_font_installed: Optional[bool] = None
+
+
+def _has_variable_font() -> bool:
+    """Segoe UI Variable is installed (Windows 11). Checked once per process."""
+    global _variable_font_installed
+    if _variable_font_installed is None:
+        try:
+            _variable_font_installed = constants.fonts.VARIABLE_FAMILY in QFontDatabase.families()
+        except Exception:
+            _variable_font_installed = False
+    return _variable_font_installed
+
+
+def make_widget_font(family: str, point_size: int, weight: int) -> QFont:
+    """The widget's QFont for a configured family (7a). "Segoe UI Variable" (the default) gets its Text
+    optical size through the opsz axis - set explicitly, so every Qt measures it alike (Qt 6.9 applied the
+    Text size by itself, 6.10 the Small one: "888.8 Mbps" 60 vs 64 px). The named sizes ("... Text",
+    "... Small", "... Display") map to the family and their axis value. Segoe UI is the second family of
+    the request: the variable font has no Hebrew (or Arabic, CJK...) glyphs, and Qt then takes those from
+    Segoe UI - the face the Hebrew UI uses (#194) - instead of an arbitrary fallback at mismatched sizes.
+    Without the variable font (Windows 10) it is Segoe UI outright; QFont alone would pick Tahoma. Every
+    other family is passed through unchanged, exactly as before."""
+    f = constants.fonts
+    family = f.FAMILY_RENAMES.get(family, family)
+    opsz = f.VARIABLE_OPSZ.get(family)
+    if opsz is None:
+        return QFont(family, point_size, weight)
+    if not _has_variable_font():
+        return QFont(f.FALLBACK_FONT, point_size, weight)
+    font = QFont(f.VARIABLE_FAMILY, point_size, weight)
+    font.setFamilies([f.VARIABLE_FAMILY, f.FALLBACK_FONT])
+    try:
+        font.setVariableAxis(QFont.Tag.fromString("opsz"), float(opsz))
+    except Exception:   # Qt < 6.7: the variable font's default instance
+        pass
+    return font
 
 
 def trend_window(num_points: int) -> int:
@@ -243,6 +282,13 @@ class RenderConfig:
     show_hardware_power: bool = False
     # "celsius" | "fahrenheit" - display only; every reading is Celsius (rc.2 F8).
     temperature_unit: str = constants.config.defaults.DEFAULT_TEMPERATURE_UNIT
+    # Windows High Contrast is on (legibility "L", 4a): every pen is the system text colour (from_dict),
+    # coding and the widget background are off, and the mini graph is not drawn - but graph_enabled
+    # stays as configured, so the layout (e.g. the split panels) keeps its shape.
+    high_contrast: bool = False
+    # On an accent-coloured taskbar (5a): what the text sits on (#RRGGBB), so the hardware label colours
+    # - picked per paint, not themed - get the same contrast floor as the themed pens. None elsewhere.
+    pen_backdrop: Optional[str] = None
 
 
     @classmethod
@@ -277,11 +323,14 @@ class RenderConfig:
                 graph_style = constants.config.defaults.DEFAULT_GRAPH_STYLE
 
             # The one place the theme enters: the current Windows mode's colours (never the inert
-            # pre-1.3 single-value keys a migrated file still carries for a rollback).
-            colors = color_scheme.resolve(config)
+            # pre-1.3 single-value keys a migrated file still carries for a rollback), adjusted for High
+            # Contrast and an accent-coloured taskbar (paint time only; the config is untouched).
+            colors = color_scheme.paint_colors(config)
+            hc = colors.high_contrast
 
             return cls(
-                color_coding=bool(config.get('color_coding', constants.config.defaults.DEFAULT_COLOR_CODING)),
+                color_coding=bool(config.get('color_coding', constants.config.defaults.DEFAULT_COLOR_CODING))
+                and not colors.coding_off,
                 graph_enabled=bool(config.get('graph_enabled', constants.config.defaults.DEFAULT_GRAPH_ENABLED)),
                 high_speed_threshold=float(config.get('high_speed_threshold', constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD)),
                 low_speed_threshold=float(config.get('low_speed_threshold', constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD)),
@@ -298,7 +347,7 @@ class RenderConfig:
                 graph_upload_color=colors['graph_upload_color'],
                 graph_download_color=colors['graph_download_color'],
                 background_color=str(config.get('background_color', constants.config.defaults.DEFAULT_BACKGROUND_COLOR)),
-                background_opacity=max(0.0, min(1.0, float(config.get('background_opacity', constants.config.defaults.DEFAULT_BACKGROUND_OPACITY)) / 100.0)),
+                background_opacity=0.0 if hc else max(0.0, min(1.0, float(config.get('background_opacity', constants.config.defaults.DEFAULT_BACKGROUND_OPACITY)) / 100.0)),
                 graph_opacity=max(0.0, min(1.0, opacity)),
                 speed_display_mode=str(config.get('speed_display_mode', constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE)),
                 decimal_places=int(config.get('decimal_places', constants.config.defaults.DEFAULT_DECIMAL_PLACES)),
@@ -310,7 +359,7 @@ class RenderConfig:
                 hide_unit_suffix=bool(config.get('hide_unit_suffix', constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX)),
                 hardware_label_style=str(config.get(
                     'hardware_label_style', constants.config.defaults.DEFAULT_HARDWARE_LABEL_STYLE)),
-                hardware_label_color=str(config.get(
+                hardware_label_color="match_text" if hc else str(config.get(
                     'hardware_label_color', constants.config.defaults.DEFAULT_HARDWARE_LABEL_COLOR)),
                 cpu_label_color=str(config.get(
                     'cpu_label_color', constants.config.defaults.DEFAULT_CPU_LABEL_COLOR)),
@@ -349,6 +398,8 @@ class RenderConfig:
                 show_hardware_temps=bool(config.get('show_hardware_temps', False)),
                 show_hardware_power=bool(config.get('show_hardware_power', False)),
                 temperature_unit=temperature_unit(config),
+                high_contrast=hc,
+                pen_backdrop=colors.backdrop,
             )
         except Exception as e:
             logger.error("Failed to create RenderConfig: %s", e)
@@ -391,6 +442,11 @@ class WidgetRenderer:
                 # single slot. Value: (size, history key, upload points, download points, ceiling row).
                 self._graph_cache: Dict[Tuple[bool, str, str], Tuple[Any, ...]] = {}
 
+                # The erasing halo (widget_paint): while render_widget paints with layers, the mini graph
+                # (and the split divider) go to this painter - the graph layer - instead of the one passed
+                # in, which then holds only text. None = paint straight through, as before.
+                self._graph_painter: Optional[QPainter] = None
+
                 # Caching for high-frequency paint events
                 self._cached_pens = {}
                 self._cached_bg_color = None
@@ -416,11 +472,12 @@ class WidgetRenderer:
         self.low_color = QColor(self.config.low_speed_color)
         
         weight = int(self.config.font_weight)
-        self.font = QFont(self.config.font_family, self.config.font_size, weight)
+        self.font = make_widget_font(self.config.font_family, self.config.font_size, weight)
         self.metrics = QFontMetrics(self.font)
         
         if self.config.use_separate_arrow_font:
-            self.arrow_font = QFont(self.config.arrow_font_family, self.config.arrow_font_size, int(self.config.arrow_font_weight))
+            self.arrow_font = make_widget_font(self.config.arrow_font_family, self.config.arrow_font_size,
+                                               int(self.config.arrow_font_weight))
         else:
             self.arrow_font = self.font
         self.arrow_metrics = QFontMetrics(self.arrow_font)
@@ -624,7 +681,8 @@ class WidgetRenderer:
                                      identity_text if last else None, identity_color,
                                      identity_solid, identity_ssid if last else None)
 
-            self.draw_split_divider(painter, rects, config)
+            with self.graph_layer(painter) as gp:
+                self.draw_split_divider(gp, rects, config)
         except Exception as e:
             self.logger.error("Failed to draw split network graphs: %s", e)
 
@@ -666,7 +724,16 @@ class WidgetRenderer:
             tier = fit.tier
             inline_unit = tier == TIER_INLINE_UNIT and not config.hide_unit_suffix
             whole = tier >= TIER_WHOLE
-            short = inline_unit or fit.unit_short or config.short_unit_labels
+            margin = constants.renderer.TEXT_MARGIN
+            show_unit_row = (unit_only or unit_row) and not inline_unit and not config.hide_unit_suffix
+            # The configured label (7e): the short "Mb" / "MB" differ by case alone, so "49 Mb" on a side
+            # bar read as megabits or megabytes. A unit row too wide for the bar steps its font down; only
+            # when even the smallest step can't hold the full label (a Small 32 px bar with binary units,
+            # "MiB/s") does it fall back to the short one, rather than clip. Decided from the whole unit
+            # family, never the live unit, so it can't flip as traffic changes.
+            short = config.short_unit_labels
+            if show_unit_row and not short and not self._unit_family_fits(config, False, width - 2 * margin):
+                short = True
             up_t, dw_t, unit = format_speed_compact(
                 upload, download, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
                 decimal_places=config.decimal_places, unit_type=config.unit_type, short_labels=short,
@@ -676,7 +743,6 @@ class WidgetRenderer:
             rows = [] if unit_only else [(is_up, up_t if is_up else dw_t, upload if is_up else download)
                                          for is_up in (first_up, not first_up)
                                          if only_upload is None or is_up == only_upload]
-            show_unit_row = (unit_only or unit_row) and not inline_unit and not config.hide_unit_suffix
 
             fm, afm = self.metrics, self.arrow_metrics
             sep = getattr(self.i18n, "DECIMAL_SEPARATOR", ".")
@@ -690,7 +756,6 @@ class WidgetRenderer:
             unit_gap = constants.renderer.COMPACT_UNIT_GAP_PX if inline_unit else 0
             unit_w = fm.horizontalAdvance(unit) if (inline_unit or show_unit_row) else 0
             block_w = arrow_w + arrow_gap + num_col + (unit_gap + unit_w if inline_unit else 0)
-            margin = constants.renderer.TEXT_MARGIN
             # A long locale unit at a large font ("МиБ" at 11 pt on a 32 px bar) can be wider than the
             # bar even in its short form. There is no shorter honest label (dropping the "и" would say
             # decimal MB), so the unit row alone steps its font down until the unit fits the bar. The
@@ -698,12 +763,7 @@ class WidgetRenderer:
             # row keeps one size as traffic crosses K <-> M <-> G instead of shrinking and growing.
             unit_font = self.font
             if show_unit_row:
-                from netspeedtray.utils.helpers import get_unit_labels_for_type
-                # Only the units this readout can show: "always Mbps" never drops below mega.
-                labels = get_unit_labels_for_type(self.i18n, config.unit_type, short)
-                if config.speed_display_mode == "always_mbps":
-                    labels = labels[2:]
-                family = [u for u in labels if isinstance(u, str) and u] + [unit]
+                family = self._unit_family(config, short) + [unit]
                 widest = max(family, key=fm.horizontalAdvance)
                 if fm.horizontalAdvance(widest) > width - 2 * margin:
                     unit_font, _ = self._fit_font(widest, width - 2 * margin)
@@ -749,6 +809,22 @@ class WidgetRenderer:
             self.logger.error("Failed to draw compact network speeds: %s", e)
 
     _MIN_UNIT_POINT_SIZE = 6.0
+
+    def _unit_family(self, config: RenderConfig, short: bool) -> List[str]:
+        """The unit labels the compact readout can show (B/K/M/G; "always Mbps" never drops below mega)."""
+        from netspeedtray.utils.helpers import get_unit_labels_for_type
+        labels = get_unit_labels_for_type(self.i18n, config.unit_type, short)
+        if config.speed_display_mode == "always_mbps":
+            labels = labels[2:]
+        return [u for u in labels if isinstance(u, str) and u]
+
+    def _unit_family_fits(self, config: RenderConfig, short: bool, avail: int) -> bool:
+        """Every label of the family fits ``avail`` px at the unit row's smallest font step."""
+        family = self._unit_family(config, short)
+        if not family:
+            return True
+        widest = max(family, key=self.metrics.horizontalAdvance)
+        return self._fit_font(widest, avail)[1] <= avail
 
     def _fit_font(self, text: str, avail: int) -> Tuple[QFont, int]:
         """(font, width): the widget font stepped down in half points until ``text`` fits ``avail``
@@ -1196,11 +1272,15 @@ class WidgetRenderer:
             for key in ('cpu_label_color', 'gpu_label_color'):
                 value = str(getattr(config, key, '') or '')
                 pair.append(value if QColor.isValidColorName(value) else text)
-            return pair[0], pair[1]
-        text_qc = QColor(text)
-        light_taskbar = text_qc.isValid() and text_qc.lightnessF() < 0.5
-        return (hardware_vendors.widget_label_color("cpu", light_taskbar),
-                hardware_vendors.widget_label_color("gpu", light_taskbar))
+        else:
+            text_qc = QColor(text)
+            light_taskbar = text_qc.isValid() and text_qc.lightnessF() < 0.5
+            pair = [hardware_vendors.widget_label_color("cpu", light_taskbar),
+                    hardware_vendors.widget_label_color("gpu", light_taskbar)]
+        backdrop = getattr(config, 'pen_backdrop', None)
+        if backdrop:   # an accent-coloured taskbar (5a): same floor as the themed pens
+            pair = [color_scheme.legible_on(QColor(c).name().upper(), backdrop, text) for c in pair]
+        return pair[0], pair[1]
 
     def _draw_memory_label(self, painter: QPainter, label_x: int, y: int, row: Dict[str, Any]) -> None:
         """Paint a row's RAM/VRAM label at the fixed start of its reserved label cell,
@@ -1311,6 +1391,21 @@ class WidgetRenderer:
         valid_parts = [p for p in parts if p is not None]
         return f"({', '.join(valid_parts)})"
 
+    @contextlib.contextmanager
+    def graph_layer(self, painter: QPainter) -> Iterator[QPainter]:
+        """The painter graph elements go to: the halo's graph layer while render_widget paints with
+        layers (with ``painter``'s transform, so coordinates match), else ``painter`` itself."""
+        gp = getattr(self, "_graph_painter", None)
+        if gp is None or gp is painter:
+            yield painter
+            return
+        gp.save()
+        try:
+            gp.setWorldTransform(painter.worldTransform())
+            yield gp
+        finally:
+            gp.restore()
+
     def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig,
                         history: List[Any], layout_mode: str = 'vertical',
                         is_hardware: bool = False, hardware_color: str = "#FFFFFF",
@@ -1318,9 +1413,15 @@ class WidgetRenderer:
         """Draws a mini graph of history (speed or hardware utilization).
 
         ``series`` picks the network line(s): "both" (one shared axis), or "upload" / "download" alone
-        on their own axis - the panels of the split view."""
-        if not config.graph_enabled or len(history) < constants.renderer.MIN_GRAPH_POINTS:
+        on their own axis - the panels of the split view. Not drawn in High Contrast (4a)."""
+        if (not config.graph_enabled or getattr(config, "high_contrast", False)
+                or len(history) < constants.renderer.MIN_GRAPH_POINTS):
             return
+        with self.graph_layer(painter) as gp:
+            self._draw_mini_graph(gp, width, height, config, history, is_hardware, hardware_color, series)
+
+    def _draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig,
+                         history: List[Any], is_hardware: bool, hardware_color: str, series: str) -> None:
 
         # Honor the configured graph timespan: the series buffers more than the visible window (so a
         # longer timespan reveals already-recorded samples at once), so show only the last `max_samples`
@@ -1408,14 +1509,10 @@ class WidgetRenderer:
                 painter.drawLine(QPointF(float(graph_rect.left()), ceiling_y),
                                  QPointF(float(graph_rect.right()), ceiling_y))
 
-            # Additive fills: on the usual transparent widget (DWM composites it over the taskbar) and on
-            # a dark background they read as a glow. Over an opaque LIGHT background, adding colour to a
-            # near-white backdrop saturates to white and the fill vanishes (PR #441 review renders), so
-            # there the fill is blended normally. Transparent / dark output is unchanged.
-            bg = QColor(config.background_color)
-            light_backdrop = config.background_opacity > 0 and bg.isValid() and bg.lightnessF() >= 0.5
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver if light_backdrop
-                                       else QPainter.CompositionMode.CompositionMode_Plus)
+            # Normal (SourceOver) fills since the legibility package (2a): the additive "glow" brightened
+            # the area behind white text (Detailed scored 3.2-4.0:1 under the digits), vanished over an
+            # opaque light background, and overlapping up/down fills read as a third colour.
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
 
             from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF
 
@@ -1427,7 +1524,7 @@ class WidgetRenderer:
                 
                 grad = QLinearGradient(0, graph_rect.top(), 0, graph_rect.bottom())
                 c = QColor(color_hex)
-                c.setAlpha(120)
+                c.setAlpha(constants.renderer.DETAILED_FILL_ALPHA)
                 grad.setColorAt(0.0, c)
                 c.setAlpha(0)
                 grad.setColorAt(1.0, c)

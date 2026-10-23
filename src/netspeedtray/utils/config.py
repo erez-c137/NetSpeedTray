@@ -472,6 +472,23 @@ class ConfigManager:
         if self._migrate_color_scheme(migrated):
             changes_made = True
 
+        # Pre-release 2.2 rc.2 builds stored the default font as its optical size ("Segoe UI Variable
+        # Text"), a name Qt can't resolve (2.1.7 after a rollback drew Tahoma). Read it as the family, at
+        # any version: no build ever offered the optical size as a choice, so it is never a user's pick.
+        for key in ("font_family", "arrow_font_family"):
+            value = migrated.get(key)
+            renamed = constants.fonts.FAMILY_RENAMES.get(value) if isinstance(value, str) else None
+            if renamed:
+                migrated[key] = renamed
+                changes_made = True
+                self.logger.info("Migrated %s %r -> %r", key, value, renamed)
+
+        # 1.4 (legibility "L"): once, for a file written before it - never re-run on a 1.4 file, where an
+        # old factory value (say a dark High of #00FF00) is the user's deliberate pick by then.
+        if version_parses and not loaded_is_newer and self._version_less_than(str(loaded_version), "1.4"):
+            if self._migrate_to_1_4(migrated):
+                changes_made = True
+
         # Version-based migrations (applied if loaded_version < target version)
         # Example structure for future versions:
         # if self._version_less_than(loaded_version, "2.0"):
@@ -537,13 +554,51 @@ class ConfigManager:
                 old = migrated.get(stem)
                 if not self._is_hex(old):
                     continue
-                factory_dark, factory_light = d.THEMED_COLOR_DEFAULTS[stem]
-                seeded = (old, factory_light if old.upper() == factory_dark.upper() else old)
+                # The pre-1.3 factory value - pinned, not today's dark default (High's moved in 1.4).
+                if old.upper() == d.LEGACY_COLOR_FACTORY[stem].upper():
+                    seeded = d.THEMED_COLOR_DEFAULTS[stem]
+                else:
+                    seeded = (old, old)
             else:
                 continue   # new in 1.3 (Medium, graph colours): validation fills the defaults
             migrated[dark_key], migrated[light_key] = seeded
             wrote = True
             self.logger.info("Migrated %s -> %s=%s, %s=%s", stem, dark_key, seeded[0], light_key, seeded[1])
+        return wrote
+
+    def _migrate_to_1_4(self, migrated: Dict[str, Any]) -> bool:
+        """
+        Schema 1.4 (2.2 rc.2, the legibility package "L"): move values still on an OLD factory default to
+        the new one, in place. Returns True when it wrote anything. The caller runs it once, for a file
+        older than 1.4.
+
+        - The dark High band colour, exactly #00FF00 (case-insensitive) -> #8CF2C3. Any other value is the
+          user's and stays. (A 2.1.x file reaches here already seeded by _migrate_color_scheme, which maps
+          its factory #00FF00 straight to the new pair; this covers a 1.3 file.)
+        - The font and the arrow font, exactly "Segoe UI" -> "Segoe UI Variable" (7a; drawn at its Text
+          optical size).
+        - The separate arrow font, on at exactly the old default (Segoe UI, 10 pt, DemiBold) -> off, so
+          the arrows follow the text font (7b). A changed arrow font keeps the option on.
+        Medium and the light colours were new in 1.3 (never shipped), so they need no step.
+        """
+        d = constants.config.defaults
+        wrote = False
+        for key, (old, new) in d.MIGRATE_1_4_DEFAULTS.items():
+            value = migrated.get(key)
+            if isinstance(value, str) and value.strip().lower() == old.lower():
+                migrated[key] = new
+                wrote = True
+                self.logger.info("Migrated %s %r -> %r (the old default; 1.4)", key, value, new)
+        family, size, weight = d.LEGACY_ARROW_FONT
+        arrow_family = migrated.get("arrow_font_family")
+        if (migrated.get("use_separate_arrow_font") is True
+                and isinstance(arrow_family, str)
+                and arrow_family.strip().lower() in (family.lower(), d.DEFAULT_ARROW_FONT_FAMILY.lower())
+                and migrated.get("arrow_font_size", size) == size
+                and migrated.get("arrow_font_weight", weight) == weight):
+            migrated["use_separate_arrow_font"] = False
+            wrote = True
+            self.logger.info("Migrated use_separate_arrow_font -> False (the old default arrow font; 1.4)")
         return wrote
 
     @staticmethod

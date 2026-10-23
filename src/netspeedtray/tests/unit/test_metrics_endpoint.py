@@ -388,6 +388,31 @@ def test_responses_carry_nosniff(endpoint):
         assert headers.get("X-Content-Type-Options") == "nosniff", path
 
 
+@pytest.mark.parametrize("host,ok", [
+    ("[0000:0000:0000:0000:0000:0000:0000:0001]:9184", True),   # Windows PowerShell / .NET
+    ("[0:0:0:0:0:0:0:1]:9184", True),
+    ("[::1]", True),
+    ("[::0001]:9184", True),
+    ("127.0.0.1:9184", True),
+    ("LOCALHOST:9184", True),
+    ("[::ffff:127.0.0.1]:9184", True),       # IPv4-mapped loopback literal
+    ("[::2]:9184", False),                   # not loopback
+    ("[fe80::1%25eth0]:9184", False),        # zone ids are not a loopback Host
+    ("[::1%251]:9184", False),               # ...not even on ::1 (ipaddress accepts the scope)
+    ("[::1%1]", False),
+    ("[127.0.0.1]:9184", False),             # brackets are for IPv6 only (RFC 3986)
+    ("::1", False),                          # IPv6 must be bracketed
+    ("[::1]:80", False),                     # someone else's port
+    ("localhost.evil.example:9184", False),  # a name: rebinding risk
+    ("0x7f.0.0.1:9184", False),              # odd IPv4 spellings are refused, not guessed at
+    ("2130706433:9184", False),
+    ("10.0.0.1:9184", False),
+    ("[]:9184", False),
+])
+def test_host_check_normalises_loopback_literals_only(host, ok):
+    assert me._host_allowed(host, 9184) is ok
+
+
 @pytest.mark.parametrize("hdrs", [
     {"Origin": "https://evil.example"},
     {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors"},
@@ -705,6 +730,21 @@ def test_the_ipv6_loopback_is_held_too_so_nothing_can_squat_it(endpoint):
     conn = http.client.HTTPConnection("::1", port, timeout=5)
     try:
         conn.request("GET", "/metrics", headers={"Host": f"[::1]:{port}"})
+        assert conn.getresponse().status == 200
+    finally:
+        conn.close()
+
+
+@needs_v6
+def test_windows_powershell_long_form_ipv6_host_is_served(endpoint):
+    """Windows PowerShell's Invoke-WebRequest (.NET) sends [::1] fully expanded; it got 403 in the
+    rc.2 VM session while curl got 200. Same address, so it must be served."""
+    port = _free_on_both()
+    assert endpoint.apply(True, port).state == M.STATE_RUNNING
+    conn = http.client.HTTPConnection("::1", port, timeout=5)
+    try:
+        conn.request("GET", "/metrics",
+                     headers={"Host": f"[0000:0000:0000:0000:0000:0000:0000:0001]:{port}"})
         assert conn.getresponse().status == 200
     finally:
         conn.close()

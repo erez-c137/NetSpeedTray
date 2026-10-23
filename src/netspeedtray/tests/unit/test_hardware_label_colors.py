@@ -311,7 +311,7 @@ def test_a_2_1_config_is_backed_up_before_the_label_style_migration(tmp_path):
     backup = path.with_name(f"{path.name}.bak.v1.1")
     assert backup.exists()
     assert json.loads(backup.read_text(encoding="utf-8")) == original
-    assert loaded["config_version"] == "1.3"
+    assert loaded["config_version"] == "1.4"
 
 
 def test_runtime_taskbar_height_is_neither_written_nor_preserved(tmp_path, caplog):
@@ -321,7 +321,7 @@ def test_runtime_taskbar_height_is_neither_written_nor_preserved(tmp_path, caplo
     from unittest.mock import MagicMock
     from netspeedtray.core.config_controller import ConfigController
     path = tmp_path / "config.json"
-    path.write_text(json.dumps({"config_version": "1.3", "taskbar_height": 48, "font_size": 10}),
+    path.write_text(json.dumps({"config_version": "1.4", "taskbar_height": 48, "font_size": 10}),
                     encoding="utf-8")
     cm = ConfigManager(path)
     with caplog.at_level(logging.WARNING):

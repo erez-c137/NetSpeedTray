@@ -166,7 +166,7 @@ def test_typed_default_color_is_kept(qtbot):
     field.selectAll()
     QTest.keyClicks(field, "#FF8800")   # textEdited, like a real user
     s = dlg.get_settings()
-    assert (s["default_color_dark"].upper(), s["default_color_light"]) == ("#FF8800", "#000000")
+    assert (s["default_color_dark"].upper(), s["default_color_light"]) == ("#FF8800", "#1B1B1B")
     assert "color_is_automatic" not in s
 
 
@@ -175,7 +175,7 @@ def test_typed_colour_survives_a_live_theme_flip(qtbot, monkeypatch):
     preview and on Save."""
     dlg, main = _make(qtbot)
     _light(monkeypatch)                                        # the theme flipped to light
-    assert _painted_text(dlg.get_settings()) == "#000000"      # untouched: follows the theme
+    assert _painted_text(dlg.get_settings()) == "#1B1B1B"      # untouched: follows the theme
     dlg.appearance_page.default_color_light_input.setText("#FF8800")
     _flush(dlg)
     s = dlg.get_settings()
@@ -192,7 +192,7 @@ def test_cancel_after_reset_all_follows_the_theme_for_an_automatic_colour(qtbot,
     _flush(dlg)
     _light(monkeypatch)
     dlg.cancel_button.click()
-    assert main.config["font_size"] == 8 and _painted_text(main.config) == "#000000"
+    assert main.config["font_size"] == 8 and _painted_text(main.config) == "#1B1B1B"
 
 
 def test_pick_then_cancel_still_follows_the_theme(qtbot, monkeypatch):
@@ -204,8 +204,8 @@ def test_pick_then_cancel_still_follows_the_theme(qtbot, monkeypatch):
     _flush(dlg)
     assert _painted_text(main.config) == "#123456"
     dlg.cancel_button.click()
-    assert (main.config["default_color_dark"], main.config["default_color_light"]) == ("#FFFFFF", "#000000")
-    assert _painted_text(main.config) == "#000000"
+    assert (main.config["default_color_dark"], main.config["default_color_light"]) == ("#FFFFFF", "#1B1B1B")
+    assert _painted_text(main.config) == "#1B1B1B"
 
 
 def test_loading_a_colour_does_not_change_it(qtbot):

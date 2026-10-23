@@ -43,7 +43,12 @@ class ConfigConstants:
     # 1.3 (2.2 rc.2): the colour scheme - every themed colour is a `<stem>_dark` / `<stem>_light` pair
     # (THEMED_COLOR_STEMS) and the theme no longer writes the text colour into the file. The bump keeps a
     # `.bak.v1.2`; the pre-1.3 colour keys stay in the file, inert, so rc.1 / 2.1.x still read them.
-    CONFIG_SCHEMA_VERSION: Final[str] = "1.3"
+    # 1.4 (2.2 rc.2, legibility package "L"): new factory band colours, font and arrow font. A one-time
+    # step (utils/config._migrate_to_1_4) moves only values still on the OLD factory default - a dark High
+    # of exactly #00FF00, the font "Segoe UI" (-> "Segoe UI Variable"), the separate 10 pt DemiBold Segoe UI
+    # arrow font - to the new
+    # defaults; anything else is the user's choice and stays. The bump keeps a `.bak.v1.3` (or `.bak.v1.2`).
+    CONFIG_SCHEMA_VERSION: Final[str] = "1.4"
     # A same-version field migration (e.g. dropping a beta's key) rewrites the file without a schema
     # bump. The first `.bak.v<ver>.fields` copy is kept forever (the pristine one); each LATER such
     # migration also snapshots the file as it was just before it, as `.fields.<timestamp>`, and only
@@ -56,7 +61,9 @@ class ConfigConstants:
     DEFAULT_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
     DEFAULT_FONT_SIZE: Final[int] = 9
     DEFAULT_FONT_WEIGHT: Final[int] = fonts.WEIGHT_NORMAL
-    DEFAULT_USE_SEPARATE_ARROW_FONT: Final[bool] = True
+    # Off since 1.4 (7b): the arrows are drawn in the text's own font and weight, like the clock's text -
+    # the old separate 10 pt DemiBold arrow looked bolted on. Users who set an arrow font keep it.
+    DEFAULT_USE_SEPARATE_ARROW_FONT: Final[bool] = False
     DEFAULT_ARROW_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
     DEFAULT_ARROW_FONT_SIZE: Final[int] = 10
     DEFAULT_ARROW_FONT_WEIGHT: Final[int] = fonts.WEIGHT_DEMIBOLD
@@ -75,7 +82,7 @@ class ConfigConstants:
     DEFAULT_LOW_SPEED_THRESHOLD: Final[float] = 1.0
     # Optional third level between Low and High (#9). 0 = Off: three bands, exactly as before.
     DEFAULT_MEDIUM_SPEED_THRESHOLD: Final[float] = 0.0
-    DEFAULT_HIGH_SPEED_COLOR: Final[str] = color.GREEN # Referencing color palette
+    DEFAULT_HIGH_SPEED_COLOR: Final[str] = color.HIGH_SPEED_DARK   # #00FF00 before 1.4 (see color.py)
     DEFAULT_MEDIUM_SPEED_COLOR: Final[str] = color.AMBER
     DEFAULT_LOW_SPEED_COLOR: Final[str] = color.ORANGE # Referencing color palette
 
@@ -89,14 +96,14 @@ class ConfigConstants:
     # label colours (their Brand default already follows the taskbar).
     THEME_SUFFIXES: Final[Tuple[str, str]] = ("dark", "light")
     THEMED_COLOR_DEFAULTS: Final[Dict[str, Tuple[str, str]]] = {   # stem: (dark, light)
-        "default_color": (DEFAULT_COLOR, color.BLACK),
+        "default_color": (DEFAULT_COLOR, color.TEXT_LIGHT),
         "high_speed_color": (DEFAULT_HIGH_SPEED_COLOR, color.HIGH_SPEED_LIGHT),
         "medium_speed_color": (DEFAULT_MEDIUM_SPEED_COLOR, color.MEDIUM_SPEED_LIGHT),
         "low_speed_color": (DEFAULT_LOW_SPEED_COLOR, color.LOW_SPEED_LIGHT),
-        "graph_upload_color": (color.UPLOAD_LINE_COLOR, color.UPLOAD_LINE_LIGHT),
+        "graph_upload_color": (color.WIDGET_UPLOAD_LINE_DARK, color.WIDGET_UPLOAD_LINE_LIGHT),
         "graph_download_color": (color.DOWNLOAD_LINE_COLOR, color.DOWNLOAD_LINE_LIGHT),
-        "arrow_up_color": (DEFAULT_ARROW_UP_COLOR, color.HIGH_SPEED_LIGHT),
-        "arrow_down_color": (DEFAULT_ARROW_DOWN_COLOR, color.BLACK),
+        "arrow_up_color": (DEFAULT_ARROW_UP_COLOR, color.ARROW_UP_LIGHT),
+        "arrow_down_color": (DEFAULT_ARROW_DOWN_COLOR, color.TEXT_LIGHT),
     }
     THEMED_COLOR_STEMS: Final[Tuple[str, ...]] = tuple(THEMED_COLOR_DEFAULTS)
     # The pre-1.3 single-value keys. No longer read or written: the 1.3 migration seeds the pairs from
@@ -106,6 +113,25 @@ class ConfigConstants:
         "default_color", "color_is_automatic", "high_speed_color", "low_speed_color",
         "arrow_up_color", "arrow_down_color",
     )
+    # The factory value each pre-1.3 single key shipped with (the 1.2 -> 1.3 seeding's "nobody chose this"
+    # test). Pinned here, NOT read from the current defaults: High's dark default moved in 1.4, and
+    # comparing a 2.1.x file's #00FF00 against the new mint would have copied the old green to both
+    # taskbars as if the user had picked it.
+    LEGACY_COLOR_FACTORY: Final[Dict[str, str]] = {
+        "high_speed_color": color.LEGACY_HIGH_SPEED_DARK, "low_speed_color": color.ORANGE,
+        "arrow_up_color": color.GREEN, "arrow_down_color": color.WHITE,
+    }
+    # The 1.4 step (legibility "L"): config key -> (old factory value, new default). Applied once, to a
+    # file older than 1.4, and only where the value is EXACTLY the old factory one (compared
+    # case-insensitively). Medium and the light colours never shipped before 1.3 (#441), so they need none.
+    MIGRATE_1_4_DEFAULTS: Final[Dict[str, Tuple[str, str]]] = {
+        "high_speed_color_dark": (color.LEGACY_HIGH_SPEED_DARK, color.HIGH_SPEED_DARK),
+        "font_family": (fonts.LEGACY_DEFAULT_FONT, fonts.DEFAULT_FONT),
+        "arrow_font_family": (fonts.LEGACY_DEFAULT_FONT, fonts.DEFAULT_FONT),
+    }
+    # ...and the separate arrow font, on only because it was the old default: on, at exactly the old
+    # family / size / weight -> off (the arrows then follow the text font, 7b).
+    LEGACY_ARROW_FONT: Final[Tuple[str, int, int]] = (fonts.LEGACY_DEFAULT_FONT, 10, fonts.WEIGHT_DEMIBOLD)
     DEFAULT_BACKGROUND_COLOR: Final[str] = "#000000" # Black
     DEFAULT_BACKGROUND_OPACITY: Final[int] = 0 # Percentage (0-100), default transparent
     DEFAULT_GRAPH_ENABLED: Final[bool] = False

@@ -80,14 +80,266 @@ ALSO
 *A release candidate, for testers. It's a manual download from the release page - the in-app
 updater, WinGet and the Store never offer prereleases.*
 
-A small follow-up to rc.1: the docked widget recovers almost instantly on Windows 10 when you
-maximize and restore windows, and the Turkish strings are corrected.
+rc.2 was meant to be a small follow-up, and then 2.2.0 got a month as Latest ahead of it - so it
+became the last full pass: every open defect and promise I could find, plus the smaller feature
+requests. One color scheme for dark and light taskbars, the widget on every taskbar, usage by day,
+a widget that steps aside for your app buttons, a second launch that brings a lost widget back, and
+text that stays readable over the graph, on an accent-colored taskbar and in High Contrast.
 
 > **Upgrading:** from rc.1 or any 2.2 beta, just install over it - the running app closes itself and
-> comes back. Nothing changes in your settings or history.
+> comes back. From 2.1.x, everything in the beta.1 to rc.1 notes applies too.
+>
+> - **Your settings are converted once more** and backed up first, as
+>   `NetSpeedTray_Config.json.bak.v1.2` next to them. Every widget color now has a dark-taskbar and
+>   a light-taskbar version. A color you picked is copied to both, so nothing you chose changes.
+>   Colors you never changed get the new defaults: High/Medium/Low colors that stay apart with
+>   red-green color blindness (on a dark taskbar High is a soft green instead of #00FF00; Low is
+>   unchanged), readable light-taskbar versions, and the clock's font, Segoe UI Variable. A font,
+>   arrow font or High color you chose stays. The old color keys stay in the file, so going back to
+>   rc.1 or 2.1.7 still works.
+> - **"Hide while app buttons cover the widget" is on.** On a horizontal Windows 11 taskbar, when
+>   your app buttons reach the widget it steps aside and comes back when there's room. Start
+>   NetSpeedTray again to bring it back for the session, or turn it off in Settings → Widget.
+> - **The speed-threshold boxes show your unit now.** The thresholds were always applied in Mbps,
+>   even when the box said MB/s. Nothing is converted, so your color coding doesn't change - but a
+>   "5" you typed under MB/s now reads "0.625 MB/s", the speed that was really used. Type it again
+>   if you meant 5 MB/s.
+> - **The Monitor's network graph leaves a gap where nothing was measured** - the app closed, the PC
+>   asleep - instead of drawing a dashed zero line. A quiet stretch while it was running still reads
+>   zero.
+> - **On a side taskbar, if you dragged the widget in an earlier version,** choose Reset Position
+>   once (right-click the widget) so it can find a free spot by itself. A saved drag counts as "you
+>   placed it", and automatic placement stays out of its way.
+> - **If you followed rc.1's LibreHardwareMonitor hint** (authentication off, listening on all
+>   interfaces), make sure port 8085 isn't open in your firewall. The hint now says so - see Security.
+> - **Switching Windows between light and dark no longer writes your settings file.** The widget
+>   just repaints.
+
+### Added
+
+- **One color scheme for dark and light taskbars.** Text, the High/Medium/Low colors, both arrows
+  and the mini graph each get a dark-taskbar and a light-taskbar color - the moon and sun swatches in
+  Settings - and the widget switches between them with Windows mode. A widget background you made
+  opaque picks the half that reads on it. ([#441]; fixes [#332], thanks [@Angel-Informatico])
+
+  *Under the hood: 16 `<stem>_dark` / `<stem>_light` keys from `THEMED_COLOR_DEFAULTS`, resolved
+  only in `RenderConfig.from_dict` from `SystemUsesLightTheme`, so every consumer follows for free;
+  `color_is_automatic`, `apply_theme_aware_defaults` and the in-memory theme rewrite are gone. An
+  opaque background is composited over a reference taskbar color in sRGB, and the light half wins
+  above relative luminance 0.1791, where black and white text read equally. A 144-scenario render
+  guard pins that dark taskbars and custom colors paint exactly as rc.1 did.*
+
+- **A Medium speed level for color coding**, between Low and High, with its own color. Off by
+  default - give it a speed in Settings → Appearance → Color coding to turn it on. ([#441]; [#9],
+  thanks [@2g4b])
+- **Mini graph colors.** Settings → Widget → Mini graph → Upload graph color and Download graph
+  color, for Trend, Detailed and the split graphs. The Monitor window's graphs keep following the app
+  theme. ([#441]; [#117], thanks [@thefaboss])
+- **Show on all taskbars.** With Windows' "Show my taskbar on all displays" on, Settings → Widget
+  puts a copy of the widget on every taskbar. Right-click and double-click work on each copy; drag
+  and the hover card stay on the main widget for now. Off by default. ([#434]; [#229], thanks
+  [@dovletix])
+
+  *Under the hood: each copy is a paint-only `MirrorWidget` with its own renderer, layout and
+  `PositionManager` (burial recovery per window), fed by the main widget's metrics and a read-only
+  config overlay that pins its screen. Copies are keyed by the Win32 monitor rect, not the Qt screen
+  name - a just-added display takes the first screen's name and stole its neighbor's copy - and are
+  unlinked from their taskbar before every destroy. With the setting off, the module isn't even
+  imported. v1 limits: copies don't step aside for app buttons, and a copy on a side taskbar keeps
+  the spot it got when it docked.*
+
+- **On a horizontal Windows 11 taskbar, the widget steps aside for your app buttons.** When they
+  reach it, it hides, and it comes back once there's room; it never moves. On by default; turn off
+  "Hide while app buttons cover the widget" in Settings → Widget. A one-time notice says how to get
+  it back. ([#438]; [#24], thanks [@relu616])
+
+  *Under the hood: the buttons are #406's UI Automation app group (the Start-led run, "..." included),
+  probed only near the widget, at most twice a second, on foreground changes and a backing-off
+  tick. It hides within 8 px and needs two clear readings 300 ms apart to come back. A widget dropped
+  onto the buttons is your choice: that offset is saved and the yield stays off for it. No UI
+  Automation, a failed probe, Windows 10 or ExplorerPatcher taskbars, side bars and Free Move all
+  keep the old behavior. Once stepped aside, an unknown reading on the same taskbar (a failed or
+  timed-out probe) keeps it aside for up to 15 s, re-probing about every second, so a storm of new
+  windows doesn't flap it; past that it shows ([#444]). A button group that doesn't fit inside the
+  taskbar's own window rect - read before and after each probe, so a sliding auto-hide bar is
+  still covered - is an unknown reading too: right after a live 150% → 100% change with auto-hide
+  on, Explorer reported the buttons at the old scale for a few seconds (reproduced in a VM), which
+  stepped the widget aside for ~10 s ([#450]).*
+
+- **On a side taskbar, the widget keeps clear of app buttons as they come and go.** rc.1 placed it
+  once at startup; now apps opened later don't slide under it, a switch between centered and top
+  icons re-places it, a drag stays below the Widgets button, and the "no free spot" notice no longer
+  takes the keyboard. ([#406])
+
+  *Under the hood: an out-of-context `EVENT_OBJECT_LOCATIONCHANGE` hook on Explorer, filtered to the
+  Start / ReBar / task-list windows. Start reaches its final spot 15-30 ms before UI Automation does,
+  so only a predicted collision runs a probe. `TaskbarAl` is read on each burst because its
+  `WM_SETTINGCHANGE` broadcast never arrives on 26200. A re-check landing mid-drag or with the menu
+  open waits until you let go.*
+
+- **Starting NetSpeedTray again brings the widget back.** A second launch used to exit silently, so
+  a hidden or off-screen widget needed Task Manager. Now it shows the running widget, back on its
+  taskbar if it was off-screen - without opening a window or changing your saved position, so a
+  duplicate start at sign-in stays invisible. ([#440]; [#234], thanks [@VenusGirl])
+- **Usage by day, month and year.** The Overview's usage card has a **Usage by day** link: a table of
+  Days, Months and Years, newest first, with Months following your data-cap billing period when the
+  reset day isn't the 1st. **Export CSV** writes the rows in bytes. ([#439]; [#334], thanks
+  [@Falenone])
+- **Back up history.** Settings → Advanced → Back up history saves a checked copy of your history to
+  a file while the app keeps recording - to keep it safe, or to move it to a new PC
+  ([DATABASE.md](DATABASE.md) has the steps). Restoring from inside the app is planned for 2.3.
+  ([#439])
+
+  *Under the hood: `VACUUM INTO` from a dedicated read-only connection, which includes rows still in
+  the `-wal` and comes out as one rollback-journal file. The copy is written to a `.partial-<pid>`
+  name, verified (`quick_check`, `db_version`, the table set), then `os.replace`d onto the name you
+  chose, so a failure leaves nothing behind. The live file's own name is refused under every
+  spelling (resolved path plus `samefile`, so 8.3 names and junctions too). Quitting mid-copy
+  interrupts it and cleans up.*
+
+- **Network details on Check connection:** your adapter, IPv4 and IPv6 addresses, and DNS servers.
+  Copy figures includes the adapter, private IPv4 and DNS, and leaves out IPv6 and any public
+  address. ([#437]; [#214], thanks [@CMTriX])
+- **The data-cap card says how much of the period was measured** - "NetSpeedTray ran 92% of this
+  period · This PC only" - with a tooltip on what the cap can and can't see. When part of the period
+  predates the app's records, it shows "This PC only" and doesn't guess. ([#437])
+- **Pick which GPU to show**, in Settings → Hardware, on PCs with two or more. Automatic (the busiest)
+  stays the default. Temperature and power show only from a sensor of the picked GPU's maker;
+  otherwise they read N/A rather than borrow another card's. ([#435]; [#236], thanks
+  [@balciseri])
+- **Temperatures in °C or °F**, in Settings → Hardware, on the widget, the hover card and the
+  Monitor. History and CSV exports stay in °C. 1.3.1's changelog said Fahrenheit was planned for
+  1.4.0; it's a little late. ([#435])
+- **LibreHardwareMonitor with a password, on any port.** Settings → Hardware → LibreHardwareMonitor
+  connection takes the port and an optional user name and password, and says live whether LHM
+  answers, asks for a password, or refused it. ([#433])
+
+  *Under the hood: the password is encrypted for your Windows account with DPAPI; the settings file
+  holds only that blob, and the support bundle redacts it and the user name. Credentials are only
+  ever sent to 127.0.0.1. LHM 0.9.5/0.9.6 save the SHA-256 of the password and hash it again at
+  startup, so after each LHM restart only the hash of the old password works - the status line says
+  to set it again in LHM. Fixed on LHM's master, not in a release yet.*
+
+- **IT admins can turn update checks off machine-wide**, with
+  `HKLM\SOFTWARE\Policies\NetSpeedTray` `DisableUpdateCheck` = 1 (HKCU works per user). The app then
+  never contacts GitHub, the menu's Check for Updates is hidden, and Settings shows "Managed by your
+  organization". New [DEPLOYING.md](DEPLOYING.md) covers silent installs, the policy and what the app
+  connects to. ([#430], [#431])
+
+### Changed
+
+- **The Monitor's network graph labels its axes and its statistic.** The axes say the unit -
+  "Download (MB/s)" - and follow your unit setting with round ticks. Past 6 h, a caption says each
+  point is the peak of its minute, hour or day, since the header above shows volume. ([#436])
+- **Settings titles are in sentence case, without trailing colons**, in every language ("Show mini
+  graph", "Graph timespan"). Window and command names keep their capitals. ([#432])
+- **The monitoring modes explain what they count.** Auto's tooltip says it follows the adapter your
+  traffic uses - usually the VPN's when one is connected - and that "Physical adapters only" is
+  closer to what your provider measures. The README's "ignoring VPNs" line was wrong and is fixed.
+  ([#437])
+- **Grayed-out hardware settings say why** when you hover them - "Turn on CPU monitoring to use
+  this", and so on. ([#435])
+- **Settings → Widget says when your preferred monitor has no taskbar**, so the widget sits on the
+  primary one, and which switch keeps it on that monitor. ([#440])
+- **New High/Medium/Low colors that stay apart with red-green color blindness.** Dark taskbar: Low
+  #FFA500 (unchanged), Medium #FFFF80, High #8CF2C3 instead of #00FF00. Light taskbar: #57190F,
+  #764B0A and #145252. A High left at exactly #00FF00 moves to the new one; any other color is yours
+  and stays. ([#446]; [#9], [#332])
+
+  *Under the hood: chosen for ≥14 pairwise ΔE2000 under normal, deuteranopia and protanopia
+  simulation, and ≥4.5:1 on #202020, #2B2B2B, #EEEEEE and #E8E8E8; tests check both.*
+
+- **The widget uses Segoe UI Variable, like the taskbar clock**, and falls back to Segoe UI where it
+  isn't installed (Windows 10). Light-taskbar text is the clock's #1B1B1B instead of pure black, and
+  the arrows use the text's own font and weight instead of a separate 10 pt DemiBold. Only the old
+  defaults move; a font or arrow font you picked stays. ([#446])
+
+  *Under the hood: stored as the family Qt resolves, "Segoe UI Variable", with `opsz` 10.5 (the Text
+  optical size). Over a mid-gray widget background the factory light text drops to black to stay
+  at 4.5:1 or above.*
+
+- **Mini graph:** Detailed draws with a plain blend instead of a glow, with a lighter fill; idle
+  traffic no longer fills the graph, because its scale never drops below 1 Mbps (it was 100 kbps);
+  and the Split graph's upload line is a muted blue. The Monitor window's graphs don't change.
+  ([#446]; [#117])
+
+  *Under the hood: `CompositionMode_Plus` → normal blend, fill start alpha 80, opacity still 66%;
+  `MIN_Y_SCALE` 12,500 → 125,000 B/s; upload line #6F86A6 (dark) / #6A7FA3 (light).*
+
+- **Side taskbars:** a 3 px gap after the arrows, and the compact unit row keeps the full "Mbps" or
+  "MB/s", stepping its font down to fit. Only a 32 px Small bar with binary units, where even 6 pt
+  can't fit, falls back to the short label. ([#446])
 
 ### Fixed
 
+- **Update checks work on a fresh Windows install.** Windows doesn't ship every root certificate it
+  trusts - it downloads one the first time something needs it - and the update check couldn't
+  trigger that download, so until a browser had fetched GitHub's root, every check failed with a
+  certificate error. Updates now use Windows' own certificate verification, the way browsers do.
+  (2.1.7 too.) ([#451])
+
+  *Under the hood: Python's `ssl` copies only the roots already in the store into OpenSSL and never
+  triggers CryptoAPI's on-demand fetch from Windows Update, so a fresh install without USERTrust ECC
+  got `CERTIFICATE_VERIFY_FAILED`. The update check, the installer/ZIP download and `checksums.txt`
+  all go through the new `utils/https.urlopen`, which uses a `truststore.SSLContext` - chain and host
+  name verified by `CertGetCertificateChain` and the SSL policy. Without truststore it falls back to
+  `ssl.create_default_context()`, and a context that doesn't verify is refused. Authenticode, the
+  SignPath pin and the checksum gate are untouched. On a fresh VM with 21 roots, plain OpenSSL
+  failed and this build reported "Up to date" a second later.*
+
+- **Check connection and the Router pill say "No connection" when the cable or Wi-Fi drops.** A
+  pulled cable read as "your router doesn't answer pings", and the pill kept "Router: Good" for about
+  two minutes before going blank. Now the pill shows "Router: No connection" in red from the first
+  dead cycle and goes back to normal on the first reply. Check connection says to check the cable or
+  Wi-Fi when the adapter has no link, or that the connection is lost when a router that was
+  answering stops; a router that never answers pings keeps the old note. ([#451])
+
+  *Under the hood: `latency_probe.link_state()` reads psutil `isup` for the adapters on the
+  router's subnet - local state only, nothing is sent. `LatencySample.gw_link_lost` is set when a
+  router that has answered loses a whole burst or its route, or when no adapter has a link; a router
+  that never answered, or an answering internet hop, never sets it.*
+
+- **The metrics endpoint answers Windows PowerShell on `[::1]`.** .NET sends the long IPv6 form
+  (`[0000:…:0001]`) in the Host header, which got a 403. A bracketed IPv6 or dotted IPv4 literal is
+  accepted when it's loopback - a literal can't be DNS-rebound - and names are still limited to
+  `localhost`. ([#451])
+- **On a left or right secondary taskbar, the widget no longer covers the clock.** With Show on all
+  taskbars and a side taskbar, every copy sat on its secondary bar's clock, and so did a main widget
+  docked on a secondary side bar. ([#449])
+
+  *Under the hood: a Windows 11 secondary taskbar has no `TrayNotifyWnd`, so `side_bar_geometry()`
+  took the bar's bottom edge as the tray end. The side-bar UIA probe now also returns the span of
+  the `SystemTray.*` buttons, kept per taskbar HWND and dropped when that bar's dock changes (a live
+  100% → 150% change re-docks the same HWND, and the old clock rect still fit). Until a probe lands,
+  the tray end is the bar bottom minus `SECONDARY_SIDE_CLOCK_RESERVE_PX` (44, scaled). Drag limits
+  use the same geometry.*
+
+- **After an Explorer restart the widget no longer floats at the bottom-right corner** for a couple
+  of seconds before the new taskbar exists. It hides and comes back at its spot. (2.1.7 too.)
+  ([#440])
+- **Hovering the Monitor's graph shows values that were measured.** On Week and short sessions the
+  tooltip read the smoothed, drawn line, so it could report a speed between two samples that never
+  happened - 38.1 between samples of 50 and 10. (2.1.7 too.) ([#436])
+- **The Monitor's network graph no longer draws unmeasured time as zero.** While the app was closed
+  or the PC slept, the graph showed a dashed zero line, as if the connection had been idle; that's a
+  gap now (2.1.7 too). Long raw windows also keep their short spikes when they're thinned for
+  drawing - a 45 Mbps one used to come out at 22. ([#436])
+
+  *Under the hood: the readers stopped padding windows with zero rows, and a new `measured_spans()` -
+  app sessions minus the stretches flagged as standby or stalls - tells the renderer which silences
+  were measured idle (drawn as zero) and which were not (the line breaks). Without coverage (the
+  in-memory Session, a v7 file, a failed read) every silence breaks the line, so it never claims a
+  zero. Thinning to 2,000 points now keeps each bucket's peak row instead of every Nth row.*
+
+- **An opaque widget background keeps its text readable.** Automatic text followed only the
+  taskbar's mode, so white text could land on an opaque light background, or black on a dark one.
+  (2.1.7 too.) ([#441])
+- **Full-screen Remote Desktop across several monitors hides the widget**, as any full-screen app
+  does; "Keep visible in fullscreen" still opts out. (2.1.7 too.) ([#440]; [#132], thanks
+  [@georgi-iovchev])
+- **Windows 10: the widget no longer overlaps the taskbar's Desktop, Links or Address toolbars.** It
+  sits left of them. Not tested live yet - Windows 10 support is best-effort, and Windows 11 has no
+  such toolbars, so nothing changes there. (2.1.7 too.) ([#440]; [#324], thanks [@Achaean])
 - **Windows 10: the widget no longer blinks out when you maximize and restore windows.** Each
   maximize and restore puts the taskbar over the widget, and rc.1 counted every recovery toward its
   "fighting the shell" backoff, so quick toggling left it hidden for 0.6 to 2.8 s. It now comes back
@@ -105,23 +357,236 @@ maximize and restore windows, and the Turkish strings are corrected.
   5), the re-seat retries after the first window above the taskbar in the taskbar's own Z-band, and
   logs that window's class and band once per episode.*
 
+- **Text stays readable over the mini graph.** The graph was drawn under the text, so a busy graph
+  behind colored digits could make them hard or impossible to read. Now the graph is erased in a
+  thin outline around the text. Copies on other taskbars get it too. (2.1.7 too.) ([#446]; [#117])
+
+  *Under the hood: with a graph on, graph and text are drawn into separate premultiplied layers at
+  the target's device pixel ratio; the rasterized text alpha, grown to 1.5 px × DPR plus a 1 px
+  feather, is cut out of the graph layer with `DestinationOut`, then both are composited over the
+  background, which is painted straight onto the target and never erased. Using the rasterized
+  alpha rather than glyph paths covers icons, the identity badge and the stepped-down unit row with
+  no per-call-site wiring. About +2 ms a frame at 150-200% (3.8 vs 2.2 ms), nothing at 100%. Across
+  a 170-scenario contrast render set, text under 4.5:1 went from 34 scenarios (11 under 3:1) to
+  none; the lowest is 4.69:1, with no graph involved.*
+
+- **High Contrast themes work.** The widget paints in the theme's text color, hides the mini graph
+  and drops color coding and its background - without touching your settings - and follows a theme
+  change live. (2.1.7 too.) ([#446])
+
+  *Under the hood: `SPI_GETHIGHCONTRAST` at paint time; every pen becomes `COLOR_WINDOWTEXT`, and
+  `graph_enabled` stays as configured so the layout keeps its shape. A change arrives through
+  `WM_SETTINGCHANGE(SPI_SETHIGHCONTRAST)`, `WM_SYSCOLORCHANGE` or `WM_DWMCOLORIZATIONCOLORCHANGED`,
+  deduped by `check_shell_theme`. Checked live on all four Windows 11 contrast themes.*
+
+- **An accent-colored taskbar keeps the widget readable, in light mode too.** The widget assumed
+  the bar was #202020 or #EEEEEE. It now reads the real accent color, and any color under 3:1
+  against it - Brand CPU/GPU labels included - is drawn in the normal text color instead; your
+  settings aren't changed. If the accent shade can't be read, color coding turns off. Current
+  Windows 11 (build 26300) paints the accent bar in light mode too, with a white clock, so the text
+  color is judged from the bar itself; Windows 10 keeps the dark-mode-only check. (2.1.7 too.)
+  ([#446])
+
+  *Under the hood: the bar color is `AccentPalette[5]`, which matched the painted taskbar exactly
+  with transparency on and off.*
+
+- **Changing the display scale while the app runs re-sizes and re-places the widget.** The scale was
+  read once per monitor and kept for the session, so going 150% → 100% left a widget sized for a
+  Small taskbar, and 100% → 150% made the app-button check see buttons that weren't there - a false
+  step-aside and the "no free spot" notice - until a restart. Copies on other taskbars read the
+  scale the same way and follow too. (2.1.7 too, for the sizing.) ([#444])
+
+  *Under the hood: `get_dpi_for_monitor` cached per HMONITOR since 1.0.5, but a monitor keeps its
+  handle across a live Settings → Display → Scale change. It's read on every call now, and a failed
+  handle falls back to the live QScreen ratio instead of 1.0. The #24 check judges in one coordinate
+  space - the monitor's scale at the moment of judging (`current_dpi_for_hwnd`) - returns busy while
+  the 1 s taskbar snapshot disagrees, and drops its measured group and re-probes at once after a
+  change. Qt's device pixel ratio catches up about 3 s after the OS scale, so
+  `resize_widget_for_font` records the ratio it measured at and the widget re-sizes once more when
+  it moves: 100% → 150% → 100% used to end at 87×48 instead of a fresh start's 85×48.*
+
+- **The speed-threshold boxes show and take your unit.** They were labeled MB/s (or Mibps, MiB/s)
+  but stored and applied whatever you typed as Mbps, so "5 MB/s" colored at 5 Mbps. Stored values
+  are unchanged; only the box converts. (2.1.7 too.) ([#441])
+- **With data usage in Auto mode, traffic before your connection comes up at sign-in is counted.**
+  With Wi-Fi slow to connect, the bytes before the active adapter was known were dropped, and so was
+  the closed-app recovery for that launch. ([#437])
+- **The hover card's pin hint points at the widget:** "Click the widget to keep this open". An
+  unpinned card lets clicks through to the app behind it, so the click that pins goes on the widget;
+  rc.1's changelog and notes described it wrong too. ([#429])
+- **Settings expanders open from the keyboard.** "Advertised plan speed" and "Color-code by load"
+  opened only with the mouse; their headers are now Tab stops that Space and Enter toggle, and
+  Narrator reads "collapsed" or "expanded". (2.1.7 too.) ([#432])
+- **A setting that fails to apply is rolled back properly.** The old settings were saved, but parts
+  of the app kept running the new ones until a restart; a failed live preview could also write the
+  file. (2.1.7 too.) ([#432])
+- **The Monitor's Network header fits at the minimum width when "From recorded history" shows.** rc.1
+  said it was fixed in every language; with that note up - every upgrade from 2.1.x - it still
+  squeezed the period menu and the Live pill in all 16. The note now narrows, then moves into the
+  totals' tooltip. ([#432])
+- **With a preferred monitor whose taskbar is on another edge, the widget starts on that taskbar and
+  paints for it**, instead of laying out for the primary's taskbar. ([#434], [#440])
+- **An eGPU plugged in without a display change is picked up** within a poll; VRAM no longer stays in
+  "shared" mode until something else rebuilt the GPU list. ([#435])
+- **The installer runs in 64-bit mode on Windows 11 on ARM**, so it installs to Program Files instead
+  of Program Files (x86). (2.1.7 too.) ([#431])
+- **The history upgrade survives a clock set back into its hourly data**, and a file held for a moment
+  by antivirus no longer fails it; before, both stopped the upgrade until the next start. ([#437])
+- **Repeated settings conversions on the same version each keep a backup** of the state just before
+  them (the newest three, plus the first). ([#437])
+- **Reset Position no longer shows for very old default offsets** from configs that predate 1.3.0.
+  ([#440])
+- **The Setup log is honest about silent SYSTEM installs:** it said the app would start at each user's
+  next sign-in, but it only does after they've started it once. ([#430])
+- **privacy.md and DATABASE.md describe what the app really does** - when it checks for updates, what
+  the support bundle redacts, the LibreHardwareMonitor and Check connection traffic, and the real
+  Settings labels. ([#431])
+
+### Security
+
+- **The LibreHardwareMonitor hint no longer tells you to leave LHM open to your network.** rc.1 said
+  to turn its authentication off and let it listen on all interfaces, which exposes its sensor server
+  to the LAN. LHM up to 0.9.6 can't listen on 127.0.0.1 only, so the hint now says: don't open its
+  port in your firewall, pick 127.0.0.1 once a newer LHM offers it, and enter the password here if
+  you turn authentication on. ([#433])
+- **Portable updates check the publisher's signature on the new NetSpeedTray.exe** before anything is
+  staged, on top of the download checksum. An unsigned or wrongly signed exe is refused, nothing is
+  installed, and the release page opens instead. ([#430])
+
+  *Under the hood: WinVerifyTrust with whole-chain revocation plus the SignPath pin (Subject CN
+  SignPath Foundation, Issuer GlobalSign GCC R45 CodeSigning CA 2020). This covers the bootloader exe
+  only - the `_internal\` payload is still vouched for by `checksums.txt` alone, so it's defense in
+  depth against a swapped exe, not proof against a swapped release. A locally built portable zip
+  can no longer be applied through the in-app updater.*
+
+### Performance
+
+- **Check connection no longer makes the widget and graphs hitch.** Each check's network-details
+  read ran a full Python garbage collection, which held the app for about 75 ms (median, idle
+  machine); it's under 2 ms now. ([#443])
+- **The first session after the history upgrade has no write burst a few minutes in.** The upgrade
+  now flushes its leftover write-ahead log while nothing else reads the file, instead of leaving
+  ~3 MB for an automatic checkpoint ~5 minutes later. ([#437])
+- **The hourly maintenance pass never stalls history writes while the Monitor reads.** It waited up
+  to 5 s on a reader; a busy checkpoint now just retries when the app is idle. ([#437])
+
 ### Localization
 
+- Hungarian rc.1 strings refined by a native speaker, with LibreHardwareMonitor's menu names
+  localized. ([#414], thanks [@cscsanaki])
 - Turkish typos and wording fixed, with Windows' own term for network adapters. ([#423], thanks
   [@lezgintekay])
+- Settings titles moved to sentence case in all 16 languages and lost their trailing colons; French
+  and Turkish had copied the English Title Case and now follow their own rules. ([#432])
+- German: the failed-update message is translated, and the temperature guidance gets back the line
+  about very new CPUs whose sensors LHM can't read yet; plus clearer wording for the Black font
+  weight, power readings and GitHub's star, and consistent graph terms and Mbit/s. ([#427], thanks
+  [@emgeka])
+- 89 new strings and 62 changed ones (most of those the sentence-case pass) are AI-drafted in every
+  language and listed for review in [#364].
 
 ### Developer notes
 
 - Release notes now live in `.github/release-notes/vX.Y.Z.md`; CI publishes them exactly as before.
   Proven with a throwaway tag that was cancelled before signing. ([#422])
-- 5,084 tests.
+- Config schema 1.3: the 16 themed color keys, `medium_speed_threshold`, `hide_when_apps_cover`,
+  `show_on_all_taskbars`, `gpu_adapter`, `temperature_unit`, `lhm_port`, `lhm_username` and
+  `lhm_password_protected`; `app_overlap_drop_offset` is app state, kept by Reset all. Legacy color
+  keys stay in the file for rollback. ([#433], [#434], [#435], [#438], [#441])
+- Config schema 1.4, applied once to files older than 1.4 and only where a value is exactly the old
+  factory one: dark High `#00FF00` (case-insensitive) → `#8CF2C3`, font "Segoe UI" → "Segoe UI
+  Variable", and the separate Segoe UI 10 pt DemiBold arrow font turned off. The bump keeps a
+  `.bak.v1.2` (or `.bak.v1.3`). It also fixes #441's 1.2 → 1.3 seeding, which compared against the
+  *current* dark defaults - with the new High, a 2.1.7 factory `#00FF00` would have been copied to
+  both taskbars as a user pick. It now compares against the pinned pre-1.3 factory values
+  (`LEGACY_COLOR_FACTORY`). ([#446])
+- The #441 byte-identical render golden was re-based on the new look (which changes every frame on
+  purpose), with rc.1 configs going through the real 1.2 → 1.4 migration. ([#446])
+- The build ignores PATH folders that shadow System32's `icuuc.dll` / `icuin.dll` while PyInstaller
+  analyses QtCore - with Poppler's bin on PATH, the exe died at startup with "DLL load failed: The
+  specified procedure could not be found" - and stops outright if either DLL gets bundled anyway.
+  Builder-side only; shipped builds weren't affected. ([#425], thanks [@emgeka]; [#445])
+- **Golden tests pin the parts that must not move:** 160 top/bottom placements generated on rc.1
+  ([#406]), 144 color-scheme render scenarios ([#441]), and 57 GPU "Automatic" polls across 14
+  machine types ([#435]).
+- RAM is collected when CPU or RAM is on, VRAM when GPU or VRAM is on; where they're shown is
+  unchanged (RAM rides on the CPU row, VRAM on the GPU row). ([#435])
+- `wmi` is imported on the GUI thread at startup and each WMI query breaks the module's class-cache
+  cycle itself, so COM proxies are released on their own thread and the "Win32 exception releasing
+  IUnknown" line at exit is gone. ([#443])
+- Logging: copies of the widget tag their lines `[mirror DISPLAY-…]`; a re-seat in the first 5 s
+  after docking or a tray change logs at DEBUG and no longer uses up the one INFO burial line; the
+  click-through warning logs the style after the change; installed builds no longer log "The
+  running install looks incomplete" on every launch - the post-update cleanup skips quietly without
+  `portable.marker`, since only the portable updater leaves anything to sweep. ([#434], [#440],
+  [#450])
+- New dependency: `truststore` 0.10.4 (MIT, pure Python, the one pip vendors), pinned in
+  `requirements.in/.txt` and `dev-requirements.txt`. The build fails if it isn't bundled, and a
+  source scan fails the suite on any `urlopen`, `HTTPSConnection` or `create_default_context`
+  outside `utils/https.py`. ([#451])
+- Four load-dependent test flakes made deterministic - Check connection quit, two monitor-thread
+  polls, the migration random-kill test and the side-bar first placement - without weakening what
+  they check. ([#442])
+- `build/version_info.txt` is no longer tracked (both build scripts generate it), and the
+  American-spelling test covers DEPLOYING.md and DATABASE.md. ([#431])
+- 6,564 tests.
 
+[#9]: https://github.com/erez-c137/NetSpeedTray/issues/9
+[#24]: https://github.com/erez-c137/NetSpeedTray/issues/24
+[#117]: https://github.com/erez-c137/NetSpeedTray/issues/117
+[#132]: https://github.com/erez-c137/NetSpeedTray/issues/132
+[#214]: https://github.com/erez-c137/NetSpeedTray/issues/214
+[#229]: https://github.com/erez-c137/NetSpeedTray/issues/229
+[#234]: https://github.com/erez-c137/NetSpeedTray/issues/234
+[#236]: https://github.com/erez-c137/NetSpeedTray/issues/236
+[#324]: https://github.com/erez-c137/NetSpeedTray/issues/324
+[#332]: https://github.com/erez-c137/NetSpeedTray/issues/332
+[#334]: https://github.com/erez-c137/NetSpeedTray/issues/334
+[#364]: https://github.com/erez-c137/NetSpeedTray/issues/364
+[#406]: https://github.com/erez-c137/NetSpeedTray/pull/406
+[#414]: https://github.com/erez-c137/NetSpeedTray/pull/414
 [#422]: https://github.com/erez-c137/NetSpeedTray/pull/422
 [#423]: https://github.com/erez-c137/NetSpeedTray/pull/423
 [#424]: https://github.com/erez-c137/NetSpeedTray/pull/424
+[#425]: https://github.com/erez-c137/NetSpeedTray/pull/425
 [#426]: https://github.com/erez-c137/NetSpeedTray/pull/426
-[@pasharm]: https://github.com/pasharm
+[#427]: https://github.com/erez-c137/NetSpeedTray/pull/427
+[#429]: https://github.com/erez-c137/NetSpeedTray/pull/429
+[#430]: https://github.com/erez-c137/NetSpeedTray/pull/430
+[#431]: https://github.com/erez-c137/NetSpeedTray/pull/431
+[#432]: https://github.com/erez-c137/NetSpeedTray/pull/432
+[#433]: https://github.com/erez-c137/NetSpeedTray/pull/433
+[#434]: https://github.com/erez-c137/NetSpeedTray/pull/434
+[#435]: https://github.com/erez-c137/NetSpeedTray/pull/435
+[#436]: https://github.com/erez-c137/NetSpeedTray/pull/436
+[#437]: https://github.com/erez-c137/NetSpeedTray/pull/437
+[#438]: https://github.com/erez-c137/NetSpeedTray/pull/438
+[#439]: https://github.com/erez-c137/NetSpeedTray/pull/439
+[#440]: https://github.com/erez-c137/NetSpeedTray/pull/440
+[#441]: https://github.com/erez-c137/NetSpeedTray/pull/441
+[#442]: https://github.com/erez-c137/NetSpeedTray/pull/442
+[#443]: https://github.com/erez-c137/NetSpeedTray/pull/443
+[#444]: https://github.com/erez-c137/NetSpeedTray/pull/444
+[#445]: https://github.com/erez-c137/NetSpeedTray/pull/445
+[#446]: https://github.com/erez-c137/NetSpeedTray/pull/446
+[#449]: https://github.com/erez-c137/NetSpeedTray/pull/449
+[#450]: https://github.com/erez-c137/NetSpeedTray/pull/450
+[#451]: https://github.com/erez-c137/NetSpeedTray/pull/451
+[@2g4b]: https://github.com/2g4b
+[@Achaean]: https://github.com/Achaean
+[@Angel-Informatico]: https://github.com/Angel-Informatico
+[@balciseri]: https://github.com/balciseri
+[@CMTriX]: https://github.com/CMTriX
+[@cscsanaki]: https://github.com/cscsanaki
+[@dovletix]: https://github.com/dovletix
+[@emgeka]: https://github.com/emgeka
+[@Falenone]: https://github.com/Falenone
+[@georgi-iovchev]: https://github.com/georgi-iovchev
 [@lezgintekay]: https://github.com/lezgintekay
+[@pasharm]: https://github.com/pasharm
+[@relu616]: https://github.com/relu616
+[@thefaboss]: https://github.com/thefaboss
+[@VenusGirl]: https://github.com/VenusGirl
 
 ---
 
