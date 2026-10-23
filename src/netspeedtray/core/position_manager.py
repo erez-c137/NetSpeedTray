@@ -762,7 +762,10 @@ class PositionManager(QObject):
     and active monitoring of system changes.
     """
     
-    def __init__(self, window_state: WindowState, parent: Optional[QObject] = None) -> None:
+    def __init__(self, window_state: WindowState, parent: Optional[QObject] = None, *,
+                 app_yield_enabled: bool = True) -> None:
+        """``app_yield_enabled=False``: no #24 app-button yield (a paint-only mirror's manager, #434 -
+        mirrors don't yield in v1; the yield then never probes and never hides anything)."""
         super().__init__(parent)
         self._state = window_state
         self._calculator = PositionCalculator()
@@ -848,6 +851,18 @@ class PositionManager(QObject):
         # ever attached to a native side bar.
         from netspeedtray.core.side_bar_watcher import SideBarWatcher
         self._side_watcher = SideBarWatcher(self._side_watch_context, self._apply_side_recheck, parent=self)
+        # #24: on a native horizontal Win11 bar the widget steps aside (hides) while the app buttons
+        # reach it - it never moves for them (#200). The widget wires both callbacks.
+        self.on_app_yield_changed: Optional[Callable[[], None]] = None
+        self.on_app_yield_first: Optional[Callable[[], None]] = None
+        # Persists config updates the yield makes (the "dropped on the buttons" offset, rc.2 H2).
+        self.on_app_yield_persist: Optional[Callable[[Dict[str, Any]], None]] = None
+        self._app_overlap_info: Optional[TaskbarInfo] = None
+        from netspeedtray.core.app_overlap_yield import AppOverlapYield
+        self._app_yield = AppOverlapYield(self._app_overlap_context, self._app_yield_changed,
+                                          self._app_yield_first, parent=self,
+                                          on_persist_drop=self._persist_app_drop,
+                                          enabled=app_yield_enabled)
 
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -1351,9 +1366,105 @@ class PositionManager(QObject):
                                 user_placed=user_placed_side_offset(self._state.config))
 
     def note_foreground_change(self) -> None:
-        """The widget saw a foreground change: a new app's button may be growing the side bar's app
-        group toward it (side-bar watcher; no-op elsewhere)."""
+        """The widget saw a foreground change: a new app's button may be growing the app group toward
+        it (side-bar watcher on a side bar, the #24 yield on a horizontal one; each a no-op elsewhere)."""
         self._side_watcher.note_foreground_change()
+        self._app_yield.note_foreground_change()
+
+    # --- #24: app-button yield on a native horizontal Win11 bar --------------------------------
+
+    def sync_app_overlap(self, taskbar_info: Optional[TaskbarInfo]) -> None:
+        """Every refresh (1 s tick + foreground changes), BEFORE the visibility gate: attach / detach
+        the yield for this taskbar and run its bounded re-check."""
+        self._app_overlap_info = taskbar_info
+        self._app_yield.sync()
+
+    def is_yielding_to_apps(self) -> bool:
+        """True while the widget steps aside for app buttons that reach it (#24)."""
+        return self._app_yield.yielded
+
+    def note_user_drop(self) -> None:
+        """A drag ended: a drop onto the app buttons is the user's choice (no yield until clear once)."""
+        self._app_yield.note_user_drop()
+
+    def stop_app_overlap(self) -> None:
+        """App shutdown."""
+        self._app_yield.detach("shutting down")
+
+    def suspend_app_yield(self) -> bool:
+        """A second launch asked for the widget (#440): no yield for the rest of this session. True
+        when the widget was yielded at that moment."""
+        return self._app_yield.suspend_for_session()
+
+    def _persist_app_drop(self, value: Optional[int]) -> None:
+        self._state.config["app_overlap_drop_offset"] = value
+        if self.on_app_yield_persist is not None:
+            self.on_app_yield_persist({"app_overlap_drop_offset": value})
+
+    def _app_overlap_context(self):
+        """The yield's view of the widget. A string when it must not yield (the reason, for the log):
+        not a native Win11 TOP/BOTTOM bar (side bars, ExplorerPatcher / Win10 bars with a real task
+        list), floating, or the user turned the setting off; NO_TASKBAR with no taskbar at all (only
+        reached once holding_for_taskbar's own hold has run out - _execute_refresh returns before it);
+        BUSY while the widget is dragged or its menu is open."""
+        from netspeedtray.core.app_overlap_yield import BUSY, NO_TASKBAR, OverlapContext
+        if not self._state.config.get("hide_when_apps_cover", constants.config.defaults.DEFAULT_HIDE_WHEN_APPS_COVER):
+            return "the 'Hide while app buttons cover the widget' setting is off"
+        if self.is_floating():
+            return "the widget is floating (Free Move or a display without a taskbar)"
+        info = self._app_overlap_info or self._state.taskbar_info
+        if info is None or not getattr(info, "hwnd", 0):
+            return NO_TASKBAR
+        try:
+            edge = info.get_edge_position()
+        except Exception:
+            return None
+        if edge not in (constants.taskbar.edge.TOP, constants.taskbar.edge.BOTTOM):
+            return "the widget is not on a top/bottom taskbar"
+        if taskbar_utils.valid_rect(getattr(info, "tasklist_rect", None)) is not None:
+            return "this taskbar has a classic task list"
+        if self._widget_busy():
+            return BUSY
+        widget = self._state.widget
+        dpi = info.dpi_scale if info.dpi_scale and info.dpi_scale > 0 else 1.0
+        width = float(widget.width())
+        left = float(widget.pos().x())
+        if not widget.isVisible():
+            # Hidden: it is never re-placed, so its window can sit at a stale spot (rc.2 H3: 28 px
+            # off after a tray-width change) - judge where it WOULD go.
+            left = self._would_be_x(info, left)
+        defaults = constants.config.defaults
+        offset = self._state.config.get("tray_offset_x", defaults.DEFAULT_TRAY_OFFSET_X)
+        drop_key = int(offset) if isinstance(offset, int) and offset != defaults.DEFAULT_TRAY_OFFSET_X else None
+        saved = self._state.config.get("app_overlap_drop_offset")
+        try:
+            from netspeedtray.core.system_events import read_taskbar_alignment
+            align = read_taskbar_alignment()
+        except Exception:
+            align = None
+        return OverlapContext(hwnd=int(info.hwnd), dpi=dpi, widget=(left, left + width),
+                              centered=None if align is None else align == 1,
+                              drop_key=drop_key, saved_drop=saved if isinstance(saved, int) else None)
+
+    def _would_be_x(self, info: TaskbarInfo, fallback: float) -> float:
+        """The x the docked widget would be placed at on ``info`` right now (its window may be stale
+        while hidden); ``fallback`` when it can't be computed."""
+        try:
+            widget = self._state.widget
+            pos = self._calculator.calculate_position(info, (widget.width(), widget.height()),
+                                                      self._state.config)
+            return float(pos.x) if pos is not None else fallback
+        except Exception as e:
+            logger.debug("would-be position for the app yield failed: %s", e)
+            return fallback
+
+    def _app_yield_changed(self) -> None:
+        if self.on_app_yield_changed is not None:
+            self.on_app_yield_changed()
+
+    def _app_yield_first(self) -> None:
+        if self.on_app_yield_first is not None:
+            self.on_app_yield_first()
 
     def note_taskbar_alignment_hint(self) -> None:
         """A WM_SETTINGCHANGE / alignment signal: let the side-bar watcher compare TaskbarAl."""
@@ -1452,6 +1563,7 @@ class PositionManager(QObject):
         # We rely on the caller (Widget) to persist this config change to disk if needed.
         self.update_position()
         self.ensure_topmost()
+        self._app_yield.note_position_reset()
 
     def move_to_default_for_session(self) -> bool:
         """

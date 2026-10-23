@@ -115,6 +115,12 @@ class WidgetPage(QWidget):
         layout.addWidget(SettingCard(self.i18n.KEEP_VISIBLE_FULLSCREEN_LABEL,
                                      control=self.keep_visible_fullscreen))
 
+        # #24: on a horizontal Win11 taskbar the widget steps aside while the app buttons reach it.
+        # Off = it stays put (and may cover them). The way back for a user who prefers that.
+        self.hide_when_apps_cover = Win11Toggle(label_text="")
+        self.hide_when_apps_cover.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.HIDE_WHEN_APPS_COVER_LABEL, control=self.hide_when_apps_cover))
+
         # NOTE: there is intentionally no tray-offset slider. Free Move (drag the widget anywhere) is the
         # reposition escape hatch; the auto-position uses sensible default offsets. tray_offset_x/y remain
         # in config for the position engine (position_manager) but aren't surfaced as fiddly px sliders.
@@ -317,6 +323,8 @@ class WidgetPage(QWidget):
         self._sync_monitor_note()
         self.keep_visible_fullscreen.setChecked(
             config.get("keep_visible_fullscreen", constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN))
+        self.hide_when_apps_cover.setChecked(
+            config.get("hide_when_apps_cover", constants.config.defaults.DEFAULT_HIDE_WHEN_APPS_COVER))
 
         self.mini_graph_section.load_settings(config)
 
@@ -333,5 +341,6 @@ class WidgetPage(QWidget):
             "free_move": self.free_move.isChecked(),
             "free_float": self.free_float.isChecked(),
             "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
+            "hide_when_apps_cover": self.hide_when_apps_cover.isChecked(),
             **self.mini_graph_section.get_settings(),
         }

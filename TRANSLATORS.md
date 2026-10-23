@@ -41,6 +41,9 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > 🆕 **Pending native review for 2.2 (hover card pin + Reset Position - see #364):** non-English values are AI-assisted.
 > - `RESET_POSITION_MENU_ITEM` - right-click menu item, shown once the widget has been dragged; it puts the widget back by the tray. Keep the `&` accelerator on a letter no other item of that menu uses.
 > - `SIDE_BAR_NO_ROOM_TITLE` / `SIDE_BAR_NO_ROOM_BODY` - a one-time message when a left/right taskbar is so full of app buttons that the widget has no free spot; the body quotes your `RESET_POSITION_MENU_ITEM` (without the `&`).
+> - `APP_OVERLAP_YIELD_BODY` - a one-time message (under the `SIDE_BAR_NO_ROOM_TITLE` title) the first time the widget hides because a horizontal taskbar's app buttons have grown into it: it comes back when there is room, starting the app again brings it back at once, and the switch below keeps it visible. Keep the `{setting}`, `{settings}` and `{page}` placeholders - they are filled with your `HIDE_WHEN_APPS_COVER_LABEL`, `SETTINGS_WINDOW_TITLE` and `WIDGET_SETTINGS_GROUP`.
+> - `APP_OVERLAP_ACTIVATE_BODY` - shown when the app is started again while the widget had stepped aside: it stays visible until the next restart; same placeholders.
+> - `HIDE_WHEN_APPS_COVER_LABEL` - Settings > Widget switch (on by default): hide the widget while the taskbar's app buttons cover it. Sentence case.
 > - `HOVER_CARD_PIN_HINT` - a small line at the bottom of the hover card: clicking the widget keeps the card open.
 
 > 🆕 **Pending native review for 2.2 (beta.4 polish, see #364):** non-English values are AI-assisted.

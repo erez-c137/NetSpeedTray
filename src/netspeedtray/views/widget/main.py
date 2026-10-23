@@ -418,6 +418,11 @@ class NetworkSpeedWidget(QWidget):
             )
             self.position_manager = PositionManager(window_state, parent=self)
             self.position_manager.on_side_no_room = self._maybe_show_side_no_room_notice
+            # #24: the app buttons reached the widget (or left it) - re-run the visibility gate. Late
+            # bound (looked up when called), like the persist hook below.
+            self.position_manager.on_app_yield_changed = lambda: self._on_app_yield_changed()
+            self.position_manager.on_app_yield_first = lambda: self._maybe_show_app_overlap_notice()
+            self.position_manager.on_app_yield_persist = lambda updates: self.update_config(updates)
             # Note: InputHandler is initialized in _init_ui_components() after tray_manager is created
             
             self.logger.debug("Managers initialized successfully.")
@@ -506,12 +511,20 @@ class NetworkSpeedWidget(QWidget):
 
             # Allow user override to keep widget visible even when a fullscreen window is present
             keep_visible = self.config.get("keep_visible_fullscreen", False)
+            # #24 app-button yield: attach / detach for this taskbar first (floating detaches it).
+            self.position_manager.sync_app_overlap(taskbar_info)
             if free_float_active:
                 # The accessory display has no taskbar to hide behind, and the visibility/obstruction
                 # checks are judged against the (irrelevant) primary taskbar - so just keep it shown.
                 should_be_visible = True
             else:
                 should_be_visible = is_taskbar_visible(taskbar_info) and (keep_visible or not is_taskbar_obstructed(taskbar_info, hwnd))
+                # #24: a native horizontal Win11 bar whose app buttons reach the widget - it steps
+                # aside on this same hide path (never moves, #200). ANDed: neither this nor the
+                # fullscreen hide / keep_visible_fullscreen overrides the other. ``is True``: a stand-in
+                # position manager without the yield never hides the widget.
+                if self.position_manager.is_yielding_to_apps() is True:
+                    should_be_visible = False
 
             if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)
@@ -2196,6 +2209,14 @@ class NetworkSpeedWidget(QWidget):
             if pm is None:
                 return
             self.logger.info("Another launch asked the widget to show itself (visible=%s).", self.isVisible())
+            # #24, first: the app-button yield stands down for this session (it would hide the widget
+            # again on the refresh below). Also under a fullscreen app - it comes back when that ends.
+            # Its own try: nothing about the yield may stop the widget coming back.
+            was_yielded = False
+            try:
+                was_yielded = self._stand_down_app_yield() is True
+            except Exception as e:
+                self.logger.debug("app-yield stand-down skipped: %s", e)
             handler = getattr(self, "system_event_handler", None)
             if (handler is not None and handler.is_fullscreen_active()
                     and not self.config.get("keep_visible_fullscreen", False)):
@@ -2216,6 +2237,9 @@ class NetworkSpeedWidget(QWidget):
             if pm.is_buried_behind_taskbar():
                 pm.reseat_above_taskbar()
             QTimer.singleShot(0, self._execute_refresh)
+            if was_yielded:
+                # Last: only when the yield had hidden it (never over a fullscreen app - returned above).
+                self._explain_app_yield_stand_down()
         except Exception as e:
             self.logger.error("Bringing the widget back for a second launch failed: %s", e, exc_info=True)
 
@@ -2257,6 +2281,71 @@ class NetworkSpeedWidget(QWidget):
             QTimer.singleShot(0, lambda: self._show_notice_flyout(title, body))
         except Exception as e:
             self.logger.debug("side-bar no-room notice failed: %s", e)
+
+    def _on_app_yield_changed(self) -> None:
+        """The #24 yield flipped (its probe landed): apply it through the authoritative refresh, out
+        of the probe's poll callback. A hover card (pinned ones last minutes) goes with the widget."""
+        try:
+            if self.position_manager.is_yielding_to_apps() is True:
+                self.dismiss_hover_card()
+        except Exception as e:
+            self.logger.debug("hover card dismiss on app yield failed: %s", e)
+        QTimer.singleShot(0, self._execute_refresh)
+
+    def _stand_down_app_yield(self) -> bool:
+        """Step 1 of a second launch (show_from_second_launch): a yielded widget has no other way back
+        (no tray icon), so the #24 yield stands down for the rest of this session - BEFORE the show /
+        re-seat, so the refresh that follows can't hide it again. True when it was hidden by the yield."""
+        try:
+            pm = getattr(self, "position_manager", None)
+            if pm is None:
+                return False
+            was_yielded = pm.suspend_app_yield() is True
+            self.logger.info("Second launch: the app-button yield is off for this session (was yielded: %s).",
+                             was_yielded)
+            return was_yielded
+        except Exception as e:
+            self.logger.error("App-yield second-launch handling failed: %s", e, exc_info=True)
+            return False
+
+    def _explain_app_yield_stand_down(self) -> None:
+        """The last step of a second launch that brought a YIELDED widget back: a non-activating flyout
+        says why it had stepped aside and how to keep it visible for good. After the show / re-seat, so
+        it is anchored to the widget's real spot."""
+        try:
+            title = self.i18n.SIDE_BAR_NO_ROOM_TITLE
+            body = self._app_overlap_text(self.i18n.APP_OVERLAP_ACTIVATE_BODY)
+            QTimer.singleShot(self._ACTIVATE_FLYOUT_DELAY_MS, lambda: self._show_notice_flyout(title, body))
+        except Exception as e:
+            self.logger.debug("app-yield second-launch notice failed: %s", e)
+
+    # The flyout follows the show + the refresh it queues, so it sits next to the re-placed widget.
+    _ACTIVATE_FLYOUT_DELAY_MS = 250
+
+    def _app_overlap_text(self, template: str) -> str:
+        """Fill a #24 notice with the exact Settings words it points at (the switch, the window and the
+        page names), so it can never drift from the UI."""
+        try:
+            return template.format(setting=self.i18n.HIDE_WHEN_APPS_COVER_LABEL,
+                                   settings=self.i18n.SETTINGS_WINDOW_TITLE,
+                                   page=self.i18n.WIDGET_SETTINGS_GROUP)
+        except Exception:
+            return template
+
+    def _maybe_show_app_overlap_notice(self) -> None:
+        """One-time heads-up (ever), the first time the widget steps aside for app buttons on a
+        horizontal taskbar (#24): why it is gone, and how to get it back (start the app again, or the
+        Settings switch). Reuses the side-bar no-room title and flyout; non-activating."""
+        try:
+            if getattr(self, "_app_overlap_notice_shown", False) or self.config.get("app_overlap_notice_shown", False):
+                return
+            self._app_overlap_notice_shown = True
+            self.update_config({"app_overlap_notice_shown": True})
+            title = self.i18n.SIDE_BAR_NO_ROOM_TITLE
+            body = self._app_overlap_text(self.i18n.APP_OVERLAP_YIELD_BODY)
+            QTimer.singleShot(0, lambda: self._show_notice_flyout(title, body))
+        except Exception as e:
+            self.logger.debug("app-overlap notice failed: %s", e)
 
     # The no-room notice is longer than a usage alert: give it time to be read.
     _NOTICE_FLYOUT_DISMISS_MS = 30000
@@ -2875,6 +2964,7 @@ class NetworkSpeedWidget(QWidget):
             if getattr(self, 'position_manager', None):
                 self.position_manager.stop_monitoring()
                 self.position_manager.stop_side_watcher()
+                self.position_manager.stop_app_overlap()
 
         def _state_watcher() -> None:
             timer = getattr(self, '_state_watcher_timer', None)
