@@ -472,6 +472,17 @@ class ConfigManager:
         if self._migrate_color_scheme(migrated):
             changes_made = True
 
+        # Pre-release 2.2 rc.2 builds stored the default font as its optical size ("Segoe UI Variable
+        # Text"), a name Qt can't resolve (2.1.7 after a rollback drew Tahoma). Read it as the family, at
+        # any version: no build ever offered the optical size as a choice, so it is never a user's pick.
+        for key in ("font_family", "arrow_font_family"):
+            value = migrated.get(key)
+            renamed = constants.fonts.FAMILY_RENAMES.get(value) if isinstance(value, str) else None
+            if renamed:
+                migrated[key] = renamed
+                changes_made = True
+                self.logger.info("Migrated %s %r -> %r", key, value, renamed)
+
         # 1.4 (legibility "L"): once, for a file written before it - never re-run on a 1.4 file, where an
         # old factory value (say a dark High of #00FF00) is the user's deliberate pick by then.
         if version_parses and not loaded_is_newer and self._version_less_than(str(loaded_version), "1.4"):
@@ -564,7 +575,8 @@ class ConfigManager:
         - The dark High band colour, exactly #00FF00 (case-insensitive) -> #8CF2C3. Any other value is the
           user's and stays. (A 2.1.x file reaches here already seeded by _migrate_color_scheme, which maps
           its factory #00FF00 straight to the new pair; this covers a 1.3 file.)
-        - The font and the arrow font, exactly "Segoe UI" -> "Segoe UI Variable Text" (7a).
+        - The font and the arrow font, exactly "Segoe UI" -> "Segoe UI Variable" (7a; drawn at its Text
+          optical size).
         - The separate arrow font, on at exactly the old default (Segoe UI, 10 pt, DemiBold) -> off, so
           the arrows follow the text font (7b). A changed arrow font keeps the option on.
         Medium and the light colours were new in 1.3 (never shipped), so they need no step.

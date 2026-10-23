@@ -74,7 +74,7 @@ class WidgetLayoutManager:
             font_weight = QFont.Weight.Normal
 
         from netspeedtray.utils.widget_renderer import make_widget_font
-        font = make_widget_font(font_family, font_size, font_weight)   # Segoe UI Variable Text -> opsz (7a)
+        font = make_widget_font(font_family, font_size, font_weight)   # Segoe UI Variable -> Text opsz (7a)
         self.widget.setFont(font)
         self.widget.current_font = font # Update public attribute
         

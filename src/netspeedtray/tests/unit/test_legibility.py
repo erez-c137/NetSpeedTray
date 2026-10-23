@@ -397,7 +397,7 @@ def test_a_2_1_7_user_on_defaults_gets_every_new_default(tmp_path):
     assert (out["low_speed_color_dark"], out["low_speed_color_light"]) == ("#FFA500", "#57190F")
     assert (out["medium_speed_color_dark"], out["medium_speed_color_light"]) == ("#FFFF80", "#764B0A")
     assert out["default_color_light"] == "#1B1B1B"
-    assert out["font_family"] == "Segoe UI Variable Text"
+    assert out["font_family"] == "Segoe UI Variable"
     assert out["use_separate_arrow_font"] is False
     assert out["config_version"] == "1.4"
     assert path.with_name(path.name + ".bak.v1.2").exists()
@@ -419,7 +419,7 @@ def test_a_1_3_file_on_the_old_green_moves_once(tmp_path, old):
     out, path = _load(tmp_path, cfg)
     assert out["high_speed_color_dark"] == "#8CF2C3"
     assert out["high_speed_color_light"] == "#007A00"       # an unshipped 1.3 value: left alone
-    assert out["font_family"] == "Segoe UI Variable Text"
+    assert out["font_family"] == "Segoe UI Variable"
     assert path.with_name(path.name + ".bak.v1.3").exists()
 
 
@@ -434,7 +434,7 @@ def test_a_1_4_file_keeps_a_deliberate_green(tmp_path):
 
 def test_the_1_4_defaults_are_the_decided_ones():
     assert D.CONFIG_SCHEMA_VERSION == "1.4"
-    assert D.DEFAULT_FONT_FAMILY == "Segoe UI Variable Text"
+    assert D.DEFAULT_FONT_FAMILY == D.DEFAULT_ARROW_FONT_FAMILY == "Segoe UI Variable"
     assert D.DEFAULT_USE_SEPARATE_ARROW_FONT is False
     assert D.THEMED_COLOR_DEFAULTS["graph_upload_color"] == ("#6F86A6", "#6A7FA3")
     assert D.THEMED_COLOR_DEFAULTS["default_color"] == ("#FFFFFF", "#1B1B1B")
@@ -442,21 +442,97 @@ def test_the_1_4_defaults_are_the_decided_ones():
 
 # --------------------------------------------------------------------------- 7a / 7b fonts
 
-def test_the_default_font_maps_to_segoe_ui_variable_text(q_app):
-    from PyQt6.QtGui import QFontDatabase, QFontInfo
-    f = make_widget_font("Segoe UI Variable Text", 9, 400)
-    if "Segoe UI Variable" in QFontDatabase.families():
-        assert f.family() == "Segoe UI Variable"
-        assert QFontInfo(f).family() == "Segoe UI Variable"
-    else:
+@pytest.mark.parametrize("name", ["Segoe UI Variable", "Segoe UI Variable Text"])
+def test_the_default_font_is_segoe_ui_variable_at_its_text_size(q_app, name):
+    """The stored family is the one Qt resolves; the Text optical size (opsz 10.5) is set explicitly, so
+    Qt 6.9 (shipped) and 6.10 (tests) measure alike - left alone, 6.10 drew the Small size, 4 px wider
+    on "888.8 Mbps". A pre-release "... Text" name resolves the same way."""
+    from PyQt6.QtGui import QFontDatabase, QFontInfo, QFontMetrics
+    f = make_widget_font(name, 9, 400)
+    if "Segoe UI Variable" not in QFontDatabase.families():
         assert f.family() == "Segoe UI"
+        return
+    assert f.family() == "Segoe UI Variable" and QFontInfo(f).family() == "Segoe UI Variable"
+    assert f.families() == ["Segoe UI Variable", "Segoe UI"]
+    assert f.variableAxisValue(QFont.Tag.fromString("opsz")) == 10.5
+    small = QFont("Segoe UI Variable", 9, 400)
+    small.setVariableAxis(QFont.Tag.fromString("opsz"), 8.0)
+    text_w, small_w = (QFontMetrics(x).horizontalAdvance("888.8 Mbps") for x in (f, small))
+    assert text_w < small_w, "the Text optical size did not apply"
+
+
+def test_hebrew_falls_back_to_segoe_ui_not_an_arbitrary_face(q_app):
+    """Segoe UI Variable has no Hebrew. A Hebrew Wi-Fi name in the identity badge takes its letters from
+    Segoe UI - the second family of the request, the Hebrew UI's face (#194) - so it measures like Segoe
+    UI (an arbitrary fallback drew some letters at a mismatched size)."""
+    from PyQt6.QtGui import QFontDatabase, QFontMetrics, QRawFont
+    if "Segoe UI Variable" not in QFontDatabase.families():
+        pytest.skip("Windows 10: the widget draws Segoe UI outright")
+    heb = "\u05e7\u05e4\u05d4\u05e0\u05ea\u05d1\u05d9\u05ea"
+    f = make_widget_font("Segoe UI Variable", 9, 400)
+    assert not QRawFont.fromFont(f).supportsCharacter(heb[0])        # the variable face itself has none
+    seg = QFont("Segoe UI", 9, 400)
+    assert QFontMetrics(f).horizontalAdvance(heb) == QFontMetrics(seg).horizontalAdvance(heb)
+
+
+_NATIVE_FONT_PROBE = r"""
+import json, sys
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetrics, QRawFont
+app = QApplication(sys.argv[:1])
+from netspeedtray.utils.widget_renderer import make_widget_font
+out = {"installed": "Segoe UI Variable" in QFontDatabase.families()}
+if out["installed"]:
+    heb = "קפהנתבית"
+    f = make_widget_font("Segoe UI Variable", 9, 400)
+    small = QFont("Segoe UI Variable", 9, 400); small.setVariableAxis(QFont.Tag.fromString("opsz"), 8.0)
+    out.update(resolved=QFontInfo(f).family(),
+               text_w=QFontMetrics(f).horizontalAdvance("888.8 Mbps"),
+               small_w=QFontMetrics(small).horizontalAdvance("888.8 Mbps"),
+               face_has_hebrew=QRawFont.fromFont(f).supportsCharacter(heb[0]),
+               heb_w=QFontMetrics(f).horizontalAdvance(heb),
+               heb_segoe_w=QFontMetrics(QFont("Segoe UI", 9, 400)).horizontalAdvance(heb))
+print(json.dumps(out))
+"""
+
+
+@pytest.mark.skipif(not __import__("sys").platform.startswith("win"), reason="Windows fonts")
+def test_the_variable_font_on_the_native_platform():
+    """The suite paints offscreen, where Qt's font database has no "Segoe UI Variable" (the widget then
+    draws Segoe UI). On the real Windows platform: the Text optical size applies (narrower than Small),
+    and Hebrew - which the variable face lacks - measures exactly as Segoe UI."""
+    import os
+    import subprocess
+    import sys
+    src = str(Path(__file__).resolve().parents[3])
+    env = dict(os.environ, QT_QPA_PLATFORM="windows", PYTHONPATH=src, PYTHONIOENCODING="utf-8")
+    res = subprocess.run([sys.executable, "-c", _NATIVE_FONT_PROBE], env=env, capture_output=True,
+                         text=True, timeout=60)
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    if not out["installed"]:
+        pytest.skip("no Segoe UI Variable on this machine (Windows 10 / Server)")
+    assert out["resolved"] == "Segoe UI Variable"
+    assert out["text_w"] < out["small_w"], out
+    assert out["face_has_hebrew"] is False and out["heb_w"] == out["heb_segoe_w"], out
 
 
 def test_without_the_variable_font_the_default_falls_back_to_segoe_ui(q_app, monkeypatch):
     from netspeedtray.utils import widget_renderer
     monkeypatch.setattr(widget_renderer, "_variable_font_installed", False)
+    assert make_widget_font("Segoe UI Variable", 9, 400).family() == "Segoe UI"
     assert make_widget_font("Segoe UI Variable Text", 9, 400).family() == "Segoe UI"
     assert make_widget_font("Consolas", 9, 400).family() == "Consolas"   # any other family: unchanged
+
+
+@pytest.mark.parametrize("key", ["font_family", "arrow_font_family"])
+@pytest.mark.parametrize("version", ["1.2", "1.3", "1.4"])
+def test_a_prerelease_optical_size_name_is_read_as_the_family(tmp_path, key, version):
+    """rc.2 pre-release builds stored "Segoe UI Variable Text" (and stamped 1.4): read it as the family
+    at any version, since 2.1.7 after a rollback resolved that name to Tahoma."""
+    cfg = dict(D.DEFAULT_CONFIG, config_version=version, **{key: "Segoe UI Variable Text"})
+    out, path = _load(tmp_path, cfg)
+    assert out[key] == "Segoe UI Variable"
+    assert json.loads(path.read_text(encoding="utf-8"))[key] == "Segoe UI Variable"
 
 
 def test_the_arrows_use_the_text_font_by_default(q_app):
@@ -476,11 +552,21 @@ def test_settings_keeps_the_weight_of_the_default_variable_font(q_app, monkeypat
     monkeypatch.setattr(QFontDatabase, "styles", staticmethod(lambda fam: list(styles.get(fam, {}))))
     monkeypatch.setattr(QFontDatabase, "weight", staticmethod(lambda fam, s: styles.get(fam, {}).get(s, -1)))
     page = AppearancePage(EN, MagicMock(), MagicMock(), MagicMock())
-    page.load_settings(dict(D.DEFAULT_CONFIG, font_family="Segoe UI Variable Text", font_weight=600))
-    assert page.allowed_font_weights == [400, 600, 700]
-    out = page.get_settings()
-    assert out["font_family"] == "Segoe UI Variable Text" and out["font_weight"] == 600
-    assert page.current_font.family() == "Segoe UI Variable"    # what the font dialog opens on
+    for name in ("Segoe UI Variable", "Segoe UI Variable Text"):     # the default; a pre-release name
+        page.load_settings(dict(D.DEFAULT_CONFIG, font_family=name, font_weight=600))
+        assert page.allowed_font_weights == [400, 600, 700]
+        out = page.get_settings()
+        assert out["font_family"] == name and out["font_weight"] == 600
+        assert page.current_font.family() == "Segoe UI Variable"    # what the font dialog opens on
+
+
+def test_the_settings_font_picker_round_trips_the_default(q_app):
+    """Picking the default face in the font dialog stores exactly the default family name."""
+    from netspeedtray.views.settings.pages.appearance import AppearancePage
+    page = AppearancePage(EN, MagicMock(), MagicMock(), MagicMock())
+    page.load_settings(dict(D.DEFAULT_CONFIG))
+    page.set_font_family(QFont("Segoe UI Variable", 9))       # what QFontDialog hands back
+    assert page.get_settings()["font_family"] == D.DEFAULT_FONT_FAMILY == "Segoe UI Variable"
 
 
 def test_light_text_falls_back_to_black_on_a_mid_grey_background(monkeypatch):

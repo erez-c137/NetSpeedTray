@@ -193,14 +193,14 @@ def max_pixel_difference(img: QImage, expected_b64: str) -> int:
 
 def calibration() -> str:
     """A plain text render that depends only on the platform's fonts - the guard's environment check.
-    In the widget's default face (Segoe UI Variable Text, or its Segoe UI fallback) and in Segoe UI."""
+    In the widget's default face (Segoe UI Variable at its Text size, or Segoe UI) and in Segoe UI."""
     from netspeedtray.utils.widget_renderer import make_widget_font
     img = QImage(200, 40, QImage.Format.Format_ARGB32)
     img.fill(QColor(0, 0, 0, 0))
     p = QPainter(img)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setPen(QColor("#FFFFFF"))
-    for i, font in enumerate((make_widget_font("Segoe UI Variable Text", 9, 400),
+    for i, font in enumerate((make_widget_font("Segoe UI Variable", 9, 400),
                               make_widget_font("Segoe UI", 9, 400))):
         p.setFont(font)
         p.drawText(QRect(0, i * 20, 200, 20), Qt.AlignmentFlag.AlignCenter, "↑ 888.8 Mbps ↓ 12.4")

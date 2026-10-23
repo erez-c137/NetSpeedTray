@@ -77,18 +77,23 @@ def _has_variable_font() -> bool:
 
 
 def make_widget_font(family: str, point_size: int, weight: int) -> QFont:
-    """The widget's QFont for a configured family (7a). "Segoe UI Variable Text" (the default) and its
-    Small / Display siblings are named optical sizes of ONE variable font, which Qt lists as "Segoe UI
-    Variable": map the name to that family and its opsz axis. Without the variable font (Windows 10) the
-    default falls back to Segoe UI - QFont alone would silently pick Tahoma. Every other family is passed
-    through unchanged, exactly as before."""
+    """The widget's QFont for a configured family (7a). "Segoe UI Variable" (the default) gets its Text
+    optical size through the opsz axis - set explicitly, so every Qt measures it alike (Qt 6.9 applied the
+    Text size by itself, 6.10 the Small one: "888.8 Mbps" 60 vs 64 px). The named sizes ("... Text",
+    "... Small", "... Display") map to the family and their axis value. Segoe UI is the second family of
+    the request: the variable font has no Hebrew (or Arabic, CJK...) glyphs, and Qt then takes those from
+    Segoe UI - the face the Hebrew UI uses (#194) - instead of an arbitrary fallback at mismatched sizes.
+    Without the variable font (Windows 10) it is Segoe UI outright; QFont alone would pick Tahoma. Every
+    other family is passed through unchanged, exactly as before."""
     f = constants.fonts
+    family = f.FAMILY_RENAMES.get(family, family)
     opsz = f.VARIABLE_OPSZ.get(family)
     if opsz is None:
         return QFont(family, point_size, weight)
     if not _has_variable_font():
         return QFont(f.FALLBACK_FONT, point_size, weight)
     font = QFont(f.VARIABLE_FAMILY, point_size, weight)
+    font.setFamilies([f.VARIABLE_FAMILY, f.FALLBACK_FONT])
     try:
         font.setVariableAxis(QFont.Tag.fromString("opsz"), float(opsz))
     except Exception:   # Qt < 6.7: the variable font's default instance

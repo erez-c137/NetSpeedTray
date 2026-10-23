@@ -45,7 +45,8 @@ class ConfigConstants:
     # `.bak.v1.2`; the pre-1.3 colour keys stay in the file, inert, so rc.1 / 2.1.x still read them.
     # 1.4 (2.2 rc.2, legibility package "L"): new factory band colours, font and arrow font. A one-time
     # step (utils/config._migrate_to_1_4) moves only values still on the OLD factory default - a dark High
-    # of exactly #00FF00, the font "Segoe UI", the separate 10 pt DemiBold Segoe UI arrow font - to the new
+    # of exactly #00FF00, the font "Segoe UI" (-> "Segoe UI Variable"), the separate 10 pt DemiBold Segoe UI
+    # arrow font - to the new
     # defaults; anything else is the user's choice and stays. The bump keeps a `.bak.v1.3` (or `.bak.v1.2`).
     CONFIG_SCHEMA_VERSION: Final[str] = "1.4"
     # A same-version field migration (e.g. dropping a beta's key) rewrites the file without a schema

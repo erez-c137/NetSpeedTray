@@ -19,10 +19,11 @@ from netspeedtray.views.settings.pages.colors import ColorsPage
 
 
 def _qt_family(family: str) -> str:
-    """The family Qt knows a configured font name by. The default "Segoe UI Variable Text" (7a) is an
-    optical size of the "Segoe UI Variable" family, not a family of its own: QFontDatabase lists no
-    styles for it (the weight slider went dead and every Apply saved weight 400), and QFontDialog opened
-    on Tahoma. Every other name is returned unchanged."""
+    """The family Qt knows a configured font name by. The default is the family "Segoe UI Variable"
+    (7a) itself; a pre-release "Segoe UI Variable Text" (an optical size, not a family) resolves to it -
+    QFontDatabase lists no styles for the optical size (the weight slider went dead and every Apply saved
+    weight 400), and QFontDialog opened on Tahoma. Without the variable font (Windows 10) it is the
+    Segoe UI the widget really draws. Every other name is returned unchanged."""
     try:
         from netspeedtray.utils.widget_renderer import make_widget_font
         return make_widget_font(family, 9, int(constants.fonts.WEIGHT_NORMAL)).family() or family
