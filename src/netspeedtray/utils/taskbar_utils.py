@@ -273,6 +273,11 @@ def request_taskbar_layout_probe(taskbar_hwnd: Optional[int], keep_last: bool = 
         else:
             _layout_state.update(hwnd=int(taskbar_hwnd), apps=None, widgets=None, group=None,
                                  overflow=None, pending=True, done=False, started=time.monotonic())
+            # A fresh probe means a new dock (edge / thickness / DPI / widget height): the clock seen
+            # on the old layout is no longer trusted - after a live 100 -> 150 % change (#444) it still
+            # lies inside the same-height bar, but the clock grew. The DPI-scaled reserve answers
+            # until this probe lands.
+            _probed_tray.pop(int(taskbar_hwnd), None)
         start = not _layout_state["running"]
         _layout_state["running"] = True
     if start:

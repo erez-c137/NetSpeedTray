@@ -200,3 +200,23 @@ def test_horizontal_secondary_bar_keeps_the_clock_width_reserve(edge):
     pos = PositionCalculator().calculate_position(tb, (85, 40), {"tray_offset_x": 0})
     reserve = constants.config.defaults.DEFAULT_SECONDARY_CLOCK_RESERVE_PX
     assert pos.x == 5760 - reserve - 85
+
+
+def test_a_new_dock_drops_the_clock_probed_on_the_old_one():
+    """#444: a live scale change (100 -> 150 %) re-docks the SAME HWND with the same 1080 physical px
+    height, so a 100 % clock rect still lies inside the bar, in its lower half - but the clock is now
+    taller (top ~1014 physical). Until the fresh probe lands, the DPI-scaled reserve must be used,
+    never the old layout's clock (690.7 logical, 15 px down into the 150 % clock)."""
+    with patch.object(taskbar_utils, "_start_layout_worker"), \
+            patch.object(taskbar_utils, "_query_taskbar_layout_blocking",
+                         return_value=(None, None, None, None, CLOCK)):
+        taskbar_utils.request_taskbar_layout_probe(HWND)
+        taskbar_utils._layout_worker()
+    assert taskbar_utils.probed_tray_rect(HWND) == CLOCK
+    tb = _secondary_bar(RIGHT)
+    tb.dpi_scale = 1.5
+    tb.rect = (X1 - 72, 0, X1, 1080)
+    with patch.object(taskbar_utils, "_start_layout_worker"):
+        taskbar_utils.request_taskbar_layout_probe(HWND)       # the new dock's probe, in flight
+    geo = side_bar_geometry(tb, 1.5)
+    assert geo.tray_top == 1080 / 1.5 - RESERVE
