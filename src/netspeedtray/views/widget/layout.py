@@ -11,7 +11,7 @@ from netspeedtray import constants
 from netspeedtray.utils.taskbar_utils import (is_small_taskbar, get_taskbar_info, horizontal_taskbar_strip,
                                               vertical_taskbar_strip, dock_signature)
 from netspeedtray.utils.helpers import (memory_label_width, effective_display_mode, hw_suffix_reference,
-                                        temperature_unit)
+                                        temperature_unit, line_spacing_px)
 
 
 if TYPE_CHECKING:
@@ -417,7 +417,10 @@ class WidgetLayoutManager:
                 if float_screen is not None:
                     # No taskbar to match on a taskbar-less display: font-derived height in LOGICAL px, so
                     # Qt scales it correctly on that screen regardless of the primary monitor's DPI (#188).
-                    calculated_height = self.metrics.height() * 2 + (margin * 4)
+                    # The network rows' line_spacing doesn't apply to the hardware-only modes (no gap).
+                    rows = (self.metrics.height() * 2 if display_mode in ["cpu_only", "gpu_only", "combined"]
+                            else self._two_row_height() - 1)
+                    calculated_height = rows + (margin * 4)
                 else:
                     # Visible taskbar height for horizontal docking (#104/PR #110), with a #221
                     # fallback + two-row floor so a work area Windows doesn't inset for the taskbar
@@ -531,7 +534,7 @@ class WidgetLayoutManager:
           trusts, and the same ``<= 0`` guard ``position_manager`` already uses to POSITION the
           widget. This only brings the sizing into line with the positioning already happening.
         - Part B (floor): the renderer always stacks two rows (``draw_network_speeds``:
-          ``total_height = 2*line_height + 1``), so any docked height below that crops the glyphs.
+          ``total_height = 2*line_height + line_spacing``), so any docked height below that crops the glyphs.
           Floor to the two-row content (+1px for the ``int()`` rounding in ``top_y``) so text can
           never crop, without the generous margin pad the free-float/side branches use.
 
@@ -591,7 +594,7 @@ class WidgetLayoutManager:
         """The baselines the renderer paints at in a ``height`` px widget: the network rows
         (``draw_network_speeds``: box ``2*line_height + gap`` centred) and the hardware rows
         (``draw_hardware_stats``: ``2*line_height``, no gap)."""
-        line_h, asc, gap = self.metrics.height(), self.metrics.ascent(), constants.renderer.TWO_ROW_GAP_PX
+        line_h, asc, gap = self.metrics.height(), self.metrics.ascent(), self._row_gap()
         net = int((height - (2 * line_h + gap)) / 2 + asc)
         hw = int((height - 2 * line_h) / 2 + asc)
         return net, net + line_h + gap, hw, hw + line_h
@@ -660,9 +663,12 @@ class WidgetLayoutManager:
         "Fits" is decided by painting the reference glyphs at every standard display scale
         (``_paint_fits``), since hinting at 125/150% moves ink by a device row that a 96 DPI metrics
         model can't see. Without the font object (unit tests that set only ``metrics``) the 100%
-        metrics model is used.
+        metrics model is used. The old floor grows with a wider ``line_spacing`` (+1 px clear) but
+        never drops below the ``*2 + 2`` above: the hardware rows are painted without a gap, so a
+        negative spacing must not let them crop.
         """
-        old_floor = self.metrics.height() * 2 + 2
+        old_floor = max(self._two_row_height(),
+                        self.metrics.height() * 2 + constants.renderer.TWO_ROW_GAP_PX) + 1
         start = max(1, math.ceil(strip))
         if start >= old_floor:
             return old_floor
@@ -680,3 +686,19 @@ class WidgetLayoutManager:
         except Exception as e:
             self.logger.debug("Thin-strip fit check failed (%s); keeping the two-row floor.", e)
         return old_floor
+
+    def _row_gap(self) -> int:
+        """The user's gap between the two network rows (``line_spacing``, default 1 = the old
+        ``TWO_ROW_GAP_PX``); ``draw_network_speeds`` paints with the same value - both read it
+        through ``line_spacing_px``, so a missing or non-integer value is the default in both."""
+        try:
+            return line_spacing_px(self.widget.config.get("line_spacing"))
+        except Exception:
+            return constants.config.defaults.DEFAULT_LINE_SPACING
+
+    def _two_row_height(self) -> int:
+        """Height of the stacked upload/download readout: ``2*line_height + line_spacing``.
+
+        Mirrors ``total_height`` in ``draw_network_speeds``.
+        """
+        return self.metrics.height() * 2 + self._row_gap()

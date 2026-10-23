@@ -73,6 +73,12 @@ class UnitsPage(QWidget):
         self.short_unit_labels.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.SHORT_UNIT_LABELS_LABEL, control=self.short_unit_labels))
 
+        # Extra px between the upload/download rows on top of the font's line height; 1 = old fixed gap.
+        self.line_spacing = Win11Segmented([(f"{v:+d}" if v else "0", v) for v in range(-4, 5)])
+        self.line_spacing.valueChanged.connect(self.on_change)
+        layout.addWidget(SettingCard(self._tr("LINE_SPACING_LABEL", "Line spacing (px)"),
+                                     control=self.line_spacing))
+
         layout.addStretch()
 
     def load_settings(self, config: Dict[str, Any]):
@@ -96,7 +102,11 @@ class UnitsPage(QWidget):
         self.hide_arrows.setChecked(config.get("hide_arrows", False))
         self.hide_unit_suffix.setChecked(config.get("hide_unit_suffix", False))
         self.short_unit_labels.setChecked(config.get("short_unit_labels", constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS))
-        
+        spacing = as_int(config.get("line_spacing"), constants.config.defaults.DEFAULT_LINE_SPACING)
+        if not -4 <= spacing <= 4:     # the control has no segment for it and would keep no value
+            spacing = constants.config.defaults.DEFAULT_LINE_SPACING
+        self.line_spacing.setValue(spacing)
+
 
     def get_settings(self) -> Dict[str, Any]:
         speed_mode = "always_mbps" if self.speed_display_mode.isChecked() else "auto"
@@ -109,7 +119,8 @@ class UnitsPage(QWidget):
             "swap_upload_download": self.swap_upload_download.isChecked(),
             "hide_arrows": self.hide_arrows.isChecked(),
             "hide_unit_suffix": self.hide_unit_suffix.isChecked(),
-            "short_unit_labels": self.short_unit_labels.isChecked()
+            "short_unit_labels": self.short_unit_labels.isChecked(),
+            "line_spacing": self.line_spacing.value(),
         }
 
     def _on_force_mb_toggled(self, checked: bool) -> None:
