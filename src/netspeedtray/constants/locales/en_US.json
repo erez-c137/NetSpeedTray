@@ -242,6 +242,7 @@
     "SWAP_UPLOAD_DOWNLOAD_LABEL": "Swap upload/download order",
     "HIDE_ARROWS_LABEL": "Hide arrows",
     "HIDE_UNIT_SUFFIX_LABEL": "Hide unit suffix",
+    "LINE_SPACING_LABEL": "Line spacing (px)",
     "SHORT_UNIT_LABELS_LABEL": "Short unit labels (e.g. Mb)",
     "DISPLAY_FORMAT_GROUP": "Display format",
     "INTERFACE_LAYOUT_GROUP": "Interface layout",

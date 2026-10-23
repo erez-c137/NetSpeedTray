@@ -242,6 +242,7 @@
     "SWAP_UPLOAD_DOWNLOAD_LABEL": "Intercambiar orden subida/descarga",
     "HIDE_ARROWS_LABEL": "Ocultar flechas",
     "HIDE_UNIT_SUFFIX_LABEL": "Ocultar sufijo de unidad",
+    "LINE_SPACING_LABEL": "Interlineado (px)",
     "SHORT_UNIT_LABELS_LABEL": "Etiquetas cortas (ej. Mb)",
     "DISPLAY_FORMAT_GROUP": "Formato de visualización",
     "INTERFACE_LAYOUT_GROUP": "Diseño de interfaz",
