@@ -29,6 +29,15 @@ IDENTITY_BAND_GAP_PX: int = 6
 IDENTITY_PILL_PAD_X: int = 7      # horizontal padding inside the band pill
 
 
+def compact_hw_label_width(fm, labels: List[str], style: str) -> int:
+    """Width of the label column of the compact side-bar hardware rows (draw_hardware_compact; the
+    side-bar fit sizes from it too): the CPU/GPU icon or text label, and the "RAM" / "VRAM" word of a
+    memory-only stat, which has no icon."""
+    widths = [fm.horizontalAdvance(s) if (style == "text" or s in ("RAM", "VRAM"))
+              else constants.renderer.HW_ICON_SIZE_PX for s in labels]
+    return max(widths, default=constants.renderer.HW_ICON_SIZE_PX)
+
+
 def identity_pill_width(fm, text: str) -> int:
     """Total pill width for `text` under font metrics `fm` (advance + both-side padding)."""
     return fm.horizontalAdvance(text) + 2 * IDENTITY_PILL_PAD_X
@@ -758,15 +767,19 @@ class WidgetRenderer:
         """CPU/GPU on a side taskbar too narrow for today's rows: ``[icon] 37%`` per stat (``inline``)
         or the icon centred over the value; memory, temperature and power live in the hover card.
         ``percent_sign`` False (side_bar_fit: even "100%" is wider than the bar) draws "100" - still
-        read as a percent under its CPU/GPU icon, and whole instead of clipped at both ends."""
+        read as a percent under its CPU/GPU icon, and whole instead of clipped at both ends.
+
+        A stat labelled 'RAM' / 'VRAM' is memory shown without its CPU / GPU monitor: its value is the
+        memory's percent used, under the "RAM" / "VRAM" text (there is no memory icon), stepped down
+        to fit the bar when the word is wider than it."""
         try:
             if not stats:
                 return
             fm = self.metrics
             style = getattr(config, 'hardware_label_style', constants.config.defaults.DEFAULT_HARDWARE_LABEL_STYLE)
             cpu_color, gpu_color = self.hardware_label_colors(config)
-            icon_w = (max(fm.horizontalAdvance(s) for s, _ in stats) if style == "text"
-                      else constants.renderer.HW_ICON_SIZE_PX)
+            icon_w = compact_hw_label_width(fm, [s for s, _ in stats], style)
+            avail = max(1, width - 2 * constants.renderer.TEXT_MARGIN)
             gap = constants.renderer.COMPACT_HW_ICON_GAP_PX
             pct_col = fm.horizontalAdvance("100%" if percent_sign else "100")
             line_h, asc, row_gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
@@ -780,12 +793,20 @@ class WidgetRenderer:
             painter.setClipRect(QRect(0, y_offset, width, height), Qt.ClipOperation.IntersectClip)
             painter.setFont(self.font)
             for label, val in stats:
-                color = QColor(cpu_color if label == 'CPU' else gpu_color)
+                color = QColor(cpu_color if label in ('CPU', 'RAM') else gpu_color)
                 pct = self._fmt_hw_percent(val if val is not None else float("nan"))
                 if not percent_sign:
                     pct = pct.rstrip("%")
                 icon_x = x0 if inline else (width - icon_w) // 2
-                if style == "text":
+                if label in ('RAM', 'VRAM'):
+                    painter.setPen(QPen(color))
+                    label_w = fm.horizontalAdvance(label)
+                    if not inline and label_w > avail:
+                        small, label_w = self._fit_font(label, avail)
+                        painter.setFont(small)
+                    lx = icon_x if inline else max(0, (width - label_w) // 2)
+                    painter.drawText(lx, y, label)
+                elif style == "text":
                     painter.setPen(QPen(color))
                     painter.drawText(icon_x, y, label)
                 else:
@@ -998,12 +1019,17 @@ class WidgetRenderer:
                            vram_info: Optional[Tuple[float, float]] = None,
                            layout_mode: str = 'vertical', x_offset: int = 0, fixed_width: Optional[int] = None,
                            cpu_power: Optional[float] = None, gpu_power: Optional[float] = None,
-                           y_offset: int = 0, memory_below: bool = False) -> None:
+                           y_offset: int = 0, memory_below: bool = False,
+                           ram_only: bool = False, vram_only: bool = False) -> None:
         """Draws CPU and/or GPU utilization statistics with optional temperature, power, and memory.
 
         y_offset: top of the band (`height` tall) the rows are centered in (see draw_network_speeds).
         memory_below: give each RAM/VRAM value a row of its own under its stat even when CPU and GPU
-            share the segment (where it is otherwise inline); a side taskbar is too narrow for it inline."""
+            share the segment (where it is otherwise inline); a side taskbar is too narrow for it inline.
+        ram_only / vram_only: RAM (VRAM) is on with CPU (GPU) monitoring off - pass ``cpu_usage``
+            (``gpu_usage``) None and the memory in ``ram_info`` (``vram_info``): that slot paints one
+            memory-only row, "RAM 9.2/16.0G" - its label always on (a bare number would not say what
+            it is), no percent, no temperature/power suffix."""
         try:
             order = getattr(config, 'widget_display_order', ["network", "cpu", "gpu"])
             cpu_idx = order.index("cpu") if "cpu" in order else 999
@@ -1014,8 +1040,12 @@ class WidgetRenderer:
             items = []
             if cpu_usage is not None:
                 items.append((cpu_idx, ('CPU', cpu_usage, cpu_temp, ram_info, cpu_color, cpu_power)))
+            elif ram_only and ram_info is not None:
+                items.append((cpu_idx, ('RAM', None, None, ram_info, cpu_color, None)))
             if gpu_usage is not None:
                 items.append((gpu_idx, ('GPU', gpu_usage, gpu_temp, vram_info, gpu_color, gpu_power)))
+            elif vram_only and vram_info is not None:
+                items.append((gpu_idx, ('VRAM', None, None, vram_info, gpu_color, None)))
 
             items.sort(key=lambda x: x[0])
             enabled_stats = [x[1] for x in items]
@@ -1048,6 +1078,7 @@ class WidgetRenderer:
             # clips. Worst-case column widths are computed once and are identical for every row.
             rows = []
             for (label, val, temp, mem_info, color_hex, power) in enabled_stats:
+                mem_only = label in ('RAM', 'VRAM')
                 mem_text, total = "", 0.0
                 if mem_info and mem_info[0] is not None:
                     used, total = mem_info[0], (mem_info[1] or 0.0)
@@ -1059,22 +1090,35 @@ class WidgetRenderer:
                         mem_text = ""
                     else:
                         mem_text = f"{used:.1f}/{total:.1f}G" if total > 0 else f"{used:.1f}G"
-                mem_label = (constants.renderer.MEMORY_LABEL_RAM if label == 'CPU'
+                if mem_only and not mem_text:
+                    # A memory-only row is the slot's whole readout: on but not measured (yet) reads
+                    # N/A - the idiom of an unmeasured percent - instead of the row vanishing.
+                    mem_text = self.i18n.DEFAULT_TEXT
+                mem_label = (constants.renderer.MEMORY_LABEL_RAM if label in ('CPU', 'RAM')
                              else constants.renderer.MEMORY_LABEL_VRAM)
-                rows.append({'label': label, 'color': color_hex, 'total': total,
-                             'pct': self._fmt_hw_percent(val),
-                             'suffix': self._build_hw_suffix(temp, power, show_temps, show_power, temp_unit),
+                rows.append({'label': label, 'color': color_hex, 'total': total, 'mem_only': mem_only,
+                             'pct': '' if mem_only else self._fmt_hw_percent(val),
+                             'suffix': '' if mem_only else self._build_hw_suffix(
+                                 temp, power, show_temps, show_power, temp_unit),
                              'mem': mem_text, 'mem_label': mem_label if mem_text else ''})
+            stat_rows = [r for r in rows if not r['mem_only']]
 
-            label_col = (max(self.metrics.horizontalAdvance(r['label']) for r in rows) + 4) if style == "text" else 14
+            if not stat_rows:
+                label_col = 0
+            elif style == "text":
+                label_col = max(self.metrics.horizontalAdvance(r['label']) for r in stat_rows) + 4
+            else:
+                label_col = 14
             pct_col = self.metrics.horizontalAdvance("100%")   # the >3d percent is already a fixed 4-char field
             suffix_ref = hw_suffix_reference(show_temps, show_power, temp_unit)
             suffix_col = (sp + self.metrics.horizontalAdvance(suffix_ref)) if suffix_ref else 0
 
-            any_mem = any(r['mem'] for r in rows)
+            any_mem = any(r['mem'] for r in stat_rows)       # memory beside / under a CPU/GPU row
+            mem_only_rows = any(r['mem_only'] for r in rows)
             totals = [r['total'] for r in rows if r['total'] > 0]
             t = max(totals) if totals else 0.0
-            mem_num_col = self.metrics.horizontalAdvance(f"{t:.1f}/{t:.1f}G" if t > 0 else "9999G") if any_mem else 0
+            mem_num_col = (self.metrics.horizontalAdvance(f"{t:.1f}/{t:.1f}G" if t > 0 else "9999G")
+                           if (any_mem or mem_only_rows) else 0)
             # A gap, not a glyph. The memory value used to be introduced by " | ", which read as
             # clutter on a readout that is only a few characters wide (#250). Whitespace separates
             # it just as well, and drops a few pixels of reserved width while it is at it.
@@ -1085,17 +1129,30 @@ class WidgetRenderer:
             mem_label_col = memory_label_width(self.metrics) if (show_mem_labels and any_mem) else 0
             inline_mem = is_compact and not memory_below
             mem_col = (sep_col + mem_label_col + mem_num_col) if (any_mem and inline_mem) else 0
+            # A memory-only row: its label cell (always drawn) + the shared number column.
+            mem_only_w = (memory_label_width(self.metrics) + mem_num_col) if mem_only_rows else 0
 
-            extra_rows = 0 if inline_mem else sum(1 for r in rows if r['mem'])
+            extra_rows = 0 if inline_mem else sum(1 for r in stat_rows if r['mem'])
             total_height = line_height * (len(rows) + extra_rows)
             top_y = y_offset + int((height - total_height) / 2 + ascent)
             current_x = x_offset + margin
 
-            stat_col = label_col + pct_col + suffix_col + mem_col
-            seg_w = max(stat_col, (label_col + mem_label_col + mem_num_col) if (any_mem and not inline_mem) else 0)
+            stat_col = (label_col + pct_col + suffix_col + mem_col) if stat_rows else 0
+            seg_w = max(stat_col, (label_col + mem_label_col + mem_num_col) if (any_mem and not inline_mem) else 0,
+                        mem_only_w)
+            # Every memory number ends on the segment's right edge. Without a memory-only row seg_w is
+            # stat_col whenever memory is inline, so the shift is 0 and CPU/GPU rows paint as before.
+            inline_shift = (seg_w - stat_col) if stat_rows else 0
 
             y = top_y
             for r in rows:
+                if r['mem_only']:
+                    mem_right = current_x + seg_w
+                    self._draw_memory_label(painter, mem_right - mem_num_col - memory_label_width(self.metrics),
+                                            y, r)
+                    painter.drawText(mem_right - self.metrics.horizontalAdvance(r['mem']), y, r['mem'])
+                    y += line_height
+                    continue
                 if style == "text":
                     painter.setPen(QPen(QColor(r['color'])))
                     painter.drawText(current_x, y, r['label'])
@@ -1117,7 +1174,7 @@ class WidgetRenderer:
                 if suffix_col and r['suffix']:
                     painter.drawText(vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
                 if inline_mem and mem_col and r['mem']:
-                    mx = vx + pct_col + suffix_col
+                    mx = vx + pct_col + suffix_col + inline_shift
                     label_x = mx + sep_col
                     number_col_x = label_x + mem_label_col
                     # Right-align the number in its fixed-width column so the trailing 'G'

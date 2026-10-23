@@ -96,16 +96,32 @@ def has_dedicated_vram(used: Optional[float]) -> bool:
         return False
 
 
+def hardware_slots(config) -> Tuple[bool, bool]:
+    """(CPU slot, GPU slot): whether the widget has a CPU-side / GPU-side readout at all.
+
+    RAM shows without CPU monitoring and VRAM without GPU monitoring (rc.2 owner decision, which
+    reversed "RAM rides on CPU, VRAM rides on GPU"), so the CPU slot is CPU OR RAM and the GPU slot
+    GPU OR VRAM. A slot whose usage monitor is off paints a memory-only row (no percent). Takes a
+    config dict or a RenderConfig (same key / attribute names)."""
+    def on(key: str) -> bool:
+        try:
+            if isinstance(config, dict):
+                return bool(config.get(key, False))
+            return bool(getattr(config, key, False))
+        except Exception:
+            return False
+    return (on("monitor_cpu_enabled") or on("monitor_ram_enabled"),
+            on("monitor_gpu_enabled") or on("monitor_vram_enabled"))
+
+
 def hardware_in_hover_card_active(config) -> bool:
     """The "Show hardware in the hover card" switch is on AND there is hardware to move there.
 
-    RAM rides on the CPU line and VRAM on the GPU line (they are only collected and shown with
-    their host monitor), so "some hardware is enabled" means CPU or GPU monitoring is on. With
+    Any hardware readout counts - CPU, GPU, or RAM / VRAM on their own (hardware_slots). With
     nothing enabled the switch is inert: the widget keeps its Display Mode and the card gets no
     hardware section."""
     try:
-        return bool(config.get("hardware_in_hover_card", False)) and bool(
-            config.get("monitor_cpu_enabled", False) or config.get("monitor_gpu_enabled", False))
+        return bool(config.get("hardware_in_hover_card", False)) and any(hardware_slots(config))
     except AttributeError:
         return False
 
