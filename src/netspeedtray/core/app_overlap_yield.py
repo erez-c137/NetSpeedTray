@@ -58,6 +58,11 @@ context's ``dpi``, which PositionManager reads from the taskbar's monitor at the
 live scale change: BUSY until its taskbar snapshot agrees, never two scales in one judgement). A scale
 change drops the measured group (logical px at the old scale) and re-probes at once.
 
+A group rect that does not fit inside the taskbar's own window rect (read around the probe) is an
+unknown reading, not a collision: right after a live scale change Explorer can report its buttons in
+a stale scale's coordinates for seconds (rc.2 final VM run: a 10 s false step-aside after
+150 -> 100 % on an auto-hide bar, the group read at 1.5x its real position).
+
 Fail-safe: no UIA, a failed / timed-out probe, a bar without a StartButton, an ExplorerPatcher /
 Win10 bar (``tasklist_rect`` set), a side bar, Free Move or free-float -> never yield (today's
 behaviour). Mirrors (#434) build their PositionManager with the yield disabled: they don't yield in v1.
@@ -213,6 +218,8 @@ class AppOverlapYield(QObject):
         self._hold_until = 0.0                   # unknown readings keep a yield until then (0: no hold yet)
         self._model_dpi: Optional[float] = None  # the scale ``_model`` was converted at
         self._persisted_drop: Optional[int] = None
+        self._misfit_logged = False              # "buttons outside the taskbar" logged for this run
+        self._last_group_rect = None             # the last judged UIA group (physical px), for the log
         self._probe_timer = self._timer(0, self._fire_probe)
         self._poll_timer = self._timer(t.SIDE_BAR_PROBE_POLL_MS, self._poll_probe)
         self._followup_timer = self._timer(t.SIDE_BAR_FOREGROUND_FOLLOWUP_MS, self._on_followup)
@@ -438,6 +445,18 @@ class AppOverlapYield(QObject):
         self._inflight = False
         landed = taskbar_utils.taskbar_layout_landed_count(self._hwnd) > self._landed_before
         group_rect = taskbar_utils.taskbar_layout_group(self._hwnd) if landed else None
+        if group_rect is not None:
+            bar_rect = taskbar_utils.taskbar_layout_bar(self._hwnd)
+            if not taskbar_utils.group_fits_bar(group_rect, bar_rect):
+                # Not in the bar's coordinate space - Explorer mid display-scale change (see
+                # APP_GROUP_BAR_FIT_TOLERANCE_PX): an unknown reading, never a reason to yield.
+                if not self._misfit_logged:
+                    logger.info("App-button yield: the taskbar reported its buttons outside its own "
+                                "window (group %s, taskbar %s) - ignoring that reading.", group_rect, bar_rect)
+                    self._misfit_logged = True
+                group_rect = None
+            else:
+                self._misfit_logged = False
         raw = self._raw_context()
         if raw == BUSY:
             self._again = True               # judge it once the drag / menu is over
@@ -448,6 +467,7 @@ class AppOverlapYield(QObject):
             self._finish()
             return
         span = group_span(group_rect, ctx.dpi) if landed else None
+        self._last_group_rect = group_rect
         if landed:
             t = constants.timeouts
             same = (self._model_known and (span is None) == (self._model is None)
@@ -487,8 +507,9 @@ class AppOverlapYield(QObject):
         if action not in ("yield", "show"):
             return
         if action == "yield":
-            logger.info("App buttons reach the widget (group %.0f..%.0f, widget %.0f..%.0f): stepping "
-                        "aside until there is room.", span[0], span[1], ctx.widget[0], ctx.widget[1])
+            logger.info("App buttons reach the widget (group %.0f..%.0f, widget %.0f..%.0f; UIA %s at "
+                        "scale %.3g): stepping aside until there is room.", span[0], span[1],
+                        ctx.widget[0], ctx.widget[1], self._last_group_rect, ctx.dpi)
             # While yielded the re-check backs off only up to the shorter cap.
             self._near_interval_ms = min(self._near_interval_ms,
                                          constants.timeouts.APP_YIELD_YIELDED_RECHECK_MAX_MS)
