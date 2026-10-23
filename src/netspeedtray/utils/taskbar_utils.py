@@ -946,6 +946,13 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
                 return None
 
             rect_phys = win32gui.GetWindowRect(hwnd)
+            if rect_phys[2] <= rect_phys[0] or rect_phys[3] <= rect_phys[1]:
+                # A taskbar collapsed to zero width/height is going away (its display was unplugged,
+                # or Explorer is tearing it down). Not an error: the next enumeration no longer has it
+                # (#434 live run - this was 3-4 ERROR lines per unplug, from the 1 s mirror tick).
+                logger.debug("Taskbar HWND %s (%s) has an empty rect %s - going away. Ignoring.",
+                             hwnd, class_name, rect_phys)
+                return None
             tray_hwnd = win32gui.FindWindowEx(hwnd, 0, "TrayNotifyWnd", None) or None
             tasklist_rect_phys = find_tasklist_rect(hwnd)
             

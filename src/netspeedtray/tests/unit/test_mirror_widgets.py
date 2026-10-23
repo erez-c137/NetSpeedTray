@@ -34,8 +34,8 @@ def _app():
     return QApplication.instance() or QApplication([])
 
 
-def _tb(hwnd, screen, primary=False):
-    return SimpleNamespace(hwnd=hwnd, screen_name=screen, is_primary=primary,
+def _tb(hwnd, screen, primary=False, monitor_rect=None):
+    return SimpleNamespace(hwnd=hwnd, screen_name=screen, is_primary=primary, monitor_rect=monitor_rect,
                            get_edge_position=lambda: constants.TaskbarEdge.BOTTOM)
 
 
@@ -71,11 +71,20 @@ class _FakeMirror:
         pass
 
 
-def _manager(taskbars, main_dock=(100, "PRIMARY"), fg=0):
+PRIMARY_HWNDS = {100, 101}
+
+
+def _classes(hwnd):
+    """Window class for the fake desktop: 100/101 are primary bars, the rest secondary ones."""
+    return "Shell_TrayWnd" if hwnd in PRIMARY_HWNDS else "Shell_SecondaryTrayWnd"
+
+
+def _manager(taskbars, main_dock=(100, "PRIMARY"), fg=0, window_class=_classes):
     main = SimpleNamespace(docked_taskbar=lambda: main_dock)
     holder = {"taskbars": taskbars}
     mgr = MirrorManager(main, taskbars_provider=lambda: holder["taskbars"],
-                        mirror_factory=_FakeMirror, foreground_provider=lambda: fg)
+                        mirror_factory=_FakeMirror, foreground_provider=lambda: fg,
+                        window_class=window_class)
     return mgr, holder
 
 
@@ -555,6 +564,8 @@ class TestRealMirror:
         assert opaque > 20      # text was painted, not just the 1-alpha hit-test layer
 
     def test_renderer_follows_the_main_renderer(self, real_mirror):
+        # NOTE #441 (colour scheme): it removes default_color's effect. Whichever of #434 / #441 merges
+        # second switches this test to default_color_dark / default_color_light.
         main, m = real_mirror.main, real_mirror.mirror
         assert m.renderer is not main.renderer
         main.config["default_color"] = "#123456"
@@ -800,3 +811,88 @@ class TestOpenedWindowFollowsTheMirror:
         m, win = self._setup(monkeypatch, d.CLICK_ACTION_PAUSE)
         MirrorWidget._run_click_action(m, "double_click_action", d.DEFAULT_DOUBLE_CLICK_ACTION)
         win.move.assert_not_called()
+
+
+# --- VM live-run findings (#434, NST-Win11-MultiMon) ------------------------------------------------
+
+R0, R1, R2 = (0, 0, 1920, 1080), (1920, 0, 3840, 1080), (3840, 0, 5760, 1080)
+
+
+class TestLiveRunFindings:
+    def test_zero_size_taskbar_is_skipped_quietly(self, monkeypatch, caplog):
+        """1: an unplugged display's taskbar collapses to an empty rect before it goes; enumerating
+        it logged 'TaskbarInfo.height must be positive ... 0' at ERROR 3-4 times per unplug."""
+        import logging
+        from netspeedtray.utils import taskbar_utils as tbu
+        gui = MagicMock()
+        gui.error = Exception
+        gui.FindWindow.return_value = 0                      # no primary: only the dying secondary
+        gui.IsWindow.return_value = True
+        gui.IsWindowVisible.return_value = True
+        gui.GetClassName.return_value = "Shell_SecondaryTrayWnd"
+        gui.GetWindowRect.return_value = (1920, 1080, 3840, 1080)   # zero height
+        gui.EnumWindows.side_effect = lambda cb, extra: cb(0x500, extra)
+        monkeypatch.setattr(tbu, "win32gui", gui)
+        with caplog.at_level(logging.DEBUG, logger="NetSpeedTray.TaskbarUtils"):
+            bars = tbu.get_all_taskbar_info()
+        assert all(tb.hwnd != 0x500 for tb in bars)
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any("going away" in r.getMessage() for r in caplog.records)
+
+    def test_never_a_mirror_on_the_primary_while_main_is_on_it(self):
+        """2: during an explorer restart main's HWND is dead for a tick and the new primary bar can
+        carry another screen's label - no mirror may land on the Shell_TrayWnd over the main widget."""
+        classes = {300: "Shell_SecondaryTrayWnd", 262598: "Shell_TrayWnd"}   # main's 100 is dead
+        mgr, _ = _manager([_tb(262598, "D1-MISLABELLED", True, R0), _tb(300, "D2", False, R2)],
+                          main_dock=(100, "D0"), window_class=lambda h: classes.get(h, ""))
+        mgr.tick()
+        assert [m.taskbar_hwnd for m in mgr.mirrors.values()] == [300]
+        mgr.shutdown()
+
+    def test_primary_still_mirrored_when_main_is_on_a_live_secondary(self):
+        mgr, _ = _manager([_tb(100, "D0", True, R0), _tb(200, "D1", False, R1)], main_dock=(200, "D1"))
+        mgr.tick()
+        assert [m.taskbar_hwnd for m in mgr.mirrors.values()] == [100]
+        mgr.shutdown()
+
+    def test_readded_display_does_not_steal_the_neighbours_mirror(self):
+        """3: display 1 re-added - for a tick its new taskbar carries display 2's Qt name. Display 2's
+        mirror stays (same object, no rebuild); display 1 gets its own once the labels are right."""
+        mgr, holder = _manager([_tb(100, "D0", True, R0), _tb(300, "D2", False, R2)], main_dock=(100, "D0"))
+        mgr.tick()
+        d2 = mgr.mirrors[R2]
+        holder["taskbars"] = [_tb(100, "D0", True, R0), _tb(200, "D2", False, R1), _tb(300, "D2", False, R2)]
+        mgr.tick()
+        assert mgr.mirrors == {R2: d2} and not d2.deleted
+        holder["taskbars"] = [_tb(100, "D0", True, R0), _tb(200, "D1", False, R1), _tb(300, "D2", False, R2)]
+        mgr.tick()
+        assert mgr.mirrors[R2] is d2 and not d2.deleted
+        assert mgr.mirrors[R1].taskbar_hwnd == 200
+        mgr.shutdown()
+
+    def test_restart_signal_keeps_mirrors_on_live_unchanged_taskbars(self):
+        """4: the restart signal often arrives after the ticks rebuilt the mirrors - it must not drop
+        and rebuild them again on the same HWNDs. Only a mirror whose taskbar window died goes."""
+        alive = {100: "Shell_TrayWnd", 200: "Shell_SecondaryTrayWnd", 300: "Shell_SecondaryTrayWnd"}
+        mgr, holder = _manager([_tb(100, "D0", True, R0), _tb(200, "D1", False, R1), _tb(300, "D2", False, R2)],
+                               main_dock=(100, "D0"), window_class=lambda h: alive.get(h, ""))
+        mgr._staggered_ticks = mgr.tick
+        mgr.tick()
+        d1, d2 = mgr.mirrors[R1], mgr.mirrors[R2]
+        mgr._on_taskbar_restarted()
+        assert mgr.mirrors[R1] is d1 and mgr.mirrors[R2] is d2 and not d1.deleted and not d2.deleted
+        del alive[300]                                       # display 2's bar re-created
+        holder["taskbars"] = [_tb(100, "D0", True, R0), _tb(200, "D1", False, R1), _tb(301, "D2", False, R2)]
+        mgr._on_taskbar_restarted()
+        assert d2.deleted and mgr.mirrors[R2].taskbar_hwnd == 301
+        assert mgr.mirrors[R1] is d1 and not d1.deleted
+        mgr.shutdown()
+
+    def test_unchanged_taskbar_is_never_rebuilt_by_ticks(self):
+        mgr, _ = _manager([_tb(100, "D0", True, R0), _tb(200, "D1", False, R1)], main_dock=(100, "D0"))
+        mgr.tick()
+        d1 = mgr.mirrors[R1]
+        for _ in range(5):
+            mgr.tick()
+        assert mgr.mirrors[R1] is d1 and not d1.deleted and len(d1.refreshed) == 6
+        mgr.shutdown()

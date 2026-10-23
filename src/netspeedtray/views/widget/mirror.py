@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import collections.abc
 import logging
+from collections import Counter
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import win32api
@@ -412,6 +413,16 @@ class MirrorWidget(QWidget):
             event.ignore()
 
 
+def _window_class(hwnd: int) -> str:
+    """The window class of a live ``hwnd``; "" when it is not (or no longer) a window."""
+    try:
+        if hwnd and win32gui.IsWindow(hwnd):
+            return win32gui.GetClassName(hwnd) or ""
+    except Exception:
+        pass
+    return ""
+
+
 def _fullscreen_monitor(hwnd: int) -> int:
     """The HMONITOR a true-fullscreen ``hwnd`` covers (window rect == monitor rect), else 0. The
     cheap test SystemEventHandler._is_fullscreen_obstruction starts with; no taskbar query."""
@@ -428,20 +439,22 @@ def _fullscreen_monitor(hwnd: int) -> int:
 class MirrorManager(QObject):
     """
     Owns the mirrors while "Show on all taskbars" is on: one per taskbar other than the main
-    widget's, keyed by screen name. Reconciled from ONE get_all_taskbar_info() a tick (1 s), however
+    widget's, keyed by the taskbar's monitor (MirrorManager._key). Reconciled from ONE get_all_taskbar_info() a tick (1 s), however
     many mirrors exist. Constructed only by NetworkSpeedWidget.apply_mirrors when the setting is on.
     """
 
     def __init__(self, main: Any,
                  taskbars_provider: Optional[Callable[[], List[Any]]] = None,
                  mirror_factory: Optional[Callable[[Any], Any]] = None,
-                 foreground_provider: Optional[Callable[[], int]] = None) -> None:
+                 foreground_provider: Optional[Callable[[], int]] = None,
+                 window_class: Optional[Callable[[int], str]] = None) -> None:
         super().__init__(main if isinstance(main, QObject) else None)
         self._main = main
         self._taskbars = taskbars_provider or taskbar_utils.get_all_taskbar_info
         self._factory = mirror_factory or (lambda tb: MirrorWidget(main, tb))
         self._foreground = foreground_provider or win32gui.GetForegroundWindow
-        self.mirrors: Dict[str, Any] = {}
+        self._window_class = window_class or _window_class
+        self.mirrors: Dict[Any, Any] = {}   # monitor key (see _key) -> mirror
         self._connections: List[Tuple[Any, Callable]] = []
         self._shut = False
         self._last_fs_monitor = 0
@@ -516,28 +529,56 @@ class MirrorManager(QObject):
         getter = getattr(self._main, "docked_taskbar", None)
         return getter() if callable(getter) else None
 
-    def reconcile(self, taskbars: List[Any]) -> Dict[str, Any]:
+    @staticmethod
+    def _key(tb: Any) -> Any:
+        """A mirror's identity: the MONITOR its taskbar is on, from Win32 (GetMonitorInfo's physical
+        rect) - not the Qt screen name, which a taskbar gets by overlap with Qt's screen list and
+        which is wrong for a moment while a display is being added (#434 live run: display 2's mirror
+        was rebuilt onto display 1's new taskbar). The screen name only when the rect is unknown."""
+        rect = getattr(tb, "monitor_rect", None)
+        return tuple(rect) if rect else tb.screen_name
+
+    def reconcile(self, taskbars: List[Any]) -> Dict[Any, Any]:
         """Create / destroy mirrors so there is exactly one per taskbar other than main's. Returns
-        the target {screen name: TaskbarInfo}. A taskbar whose HWND changed (explorer restart, a bar
-        re-created) gets a fresh mirror instead of a re-dock."""
+        the target {monitor key: TaskbarInfo}. Only a mirror whose taskbar HWND or screen changed is
+        rebuilt (explorer restart, a re-created bar); one whose taskbar is unchanged is left alone."""
         dock = self._main_dock()
         if dock is None:
             return {}   # the main widget's own dock is unknown this tick: change nothing
         main_hwnd, main_screen = dock
-        targets: Dict[str, Any] = {}
-        for tb in taskbars:
-            hwnd = int(getattr(tb, "hwnd", 0) or 0)
-            if not hwnd or hwnd == main_hwnd:
+        # The PRIMARY taskbar (Shell_TrayWnd) gets a mirror only while the main widget is provably
+        # elsewhere: docked to a live secondary bar, or off any taskbar (free-float / Free Move, where
+        # the screen check below decides). During an explorer restart main's HWND is dead for a tick
+        # and the screen labels are in flux - a mirror then landed on the primary, over main (#434).
+        primary_ok = not main_hwnd or self._window_class(main_hwnd) == "Shell_SecondaryTrayWnd"
+        candidates = [tb for tb in taskbars if int(getattr(tb, "hwnd", 0) or 0)]
+        # Two taskbars labelled with ONE Qt screen = a display is being added or removed and Qt's
+        # screen list is behind: leave those monitors alone this tick (no create, no destroy).
+        names = Counter(tb.screen_name for tb in candidates)
+        targets: Dict[Any, Any] = {}
+        held = set()
+        for tb in candidates:
+            hwnd = int(tb.hwnd)
+            key = self._key(tb)
+            if names[tb.screen_name] > 1:
+                held.add(key)
+                continue
+            if hwnd == main_hwnd:
                 continue
             # By screen too: just after an explorer restart main may still hold the OLD hwnd of a
             # bar on its own screen - never mirror onto the main widget's screen.
             if main_screen is not None and tb.screen_name == main_screen:
                 continue
-            targets.setdefault(tb.screen_name, tb)
+            if not primary_ok and self._window_class(hwnd) == "Shell_TrayWnd":
+                continue
+            targets.setdefault(key, tb)
         for key in list(self.mirrors):
             mirror = self.mirrors[key]
+            if key in held and not getattr(mirror, "dead", False):
+                continue
             tb = targets.get(key)
-            if tb is None or int(tb.hwnd) != int(mirror.taskbar_hwnd) or getattr(mirror, "dead", False):
+            if (tb is None or int(tb.hwnd) != int(mirror.taskbar_hwnd)
+                    or tb.screen_name != mirror.screen_name or getattr(mirror, "dead", False)):
                 self._destroy(key)
         for key, tb in targets.items():
             if key not in self.mirrors:
@@ -545,7 +586,7 @@ class MirrorManager(QObject):
                     self.mirrors[key] = self._factory(tb)
                 except Exception as e:
                     logger.error("Could not create a mirror for %s: %s",
-                                 stable_pseudonym(key, "DISPLAY"), e, exc_info=True)
+                                 stable_pseudonym(tb.screen_name, "DISPLAY"), e, exc_info=True)
         if self.mirrors:
             if not self._fs_timer.isActive() and not self._shut:
                 self._fs_timer.start()
@@ -553,10 +594,11 @@ class MirrorManager(QObject):
             self._fs_timer.stop()
         return targets
 
-    def _destroy(self, key: str) -> None:
+    def _destroy(self, key: Any) -> None:
         mirror = self.mirrors.pop(key, None)
         if mirror is None:
             return
+        key = getattr(mirror, "screen_name", key)   # for the log line (pseudonymised)
         try:
             # #406's side-bar watcher (a hook thread) must never outlive its mirror. Mirrors never
             # attach it (side_watcher_enabled=False); stop it anyway, in case that ever changes.
@@ -607,12 +649,15 @@ class MirrorManager(QObject):
             QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS, self.tick)
 
     def _on_taskbar_restarted(self) -> None:
-        """Explorer is rebuilding the taskbars: drop every mirror; the next ticks rebuild them on the
-        new taskbar windows."""
+        """Explorer is rebuilding the taskbars: drop the mirrors whose taskbar window is gone; the next
+        ticks rebuild them on the new windows. A mirror whose taskbar is still the same live window
+        is kept - the restart signal (the 3 s validity poll) often comes AFTER the ticks have already
+        rebuilt the mirrors, and dropping them again rebuilt them twice on the same HWNDs (#434)."""
         if self._shut:
             return
-        for key in list(self.mirrors):
-            self._destroy(key)
+        for key, mirror in list(self.mirrors.items()):
+            if not self._window_class(int(mirror.taskbar_hwnd)):
+                self._destroy(key)
         self._staggered_ticks()
 
     def _on_screen_added(self, *_args) -> None:
@@ -628,8 +673,9 @@ class MirrorManager(QObject):
             name = screen.name() if screen is not None else None
         except Exception:
             name = None
-        if name in self.mirrors:
-            self._destroy(name)
+        for key, mirror in list(self.mirrors.items()):
+            if name is not None and getattr(mirror, "screen_name", None) == name:
+                self._destroy(key)
         self._staggered_ticks()
 
     def _poll_fullscreen(self) -> None:
