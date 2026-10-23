@@ -47,6 +47,7 @@ from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox, QProgressDialog, QWidget
 
 from netspeedtray import constants
+from netspeedtray.utils import https
 from netspeedtray.utils.signature_verifier import verify_file
 
 logger = logging.getLogger("NetSpeedTray.UpdateInstaller")
@@ -67,7 +68,7 @@ def download_to(url: str, dest: str,
     Raises on any network/IO error, on cancellation, or if the size exceeds _MAX_BYTES.
     """
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(req, timeout=30) as resp, open(dest, "wb") as out:
+    with https.urlopen(req, timeout=30) as resp, open(dest, "wb") as out:
         total = int(resp.headers.get("Content-Length", 0) or 0)
         read = 0
         while True:
@@ -334,7 +335,7 @@ def _sha256_file(path: str) -> str:
 def _fetch_checksums(url: str) -> str:
     """Download the release's checksums.txt over HTTPS (small; capped)."""
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with https.urlopen(req, timeout=30) as resp:
         return resp.read(1_000_000).decode("utf-8", "replace")
 
 

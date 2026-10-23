@@ -29,7 +29,7 @@ class _FakeResp:
 def test_download_to_writes_file_and_reaches_100(tmp_path, monkeypatch):
     data = b"x" * (200 * 1024)  # multiple 64K chunks
     dest = tmp_path / "out.bin"
-    monkeypatch.setattr(ui.urllib.request, "urlopen", lambda req, timeout=30: _FakeResp(data, len(data)))
+    monkeypatch.setattr(ui.urllib.request, "urlopen", lambda req, timeout=30, **kw: _FakeResp(data, len(data)))
     pcts = []
     ui.download_to("https://example/x", str(dest), progress_cb=pcts.append)
     assert dest.read_bytes() == data
@@ -39,7 +39,7 @@ def test_download_to_writes_file_and_reaches_100(tmp_path, monkeypatch):
 def test_download_to_progress_minus_one_when_size_unknown(tmp_path, monkeypatch):
     data = b"y" * 2048
     dest = tmp_path / "out.bin"
-    monkeypatch.setattr(ui.urllib.request, "urlopen", lambda req, timeout=30: _FakeResp(data, None))
+    monkeypatch.setattr(ui.urllib.request, "urlopen", lambda req, timeout=30, **kw: _FakeResp(data, None))
     pcts = []
     ui.download_to("https://e/x", str(dest), progress_cb=pcts.append)
     assert dest.read_bytes() == data
@@ -49,7 +49,7 @@ def test_download_to_progress_minus_one_when_size_unknown(tmp_path, monkeypatch)
 def test_download_to_raises_on_cancel(tmp_path, monkeypatch):
     data = b"z" * (200 * 1024)
     dest = tmp_path / "out.bin"
-    monkeypatch.setattr(ui.urllib.request, "urlopen", lambda req, timeout=30: _FakeResp(data, len(data)))
+    monkeypatch.setattr(ui.urllib.request, "urlopen", lambda req, timeout=30, **kw: _FakeResp(data, len(data)))
     with pytest.raises(RuntimeError):
         ui.download_to("https://e/x", str(dest), is_cancelled=lambda: True)
 
@@ -59,7 +59,7 @@ def test_download_to_enforces_size_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(ui, "_MAX_BYTES", 100 * 1024)
     data = b"q" * (300 * 1024)
     dest = tmp_path / "out.bin"
-    monkeypatch.setattr(ui.urllib.request, "urlopen", lambda req, timeout=30: _FakeResp(data, len(data)))
+    monkeypatch.setattr(ui.urllib.request, "urlopen", lambda req, timeout=30, **kw: _FakeResp(data, len(data)))
     with pytest.raises(RuntimeError):
         ui.download_to("https://e/x", str(dest))
 

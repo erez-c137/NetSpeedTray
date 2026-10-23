@@ -75,6 +75,10 @@ my_hidden_imports = [
     'numpy',
     'signal',
     'wmi',
+    # Imported lazily by utils/https.py: the update checker/downloader verify TLS through Windows'
+    # chain engine with it, which fetches a missing root on demand. Without it a fresh Windows
+    # install fails every update check with CERTIFICATE_VERIFY_FAILED (rc.2 VM session).
+    'truststore',
 ]
 
 # Modules that get pulled in transitively but aren't used by NetSpeedTray.
@@ -348,6 +352,13 @@ for _need in _required_runtime_libs:
             f"broken). Check _drop_unused_qt_artifacts() and `my_excludes`."
         )
 print('[netspeedtray.spec] SSL runtime libs present: OpenSSL + _ssl/_hashlib OK.')
+
+# Same failure mode, one layer up: without truststore https.py silently falls back to OpenSSL's
+# view of the store and fresh installs cannot check for updates. Fail the build instead.
+if not any(name == 'truststore' or name.startswith('truststore.') for name, *_ in a.pure):
+    raise SystemExit("[netspeedtray.spec] FATAL: 'truststore' is missing from the bundle "
+                     "(pip install -r requirements.txt). Update checks would fail on fresh installs.")
+print('[netspeedtray.spec] truststore bundled: HTTPS verified by Windows.')
 
 # Regression guard (#425): Qt6Core.dll imports icuuc.dll/icuin.dll by bare name and must get
 # Windows' own copies from System32. PyInstaller never bundles those, so any ICU DLL in the
