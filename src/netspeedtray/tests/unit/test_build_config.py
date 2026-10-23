@@ -237,3 +237,12 @@ def test_the_release_build_step_does_not_set_nst_venv():
     release = _read(".github", "workflows", "release.yml")
     assert "NST_VENV" not in release
     assert "python -m venv .venv" in release
+
+
+def test_the_spec_fails_the_build_on_a_bundled_foreign_icu_dll():
+    """#425 keeps PATH from shadowing System32's ICU; this guard catches it if anything slips past."""
+    spec = _read("build", "netspeedtray.spec")
+    guard = spec.index("_foreign_icu = ")
+    assert spec.index("_bundled_basenames = ") < guard < spec.index("pyz = PYZ(")
+    assert "'icuuc.dll', 'icuin.dll'" in spec[guard:guard + 200]
+    assert "raise SystemExit(" in spec[guard:guard + 300]

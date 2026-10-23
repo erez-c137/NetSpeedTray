@@ -349,6 +349,16 @@ for _need in _required_runtime_libs:
         )
 print('[netspeedtray.spec] SSL runtime libs present: OpenSSL + _ssl/_hashlib OK.')
 
+# Regression guard (#425): Qt6Core.dll imports icuuc.dll/icuin.dll by bare name and must get
+# Windows' own copies from System32. PyInstaller never bundles those, so any ICU DLL in the
+# bundle came from a foreign PATH entry (e.g. Poppler) and would shadow System32 at runtime.
+_foreign_icu = sorted(n for n in _bundled_basenames if n in ('icuuc.dll', 'icuin.dll'))
+if _foreign_icu:
+    raise SystemExit(
+        f"[netspeedtray.spec] FATAL: foreign ICU DLL(s) bundled: {_foreign_icu}. QtCore would load "
+        f"them instead of System32's and fail at startup. Remove the PATH entry that provides them."
+    )
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 # UPX is off for every target (see _UPX at the top). Should anyone ever turn it back on, the files
