@@ -91,6 +91,13 @@ class LayoutConstants:
     # scaled with the DPI; owner's probe 2026-10-22). Only an ESTIMATE for the #24 yield's "is the app
     # group near the widget" poll gating - the collision itself always uses UIA's real rects.
     APP_BUTTON_SLOT_PX: Final[int] = 44
+    # The #24 yield only trusts a UIA app group that lies inside the taskbar's own window rect (read
+    # just before and after the probe), within this many physical px. Right after a live display-scale
+    # change Explorer can report the buttons in a stale scale's coordinates for seconds (rc.2 final VM
+    # run, 150 -> 100 % with an auto-hide bar: a centred group read as 1007..1873 = 1.5 x its real
+    # 671..1249, a 10 s false step-aside); such a rect no longer fits the bar. Real buttons sit well
+    # inside it; the slack only absorbs rounding.
+    APP_GROUP_BAR_FIT_TOLERANCE_PX: Final[int] = 4
 
     def __init__(self) -> None:
         self.validate()

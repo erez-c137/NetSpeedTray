@@ -89,7 +89,7 @@ def q_app():
 @pytest.fixture
 def layout():
     """The REAL layout cache, its worker run synchronously on the REAL element parsing."""
-    ctl = types.SimpleNamespace(elements=None, workers=[], requests=[], fail=False)
+    ctl = types.SimpleNamespace(elements=None, workers=[], requests=[], fail=False, bar=None)
 
     def start():
         ctl.workers.append(taskbar_utils._layout_worker)
@@ -116,7 +116,7 @@ def layout():
     taskbar_utils._layout_state.update(fresh)
     with patch.object(taskbar_utils, "_start_layout_worker", side_effect=start), \
             patch.object(taskbar_utils, "_query_taskbar_layout_blocking", side_effect=query), \
-            patch.object(taskbar_utils, "request_taskbar_layout_probe", side_effect=request):
+            patch.object(taskbar_utils, "request_taskbar_layout_probe", side_effect=request),             patch.object(taskbar_utils, "_taskbar_window_rect", side_effect=lambda _h: ctl.bar):
         yield ctl
     taskbar_utils._layout_state.update(fresh)
 
@@ -1002,3 +1002,74 @@ def test_shutdown_and_restart_log_their_own_reason(rig, caplog):
         r.y.detach("shutting down")
     assert any("shutting down" in x for x in caplog.messages)
     assert not any("no longer" in x for x in caplog.messages)
+
+
+# --- a live scale change: Explorer's buttons in a stale scale's coordinates (rc.2 final VM run) ---
+
+def _centred_group(scale, n_apps=11, screen=1920, y0=Y0, y1=Y1, factor=1.0):
+    """Start, Search and ``n_apps`` apps centred on the bar at ``scale``; every coordinate times
+    ``factor`` (factor 1.5 at scale 1.0: the stale-scale report seen right after 150 -> 100 %)."""
+    slot = 44 * scale
+    width = (n_apps + 2) * slot
+    x = (screen - width) / 2
+    names = [("StartButton", "ToggleButton"), ("SearchButton", "ToggleButton")] +         [("Appid: app%d" % i, APP) for i in range(n_apps)]
+    els = []
+    for aid, cls in names:
+        els.append((cls, aid, tuple(int(round(v * factor)) for v in (x, y0, x + slot, y1))))
+        x += slot
+    return els
+
+
+def test_a_stale_scale_group_after_150_to_100_never_yields(rig, layout):
+    """The 10 s false step-aside: 150 -> 100 % (auto-hide bar), the widget re-placed at 100 %
+    (1611..1698, as logged), and the first probes report the centred group at 1.5x its real place -
+    group 1007..1873 in the log. That rect does not fit the bar's window (0,1032)-(1920,1080)."""
+    layout.bar = (0, Y0, 1920, Y1)
+    r = rig(1611, width=87, dpi=1.5, centered=True)
+    r.start(_centred_group(1.5))
+    assert not r.y.yielded
+
+    r.dpi = 1.0                                    # the live change reaches the snapshot
+    r.now += 1.0
+    r.y.sync()                                     # #444: the old group is dropped, re-probe at once
+    stale = _centred_group(1.0, factor=1.5)
+    left, _t, right, _b = uia_widgets.app_group_from_elements(stale, False)
+    assert abs(left - 1007) < 8 and abs(right - 1873) < 8          # ~ the logged span
+    r.probe(stale, advance=0.6)
+    assert not r.y.yielded and r.changes == 0, "a rect outside the bar is not a collision"
+
+    r.now += 3.0
+    r.y.sync()
+    r.probe(_centred_group(1.0), advance=0.6)      # Explorer caught up: the real 671..1249
+    assert not r.y.yielded and r.changes == 0
+
+
+def test_an_auto_hide_bar_slid_off_screen_still_yields_for_real_buttons(rig, layout):
+    """The fit check is against the bar's OWN rect, wherever it is: a hidden auto-hide bar (slid
+    down to y 1078) with buttons that really reach the widget still yields."""
+    layout.bar = (0, 1078, 1920, 1126)
+    els = [(c, a, (r[0], 1078, r[2], 1126)) for c, a, r in left_aligned(30, widgets=False)]
+    r = rig(1380)
+    r.start(els)
+    assert r.y.yielded
+
+
+def test_group_fits_bar():
+    bar = (0, 1032, 1920, 1080)
+    assert taskbar_utils.group_fits_bar((671, 1032, 1249, 1080), bar)
+    assert taskbar_utils.group_fits_bar((671, 1029, 1249, 1083), bar)               # rounding slack
+    assert not taskbar_utils.group_fits_bar((1007, 1548, 1873, 1620), bar)          # every coord x1.5
+    assert not taskbar_utils.group_fits_bar((1007, 1032, 1873, 1104), bar)          # sizes x1.5
+    assert not taskbar_utils.group_fits_bar((1500, 1032, 2100, 1080), bar)          # past the bar's end
+    assert taskbar_utils.group_fits_bar((671, 1032, 1249, 1080), None)              # unknown: no check
+    assert taskbar_utils.group_fits_bar(None, bar)
+
+
+def test_the_bar_rect_spans_a_slide_during_the_probe(layout):
+    """Read before AND after the UIA call: a bar sliding meanwhile is covered by the union."""
+    rects = iter([(0, 1032, 1920, 1080), (0, 1060, 1920, 1108)])
+    layout.elements = CENTERED
+    with patch.object(taskbar_utils, "_taskbar_window_rect", side_effect=lambda _h: next(rects)):
+        taskbar_utils.request_taskbar_layout_probe(HWND)
+        layout.land()
+    assert taskbar_utils.taskbar_layout_bar(HWND) == (0, 1032, 1920, 1108)
