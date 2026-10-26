@@ -7,7 +7,7 @@ pytest-mock
 pytest-cov
 freezegun
 pip-tools
-wheel>=0.46.2  # Explicitly added to enforce Security CVE fix
+wheel>=0.48.0  # Explicitly added to enforce Security CVE fix
 pillow>=13.0.0  # Security: 56 Dependabot alerts (3 critical) fixed in 13.0.0
 pytest>=9.0.3   # Security: vulnerable tmpdir handling fix
 parameterized
