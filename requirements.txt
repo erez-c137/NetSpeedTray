@@ -8,15 +8,15 @@ contourpy==1.3.3
     # via matplotlib
 cycler==0.12.1
     # via matplotlib
-fonttools==4.61.0
+fonttools==4.67.0
     # via
     #   -r requirements.in
     #   matplotlib
 kiwisolver==1.4.8
     # via matplotlib
-matplotlib==3.10.5
+matplotlib==3.11.2
     # via -r requirements.in
-numpy==2.3.2
+numpy==2.5.4
     # via
     #   -r requirements.in
     #   contourpy
@@ -27,27 +27,21 @@ pillow==13.0.0
     # via
     #   -r requirements.in
     #   matplotlib
-psutil==7.0.0
+psutil==7.2.2
     # via -r requirements.in
 pyparsing==3.2.3
     # via matplotlib
-pyqt6==6.9.1
+pyqt6==6.11.0
     # via -r requirements.in
-pyqt6-qt6==6.9.1
+pyqt6-qt6==6.11.2
     # via pyqt6
 pyqt6-sip==13.10.2
     # via pyqt6
-python-bidi==0.6.11
+python-bidi==0.6.12
     # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via matplotlib
-pywin32==311 ; sys_platform == "win32"
-    # via
-    #   -r requirements.in
-    #   wmi
 six==1.17.0
     # via python-dateutil
-truststore==0.10.4
-    # via -r requirements.in
-wmi==1.5.1 ; sys_platform == "win32"
+truststore==0.10.5
     # via -r requirements.in
