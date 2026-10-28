@@ -24,19 +24,16 @@ spot must not keep it hidden (rc.2 live test H3).
 When it probes (no new OS hook; one UIA FindAll from the XAML host, ~10 ms on the layout worker):
 
 * on attach (startup, a new taskbar);
-* on a foreground change (a new app usually takes the foreground) - counted as one more button on
-  the last measured group (half a slot at EACH end of a centred group, a whole slot at the far end of
-  a left-aligned one, a whole slot at both ends when the alignment can't be read), and probed (plus
-  once more ``SIDE_BAR_FOREGROUND_FOLLOWUP_MS`` later, the button slides in) only when that
-  prediction is within ``SIDE_BAR_NEAR_SLOTS`` slots of the widget, or while yielded;
-* from the 1 s refresh tick every ``SIDE_BAR_NEAR_RECHECK_MS`` - only while yielded or near - backing
-  off (doubling) while probes find the same span (#406's M2): up to ``SIDE_BAR_NEAR_RECHECK_MAX_MS``
-  when shown, ``APP_YIELD_YIELDED_RECHECK_MAX_MS`` while yielded (an app closed in the background
-  must bring it back quickly);
+* on every foreground change, followed by a bounded burst of three follow-ups spaced by
+  ``SIDE_BAR_FOREGROUND_FOLLOWUP_MS``. Uncombined buttons can be much wider than a 44 px slot;
+  a prediction must not suppress their measurement;
+* from the 1 s refresh tick every ``APP_YIELD_ACTIVE_RECHECK_MS`` while yielded or near. Unchanged
+  nearby spans never back off: a background close must bring the widget back promptly. Unknown
+  layouts while shown still back off up to ``SIDE_BAR_NEAR_RECHECK_MAX_MS``;
 * never more than one probe per ``SIDE_BAR_MIN_PROBE_INTERVAL_MS``.
 
 The owner's normal centred bar (11 apps ending at x 1247, widget at 1496) is ~5.6 slots clear: it
-never yields, and only several foreground changes in a row cost one probe.
+never yields and performs no periodic probes after its foreground follow-up burst ends.
 
 A user who DROPS the widget onto the buttons keeps it there: the yield is suppressed until a probe
 sees the widget clear once. That choice survives a restart: the dropped ``tray_offset_x`` is saved
@@ -212,6 +209,7 @@ class AppOverlapYield(QObject):
         self._landed_before = 0
         self._last_probe_at = -1e9
         self._again = False
+        self._followups_left = 0
         self._near_interval_ms = t.SIDE_BAR_NEAR_RECHECK_MS
         self._first_yield_done = False
         self._suspended = False                  # a second launch asked for the widget: off this session
@@ -259,6 +257,7 @@ class AppOverlapYield(QObject):
         self._changes = 0
         self._inflight = False
         self._again = False
+        self._followups_left = 0
         self._hold_until = 0.0
         self._model_dpi = None
         self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
@@ -307,7 +306,11 @@ class AppOverlapYield(QObject):
         # transient UIA failure at startup doesn't switch the yield off for the session.
         if not (self._state.yielded or self._model is None or self._near(ctx)):
             return
-        if (self._clock() - self._last_probe_at) * 1000.0 >= self._near_interval_ms:
+        # A stale span near the widget is not evidence that the next minute is safe. Likewise a
+        # hidden widget must notice background closes promptly, without another foreground event.
+        interval = (constants.timeouts.APP_YIELD_ACTIVE_RECHECK_MS
+                    if self._state.yielded or self._near(ctx) else self._near_interval_ms)
+        if (self._clock() - self._last_probe_at) * 1000.0 >= interval:
             self._schedule(0)
 
     def _attach(self, ctx: OverlapContext) -> None:
@@ -323,6 +326,7 @@ class AppOverlapYield(QObject):
         self._changes = 0
         self._inflight = False
         self._again = False
+        self._followups_left = 0
         self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
         self._model_dpi = None
         self._hold_until = 0.0
@@ -341,14 +345,19 @@ class AppOverlapYield(QObject):
     # --- inputs ------------------------------------------------------------------------------
 
     def note_foreground_change(self) -> None:
-        """A new foreground window, often a new app: one more button on the group; probe if near."""
+        """Measure after a foreground change, including wide/uncombined app buttons.
+
+        The 44 px prediction is only a proximity hint, not a safe reason to skip this measurement.
+        A new labelled button can be wider, and Explorer may finish animating after the first probe.
+        """
         ctx = self._context()
-        if ctx is None or not self._model_known:
+        if ctx is None:
             return
         self._changes += 1
-        if self._state.yielded or self._near(ctx):
-            self._schedule(0)
-            self._followup_timer.start()
+        self._near_interval_ms = constants.timeouts.APP_YIELD_ACTIVE_RECHECK_MS
+        self._followups_left = constants.timeouts.APP_YIELD_FOREGROUND_FOLLOWUPS
+        self._schedule(0)
+        self._followup_timer.start()
 
     def note_user_drop(self) -> None:
         """The user dropped the widget: if that is ON the buttons it's their choice - no yield until
@@ -372,8 +381,11 @@ class AppOverlapYield(QObject):
 
     def _on_followup(self) -> None:
         ctx = self._context()
-        if ctx is not None and (self._state.yielded or self._near(ctx)):
+        if ctx is not None and self._followups_left > 0:
+            self._followups_left -= 1
             self._schedule(0)
+            if self._followups_left:
+                self._followup_timer.start()
 
     # --- decisions ---------------------------------------------------------------------------
 
@@ -472,9 +484,14 @@ class AppOverlapYield(QObject):
             t = constants.timeouts
             same = (self._model_known and (span is None) == (self._model is None)
                     and (span is None or all(abs(a - b) < 1.0 for a, b in zip(span, self._model))))
-            cap = t.APP_YIELD_YIELDED_RECHECK_MAX_MS if self._state.yielded else t.SIDE_BAR_NEAR_RECHECK_MAX_MS
-            self._near_interval_ms = (min(self._near_interval_ms * 2, cap)
-                                      if same else t.SIDE_BAR_NEAR_RECHECK_MS)
+            near = (span is not None and span_gap(ctx.widget, span)
+                    < t.SIDE_BAR_NEAR_SLOTS * constants.layout.APP_BUTTON_SLOT_PX)
+            if self._state.yielded or near:
+                self._near_interval_ms = t.APP_YIELD_ACTIVE_RECHECK_MS
+            elif same:
+                self._near_interval_ms = min(self._near_interval_ms * 2, t.SIDE_BAR_NEAR_RECHECK_MAX_MS)
+            else:
+                self._near_interval_ms = t.SIDE_BAR_NEAR_RECHECK_MS
             self._model = span
             self._model_known = True
             self._model_dpi = ctx.dpi
@@ -510,9 +527,8 @@ class AppOverlapYield(QObject):
             logger.info("App buttons reach the widget (group %.0f..%.0f, widget %.0f..%.0f; UIA %s at "
                         "scale %.3g): stepping aside until there is room.", span[0], span[1],
                         ctx.widget[0], ctx.widget[1], self._last_group_rect, ctx.dpi)
-            # While yielded the re-check backs off only up to the shorter cap.
-            self._near_interval_ms = min(self._near_interval_ms,
-                                         constants.timeouts.APP_YIELD_YIELDED_RECHECK_MAX_MS)
+            # Background closes must be noticed promptly while yielded too.
+            self._near_interval_ms = constants.timeouts.APP_YIELD_ACTIVE_RECHECK_MS
         else:
             logger.info("App-button yield over (%s): showing the widget again.",
                         "room again" if span is not None else "layout unknown")
