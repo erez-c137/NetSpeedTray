@@ -238,6 +238,7 @@ class AppOverlapYield(QObject):
         self._retreated = False
         self._step_clear_since: Optional[float] = None
         self._spot_gone_since: Optional[float] = None   # first retreated reading with no second spot
+        self._relayout_burst_at = -1e9           # when a layout change last armed the follow-up burst
         self._probe_timer = self._timer(0, self._fire_probe)
         self._poll_timer = self._timer(t.SIDE_BAR_PROBE_POLL_MS, self._poll_probe)
         self._followup_timer = self._timer(t.SIDE_BAR_FOREGROUND_FOLLOWUP_MS, self._on_followup)
@@ -327,6 +328,9 @@ class AppOverlapYield(QObject):
             self._model_known = False
             self._model_dpi = None
             self._changes = 0
+            # The fallback's pending confirmations were timed against the old scale's readings.
+            self._step_clear_since = None
+            self._spot_gone_since = None
             self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
             self._schedule(0)
             return
@@ -344,8 +348,13 @@ class AppOverlapYield(QObject):
                 # ...and the foreground follow-ups: the tray end moves first and the Widgets button
                 # SLIDES after it (rc.3 VM: a probe right after an input-language indicator went away
                 # caught the button mid-slide, and nothing probed again - the widget sat 39 px short).
-                self._followups_left = constants.timeouts.APP_YIELD_FOREGROUND_FOLLOWUPS
-                self._followup_timer.start()
+                # At most one burst per APP_YIELD_ACTIVE_WINDOW_MS: a tray that flaps (an icon blinking
+                # in and out) must not keep a far, centred bar probing 4x per flap.
+                now = self._clock()
+                if (now - self._relayout_burst_at) * 1000.0 >= constants.timeouts.APP_YIELD_ACTIVE_WINDOW_MS:
+                    self._relayout_burst_at = now
+                    self._followups_left = constants.timeouts.APP_YIELD_FOREGROUND_FOLLOWUPS
+                    self._followup_timer.start()
                 return
         if self._inflight or self._probe_timer.isActive():
             return
@@ -625,9 +634,8 @@ class AppOverlapYield(QObject):
         self._spot_gone_since = None
         if span is None:
             return False
-        on_stepped = group_reaches_widget(span, ctx.stepped)
         if not self._retreated:
-            if on_stepped and not group_reaches_widget(span, ctx.tray_spot):
+            if group_reaches_widget(span, ctx.stepped) and not group_reaches_widget(span, ctx.tray_spot):
                 self._retreated = True
                 self._step_clear_since = None
                 logger.info("App buttons reach the spot left of the Widgets button (group %.0f..%.0f, "
@@ -636,7 +644,10 @@ class AppOverlapYield(QObject):
                 self._mark_active()
                 return True
             return False
-        if on_stepped:
+        # Back only with room to spare (spatial hysteresis): a group end hovering at the threshold
+        # must not swing the widget a whole Widgets button left and right on every probe.
+        if group_reaches_widget(span, ctx.stepped, constants.layout.TRAY_EDGE_MIN_GAP_PX
+                                + constants.layout.WIDGETS_FALLBACK_RETURN_MARGIN_PX):
             self._step_clear_since = None
             return False
         if self._step_clear_since is None:

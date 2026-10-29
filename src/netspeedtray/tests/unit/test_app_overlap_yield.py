@@ -1326,6 +1326,65 @@ def test_a_retreated_widget_is_rechecked_on_the_tick_to_notice_a_background_clos
     assert r.pending_probe()
 
 
+def test_the_fallback_returns_only_with_a_margin_of_room(rig):
+    """rc.3 review: a group end hovering at the threshold (1362 clear / 1368 reaching, stepped spot
+    from 1372) swung the widget 304 px every couple of probes. Returning needs the usual gap PLUS
+    WIDGETS_FALLBACK_RETURN_MARGIN_PX of room."""
+    margin = constants.layout.WIDGETS_FALLBACK_RETURN_MARGIN_PX
+    r = _fallback_rig(rig)
+    r.start(left_aligned(28, stray=(1333, 1368)))   # ends 1368: reaches the stepped spot
+    assert r.y.retreated
+    r.widget_x = TRAY_SPOT[0]
+    for _ in range(3):                               # 1362: clear by 10 - but not by gap + margin
+        r.y.note_foreground_change()
+        r.probe(left_aligned(28, stray=(1333, 1362)), advance=1.0)
+        assert r.y.retreated and r.y._step_clear_since is None   # not even a first clear reading
+        r.y.note_foreground_change()
+        r.probe(left_aligned(28, stray=(1333, 1368)), advance=1.0)
+        assert r.y.retreated
+    end = int(STEPPED[0] - GAP - margin)             # exactly gap + margin clear
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, stray=(1333, end)), advance=1.0)
+    r.probe(left_aligned(28, stray=(1333, end)), advance=0.5)
+    assert not r.y.retreated
+
+
+def test_a_flapping_tray_arms_the_follow_up_burst_at_most_once_per_active_window(rig):
+    """rc.3 review: every layout-key change armed 1 probe + 3 follow-ups, even on a far centred bar - a
+    tray icon flapping every 2 s meant ~89 probes a minute. The burst is armed at most once per
+    APP_YIELD_ACTIVE_WINDOW_MS; the single immediate (rate-limited) probe stays."""
+    r = rig(OWNER_WIDGET_X)
+    r.layout_key = (1, 1770, True)
+    r.start(CENTERED)
+    bursts = probes = 0
+    for i in range(30):                              # 60 s of a flapping tray
+        r.layout_key = (1, 1770 if i % 2 else 1746, True)
+        r.now += 2.0
+        r.y.sync()
+        if r.y._followup_timer.isActive():
+            bursts += 1
+            r.y._followup_timer.stop()
+        if r.pending_probe():
+            probes += 1
+            r.probe(CENTERED)
+    window_s = T.APP_YIELD_ACTIVE_WINDOW_MS / 1000.0
+    assert bursts <= int(60 / window_s) + 1
+    assert probes == 30                              # one immediate re-probe per change, as before
+
+
+def test_a_display_scale_change_restarts_the_fallback_confirmations(rig):
+    r = _fallback_rig(rig)
+    r.start(left_aligned(30))
+    assert r.y.retreated
+    r.y.note_foreground_change()
+    r.probe(left_aligned(20), advance=1.0)           # first clear reading: confirmation pending
+    assert r.y._step_clear_since is not None
+    r.dpi = 1.25
+    r.now += 1.0
+    r.y.sync()
+    assert r.y._step_clear_since is None and r.y._spot_gone_since is None
+
+
 def test_buttons_reaching_the_tray_spot_too_still_yield(rig):
     r = _fallback_rig(rig)
     r.start(left_aligned(36))                    # ends 1685: covers both spots

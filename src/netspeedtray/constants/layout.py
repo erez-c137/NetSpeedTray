@@ -80,6 +80,12 @@ class LayoutConstants:
     # beside the tray). The same rule as the tray gap: never abut a shell button and steal its clicks
     # (rc.3 VM 2026-10-29: the default spot covered the button's right half, arrows touching "Windy").
     WIDGETS_BUTTON_MIN_GAP_PX: Final[int] = 8
+    # The #24 yield's full-bar fallback (rc.3) holds the widget at the rc.2 tray spot while the app
+    # buttons reach the spot left of the Widgets button; it returns only once they are this much MORE
+    # than the usual gap clear of it (logical px, so DPI-scaled; half a button slot). Spatial
+    # hysteresis: a group end hovering at the threshold must not swing the widget a whole Widgets
+    # button left and right on every probe.
+    WIDGETS_FALLBACK_RETURN_MARGIN_PX: Final[int] = 22
     # A Win11 SECONDARY side (left/right) taskbar has no TrayNotifyWnd, so before (or without) a UIA
     # probe of its clock, this many logical px at the bar's bottom are kept for it - the vertical twin
     # of DEFAULT_SECONDARY_CLOCK_RESERVE_PX. Probed live (VM, Win11 26300, 100 %, 2026-10-23): the
