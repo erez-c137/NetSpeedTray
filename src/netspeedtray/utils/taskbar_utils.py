@@ -207,6 +207,7 @@ _layout_landed = threading.Condition(_layout_lock)
 # group: the contiguous Start-led button run (uia_widgets.app_group_from_elements), for consumers that
 # must not count far-away buttons; landed: how many probe results have landed (a sequence number).
 _layout_state: dict = {"hwnd": 0, "apps": None, "widgets": None, "group": None, "overflow": None,
+                       "widgets_content": None,
                        "bar": None, "pending": False,
                        "done": False, "gen": 0, "running": False, "started": 0.0, "landed": 0}
 # A UIA call into a hung Explorer can block for a long time. Past this, the request counts as
@@ -251,8 +252,11 @@ def _layout_worker() -> None:
         bar_before = _taskbar_window_rect(hwnd)
         result = _query_taskbar_layout_blocking(hwnd)
         bar = _rect_union(bar_before, _taskbar_window_rect(hwnd))   # an auto-hide bar may slide meanwhile
-        overflow = None
-        if isinstance(result, tuple) and len(result) == 5:
+        overflow = content = None
+        if isinstance(result, tuple) and len(result) == 6:
+            apps, widgets, group, overflow, tray, content = result
+            _remember_probed_tray(hwnd, tray)
+        elif isinstance(result, tuple) and len(result) == 5:
             apps, widgets, group, overflow, tray = result
             _remember_probed_tray(hwnd, tray)
         elif isinstance(result, tuple) and len(result) == 4:
@@ -267,6 +271,7 @@ def _layout_worker() -> None:
             if _layout_state["gen"] == gen and _layout_state["pending"]:
                 _layout_state.update(apps=valid_rect(apps), widgets=valid_rect(widgets),
                                      group=valid_rect(group), overflow=valid_rect(overflow),
+                                     widgets_content=valid_rect(content),
                                      bar=bar, pending=False, done=True,
                                      landed=_layout_state.get("landed", 0) + 1)
                 _layout_landed.notify_all()
@@ -329,6 +334,16 @@ def taskbar_layout_snapshot(taskbar_hwnd: Optional[int]):
         if _layout_state["done"]:
             return _layout_state["apps"], _layout_state["widgets"], bool(_layout_state["pending"])
         return None, None, bool(_layout_state["pending"])
+
+
+def taskbar_layout_widgets_content(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
+    """The last probed Widgets button's icon + text extent (physical px) for ``taskbar_hwnd``, or None
+    (no probe landed, no button, nothing visible in it)."""
+    taskbar_layout_snapshot(taskbar_hwnd)   # applies the timeout rule
+    with _layout_lock:
+        if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
+            return None
+        return _layout_state.get("widgets_content")
 
 
 def taskbar_layout_overflow(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
