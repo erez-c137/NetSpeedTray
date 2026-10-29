@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "이 모니터에는 작업 표시줄이 없어 NetSpeedTray가 기본 모니터의 작업 표시줄에 표시됩니다. 이 모니터에 두려면 '{option}'을(를) 켜세요.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "전체화면에서도 위젯 유지",
     "HIDE_WHEN_APPS_COVER_LABEL": "앱 단추가 위젯을 가리는 동안 숨기기",
+    "HIDE_WHEN_APPS_COVER_DESC": "가로 작업 표시줄에만 해당: 공간이 생기면 다시 나타납니다. 직접 끌어다 놓지 않는 한 날씨 단추 위에 놓이지 않습니다.",
     "FONT_SIZE_LABEL": "글꼴 크기",
     "FONT_FAMILY_LABEL": "글꼴",
     "FONT_WEIGHT_LABEL": "두께",

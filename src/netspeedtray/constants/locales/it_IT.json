@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Questo schermo non ha la barra delle applicazioni, quindi NetSpeedTray si trova sulla barra delle applicazioni dello schermo principale. Attiva \"{option}\" per tenerlo su questo schermo.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Mantieni visibile a schermo intero",
     "HIDE_WHEN_APPS_COVER_LABEL": "Nascondi quando i pulsanti delle app coprono il widget",
+    "HIDE_WHEN_APPS_COVER_DESC": "Solo sulle barre delle applicazioni orizzontali: torna quando c'è spazio. Non si posiziona mai sul pulsante del meteo, a meno che non lo trascini lì.",
     "FONT_SIZE_LABEL": "Dimensione carattere",
     "FONT_FAMILY_LABEL": "Carattere",
     "FONT_WEIGHT_LABEL": "Spessore",

@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "此显示器没有任务栏，因此 NetSpeedTray 显示在主显示器的任务栏上。若要让它留在此显示器上，请打开“{option}”。",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "全屏时保持可见",
     "HIDE_WHEN_APPS_COVER_LABEL": "应用按钮遮挡小组件时隐藏",
+    "HIDE_WHEN_APPS_COVER_DESC": "仅限水平任务栏：有空间时会重新出现。除非你把它拖过去，否则它不会盖住天气按钮。",
     "FONT_SIZE_LABEL": "字号",
     "FONT_FAMILY_LABEL": "字体",
     "FONT_WEIGHT_LABEL": "字重",

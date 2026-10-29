@@ -129,7 +129,9 @@ class WidgetPage(QWidget):
         # Off = it stays put (and may cover them). The way back for a user who prefers that.
         self.hide_when_apps_cover = Win11Toggle(label_text="")
         self.hide_when_apps_cover.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.HIDE_WHEN_APPS_COVER_LABEL, control=self.hide_when_apps_cover))
+        layout.addWidget(SettingCard(self.i18n.HIDE_WHEN_APPS_COVER_LABEL,
+                                     description=self.i18n.HIDE_WHEN_APPS_COVER_DESC,
+                                     control=self.hide_when_apps_cover))
 
         # NOTE: there is intentionally no tray-offset slider. Free Move (drag the widget anywhere) is the
         # reposition escape hatch; the auto-position uses sensible default offsets. tray_offset_x/y remain

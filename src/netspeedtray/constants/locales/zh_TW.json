@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "此顯示器沒有工作列，因此 NetSpeedTray 會顯示在主要顯示器的工作列上。若要讓它留在此顯示器上，請開啟「{option}」。",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "全螢幕時保持顯示",
     "HIDE_WHEN_APPS_COVER_LABEL": "應用程式按鈕遮住小工具時隱藏",
+    "HIDE_WHEN_APPS_COVER_DESC": "僅限水平工作列：有空間時會重新出現。除非你把它拖過去，否則它不會蓋住天氣按鈕。",
     "FONT_SIZE_LABEL": "字型大小",
     "FONT_FAMILY_LABEL": "字型",
     "FONT_WEIGHT_LABEL": "粗細",

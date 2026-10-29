@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Ta monitor nima opravilne vrstice, zato je NetSpeedTray v opravilni vrstici primarnega monitorja. Vklopite »{option}«, da ostane na tem monitorju.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Ohrani vidno v celozaslonskem načinu",
     "HIDE_WHEN_APPS_COVER_LABEL": "Skrij, ko gumbi aplikacij prekrivajo pripomoček",
+    "HIDE_WHEN_APPS_COVER_DESC": "Samo na vodoravni opravilni vrstici: vrne se, ko je spet prostor. Nikoli ne leži na gumbu za vreme, razen če ga tja povlečete.",
     "FONT_SIZE_LABEL": "Velikost pisave",
     "FONT_FAMILY_LABEL": "Pisava",
     "FONT_WEIGHT_LABEL": "Debelina",

@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Dieser Monitor hat keine Taskleiste, daher sitzt NetSpeedTray auf der Taskleiste des Hauptbildschirms. Aktiviere „{option}“, damit es auf diesem Monitor bleibt.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Im Vollbild sichtbar halten",
     "HIDE_WHEN_APPS_COVER_LABEL": "Ausblenden, solange App-Schaltflächen das Widget verdecken",
+    "HIDE_WHEN_APPS_COVER_DESC": "Nur auf horizontalen Taskleisten: Es kehrt zurück, sobald Platz ist. Es liegt nie auf der Wetter-Schaltfläche, außer du ziehst es dorthin.",
     "FONT_SIZE_LABEL": "Schriftgröße",
     "FONT_FAMILY_LABEL": "Schriftart",
     "FONT_WEIGHT_LABEL": "Stärke",
