@@ -2748,6 +2748,15 @@ class NetworkSpeedWidget(QWidget):
                 # their y-extents can tell an overlap apart (comparing x always "overlapped").
                 overlaps = rect_overlaps_y(self.y(), self.y() + self.height(), widgets_rect, dpi)
             else:
+                from netspeedtray.core.position_manager import user_placed_horizontal_offset
+                pm = getattr(self, "position_manager", None)
+                if (not user_placed_horizontal_offset(self.config)
+                        and not (pm is not None and pm.is_widgets_fallback_active())):
+                    # The default spot keeps clear of the button by construction (rc.3). An overlap
+                    # seen here is the #200 probe and the layout probe disagreeing for a moment while
+                    # the bar re-lays (rc.3 VM: a tray icon appearing slid the button under the
+                    # widget for one probe) - never a reason for a one-time, never-again notice.
+                    return
                 overlaps = rect_overlaps_x(self.x(), self.x() + self.width(), widgets_rect, dpi)
             if not overlaps:
                 return

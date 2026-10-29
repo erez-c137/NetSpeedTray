@@ -1493,6 +1493,11 @@ class PositionManager(QObject):
         self._app_overlap_info = taskbar_info
         self._app_yield.sync()
 
+    def is_widgets_fallback_active(self) -> bool:
+        """True while a full left-aligned bar keeps the widget at the rc.2 tray spot, on the Widgets
+        button's padding, instead of left of it (AppOverlapYield.retreated, rc.3)."""
+        return self._app_yield.retreated
+
     def is_yielding_to_apps(self) -> bool:
         """True while the widget steps aside for app buttons that reach it (#24)."""
         return self._app_yield.yielded

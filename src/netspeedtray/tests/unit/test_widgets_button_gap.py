@@ -153,6 +153,33 @@ def test_the_app_yield_judges_the_stepped_spot():
     assert pm._would_be_x(tb, -1.0) == VM_WIDGETS[0] - GAP - W
 
 
+@pytest.mark.parametrize("offset,fallback,expect", [
+    (0, False, False),     # the default spot: clear by construction - a probe mismatch never nudges
+    (10, False, False),    # a pre-1.3.0 default is the default too
+    (0, True, True),       # the full-bar fallback sits on the button's padding (rc.2's spot): nudge
+    (50, False, True),     # a user's drag onto the button: nudge, as #200 always did
+])
+def test_the_200_nudge_on_a_top_bottom_bar(offset, fallback, expect):
+    """rc.3 VM: a tray icon appearing slid the Widgets button under the widget for one #200 probe while
+    the layout probe still held the old box - a false, never-again notice for a default spot."""
+    import types
+    from unittest.mock import patch
+    from netspeedtray.utils import taskbar_utils
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    pm = MagicMock()
+    pm.is_widgets_fallback_active.return_value = fallback
+    fake = types.SimpleNamespace(
+        _widgets_nudge_shown=False, logger=MagicMock(), config={"tray_offset_x": offset},
+        update_config=MagicMock(), position_manager=pm, i18n=MagicMock(),
+        x=lambda: 1481, y=lambda: 1032, width=lambda: 85, height=lambda: 48)
+    tb = types.SimpleNamespace(widgets_rect=(1538, 1036, 1674, 1076), dpi_scale=1.0,
+                               get_edge_position=lambda: E.BOTTOM)
+    with patch("netspeedtray.views.widget.main.QTimer.singleShot"), \
+            patch.object(taskbar_utils, "set_widgets_probe_enabled"):
+        NetworkSpeedWidget._maybe_nudge_widgets_overlap(fake, tb)
+    assert fake._widgets_nudge_shown is expect
+
+
 def test_the_200_cache_never_answers_for_another_taskbar(monkeypatch):
     # An Explorer restart brings a new taskbar HWND, often with a new layout (VM: left -> centred). The
     # old bar's cached rect must not place the widget on the new bar for the cache's 30 s.
