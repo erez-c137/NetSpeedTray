@@ -385,3 +385,56 @@ def test_shutdown_hard_deadline_fires_exit_1(monkeypatch):
     monitor._arm_shutdown_deadline(["--shutdown", "--timeout", "0.05"], exit_fn=fired.append)
     time.sleep(0.4)
     assert fired == [1]
+
+
+# --- `--shutdown` runs before the GUI imports (rc.3 startup-hang investigation) -------------------
+
+# Run in a fresh interpreter: monitor.py as __main__ with `--shutdown`, the window scan and the post
+# stubbed out so it can never reach a real instance (the developer's own running app included).
+_EARLY_SHUTDOWN_PROBE = r"""
+import json, runpy, sys
+src, monitor_py = sys.argv[1], sys.argv[2]
+sys.path.insert(0, src)
+from netspeedtray.core import shutdown_channel as sc
+sc.find_running_instances = lambda: []
+sc._enum_top_level_windows = lambda: []
+sc._post = lambda hwnd, msg: False
+sys.argv = [monitor_py, "--shutdown", "--timeout", "1"]
+code = "no exit"
+try:
+    runpy.run_path(monitor_py, run_name="__main__")
+except SystemExit as e:
+    code = e.code
+assert sys.modules["netspeedtray.core.shutdown_channel"] is sc
+heavy = sorted(m for m in sys.modules
+               if m.split(".")[0] in ("PyQt6", "win32api", "win32event", "pywintypes", "psutil",
+                                      "numpy", "matplotlib")
+               or m.startswith(("netspeedtray.views", "netspeedtray.core.controller",
+                                "netspeedtray.core.database", "netspeedtray.utils.styles")))
+print("RESULT " + json.dumps({"code": code, "heavy": heavy}))
+"""
+
+
+def test_shutdown_cli_runs_before_the_gui_imports(tmp_path):
+    """`--shutdown` needs ctypes and the constants, nothing else - yet it used to run from main(),
+    after monitor.py had imported PyQt6, pywin32 and the whole widget. In a loaded VM (Windows Update
+    + Defender scanning the onedir's DLLs on load) those imports took more than the 35 s deadline,
+    so the process exited 1 before it ever posted the message: the running app was never asked to
+    quit and no log line was written. It is dispatched ahead of those imports now."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[3]
+    env = dict(os.environ, APPDATA=str(tmp_path), LOCALAPPDATA=str(tmp_path))
+    proc = subprocess.run([sys.executable, "-c", _EARLY_SHUTDOWN_PROBE, str(src), str(src / "monitor.py")],
+                          env=env, capture_output=True, text=True, timeout=120)
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT ")]
+    assert lines, (proc.returncode, proc.stdout[-2000:], proc.stderr[-2000:])
+    result = json.loads(lines[-1][len("RESULT "):])
+    assert result["code"] == 0                       # nothing running: exit 0
+    assert result["heavy"] == []
+    # ...and it still logs, to the normal log file.
+    log = (tmp_path / constants.app.APP_NAME / constants.logs.LOG_FILENAME).read_text(encoding="utf-8")
+    assert "no running NetSpeedTray instance found" in log
