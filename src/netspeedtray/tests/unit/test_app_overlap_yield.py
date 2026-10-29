@@ -137,6 +137,7 @@ class Rig:
         self.centered = centered
         self.drop_key = drop_key
         self.saved_drop = saved_drop
+        self.layout_key = None
         self.persisted = []
         self.now = 1000.0
         self.changes = 0
@@ -152,7 +153,8 @@ class Rig:
         if self.busy:
             return BUSY
         return OverlapContext(hwnd=self.hwnd, dpi=self.dpi, widget=(self.widget_x, self.widget_x + self.width),
-                              centered=self.centered, drop_key=self.drop_key, saved_drop=self.saved_drop)
+                              centered=self.centered, drop_key=self.drop_key, saved_drop=self.saved_drop,
+                              layout_key=self.layout_key)
 
     def _persist(self, value):
         self.persisted.append(value)
@@ -291,6 +293,31 @@ def test_owner_bar_idle_tick_never_probes(rig, layout):
         r.now += 1.0
         r.y.sync()
         assert not r.pending_probe()
+
+
+def test_a_live_relayout_of_the_same_bar_re_probes_once(rig, layout):
+    """rc.3 review: on a top/bottom bar the yield is the only layout prober, and once the group is
+    far from the widget it never probes again - so the Widgets box the default spot steps left of
+    froze at its startup value. A Settings alignment flip, a tray icon appearing (the tray widens)
+    or Widgets toggled re-lay the bar on the SAME HWND: each must re-probe, once."""
+    r = rig(OWNER_WIDGET_X)
+    r.layout_key = (0, 1770, True)
+    r.start(left_aligned(3))
+    for _ in range(5):
+        r.now += 1.0
+        r.y.sync()
+        assert not r.pending_probe()                 # unchanged inputs: idle, as before
+    for key in [(1, 1770, True),                     # TaskbarAl flipped to centred
+                (1, 1746, True),                     # a tray icon appeared
+                (1, 1746, False)]:                   # Widgets turned off
+        r.layout_key = key
+        r.now += 1.0
+        r.y.sync()
+        assert r.pending_probe(), key
+        r.probe(left_aligned(3))
+        r.now += 1.0
+        r.y.sync()
+        assert not r.pending_probe(), key            # once per change, not every tick
 
 
 def test_centred_bar_few_apps_never_yields_even_when_the_group_recentres(rig):
@@ -523,9 +550,11 @@ def _pm(edge=BOTTOM, tasklist=None, config=None, x=1380):
 def test_position_manager_context_only_for_native_horizontal_bars(q_app):
     pm, tb, widget = _pm()
     pm._app_overlap_info = tb
-    with patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=1):
+    tb.get_tray_rect.return_value = (1770, Y0, 1920, Y1)
+    with patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=1),             patch.object(taskbar_utils, "widgets_button_enabled", return_value=True):
         ctx = pm._app_overlap_context()
-    assert ctx == OverlapContext(hwnd=HWND, dpi=1.0, widget=(1380.0, 1380.0 + WIDGET_W), centered=True)
+    assert ctx == OverlapContext(hwnd=HWND, dpi=1.0, widget=(1380.0, 1380.0 + WIDGET_W), centered=True,
+                                 layout_key=(1, 1770, True))
     tb.get_edge_position.return_value = RIGHT
     assert isinstance(pm._app_overlap_context(), str)              # side bars: #406's watcher
     tb.get_edge_position.return_value = BOTTOM

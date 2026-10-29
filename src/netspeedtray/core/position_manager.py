@@ -1553,9 +1553,16 @@ class PositionManager(QObject):
             align = read_taskbar_alignment()
         except Exception:
             align = None
+        try:
+            tray = info.get_tray_rect()
+            tray_left = int(tray[0]) if tray else None
+        except Exception:
+            tray_left = None
+        layout_key = (align, tray_left, taskbar_utils.widgets_button_enabled())
         return OverlapContext(hwnd=int(info.hwnd), dpi=dpi, widget=(left, left + width),
                               centered=None if align is None else align == 1,
-                              drop_key=drop_key, saved_drop=saved if isinstance(saved, int) else None)
+                              drop_key=drop_key, saved_drop=saved if isinstance(saved, int) else None,
+                              layout_key=layout_key)
 
     def _would_be_x(self, info: TaskbarInfo, fallback: float) -> float:
         """The x the docked widget would be placed at on ``info`` right now (its window may be stale

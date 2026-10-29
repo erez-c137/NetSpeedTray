@@ -100,6 +100,9 @@ class OverlapContext:
     centered: Optional[bool] = None    # TaskbarAl: True centred, False left, None unknown
     drop_key: Optional[int] = None     # the user's drag offset (tray_offset_x) when one is in force
     saved_drop: Optional[int] = None   # the drop offset saved as "on the buttons, keep it" (H2)
+    # What re-lays the bar's tray end without a new HWND: (TaskbarAl, tray left in physical px, Widgets
+    # on). A change re-probes, so the Widgets box the default spot steps left of (rc.3) never goes stale.
+    layout_key: Optional[tuple] = None
 
 
 def group_span(group_rect, dpi: float) -> Optional[Span]:
@@ -221,6 +224,7 @@ class AppOverlapYield(QObject):
         self._persisted_drop: Optional[int] = None
         self._misfit_logged = False              # "buttons outside the taskbar" logged for this run
         self._last_group_rect = None             # the last judged UIA group (physical px), for the log
+        self._layout_key: Optional[tuple] = None  # OverlapContext.layout_key at the last (re)probe
         self._probe_timer = self._timer(0, self._fire_probe)
         self._poll_timer = self._timer(t.SIDE_BAR_PROBE_POLL_MS, self._poll_probe)
         self._followup_timer = self._timer(t.SIDE_BAR_FOREGROUND_FOLLOWUP_MS, self._on_followup)
@@ -304,6 +308,18 @@ class AppOverlapYield(QObject):
             self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
             self._schedule(0)
             return
+        if ctx.layout_key is not None and ctx.layout_key != self._layout_key:
+            # The alignment flipped, the tray widened / narrowed or Widgets was toggled - all on the
+            # SAME taskbar HWND (a Settings change re-lays the bar live). The last probe's Widgets box
+            # (and group) no longer describe it: probe once (rate-limited by _schedule).
+            had_key = self._layout_key is not None
+            self._layout_key = ctx.layout_key
+            if had_key:
+                logger.debug("App-button yield: taskbar layout inputs changed (%s); re-probing.",
+                             ctx.layout_key)
+                self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
+                self._schedule(0)
+                return
         if self._inflight or self._probe_timer.isActive():
             return
         # No group known yet (or the last probe found none): retry on the backed-off interval, so a
@@ -339,6 +355,7 @@ class AppOverlapYield(QObject):
         self._model_dpi = None
         self._hold_until = 0.0
         self._hwnd = int(ctx.hwnd)
+        self._layout_key = ctx.layout_key
         if keep:
             self._state.yielded = True
             self._hold_until = self._clock() + constants.timeouts.APP_YIELD_NEW_TASKBAR_HOLD_MS / 1000.0

@@ -179,3 +179,31 @@ def test_the_200_cache_never_answers_for_another_taskbar(monkeypatch):
     assert tu.get_widgets_rect(0x2) is None        # not the old bar's rect, even within the TTL
     settle()
     assert tu.get_widgets_rect(0x2) == rects[0x2]
+
+
+@pytest.mark.parametrize("dropped_at", [10, 0])
+def test_a_drop_on_a_default_offset_still_sticks(dropped_at):
+    """rc.3 review: a drag dropped 2 px left of the drag limit saves tray_offset_x 10 - a pre-1.3.0
+    default, which user_placed_horizontal_offset reads as "not placed" - and the next reposition then
+    stepped the widget ~160 px left of the Widgets button, away from where the user let go. The drop
+    saves the next offset instead (1 px, invisible), so the drag sticks."""
+    import logging
+    from unittest.mock import patch
+    from netspeedtray.core.input_handler import InputHandler
+    from netspeedtray.core.position_manager import user_placed_horizontal_offset
+    widget = MagicMock()
+    widget.config = {"tray_offset_x": 0}
+    widget.pos.return_value = QPoint(VM_TRAY_LEFT - dropped_at - W, 1032)
+    widget.width.return_value, widget.height.return_value = W, H
+    pm = MagicMock()
+    pm.is_floating.return_value = False
+    handler = InputHandler.__new__(InputHandler)
+    handler.widget, handler.position_manager = widget, pm
+    handler.logger = logging.getLogger("test")
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=_bar()):
+        handler._save_dragged_position()
+    saved = widget.update_config.call_args[0][0]["tray_offset_x"]
+    assert abs(saved - dropped_at) <= 2
+    assert user_placed_horizontal_offset({"tray_offset_x": saved})
+    x = _x(_bar(), {"tray_offset_x": saved, "tray_offset_y": 3})
+    assert abs(x - (VM_TRAY_LEFT - dropped_at - W)) <= TRAY_GAP   # where it was let go (#161 floor aside)

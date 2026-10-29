@@ -517,6 +517,10 @@ def _widgets_button_enabled() -> bool:
         return True
 
 
+# Public name: the app-button yield re-probes the layout when the Widgets toggle flips (rc.3).
+widgets_button_enabled = _widgets_button_enabled
+
+
 def _query_widgets_rect_blocking(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
     """The Widgets button's physical-pixel content rect, or None. ``taskbar_hwnd`` must be the
     Shell_TrayWnd root (the WidgetsButton is a descendant of the taskbar frame, NOT of TrayNotifyWnd).
