@@ -1348,7 +1348,26 @@ def test_the_fallback_ends_when_the_second_spot_goes_away(rig):
     r.widget_x = TRAY_SPOT[0]
     r.y.note_foreground_change()
     r.probe(left_aligned(30), advance=1.0)
-    assert not r.y.retreated
+    assert r.y.retreated and r.pending_probe()   # one reading is no proof: confirmation scheduled
+    r.probe(left_aligned(30), advance=0.5)
+    assert not r.y.retreated and r.changes == 2   # retreat + release
+
+
+def test_one_reading_without_the_second_spot_keeps_the_fallback(rig):
+    """Review of #463: a single context without the Widgets box (the snapshot taken while the layout
+    cache answered for another bar) dropped the hold; the next refresh then placed the widget at the
+    stepped spot - ON the app buttons - until the backed-off probe (up to 8 s) retreated again."""
+    r = _fallback_rig(rig)
+    r.start(left_aligned(30))
+    assert r.y.retreated and r.changes == 1
+    r.widget_x = TRAY_SPOT[0]
+    r.stepped = r.tray_spot = None               # one snapshot without the Widgets box
+    r.y.note_foreground_change()
+    r.probe(left_aligned(30), advance=1.0)
+    assert r.y.retreated and r.changes == 1      # still held: no re-place onto the buttons
+    r.stepped, r.tray_spot = STEPPED, TRAY_SPOT  # the box is back
+    r.probe(left_aligned(30), advance=0.5)
+    assert r.y.retreated and r.changes == 1
 
 
 def test_position_manager_places_at_the_tray_spot_while_retreated(q_app):

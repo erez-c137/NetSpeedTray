@@ -237,6 +237,7 @@ class AppOverlapYield(QObject):
         # rule as showing after a yield, so the widget never flips between the two spots per probe.
         self._retreated = False
         self._step_clear_since: Optional[float] = None
+        self._spot_gone_since: Optional[float] = None   # first retreated reading with no second spot
         self._probe_timer = self._timer(0, self._fire_probe)
         self._poll_timer = self._timer(t.SIDE_BAR_PROBE_POLL_MS, self._poll_probe)
         self._followup_timer = self._timer(t.SIDE_BAR_FOREGROUND_FOLLOWUP_MS, self._on_followup)
@@ -279,6 +280,7 @@ class AppOverlapYield(QObject):
         self._state.reset()
         self._retreated = False
         self._step_clear_since = None
+        self._spot_gone_since = None
         self._model = None
         self._model_known = False
         self._changes = 0
@@ -373,6 +375,7 @@ class AppOverlapYield(QObject):
         self._state.reset()
         self._retreated = False
         self._step_clear_since = None
+        self._spot_gone_since = None
         self._model = None
         self._model_known = False
         self._changes = 0
@@ -600,12 +603,26 @@ class AppOverlapYield(QObject):
         spot changed (the caller re-places the widget)."""
         if ctx.stepped is None or ctx.tray_spot is None:
             # No second spot (no button beside the tray any more, a drag, a centred bar): nothing held.
-            changed = self._retreated
-            self._retreated = False
             self._step_clear_since = None
-            if changed:
-                logger.info("Widgets-button fallback over: the default spot has no alternative here.")
-            return changed
+            if not self._retreated:
+                return False
+            # ...but ONE such reading is no proof: the snapshot behind it can lack the Widgets box for a
+            # moment (the layout cache answering for another bar, a probe that missed the button). With
+            # no second spot the hold changes nothing about the placement, while dropping it on a
+            # transient re-placed the widget at the stepped spot, on the app buttons, until the next
+            # (backed-off, up to 8 s) probe retreated again. Let go after two readings, as for a return.
+            if self._spot_gone_since is None:
+                self._spot_gone_since = at
+                self._schedule(self._state.confirm_ms)
+                return False
+            if (at - self._spot_gone_since) * 1000.0 < self._state.confirm_ms - 0.5:
+                self._schedule(max(0, int(self._state.confirm_ms - (at - self._spot_gone_since) * 1000.0)))
+                return False
+            self._retreated = False
+            self._spot_gone_since = None
+            logger.info("Widgets-button fallback over: the default spot has no alternative here.")
+            return True
+        self._spot_gone_since = None
         if span is None:
             return False
         on_stepped = group_reaches_widget(span, ctx.stepped)
