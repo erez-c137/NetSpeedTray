@@ -339,6 +339,11 @@ class AppOverlapYield(QObject):
                              ctx.layout_key)
                 self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
                 self._schedule(0)
+                # ...and the foreground follow-ups: the tray end moves first and the Widgets button
+                # SLIDES after it (rc.3 VM: a probe right after an input-language indicator went away
+                # caught the button mid-slide, and nothing probed again - the widget sat 39 px short).
+                self._followups_left = constants.timeouts.APP_YIELD_FOREGROUND_FOLLOWUPS
+                self._followup_timer.start()
                 return
         if self._inflight or self._probe_timer.isActive():
             return

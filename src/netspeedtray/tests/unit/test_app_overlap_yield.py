@@ -322,6 +322,25 @@ def test_a_live_relayout_of_the_same_bar_re_probes_once(rig, layout):
         assert not r.pending_probe(), key            # once per change, not every tick
 
 
+def test_a_live_relayout_also_re_probes_after_the_button_has_slid(rig):
+    """rc.3 VM: the tray end moves first and the Widgets button slides after it; a probe taken right
+    at the layout change caught the button mid-slide and nothing probed again (the widget sat 39 px
+    short of the button). A layout change arms the foreground follow-ups too."""
+    r = rig(OWNER_WIDGET_X)
+    r.layout_key = (0, 1738, True)
+    r.start(left_aligned(3))
+    r.layout_key = (0, 1694, True)                   # an input-language indicator appeared
+    r.now += 1.0
+    r.y.sync()
+    assert r.pending_probe()
+    r.probe(left_aligned(3))
+    assert r.y._followup_timer.isActive()
+    assert r.y._followups_left == T.APP_YIELD_FOREGROUND_FOLLOWUPS
+    r.y._followup_timer.stop()
+    r.y._on_followup()                               # 800 ms later: one more measurement
+    assert r.pending_probe()
+
+
 def test_centred_bar_few_apps_never_yields_even_when_the_group_recentres(rig):
     r = rig(OWNER_WIDGET_X)
     few = [e for e in CENTERED if not e[1].startswith("Appid: app") or int(e[1][10:]) < 3]
