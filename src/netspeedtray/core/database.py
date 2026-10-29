@@ -1517,6 +1517,13 @@ class DatabaseWorker(QThread):
                             f.write(chunk[:n])
                             left -= n
                         os.fsync(f.fileno())
+                    # Zeroing stamped the file "modified now". Put its dates back: if the unlink below
+                    # fails (a scanner holding the fresh write), _age_out_backups judges the retry by
+                    # mtime and would otherwise keep the zeroed file for another full retention period.
+                    try:
+                        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+                    except OSError:
+                        pass
                 self._zeroed.add(key)
             os.unlink(path)
             self._zeroed.discard(key)

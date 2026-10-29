@@ -830,6 +830,30 @@ def test_steady_observed_time_past_the_floor_does_age_a_backup_out(tmp_path):
     w._close_connection()
 
 
+def test_a_backup_whose_unlink_failed_once_is_retried_on_the_next_pass(tmp_path, monkeypatch):
+    """Zeroing stamps the file 'modified now'; if the unlink then fails (a scanner holding the fresh
+    write), the retry must still see the backup's own dates - not keep a zeroed file a whole period."""
+    w = _clock_worker(tmp_path)
+    b = _fake_bak(tmp_path, 7, REAL - timedelta(days=60))
+    b.write_bytes(b"history")
+    old = REAL - timedelta(days=60)
+    os.utime(b, (old.timestamp(), old.timestamp()))
+    real_unlink, failed = os.unlink, []
+
+    def flaky_unlink(path, *a, **k):
+        if Path(path) == b and not failed:
+            failed.append(1)
+            raise PermissionError(32, "held by a scanner")
+        return real_unlink(path, *a, **k)
+
+    monkeypatch.setattr(os, "unlink", flaky_unlink)
+    end = _run_hours(w, int((REAL - timedelta(days=31)).timestamp()), 24 * 30)
+    _run_hours(w, end, 26)
+    assert failed, "the first eligible pass must have tried (and failed) to unlink it"
+    assert not b.exists(), "the next pass retries it instead of waiting another retention period"
+    w._close_connection()
+
+
 def test_in_a_session_a_wall_clock_jump_against_monotonic_resets_the_steady_count(tmp_path):
     """Within a session the gap rule can't tell a +13 d jump from app-off time - monotonic time can."""
     w = _clock_worker(tmp_path)

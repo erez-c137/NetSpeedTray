@@ -127,11 +127,24 @@ class TimeoutConstants:
     # but the widget comes back only after two clear readings at least this far apart - the buttons
     # animate for ~300-550 ms after an app closes, and one mid-animation read must not blink it back.
     # (The probe rate limit, SIDE_BAR_MIN_PROBE_INTERVAL_MS, makes the real spacing >= 500 ms.) The
-    # yield reuses the side-bar cadence above: foreground follow-up, near re-check + back-off, slots.
+    # yield keeps this confirmation even with its faster nearby re-check cadence.
     APP_YIELD_SHOW_CONFIRM_MS: Final[int] = 300
-    # While yielded the near re-check backs off only up to this (not SIDE_BAR_NEAR_RECHECK_MAX_MS): an
-    # app closed in the background (no foreground change) must bring the widget back within seconds.
-    APP_YIELD_YIELDED_RECHECK_MAX_MS: Final[int] = 10000
+    # Horizontal app-button yield: a nearby or hidden widget needs a fresh layout every second,
+    # even after long idle periods. Far-away bars still have no periodic UIA probes.
+    APP_YIELD_ACTIVE_RECHECK_MS: Final[int] = 1000
+    # The 1 s refresh tick drives that re-check, and the probe it starts fires a few ms AFTER the tick,
+    # so a strict ">= 1000 ms since the last probe" skips every other tick (measured with real QTimers:
+    # median gap 2.0 s). A tick this much early still counts.
+    APP_YIELD_TICK_SLACK_MS: Final[int] = 200
+    # The 1 s cadence holds while something moves (a foreground change, a changed span, a yield flip)
+    # and this long after. Then an unchanged near / yielded layout backs off (doubling) up to
+    # APP_YIELD_IDLE_RECHECK_MAX_MS: one probe costs ~6 ms of our CPU + ~13 ms of Explorer's (host
+    # measurement, 2026-10-29), and a bar can sit crowded for hours (a game on top, the user away).
+    APP_YIELD_ACTIVE_WINDOW_MS: Final[int] = 15000
+    APP_YIELD_IDLE_RECHECK_MAX_MS: Final[int] = 8000
+    # A foreground event may precede Explorer's final layout by more than 800 ms. Observe a bounded
+    # burst, including wide uncombined task buttons, rather than assuming one 44 px slot was added.
+    APP_YIELD_FOREGROUND_FOLLOWUPS: Final[int] = 3
     # An Explorer restart, AFTER the taskbar is back (while it is missing, TASKBAR_ABSENT_HOLD_MS /
     # holding_for_taskbar owns the hide): a yielded widget stays aside this long while the NEW taskbar
     # still reports no buttons (rc.2 live test C5: its first probe found nothing, the buttons came ~3 s
