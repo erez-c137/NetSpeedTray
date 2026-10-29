@@ -99,9 +99,10 @@ reach it, keeps clear of the weather button on a left-aligned taskbar, and a few
   ran at 2 s: the probe lands a few ms after the refresh tick, so the next tick saw 0.99 s.*
 
 - **On a left-aligned taskbar the widget no longer sits on the weather button.** Windows puts the
-  Widgets button next to the tray there, and the widget covered its right half. It now sits just
-  left of it; if your app buttons fill the bar up to the weather button, it uses the old spot so it
-  stays visible. A widget you dragged stays where you put it. ([#463])
+  Widgets button next to the tray there, and the widget covered its right half - with longer
+  weather text, it drew right over it. It now sits just left of the button. If your app buttons fill
+  the bar up to it, the widget steps aside like on any full taskbar, and only stays by the tray when
+  that spot clears the weather text. A widget you dragged stays where you put it. ([#463], [#466])
 - **`NetSpeedTray.exe --shutdown` works on a busy PC.** It loaded the whole app before asking the
   running copy to quit, and with Windows Update running that alone outlasted its 35 s limit, so it
   gave up without asking. It now asks first. The installer wasn't affected. ([#464])
@@ -121,6 +122,7 @@ reach it, keeps clear of the weather button on a left-aligned taskbar, and a few
 [#462]: https://github.com/erez-c137/NetSpeedTray/pull/462
 [#463]: https://github.com/erez-c137/NetSpeedTray/pull/463
 [#464]: https://github.com/erez-c137/NetSpeedTray/pull/464
+[#466]: https://github.com/erez-c137/NetSpeedTray/pull/466
 [@boonstraworks]: https://github.com/boonstraworks
 [@cscsanaki]: https://github.com/cscsanaki
 [@emgeka]: https://github.com/emgeka
