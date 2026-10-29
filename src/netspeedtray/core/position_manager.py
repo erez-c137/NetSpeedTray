@@ -378,6 +378,30 @@ def user_placed_side_offset(config: Dict[str, Any]) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value != default
 
 
+def user_placed_horizontal_offset(config: Mapping) -> bool:
+    """True when the user dragged the widget along a top/bottom bar: the drop saves ``tray_offset_x``
+    (measured from the tray). The default, and the pre-1.3.0 defaults older configs still carry
+    (LEGACY_DEFAULT_TRAY_OFFSETS_X, rc.2 W6), are not a choice the user made."""
+    defaults = constants.config.defaults
+    value = config.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X)
+    if not isinstance(value, int) or isinstance(value, bool):
+        return False
+    return value != defaults.DEFAULT_TRAY_OFFSET_X and value not in defaults.LEGACY_DEFAULT_TRAY_OFFSETS_X
+
+
+def widgets_button_span_x(taskbar_info: Any, dpi_scale: float) -> Optional[Tuple[float, float]]:
+    """The Win11 Widgets/weather button's x span (logical px) on a top/bottom bar, or None when unknown.
+    Prefers the layout probe's full button box (``widgets_extent`` - the button's whole click target,
+    which reaches past the weather text), else the #200 probe's content rect (``widgets_rect``) - the
+    same preference as side_bar_geometry."""
+    rect = (taskbar_utils.valid_rect(getattr(taskbar_info, "widgets_extent", None))
+            or taskbar_utils.valid_rect(getattr(taskbar_info, "widgets_rect", None)))
+    if rect is None:
+        return None
+    scale = dpi_scale if dpi_scale and dpi_scale > 0 else 1.0
+    return rect[0] / scale, rect[2] / scale
+
+
 class ScreenUtils:
     """Provides static utility methods for screen-related operations using Qt."""
     @staticmethod
@@ -589,18 +613,46 @@ class PositionCalculator:
 
         x = round(right_boundary - widget_width - offset)
 
+        # The Win11 Widgets/weather button beside the tray (a LEFT-aligned bar puts it there; a centred
+        # bar keeps it at the far left, where this never applies) belongs to the tray END, as on a side
+        # bar (side_bar_geometry): the DEFAULT spot sits left of it, WIDGETS_BUTTON_MIN_GAP_PX clear,
+        # instead of on its right half with the arrows touching the weather text (rc.3 VM 2026-10-29).
+        # A position the user chose (a drag's tray_offset_x) is never overridden: the user is free to
+        # sit in the gap, overlap the button or move it (#200/#24), and gets the one-time #200 nudge
+        # (main.py) when it covers the weather. The button only resizes when the weather text does, so
+        # the widget follows it the way it follows a tray that gains an icon.
+        if tray_rect and not user_placed_horizontal_offset(config):
+            x = self._clear_of_widgets_button(taskbar_info, x, widget_width, right_boundary, dpi_scale,
+                                              full_geom.left())
+
         # Safety check: don't overlap with app icons on left
         if x < left_boundary:
             logger.warning("Calculated position overlaps app icons; snapping to safe zone.")
             x = round(left_boundary + constants.layout.DEFAULT_PADDING)
 
-        # NOTE: we deliberately do NOT auto-avoid the Win11 Widgets/weather element here. Its width
-        # changes with the weather text, so auto-repositioning would make the widget jitter left/right
-        # as the weather updates, and it would override a position the user chose. Instead the widget
-        # stays put and the user is nudged once that they can drag it (main.py, using widgets_rect). The
-        # user is always free to sit in the gap, or overlap it, or move it - their call (#200/#24).
-
         return x, y
+
+    @staticmethod
+    def _clear_of_widgets_button(taskbar_info: Any, x: int, widget_width: int, right_boundary: float,
+                                 dpi_scale: float, screen_left: int) -> int:
+        """``x`` moved left of the Widgets button when the button lies between the widget's default
+        spot and the tray and the widget would cover it or come within WIDGETS_BUTTON_MIN_GAP_PX of
+        it; else ``x`` unchanged (also when the spot left of it would leave the screen)."""
+        span = widgets_button_span_x(taskbar_info, dpi_scale)
+        if span is None:
+            return x
+        w_left, w_right = span
+        gap = constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
+        # Tray side only: the button ends at (or before) the tray boundary. One logical px of slack
+        # absorbs fractional-DPI rounding of the two rects.
+        if not (w_left < right_boundary and w_right <= right_boundary + 1):
+            return x
+        if x >= w_right + gap or x + widget_width + gap <= w_left:
+            return x
+        new_x = math.floor(w_left - gap - widget_width)
+        if new_x < screen_left:
+            return x
+        return new_x
 
     @staticmethod
     def _clamp_into_strip(y: int, widget_height: int, strip_top: float, strip_height: float,
