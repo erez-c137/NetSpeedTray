@@ -75,6 +75,59 @@ ALSO
 
 ---
 
+## [2.2.0-rc.3] - October 29, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+A small one: what the rc.2 testers found. The widget now really steps aside when wide app buttons
+reach it, keeps clear of the weather button on a left-aligned taskbar, and a few rarer fixes.
+
+> **Upgrading:** from rc.2, rc.1 or any 2.2 beta, just install over it - the running app closes
+> itself and comes back. Nothing in your settings or history is converted this time.
+
+### Fixed
+
+- **The widget steps aside for wide app buttons.** With "Combine taskbar buttons" set to never, the
+  labeled buttons could slide under the widget and stay there. It now notices within about a second
+  and comes back as soon as there's room. ([#460], thanks [@emgeka]; reported by [@relu616])
+
+  *Under the hood: rc.2 counted each foreground change as one 44 px button and only measured when
+  that guess came near, but a labeled button is 115-200 px. Now every foreground change measures
+  (plus three follow-ups 800 ms apart), and a widget near the buttons or stepped aside re-checks
+  every second for 15 s after anything moves, then backs off to every 8 s. The 1 s re-check also
+  ran at 2 s: the probe lands a few ms after the refresh tick, so the next tick saw 0.99 s.*
+
+- **On a left-aligned taskbar the widget no longer sits on the weather button.** Windows puts the
+  Widgets button next to the tray there, and the widget covered its right half - with longer
+  weather text, it drew right over it. It now sits just left of the button. If your app buttons fill
+  the bar up to it, the widget steps aside like on any full taskbar, and only stays by the tray when
+  that spot clears the weather text. A widget you dragged stays where you put it. ([#463], [#466])
+- **`NetSpeedTray.exe --shutdown` works on a busy PC.** It loaded the whole app before asking the
+  running copy to quit, and with Windows Update running that alone outlasted its 35 s limit, so it
+  gave up without asking. It now asks first. The installer wasn't affected. ([#464])
+- **An old history backup whose delete failed once is retried the next time.** Zeroing it first
+  made it look brand new, so a file an antivirus held for a moment stayed on disk for another whole
+  retention period. ([#462])
+
+### Localization
+
+- Dutch, Hungarian and German polish for the rc.2 strings; German now says "du" throughout.
+  ([#454], [#447], [#448], thanks [@boonstraworks], [@cscsanaki] and [@emgeka])
+
+[#447]: https://github.com/erez-c137/NetSpeedTray/pull/447
+[#448]: https://github.com/erez-c137/NetSpeedTray/pull/448
+[#454]: https://github.com/erez-c137/NetSpeedTray/pull/454
+[#460]: https://github.com/erez-c137/NetSpeedTray/pull/460
+[#462]: https://github.com/erez-c137/NetSpeedTray/pull/462
+[#463]: https://github.com/erez-c137/NetSpeedTray/pull/463
+[#464]: https://github.com/erez-c137/NetSpeedTray/pull/464
+[#466]: https://github.com/erez-c137/NetSpeedTray/pull/466
+[@boonstraworks]: https://github.com/boonstraworks
+[@cscsanaki]: https://github.com/cscsanaki
+[@emgeka]: https://github.com/emgeka
+[@relu616]: https://github.com/relu616
+
 ## [2.2.0-rc.2] - October 23, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app
