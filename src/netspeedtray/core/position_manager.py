@@ -1566,8 +1566,17 @@ class PositionManager(QObject):
             would = tray_x if self._app_yield.retreated else stepped_x
             left = would if would is not None else left
         stepped = tray_spot = None
+        tray_spot_clear = False
         if stepped_x is not None and tray_x is not None and abs(stepped_x - tray_x) >= 1.0:
             stepped, tray_spot = (stepped_x, stepped_x + width), (tray_x, tray_x + width)
+            # The full-bar fallback may use the tray spot only when it clears the weather text/icon
+            # by the usual gap; an unknown extent counts as not clear (hide rather than collide).
+            content = taskbar_utils.valid_rect(
+                taskbar_utils.taskbar_layout_widgets_content(int(info.hwnd)))
+            if content is not None:
+                tray_spot_clear = (tray_x >= content[2] / dpi + constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
+                                   or tray_x + width + constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
+                                   <= content[0] / dpi)
         offset = self._state.config.get("tray_offset_x", constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
         # A drag's offset - the same rule the placement uses, so a pre-1.3.0 default (10 / 1 / 3) is no
         # drop key either.
@@ -1587,7 +1596,8 @@ class PositionManager(QObject):
         return OverlapContext(hwnd=int(info.hwnd), dpi=dpi, widget=(left, left + width),
                               centered=None if align is None else align == 1,
                               drop_key=drop_key, saved_drop=saved if isinstance(saved, int) else None,
-                              layout_key=layout_key, stepped=stepped, tray_spot=tray_spot)
+                              layout_key=layout_key, stepped=stepped, tray_spot=tray_spot,
+                              tray_spot_clear=tray_spot_clear)
 
     def _would_be_x(self, info: TaskbarInfo, fallback: Optional[float],
                     widgets_step: Optional[bool] = None) -> Optional[float]:

@@ -382,6 +382,39 @@ def tray_extent_from_elements(elements) -> Optional[Tuple[int, int, int, int]]:
     return tray
 
 
+# The Widgets button's VISIBLE content: its weather icon and text. Leaf XAML classes only - its
+# NamedContainerAutomationPeer spans nearly the whole button box (VM, Win11 26300: box 1606..1758,
+# container 1614..1750, "Sunny" ending at 1682), so it says nothing about where the text ends.
+_WIDGETS_CONTENT_CLASSES = ("TextBlock", "Image", "Microsoft.UI.Xaml.Controls.AnimatedVisualPlayer")
+
+
+def widgets_content_from_elements(elements) -> Optional[Tuple[int, int, int, int]]:
+    """Pure: the union (physical px) of the icon / text elements inside the WidgetsButton's box - where
+    its weather text really ends - or None when there is no button or nothing visible in it."""
+    box = None
+    for _cls, aid, rect in elements:
+        if aid == _WIDGETS_ID:
+            box = _int_rect(rect)
+            break
+    if box is None:
+        return None
+    content = None
+    for cls, _aid, rect in elements:
+        if cls not in _WIDGETS_CONTENT_CLASSES:
+            continue
+        r = _int_rect(rect)
+        if r is None or r[0] < box[0] or r[2] > box[2] or r[1] < box[1] or r[3] > box[3]:
+            continue
+        content = r if content is None else (min(content[0], r[0]), min(content[1], r[1]),
+                                             max(content[2], r[2]), max(content[3], r[3]))
+    return content
+
+
+def _layout_from_elements_ext(elements, vertical: Optional[bool]):
+    """``_layout_from_elements_full`` plus the Widgets button's content rect (one walk, no new probe)."""
+    return _layout_from_elements_full(elements, vertical) + (widgets_content_from_elements(elements),)
+
+
 def _layout_from_elements_full(elements, vertical: Optional[bool]):
     apps, widgets = taskbar_layout_from_elements(elements)
     if vertical is None:   # infer the axis from the union: a left/right bar's run is taller than wide
@@ -406,7 +439,7 @@ def query_taskbar_layout_full(taskbar_hwnd: int, vertical: Optional[bool] = None
         result = None
         for root in _layout_root_hwnds(taskbar_hwnd):
             elements = _probe_layout(ole32, root)
-            result = None if elements is None else _layout_from_elements_full(elements, vertical)
+            result = None if elements is None else _layout_from_elements_ext(elements, vertical)
             if result is not None and result[0] is not None:
                 return result
         return result

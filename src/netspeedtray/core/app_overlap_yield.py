@@ -109,6 +109,10 @@ class OverlapContext:
     # bar, a user's drag).
     stepped: Optional[Span] = None
     tray_spot: Optional[Span] = None
+    # The tray spot clears the Widgets button's weather TEXT/icon by the usual gap (rc.3 verify: with
+    # "Mostly cloudy" the rc.2 spot drew the arrow and "0.0" over the text). False also when the
+    # content extent is unknown - hiding is better than colliding: the yield then steps aside instead.
+    tray_spot_clear: bool = False
 
 
 def group_span(group_rect, dpi: float) -> Optional[Span]:
@@ -583,7 +587,12 @@ class AppOverlapYield(QObject):
                     self._on_change()
                 except Exception as e:
                     logger.error("App-yield placement update failed: %s", e, exc_info=True)
-        reaches = group_reaches_widget(span, widget)
+        gap = constants.layout.TRAY_EDGE_MIN_GAP_PX
+        if self._state.yielded and ctx.stepped is not None and not self._retreated:
+            # Hidden for the stepped spot (no clear fallback): back with the same room to spare as a
+            # return from the fallback, so a group end at the threshold can't flash the widget.
+            gap += constants.layout.WIDGETS_FALLBACK_RETURN_MARGIN_PX
+        reaches = group_reaches_widget(span, widget, gap)
         if reaches is None and self._state.yielded:
             if not self._hold_until:
                 # A transient unknown on this taskbar (window storm, UIA timed out): one bounded hold,
@@ -634,6 +643,16 @@ class AppOverlapYield(QObject):
         self._spot_gone_since = None
         if span is None:
             return False
+        if not ctx.tray_spot_clear:
+            # The tray spot would draw over the weather text (or where that text ends is unknown): no
+            # fallback - the caller judges the stepped spot, so the yield steps the widget aside.
+            changed = self._retreated
+            self._retreated = False
+            self._step_clear_since = None
+            if changed:
+                logger.info("The spot by the tray would cover the Widgets button's text: stepping aside "
+                            "instead.")
+            return changed
         if not self._retreated:
             if group_reaches_widget(span, ctx.stepped) and not group_reaches_widget(span, ctx.tray_spot):
                 self._retreated = True

@@ -97,7 +97,7 @@ def layout():
     def query(_hwnd):
         if ctl.fail or ctl.elements is None:
             return None
-        return uia_widgets._layout_from_elements_full(ctl.elements, False)
+        return uia_widgets._layout_from_elements_ext(ctl.elements, False)
 
     def land(elements=None, fail=False):
         ctl.elements, ctl.fail = (elements if elements is not None else ctl.elements), fail
@@ -140,6 +140,7 @@ class Rig:
         self.layout_key = None
         self.stepped = None          # rc.3: the two default spots beside a Widgets button (or None)
         self.tray_spot = None
+        self.tray_spot_clear = False   # rc.3: the tray spot clears the weather text
         self.persisted = []
         self.now = 1000.0
         self.changes = 0
@@ -156,7 +157,8 @@ class Rig:
             return BUSY
         return OverlapContext(hwnd=self.hwnd, dpi=self.dpi, widget=(self.widget_x, self.widget_x + self.width),
                               centered=self.centered, drop_key=self.drop_key, saved_drop=self.saved_drop,
-                              layout_key=self.layout_key, stepped=self.stepped, tray_spot=self.tray_spot)
+                              layout_key=self.layout_key, stepped=self.stepped, tray_spot=self.tray_spot,
+                              tray_spot_clear=self.tray_spot_clear)
 
     def _persist(self, value):
         self.persisted.append(value)
@@ -1273,7 +1275,7 @@ TRAY_SPOT = (1676.0, 1826.0)
 
 def _fallback_rig(rig):
     r = rig(STEPPED[0])
-    r.stepped, r.tray_spot = STEPPED, TRAY_SPOT
+    r.stepped, r.tray_spot, r.tray_spot_clear = STEPPED, TRAY_SPOT, True
     return r
 
 
@@ -1318,6 +1320,7 @@ def test_a_retreated_widget_is_rechecked_on_the_tick_to_notice_a_background_clos
     change could bring it back. It is watched like a yield."""
     r = rig(STEPPED[0], width=60)
     r.stepped, r.tray_spot = (1460.0, 1520.0), (1766.0, 1826.0)   # a narrow widget: 246 px apart
+    r.tray_spot_clear = True
     r.start(left_aligned(31))                    # ends 1465: reaches the stepped spot only
     assert r.y.retreated
     r.widget_x = 1766.0
@@ -1451,3 +1454,88 @@ def test_position_manager_places_at_the_tray_spot_while_retreated(q_app):
     pm._app_yield._hwnd = 0
     pm._state.config["tray_offset_x"] = 10        # a pre-1.3.0 default is no drop key (rc.3 review)
     assert pm._app_overlap_context().drop_key is None
+
+
+# --- rc.3 verify: the fallback never draws over the weather text ----------------------------------------
+# VM (Win11 26300, 100 %, left-aligned): WidgetsButton 1606..1758, its NamedContainer 1614..1750, the icon
+# 1617..1641, "Sunny" ending 1682; with "Mostly cloudy" the rc.2 spot (1613..1698 on that bar) put the
+# arrow and "0.0" over the text. The fallback is used only when the tray spot clears the TEXT.
+WIDGETS_VM = [
+    _b("ToggleButton", "WidgetsButton", 1606, 1758),
+    ("NamedContainerAutomationPeer", "", (1614, 1036, 1750, 1076)),
+    ("Microsoft.UI.Xaml.Controls.AnimatedVisualPlayer", "BadgeAnchorLargeTicker", (1617, 1043, 1641, 1067)),
+    ("TextBlock", "", (1649, 1039, 1672, 1055)),
+    ("TextBlock", "", (1649, 1055, 1682, 1071)),
+]
+
+
+def test_widgets_content_is_the_icon_and_text_not_the_container():
+    assert uia_widgets.widgets_content_from_elements(WIDGETS_VM) == (1617, 1039, 1682, 1071)
+    assert uia_widgets.widgets_content_from_elements(WIDGETS_VM[:2]) is None    # nothing visible
+    assert uia_widgets.widgets_content_from_elements(CENTERED[6:]) is None      # no Widgets button
+    stray = WIDGETS_VM + [("TextBlock", "", (1800, 1039, 1850, 1071))]         # a tray label: outside
+    assert uia_widgets.widgets_content_from_elements(stray) == (1617, 1039, 1682, 1071)
+
+
+def test_the_layout_probe_keeps_the_widgets_content(layout):
+    taskbar_utils.request_taskbar_layout_probe(HWND)
+    layout.land(left_aligned(3, widgets=False) + WIDGETS_VM)
+    assert taskbar_utils.taskbar_layout_widgets_content(HWND) == (1617, 1039, 1682, 1071)
+
+
+def test_no_clear_tray_spot_means_the_yield_steps_aside_and_returns_with_the_margin(rig):
+    """The tray spot would cover the weather text (or the text's extent is unknown): no fallback - the
+    #24 yield hides the widget for the STEPPED spot (Windows shrinks a left-aligned bar's buttons before
+    they ever reach the tray spot), and shows it again with the fallback's return margin."""
+    margin = constants.layout.WIDGETS_FALLBACK_RETURN_MARGIN_PX
+    r = rig(STEPPED[0])
+    r.stepped, r.tray_spot, r.tray_spot_clear = STEPPED, TRAY_SPOT, False
+    r.start(left_aligned(28, overflow=True))         # "..." ends 1377: reaches the stepped spot only
+    assert r.y.yielded and not r.y.retreated and r.changes == 1
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, stray=(1333, 1362)), advance=1.0)   # clear by 10 only: stays hidden
+    assert r.y.yielded and r.y._state.clear_since is None   # not even a first clear reading
+    end = int(STEPPED[0] - GAP - margin)
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, stray=(1333, end)), advance=1.0)
+    assert r.y.yielded                                # first clear reading: confirmation pending
+    r.probe(left_aligned(28, stray=(1333, end)), advance=0.5)
+    assert not r.y.yielded
+
+
+def test_weather_text_growing_under_a_held_widget_steps_it_aside_at_once(rig):
+    r = _fallback_rig(rig)
+    r.start(left_aligned(30))                         # reaches the stepped spot: held by the tray
+    assert r.y.retreated and not r.y.yielded
+    r.widget_x = TRAY_SPOT[0]
+    r.tray_spot_clear = False                         # "Sunny" -> "Mostly cloudy"
+    r.y.note_foreground_change()
+    r.probe(left_aligned(30), advance=1.0)
+    assert not r.y.retreated and r.y.yielded          # same reading: hidden, never on the buttons
+
+
+def _pm_left_bar(content):
+    pm, tb, widget = _pm(config={"tray_offset_x": 0})
+    widget.width.return_value = 85
+    pm._app_overlap_info = tb
+    tb.get_screen.return_value.availableGeometry.return_value = QRect(0, 0, 1920, Y0)
+    tb.get_tray_rect.return_value = (1770, Y0, 1920, Y1)
+    tb.toolbars_rect = None
+    tb.widgets_extent = (1606, Y0, 1758, Y1)
+    tb.widgets_rect = None
+    with patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=0), \
+            patch.object(taskbar_utils, "widgets_button_enabled", return_value=True), \
+            patch.object(taskbar_utils, "taskbar_layout_widgets_content", return_value=content):
+        return pm._app_overlap_context()
+
+
+@pytest.mark.parametrize("content,clear", [
+    ((1617, 1039, 1682, 1071), False),   # "Sunny" ends 1682: the rc.2 spot (1677) would cover it
+    ((1617, 1039, 1745, 1071), False),   # "Mostly cloudy"
+    ((1617, 1039, 1669, 1071), True),    # text ending 1669: 1677 clears it by exactly the gap
+    (None, False),                       # unknown: hide rather than collide
+])
+def test_position_manager_allows_the_fallback_only_clear_of_the_text(q_app, content, clear):
+    ctx = _pm_left_bar(content)
+    assert ctx.stepped == (1513.0, 1598.0) and ctx.tray_spot == (1677.0, 1762.0)
+    assert ctx.tray_spot_clear is clear
