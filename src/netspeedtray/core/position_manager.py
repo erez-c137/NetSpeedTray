@@ -378,6 +378,30 @@ def user_placed_side_offset(config: Dict[str, Any]) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value != default
 
 
+def user_placed_horizontal_offset(config: Mapping) -> bool:
+    """True when the user dragged the widget along a top/bottom bar: the drop saves ``tray_offset_x``
+    (measured from the tray). The default, and the pre-1.3.0 defaults older configs still carry
+    (LEGACY_DEFAULT_TRAY_OFFSETS_X, rc.2 W6), are not a choice the user made."""
+    defaults = constants.config.defaults
+    value = config.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X)
+    if not isinstance(value, int) or isinstance(value, bool):
+        return False
+    return value != defaults.DEFAULT_TRAY_OFFSET_X and value not in defaults.LEGACY_DEFAULT_TRAY_OFFSETS_X
+
+
+def widgets_button_span_x(taskbar_info: Any, dpi_scale: float) -> Optional[Tuple[float, float]]:
+    """The Win11 Widgets/weather button's x span (logical px) on a top/bottom bar, or None when unknown.
+    Prefers the layout probe's full button box (``widgets_extent`` - the button's whole click target,
+    which reaches past the weather text), else the #200 probe's content rect (``widgets_rect``) - the
+    same preference as side_bar_geometry."""
+    rect = (taskbar_utils.valid_rect(getattr(taskbar_info, "widgets_extent", None))
+            or taskbar_utils.valid_rect(getattr(taskbar_info, "widgets_rect", None)))
+    if rect is None:
+        return None
+    scale = dpi_scale if dpi_scale and dpi_scale > 0 else 1.0
+    return rect[0] / scale, rect[2] / scale
+
+
 class ScreenUtils:
     """Provides static utility methods for screen-related operations using Qt."""
     @staticmethod
@@ -438,7 +462,8 @@ class PositionCalculator:
         self._last_drag_log_time: float = 0.0
 
     def calculate_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], config: Dict[str, Any],
-                           side_placement: Optional[SidePlacement] = None) -> ScreenPosition:
+                           side_placement: Optional[SidePlacement] = None,
+                           widgets_step: bool = True) -> ScreenPosition:
         """
         Calculates the widget's optimal position based on taskbar edge and tray location.
 
@@ -447,6 +472,8 @@ class PositionCalculator:
             widget_size: Tuple of (width, height) in pixels
             config: Configuration dictionary with positioning options
             side_placement: the automatic side-bar placement PositionManager decided (None = tray end)
+            widgets_step: False keeps a top/bottom bar's default spot by the tray even with a Widgets
+                button beside it (the rc.2 spot) - the #24 yield's full-bar fallback (rc.3)
             
         Returns:
             ScreenPosition with calculated x, y coordinates
@@ -509,7 +536,8 @@ class PositionCalculator:
             
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
                 # Horizontal taskbar: calculate Y position (centered in taskbar gap)
-                x, y = self._calculate_horizontal_position(taskbar_info, widget_size, config, dpi_scale)
+                x, y = self._calculate_horizontal_position(taskbar_info, widget_size, config, dpi_scale,
+                                                           widgets_step)
             elif edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
                 # Vertical taskbar: calculate X position (centered in taskbar gap)
                 x, y = self._calculate_vertical_position(taskbar_info, widget_size, config, dpi_scale,
@@ -526,8 +554,9 @@ class PositionCalculator:
             logger.error("Error calculating position: %s", e, exc_info=True)
             return self._get_safe_fallback_position(widget_size)
 
-    def _calculate_horizontal_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], 
-                                       config: Dict[str, Any], dpi_scale: float) -> Tuple[int, int]:
+    def _calculate_horizontal_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int],
+                                       config: Dict[str, Any], dpi_scale: float,
+                                       widgets_step: bool = True) -> Tuple[int, int]:
         """
         Calculate position for horizontal (top/bottom) taskbar.
         
@@ -589,18 +618,49 @@ class PositionCalculator:
 
         x = round(right_boundary - widget_width - offset)
 
+        # The Win11 Widgets/weather button beside the tray (a LEFT-aligned bar puts it there; a centred
+        # bar keeps it at the far left, where this never applies) belongs to the tray END, as on a side
+        # bar (side_bar_geometry): the DEFAULT spot sits left of it, WIDGETS_BUTTON_MIN_GAP_PX clear,
+        # instead of on its right half with the arrows touching the weather text (rc.3 VM 2026-10-29).
+        # A position the user chose (a drag's tray_offset_x) is never overridden: the user is free to
+        # sit in the gap, overlap the button or move it (#200/#24), and gets the one-time #200 nudge
+        # (main.py) when it covers the weather. The button only resizes when the weather text does, so
+        # the widget follows it the way it follows a tray that gains an icon.
+        # widgets_step=False: the #24 yield found the app buttons reaching that spot while the tray spot
+        # is still clear (a left-aligned bar full up to the Widgets button) - it stays by the tray,
+        # visible on the button's padding as in rc.2, instead of hiding (AppOverlapYield's retreat).
+        if widgets_step and tray_rect and not user_placed_horizontal_offset(config):
+            x = self._clear_of_widgets_button(taskbar_info, x, widget_width, right_boundary, dpi_scale,
+                                              full_geom.left())
+
         # Safety check: don't overlap with app icons on left
         if x < left_boundary:
             logger.warning("Calculated position overlaps app icons; snapping to safe zone.")
             x = round(left_boundary + constants.layout.DEFAULT_PADDING)
 
-        # NOTE: we deliberately do NOT auto-avoid the Win11 Widgets/weather element here. Its width
-        # changes with the weather text, so auto-repositioning would make the widget jitter left/right
-        # as the weather updates, and it would override a position the user chose. Instead the widget
-        # stays put and the user is nudged once that they can drag it (main.py, using widgets_rect). The
-        # user is always free to sit in the gap, or overlap it, or move it - their call (#200/#24).
-
         return x, y
+
+    @staticmethod
+    def _clear_of_widgets_button(taskbar_info: Any, x: int, widget_width: int, right_boundary: float,
+                                 dpi_scale: float, screen_left: int) -> int:
+        """``x`` moved left of the Widgets button when the button lies between the widget's default
+        spot and the tray and the widget would cover it or come within WIDGETS_BUTTON_MIN_GAP_PX of
+        it; else ``x`` unchanged (also when the spot left of it would leave the screen)."""
+        span = widgets_button_span_x(taskbar_info, dpi_scale)
+        if span is None:
+            return x
+        w_left, w_right = span
+        gap = constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
+        # Tray side only: the button ends at (or before) the tray boundary. One logical px of slack
+        # absorbs fractional-DPI rounding of the two rects.
+        if not (w_left < right_boundary and w_right <= right_boundary + 1):
+            return x
+        if x >= w_right + gap or x + widget_width + gap <= w_left:
+            return x
+        new_x = math.floor(w_left - gap - widget_width)
+        if new_x < screen_left:
+            return x
+        return new_x
 
     @staticmethod
     def _clamp_into_strip(y: int, widget_height: int, strip_top: float, strip_height: float,
@@ -1078,7 +1138,8 @@ class PositionManager(QObject):
         size = (widget.width(), widget.height())
         if size[0] <= 0:
             return
-        pos = self._calculator.calculate_position(_TrayOverride(info, tray), size, self._state.config)
+        pos = self._calculator.calculate_position(_TrayOverride(info, tray), size, self._state.config,
+                                                  widgets_step=not self._app_yield.retreated)
         if pos:
             self._apply_geometry(pos.x, pos.y)
 
@@ -1247,6 +1308,7 @@ class PositionManager(QObject):
             widget_size,
             self._state.config,
             side_placement=self._side_placement_for(self._state.taskbar_info, widget_size[1]),
+            widgets_step=not self._app_yield.retreated,
         )
 
     def _side_placement_for(self, taskbar_info: TaskbarInfo, widget_height: int) -> Optional[SidePlacement]:
@@ -1431,6 +1493,11 @@ class PositionManager(QObject):
         self._app_overlap_info = taskbar_info
         self._app_yield.sync()
 
+    def is_widgets_fallback_active(self) -> bool:
+        """True while a full left-aligned bar keeps the widget at the rc.2 tray spot, on the Widgets
+        button's padding, instead of left of it (AppOverlapYield.retreated, rc.3)."""
+        return self._app_yield.retreated
+
     def is_yielding_to_apps(self) -> bool:
         """True while the widget steps aside for app buttons that reach it (#24)."""
         return self._app_yield.yielded
@@ -1488,30 +1555,52 @@ class PositionManager(QObject):
             return BUSY
         width = float(widget.width())
         left = float(widget.pos().x())
+        # The two default spots when a Widgets button sits beside the tray (rc.3): left of it
+        # (``stepped``) and the rc.2 spot by the tray (``tray_spot``). Both None when they coincide (no
+        # such button, a centred bar, a user's drag): the yield then has no fallback to weigh.
+        stepped_x = self._would_be_x(info, None, widgets_step=True)
+        tray_x = self._would_be_x(info, None, widgets_step=False)
         if not widget.isVisible():
             # Hidden: it is never re-placed, so its window can sit at a stale spot (rc.2 H3: 28 px
             # off after a tray-width change) - judge where it WOULD go.
-            left = self._would_be_x(info, left)
-        defaults = constants.config.defaults
-        offset = self._state.config.get("tray_offset_x", defaults.DEFAULT_TRAY_OFFSET_X)
-        drop_key = int(offset) if isinstance(offset, int) and offset != defaults.DEFAULT_TRAY_OFFSET_X else None
+            would = tray_x if self._app_yield.retreated else stepped_x
+            left = would if would is not None else left
+        stepped = tray_spot = None
+        if stepped_x is not None and tray_x is not None and abs(stepped_x - tray_x) >= 1.0:
+            stepped, tray_spot = (stepped_x, stepped_x + width), (tray_x, tray_x + width)
+        offset = self._state.config.get("tray_offset_x", constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
+        # A drag's offset - the same rule the placement uses, so a pre-1.3.0 default (10 / 1 / 3) is no
+        # drop key either.
+        drop_key = int(offset) if user_placed_horizontal_offset(self._state.config) else None
         saved = self._state.config.get("app_overlap_drop_offset")
         try:
             from netspeedtray.core.system_events import read_taskbar_alignment
             align = read_taskbar_alignment()
         except Exception:
             align = None
+        try:
+            tray = info.get_tray_rect()
+            tray_left = int(tray[0]) if tray else None
+        except Exception:
+            tray_left = None
+        layout_key = (align, tray_left, taskbar_utils.widgets_button_enabled())
         return OverlapContext(hwnd=int(info.hwnd), dpi=dpi, widget=(left, left + width),
                               centered=None if align is None else align == 1,
-                              drop_key=drop_key, saved_drop=saved if isinstance(saved, int) else None)
+                              drop_key=drop_key, saved_drop=saved if isinstance(saved, int) else None,
+                              layout_key=layout_key, stepped=stepped, tray_spot=tray_spot)
 
-    def _would_be_x(self, info: TaskbarInfo, fallback: float) -> float:
+    def _would_be_x(self, info: TaskbarInfo, fallback: Optional[float],
+                    widgets_step: Optional[bool] = None) -> Optional[float]:
         """The x the docked widget would be placed at on ``info`` right now (its window may be stale
-        while hidden); ``fallback`` when it can't be computed."""
+        while hidden); ``fallback`` when it can't be computed. ``widgets_step`` None: as placed now
+        (the yield's full-bar fallback decides); True / False: left of / ignoring a Widgets button
+        beside the tray."""
         try:
             widget = self._state.widget
+            if widgets_step is None:
+                widgets_step = not self._app_yield.retreated
             pos = self._calculator.calculate_position(info, (widget.width(), widget.height()),
-                                                      self._state.config)
+                                                      self._state.config, widgets_step=widgets_step)
             return float(pos.x) if pos is not None else fallback
         except Exception as e:
             logger.debug("would-be position for the app yield failed: %s", e)

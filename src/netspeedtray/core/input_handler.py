@@ -253,6 +253,14 @@ class InputHandler(QObject):
                     widget_width = self.widget.width()
                     
                     new_offset = int(right_boundary - current_x_log - widget_width)
+                    # The default (0) and the pre-1.3.0 defaults (10 / 1 / 3) read as "not placed by
+                    # the user" (rc.2 W6), and the default spot steps left of a Widgets button beside
+                    # the tray (rc.3): a drop that happens to land on one of them must still stick.
+                    # 1 px further from the tray is invisible; the drag limit keeps it >= ~7 anyway.
+                    defaults = constants.config.defaults
+                    while (new_offset == defaults.DEFAULT_TRAY_OFFSET_X
+                           or new_offset in defaults.LEGACY_DEFAULT_TRAY_OFFSETS_X):
+                        new_offset += 1
                     updates["tray_offset_x"] = new_offset
                     self.logger.debug(f"Saved Horizontal Offset: {new_offset} (RightBound={right_boundary}, X={current_x_log}, W={widget_width})")
                     

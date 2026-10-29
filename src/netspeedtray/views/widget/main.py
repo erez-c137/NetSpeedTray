@@ -2724,9 +2724,10 @@ class NetworkSpeedWidget(QWidget):
     def _maybe_nudge_widgets_overlap(self, taskbar_info) -> None:
         """One-time heads-up (#200): if the widget currently overlaps the Win11 Widgets/weather panel's
         visible content, tell the user once that they can drag the widget wherever they like and it's
-        remembered. We deliberately never auto-move it - the panel's width changes with the weather, so
-        repositioning would make the widget jitter, and the user may want it right where it is. Fires at
-        most once, ever (session flag + persisted config flag)."""
+        remembered. A dragged widget is never auto-moved off it - the user may want it right where it
+        is. (Since rc.3 the DEFAULT spot steps left of a Widgets button beside the tray - its box keeps
+        one width across weather texts - so this mostly fires for drags.) Fires at most once, ever
+        (session flag + persisted config flag)."""
         try:
             if self._widgets_nudge_shown or self.config.get("widgets_overlap_nudge_shown", False):
                 # Nothing else reads the Widgets rect: stop probing for it (taskbar_utils).
@@ -2747,6 +2748,15 @@ class NetworkSpeedWidget(QWidget):
                 # their y-extents can tell an overlap apart (comparing x always "overlapped").
                 overlaps = rect_overlaps_y(self.y(), self.y() + self.height(), widgets_rect, dpi)
             else:
+                from netspeedtray.core.position_manager import user_placed_horizontal_offset
+                pm = getattr(self, "position_manager", None)
+                if (not user_placed_horizontal_offset(self.config)
+                        and not (pm is not None and pm.is_widgets_fallback_active())):
+                    # The default spot keeps clear of the button by construction (rc.3). An overlap
+                    # seen here is the #200 probe and the layout probe disagreeing for a moment while
+                    # the bar re-lays (rc.3 VM: a tray icon appearing slid the button under the
+                    # widget for one probe) - never a reason for a one-time, never-again notice.
+                    return
                 overlaps = rect_overlaps_x(self.x(), self.x() + self.width(), widgets_rect, dpi)
             if not overlaps:
                 return

@@ -195,8 +195,9 @@ def find_apps_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
 # at startup, on a dock change, on Reset position, and - as re-checks that KEEP the last result until
 # the new one lands (``keep_last``) - when core/side_bar_watcher predicts the app group reaching the
 # widget or sees the icon alignment flip. On a TOP/BOTTOM bar only the #24 app-button yield
-# (core/app_overlap_yield.py) runs it - keep_last re-checks that read the contiguous app group and
-# never change the horizontal placement.
+# (core/app_overlap_yield.py) runs it - keep_last re-checks that read the contiguous app group; the
+# only thing the horizontal placement takes from it is the Widgets button's box, and only when that
+# button sits beside the tray (PositionCalculator._clear_of_widgets_button).
 _layout_lock = threading.Lock()
 # Notified (under _layout_lock) whenever a probe lands or a request ends: wait_for_taskbar_layout.
 _layout_landed = threading.Condition(_layout_lock)
@@ -479,7 +480,9 @@ def get_apps_extent(taskbar_hwnd: Optional[int]) -> Tuple[Optional[Tuple[int, in
 # alignment it sits far-left (centered) or just left of the tray (edge-aligned - the case that can
 # overlap the widget). Cached + refreshed on a background thread; callers get the last-known rect
 # instantly and never block. Fail-safe: any error / Widgets disabled / future-build rename -> None.
-# Used only for the one-time #200 nudge (never to auto-move).
+# Feeds the one-time #200 nudge, and - when the layout probe's full box is not there - the horizontal
+# default spot's step left of a Widgets button beside the tray (rc.3). The cache belongs to ONE taskbar
+# HWND: after an Explorer restart the old bar's rect is never answered for the new bar.
 #
 # This used to shell out to a hidden powershell.exe on every 30 s refresh, for the whole session
 # (2.2.0-beta.1 lifecycle review). Now: zero process spawns; the probe is skipped when the Widgets
@@ -487,7 +490,7 @@ def get_apps_extent(taskbar_hwnd: Optional[int]) -> Tuple[Optional[Tuple[int, in
 # the nudge it feeds has been shown (set_widgets_probe_enabled).
 _WIDGETS_CACHE_TTL_S = 30.0
 _widgets_lock = threading.Lock()
-_widgets_state: dict = {"rect": None, "ts": 0.0, "querying": False}
+_widgets_state: dict = {"rect": None, "ts": 0.0, "querying": False, "hwnd": 0}
 _widgets_probe_enabled = True
 _ADVANCED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
 
@@ -512,6 +515,10 @@ def _widgets_button_enabled() -> bool:
         return int(value) != 0
     except Exception:
         return True
+
+
+# Public name: the app-button yield re-probes the layout when the Widgets toggle flips (rc.3).
+widgets_button_enabled = _widgets_button_enabled
 
 
 def _query_widgets_rect_blocking(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
@@ -561,8 +568,11 @@ def get_widgets_rect(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, in
     with _widgets_lock:
         if not _widgets_probe_enabled:
             return None
-        rect = _widgets_state["rect"]
-        stale = (now - _widgets_state["ts"]) > _WIDGETS_CACHE_TTL_S
+        same_bar = _widgets_state.get("hwnd", 0) == int(taskbar_hwnd)
+        # Another taskbar's rect (an Explorer restart brings a new HWND, often with a new layout -
+        # rc.3 VM: the left-aligned bar's rect outlived a switch to centred) is no answer for this one.
+        rect = _widgets_state["rect"] if same_bar else None
+        stale = not same_bar or (now - _widgets_state["ts"]) > _WIDGETS_CACHE_TTL_S
         if stale and not _widgets_state["querying"]:
             _widgets_state["querying"] = True
             start_refresh = True
@@ -573,6 +583,7 @@ def get_widgets_rect(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, in
                 _widgets_state["rect"] = result
                 _widgets_state["ts"] = time.monotonic()
                 _widgets_state["querying"] = False
+                _widgets_state["hwnd"] = int(taskbar_hwnd)
         threading.Thread(target=_refresh, name="nst-widgets-uia", daemon=True).start()
     return rect
 
@@ -606,7 +617,8 @@ class TaskbarInfo:
     apps_extent: Optional[Tuple[int, int, int, int]] = None
     apps_extent_source: Optional[str] = None
     # The Widgets button's full rect from the same layout probe (independent of the #200 nudge's
-    # widgets_rect, which stops probing once the nudge has been shown).
+    # widgets_rect, which stops probing once the nudge has been shown). Side-bar placement, and on a
+    # top/bottom bar the default spot's step left of a Widgets button beside the tray.
     widgets_extent: Optional[Tuple[int, int, int, int]] = None
     # Physical-pixel union of the classic toolbars (Desktop / Links / ...) between the task list and
     # the tray, or None - always None on Windows 11 (find_toolbar_bands_rect, #324).
