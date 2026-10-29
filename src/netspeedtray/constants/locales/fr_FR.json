@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Cet écran n'a pas de barre des tâches : NetSpeedTray se place donc sur celle de l'écran principal. Activez « {option} » pour le garder sur cet écran.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Rester visible en plein écran",
     "HIDE_WHEN_APPS_COVER_LABEL": "Masquer quand les boutons des applications recouvrent le widget",
+    "HIDE_WHEN_APPS_COVER_DESC": "Barres des tâches horizontales uniquement : il revient dès qu’il y a de la place. Il ne se place jamais sur le bouton météo, sauf si vous l’y faites glisser.",
     "FONT_SIZE_LABEL": "Taille de police",
     "FONT_FAMILY_LABEL": "Police",
     "FONT_WEIGHT_LABEL": "Graisse",

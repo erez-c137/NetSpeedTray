@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Ten monitor nie ma paska zadań, więc NetSpeedTray znajduje się na pasku zadań monitora głównego. Włącz „{option}”, aby pozostał na tym monitorze.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Pozostań widoczny w trybie pełnoekranowym",
     "HIDE_WHEN_APPS_COVER_LABEL": "Ukryj, gdy przyciski aplikacji zasłaniają widżet",
+    "HIDE_WHEN_APPS_COVER_DESC": "Tylko na poziomym pasku zadań: wraca, gdy jest miejsce. Nigdy nie zasłania przycisku pogody, chyba że go tam przeciągniesz.",
     "FONT_SIZE_LABEL": "Rozmiar czcionki",
     "FONT_FAMILY_LABEL": "Czcionka",
     "FONT_WEIGHT_LABEL": "Grubość",

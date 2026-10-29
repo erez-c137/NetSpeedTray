@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "This monitor has no taskbar, so NetSpeedTray sits on the primary monitor's taskbar. Turn on “{option}” to keep it on this monitor.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Keep visible in fullscreen",
     "HIDE_WHEN_APPS_COVER_LABEL": "Hide while app buttons cover the widget",
+    "HIDE_WHEN_APPS_COVER_DESC": "Horizontal taskbars only: it comes back when there's room. It never sits on the weather button unless you drag it there.",
     "FONT_SIZE_LABEL": "Font size",
     "FONT_FAMILY_LABEL": "Font",
     "FONT_WEIGHT_LABEL": "Weight",

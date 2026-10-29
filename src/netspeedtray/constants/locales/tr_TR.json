@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Bu monitörde görev çubuğu yok, bu yüzden NetSpeedTray birincil monitörün görev çubuğunda duruyor. Bu monitörde kalması için \"{option}\" seçeneğini açın.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Tam ekranda görünür tut",
     "HIDE_WHEN_APPS_COVER_LABEL": "Uygulama düğmeleri pencere öğesini kapattığında gizle",
+    "HIDE_WHEN_APPS_COVER_DESC": "Yalnızca yatay görev çubuğunda: yer açılınca geri gelir. Siz sürüklemedikçe hava durumu düğmesinin üzerinde durmaz.",
     "FONT_SIZE_LABEL": "Yazı boyutu",
     "FONT_FAMILY_LABEL": "Yazı tipi",
     "FONT_WEIGHT_LABEL": "Kalınlık",

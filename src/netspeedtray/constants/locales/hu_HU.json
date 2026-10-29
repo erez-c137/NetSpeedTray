@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Ezen a monitoron nincs tálca, ezért a NetSpeedTray az elsődleges monitor tálcáján van. Kapcsold be a(z) „{option}” lehetőséget, hogy ezen a monitoron maradjon.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Maradjon látható teljes képernyőn",
     "HIDE_WHEN_APPS_COVER_LABEL": "Elrejtés, amíg az alkalmazásgombok eltakarják a widgetet",
+    "HIDE_WHEN_APPS_COVER_DESC": "Csak vízszintes tálcán: visszatér, amint újra van hely. Soha nem kerül az időjárás gombra, hacsak oda nem húzod.",
     "FONT_SIZE_LABEL": "Betűméret",
     "FONT_FAMILY_LABEL": "Betűtípus",
     "FONT_WEIGHT_LABEL": "Vastagság",

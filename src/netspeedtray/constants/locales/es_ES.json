@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Este monitor no tiene barra de tareas, así que NetSpeedTray se coloca en la barra de tareas del monitor principal. Activa «{option}» para mantenerlo en este monitor.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Mantener visible en pantalla completa",
     "HIDE_WHEN_APPS_COVER_LABEL": "Ocultar mientras los botones de las aplicaciones cubran el widget",
+    "HIDE_WHEN_APPS_COVER_DESC": "Solo en barras de tareas horizontales: vuelve cuando hay espacio. Nunca se coloca sobre el botón del tiempo, salvo que lo arrastres allí.",
     "FONT_SIZE_LABEL": "Tamaño de fuente",
     "FONT_FAMILY_LABEL": "Fuente",
     "FONT_WEIGHT_LABEL": "Peso",

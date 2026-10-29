@@ -627,8 +627,9 @@ class PositionCalculator:
         # (main.py) when it covers the weather. The button only resizes when the weather text does, so
         # the widget follows it the way it follows a tray that gains an icon.
         # widgets_step=False: the #24 yield found the app buttons reaching that spot while the tray spot
-        # is still clear (a left-aligned bar full up to the Widgets button) - it stays by the tray,
-        # visible on the button's padding as in rc.2, instead of hiding (AppOverlapYield's retreat).
+        # is still clear (a left-aligned bar full up to the Widgets button) AND that tray spot clears
+        # the weather text/icon (#466) - it stays by the tray instead of hiding (AppOverlapYield's
+        # retreat). Otherwise the yield hides it, as on any full bar.
         if widgets_step and tray_rect and not user_placed_horizontal_offset(config):
             x = self._clear_of_widgets_button(taskbar_info, x, widget_width, right_boundary, dpi_scale,
                                               full_geom.left())

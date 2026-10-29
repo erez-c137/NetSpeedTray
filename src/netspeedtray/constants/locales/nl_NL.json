@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "Deze monitor heeft geen taakbalk, dus NetSpeedTray staat op de taakbalk van de primaire monitor. Zet '{option}' aan om het op deze monitor te houden.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Zichtbaar houden in volledig scherm",
     "HIDE_WHEN_APPS_COVER_LABEL": "Verbergen zolang app-knoppen de widget bedekken",
+    "HIDE_WHEN_APPS_COVER_DESC": "Alleen op horizontale taakbalken: hij komt terug zodra er ruimte is. Hij staat nooit op de weerknop, tenzij je hem daarheen sleept.",
     "FONT_SIZE_LABEL": "Lettergrootte",
     "FONT_FAMILY_LABEL": "Lettertype",
     "FONT_WEIGHT_LABEL": "Dikte",

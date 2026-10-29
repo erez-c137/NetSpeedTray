@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "このモニターにはタスクバーがないため、NetSpeedTray はプライマリ モニターのタスクバーに表示されます。このモニターに表示するには [{option}] をオンにしてください。",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "フルスクリーン時も表示を維持",
     "HIDE_WHEN_APPS_COVER_LABEL": "アプリのボタンと重なる間はウィジェットを隠す",
+    "HIDE_WHEN_APPS_COVER_DESC": "横向きのタスクバーのみ：空きができると戻ります。ドラッグしない限り、天気ボタンの上には表示されません。",
     "FONT_SIZE_LABEL": "フォントサイズ",
     "FONT_FAMILY_LABEL": "フォント",
     "FONT_WEIGHT_LABEL": "太さ",

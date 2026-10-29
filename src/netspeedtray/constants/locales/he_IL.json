@@ -116,6 +116,7 @@
     "PREFERRED_MONITOR_NO_TASKBAR_NOTE": "למסך זה אין שורת משימות, ולכן NetSpeedTray ממוקם בשורת המשימות של המסך הראשי. הפעל את \"{option}\" כדי להשאיר אותו במסך זה.",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "השאר גלוי במסך מלא",
     "HIDE_WHEN_APPS_COVER_LABEL": "הסתר כשלחצני היישומים מכסים את היישומון",
+    "HIDE_WHEN_APPS_COVER_DESC": "בשורת משימות אופקית בלבד: הוא חוזר כשיש מקום. הוא אף פעם לא יושב על לחצן מזג האוויר, אלא אם גוררים אותו לשם.",
     "FONT_SIZE_LABEL": "גודל גופן",
     "FONT_FAMILY_LABEL": "גופן",
     "FONT_WEIGHT_LABEL": "משקל",
