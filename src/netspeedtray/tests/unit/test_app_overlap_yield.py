@@ -959,15 +959,72 @@ def test_unknown_after_the_hold_shows_it(rig):
     assert not r.y.yielded
 
 
-def test_yielded_rechecks_stay_at_one_second(rig):
-    r = rig(1380)
-    r.start(left_aligned(28, overflow=True))
-    assert r.y.yielded
-    for _ in range(8):
-        r.now += 30.0
+def _tick_gaps(r, elements, seconds, step=0.25):
+    """Drive the 1 s tick in ``step`` s increments for ``seconds``; the gaps between probes."""
+    gaps, last, end = [], r.now, r.now + seconds
+    while r.now < end:
+        r.now += step
         r.y.sync()
-        r.probe(left_aligned(28, overflow=True))
-    assert r.y._near_interval_ms == T.APP_YIELD_ACTIVE_RECHECK_MS == 1000
+        if r.pending_probe():
+            gaps.append(round(r.now - last, 2))
+            last = r.now
+            r.probe(elements)
+    return gaps
+
+
+def test_yielded_rechecks_every_second_while_active_then_back_off_to_the_idle_cap(rig):
+    r = rig(1380)
+    crowded = left_aligned(28, overflow=True)
+    r.start(crowded)
+    assert r.y.yielded
+    gaps = _tick_gaps(r, crowded, 120.0)
+    active = T.APP_YIELD_ACTIVE_WINDOW_MS / 1000.0
+    assert set(gaps[:int(active) - 1]) == {T.APP_YIELD_ACTIVE_RECHECK_MS / 1000.0}
+    assert max(gaps) <= T.APP_YIELD_IDLE_RECHECK_MAX_MS / 1000.0 + 0.25
+    assert gaps[-1] == pytest.approx(T.APP_YIELD_IDLE_RECHECK_MAX_MS / 1000.0, abs=0.3)
+    # Hours crowded: a probe every 8 s, not every second (one probe ~19 ms of CPU incl. Explorer's).
+    assert len(gaps) < 120.0 / 2
+
+
+def test_a_long_idle_yield_still_returns_within_the_idle_cap_on_a_background_close(rig):
+    r = rig(1380)
+    crowded = left_aligned(28, overflow=True)
+    r.start(crowded)
+    _tick_gaps(r, crowded, 300.0)
+    assert r.y.yielded
+    waited = 0.0
+    while not r.pending_probe():                 # an app closed in the background: no foreground hint
+        r.now += 0.25
+        waited += 0.25
+        r.y.sync()
+    assert waited <= T.APP_YIELD_IDLE_RECHECK_MAX_MS / 1000.0
+    r.probe(left_aligned(20))
+    r.probe(left_aligned(20), advance=0.5)
+    assert not r.y.yielded
+
+
+def test_foreground_change_restores_the_one_second_cadence_after_idle(rig):
+    r = rig(1380)
+    near = left_aligned(27)                       # 91 px clear: near, never yields
+    r.start(near)
+    _tick_gaps(r, near, 120.0)
+    assert r.y._near_interval_ms == T.APP_YIELD_IDLE_RECHECK_MAX_MS
+    r.y.note_foreground_change()
+    r.probe(near)
+    r.y._followup_timer.stop()
+    r.y._followups_left = 0
+    assert set(_tick_gaps(r, near, 10.0)) == {T.APP_YIELD_ACTIVE_RECHECK_MS / 1000.0}
+
+
+def test_a_tick_slightly_under_one_second_after_the_probe_still_rechecks(rig):
+    """The tick is a 1000 ms QTimer and its probe fires a few ms after it: without slack the next
+    tick sees 0.99x s and skips (real-QTimer measurement: median gap 2.0 s, not 1 s)."""
+    r = rig(1380)
+    near = left_aligned(27)
+    r.start(near)
+    r.now += 0.995
+    r.y.sync()
+    assert r.pending_probe()
 
 
 def test_centred_prediction_grows_half_a_slot_at_each_end():
