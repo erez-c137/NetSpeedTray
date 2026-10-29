@@ -265,7 +265,7 @@ def test_hysteresis_drop_baseline_and_unknown():
 
 # --- the watcher on the owner's real bar ---------------------------------------------------------
 
-def test_owner_bottom_centred_bar_never_yields_and_costs_few_probes(rig, layout):
+def test_owner_bottom_centred_bar_never_yields_on_foreground_probes(rig, layout):
     r = rig(OWNER_WIDGET_X)
     r.start(CENTERED)
     assert layout.requests == [True]             # keep_last: never falls back to the lagging HWND rect
@@ -280,8 +280,8 @@ def test_owner_bottom_centred_bar_never_yields_and_costs_few_probes(rig, layout)
             probes += 1
         r.y._followup_timer.stop()
     assert not r.y.yielded and r.changes == 0 and r.firsts == 0
-    # 5.6 slots clear: a probe only every third foreground change (each one assumed one slot).
-    assert probes <= 11
+    # Measure each event: a newly opened uncombined button need not be a 44 px slot.
+    assert probes == 31
 
 
 def test_owner_bar_idle_tick_never_probes(rig, layout):
@@ -328,12 +328,12 @@ def test_left_aligned_apps_grow_into_the_widget_with_and_without_overflow(rig):
     r.start(left_aligned(20))                    # ends at 981: 9 slots away, nothing polls
     assert not r.y.yielded
     fg = 0
-    while not r.pending_probe():                 # apps opening: one assumed slot per foreground change
+    while not r.pending_probe():                 # opening a window must request a real measurement
         r.now += 2.0
         r.y.note_foreground_change()
         fg += 1
         assert fg < 10
-    assert fg == 7                               # predicted within 3 slots
+    assert fg == 1                               # measurement is not gated by the slot prediction
     r.probe(left_aligned(28))                    # ends at 1333: 47 px clear
     assert not r.y.yielded
     r.y.note_foreground_change()
@@ -461,7 +461,7 @@ def test_foreground_change_probes_now_and_800ms_later_when_near(rig):
     assert r.pending_probe()
 
 
-def test_near_tick_every_3s_backs_off_while_nothing_changes(rig):
+def test_near_tick_stays_responsive_while_nothing_changes(rig):
     r = rig(1380)
     r.start(left_aligned(27))
     intervals = []
@@ -476,9 +476,7 @@ def test_near_tick_every_3s_backs_off_while_nothing_changes(rig):
             assert waited < 200
         intervals.append(waited)
         r.probe(left_aligned(27))
-    assert intervals[0] == pytest.approx(T.SIDE_BAR_NEAR_RECHECK_MS / 1000.0, abs=0.6)
-    assert intervals[1] == pytest.approx(T.SIDE_BAR_NEAR_RECHECK_MS / 1000.0 * 2, abs=0.6)
-    assert intervals == sorted(intervals) and intervals[-1] <= T.SIDE_BAR_NEAR_RECHECK_MAX_MS / 1000.0 + 0.5
+    assert intervals == [T.APP_YIELD_ACTIVE_RECHECK_MS / 1000.0] * 6
 
 
 def test_far_widget_tick_never_probes_but_yielded_one_does(rig):
@@ -961,15 +959,72 @@ def test_unknown_after_the_hold_shows_it(rig):
     assert not r.y.yielded
 
 
-def test_yielded_backoff_is_capped_at_10s(rig):
-    r = rig(1380)
-    r.start(left_aligned(28, overflow=True))
-    assert r.y.yielded
-    for _ in range(8):
-        r.now += 30.0
+def _tick_gaps(r, elements, seconds, step=0.25):
+    """Drive the 1 s tick in ``step`` s increments for ``seconds``; the gaps between probes."""
+    gaps, last, end = [], r.now, r.now + seconds
+    while r.now < end:
+        r.now += step
         r.y.sync()
-        r.probe(left_aligned(28, overflow=True))
-    assert r.y._near_interval_ms == T.APP_YIELD_YIELDED_RECHECK_MAX_MS == 10000
+        if r.pending_probe():
+            gaps.append(round(r.now - last, 2))
+            last = r.now
+            r.probe(elements)
+    return gaps
+
+
+def test_yielded_rechecks_every_second_while_active_then_back_off_to_the_idle_cap(rig):
+    r = rig(1380)
+    crowded = left_aligned(28, overflow=True)
+    r.start(crowded)
+    assert r.y.yielded
+    gaps = _tick_gaps(r, crowded, 120.0)
+    active = T.APP_YIELD_ACTIVE_WINDOW_MS / 1000.0
+    assert set(gaps[:int(active) - 1]) == {T.APP_YIELD_ACTIVE_RECHECK_MS / 1000.0}
+    assert max(gaps) <= T.APP_YIELD_IDLE_RECHECK_MAX_MS / 1000.0 + 0.25
+    assert gaps[-1] == pytest.approx(T.APP_YIELD_IDLE_RECHECK_MAX_MS / 1000.0, abs=0.3)
+    # Hours crowded: a probe every 8 s, not every second (one probe ~19 ms of CPU incl. Explorer's).
+    assert len(gaps) < 120.0 / 2
+
+
+def test_a_long_idle_yield_still_returns_within_the_idle_cap_on_a_background_close(rig):
+    r = rig(1380)
+    crowded = left_aligned(28, overflow=True)
+    r.start(crowded)
+    _tick_gaps(r, crowded, 300.0)
+    assert r.y.yielded
+    waited = 0.0
+    while not r.pending_probe():                 # an app closed in the background: no foreground hint
+        r.now += 0.25
+        waited += 0.25
+        r.y.sync()
+    assert waited <= T.APP_YIELD_IDLE_RECHECK_MAX_MS / 1000.0
+    r.probe(left_aligned(20))
+    r.probe(left_aligned(20), advance=0.5)
+    assert not r.y.yielded
+
+
+def test_foreground_change_restores_the_one_second_cadence_after_idle(rig):
+    r = rig(1380)
+    near = left_aligned(27)                       # 91 px clear: near, never yields
+    r.start(near)
+    _tick_gaps(r, near, 120.0)
+    assert r.y._near_interval_ms == T.APP_YIELD_IDLE_RECHECK_MAX_MS
+    r.y.note_foreground_change()
+    r.probe(near)
+    r.y._followup_timer.stop()
+    r.y._followups_left = 0
+    assert set(_tick_gaps(r, near, 10.0)) == {T.APP_YIELD_ACTIVE_RECHECK_MS / 1000.0}
+
+
+def test_a_tick_slightly_under_one_second_after_the_probe_still_rechecks(rig):
+    """The tick is a 1000 ms QTimer and its probe fires a few ms after it: without slack the next
+    tick sees 0.99x s and skips (real-QTimer measurement: median gap 2.0 s, not 1 s)."""
+    r = rig(1380)
+    near = left_aligned(27)
+    r.start(near)
+    r.now += 0.995
+    r.y.sync()
+    assert r.pending_probe()
 
 
 def test_centred_prediction_grows_half_a_slot_at_each_end():
@@ -979,16 +1034,12 @@ def test_centred_prediction_grows_half_a_slot_at_each_end():
     assert predict_group((12.0, 981.0), 1, None) == (12.0 - slot, 981.0 + slot)
 
 
-def test_owner_centred_bar_with_alignment_needs_more_changes_before_a_probe(rig):
+def test_even_a_far_centred_bar_is_measured_after_one_foreground_change(rig):
     r = rig(OWNER_WIDGET_X, centered=True)
     r.start(CENTERED)
-    n = 0
-    while not r.pending_probe():
-        r.now += 2.0
-        r.y.note_foreground_change()
-        n += 1
-        assert n < 20
-    assert n == 6                                 # 249 px clear, 22 px per change; was 3 at a whole slot
+    r.now += 2.0
+    r.y.note_foreground_change()
+    assert r.pending_probe()
 
 
 def test_shutdown_and_restart_log_their_own_reason(rig, caplog):
@@ -1002,6 +1053,94 @@ def test_shutdown_and_restart_log_their_own_reason(rig, caplog):
         r.y.detach("shutting down")
     assert any("shutting down" in x for x in caplog.messages)
     assert not any("no longer" in x for x in caplog.messages)
+
+
+def test_wide_labelled_button_is_measured_even_when_old_model_is_far(rig):
+    r = rig(500, centered=False)
+    r.start(left_aligned(1, widgets=False))       # last app ends at 145, well outside the near band
+    wide = [_b("ToggleButton", "StartButton", 12, 57),
+            _b("ToggleButton", "SearchButton", 57, 101),
+            _b(APP, "Appid: wide labelled window", 101, 601)]
+    r.now += 1.0
+    r.y.note_foreground_change()
+    assert r.pending_probe()
+    r.probe(wide)
+    assert r.y.yielded
+
+
+def test_followup_detects_layout_that_changes_after_first_800ms(rig):
+    r = rig(1380, centered=False)
+    original = left_aligned(27, widgets=False)
+    r.start(original)
+    r.now += 1.0
+    r.y.note_foreground_change()
+    r.probe(original)
+    r.y._followup_timer.stop()
+    r.now += 0.8
+    r.y._on_followup()
+    r.probe(original)                            # first follow-up still sees the old layout
+    assert not r.y.yielded and r.y._followup_timer.isActive()
+    r.y._followup_timer.stop()
+    r.now += 0.8
+    r.y._on_followup()
+    r.probe(left_aligned(30, widgets=False))      # final layout only arrives after 800 ms
+    assert r.y.yielded
+
+
+def test_far_bar_followup_burst_is_bounded_and_then_idle(rig, layout):
+    r = rig(OWNER_WIDGET_X, centered=True)
+    r.start(CENTERED)
+    r.now += 1.0
+    r.y.note_foreground_change()
+    r.probe(CENTERED)
+    for _ in range(T.APP_YIELD_FOREGROUND_FOLLOWUPS):
+        r.y._followup_timer.stop()
+        r.now += 0.8
+        r.y._on_followup()
+        r.probe(CENTERED)
+    assert not r.y._followup_timer.isActive() and r.y._followups_left == 0
+    assert len(layout.requests) == 2 + T.APP_YIELD_FOREGROUND_FOLLOWUPS
+    for _ in range(60):
+        r.now += 1.0
+        r.y.sync()
+        assert not r.pending_probe()
+
+
+def test_background_close_returns_widget_without_a_foreground_change(rig):
+    r = rig(1380)
+    crowded = left_aligned(28, overflow=True)
+    r.start(crowded)
+    for _ in range(12):                          # do not accumulate a long idle back-off
+        r.now += 1.0
+        r.y.sync()
+        r.probe(crowded)
+    assert r.y.yielded
+    r.now += 1.0                                # background close: no foreground hint
+    r.y.sync()
+    r.probe(left_aligned(20))
+    assert r.y.yielded and r.pending_probe()     # still require the anti-flicker confirmation
+    r.probe(left_aligned(20), advance=0.5)
+    assert not r.y.yielded
+
+
+def test_foreground_event_resets_old_backoff_and_works_before_first_layout(rig):
+    r = rig(1380)
+    r.y.sync()                                  # attach, initial probe has not landed yet
+    r.y._near_interval_ms = 60000
+    r.y.note_foreground_change()
+    assert r.y._near_interval_ms == T.APP_YIELD_ACTIVE_RECHECK_MS
+    assert r.y._followups_left == T.APP_YIELD_FOREGROUND_FOLLOWUPS
+    assert r.pending_probe() and r.y._followup_timer.isActive()
+
+
+def test_detach_discards_pending_foreground_followups(rig):
+    r = rig(OWNER_WIDGET_X)
+    r.start(CENTERED)
+    r.y.note_foreground_change()
+    r.y.detach()
+    assert r.y._followups_left == 0 and not r.y._followup_timer.isActive()
+    r.y._on_followup()
+    assert not r.pending_probe()
 
 
 # --- a live scale change: Explorer's buttons in a stale scale's coordinates (rc.2 final VM run) ---
