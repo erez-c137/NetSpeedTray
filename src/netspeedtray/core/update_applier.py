@@ -746,6 +746,13 @@ def sweep_old_backups(install_dir: str, keep_newer_than_sec: float = 60.0) -> in
     removed = 0
     try:
         install_abs = os.path.abspath(install_dir)
+        if not os.path.lexists(os.path.join(install_abs, PORTABLE_MARKER)):
+            # An installed (Setup) build: no portable.marker by design, and the ``.old-`` folders
+            # are left only by the PORTABLE applier, so there is nothing to sweep. Same outcome as
+            # the incomplete case below (nothing is touched) - only without its INFO line, which
+            # every installed launch logged in rc.2 although nothing was wrong.
+            logger.debug("Not a portable install; no previous-version folders to sweep.")
+            return 0
         if not _install_is_complete(install_abs):
             logger.info("The running install looks incomplete; leaving any previous version alone.")
             return 0

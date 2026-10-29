@@ -56,6 +56,8 @@ _ATTRIBUTION_KEYS = {
     LP.LOSS_UNKNOWN: ("CHECK_CONN_VERDICT_UNKNOWN",
                       "Without replies from your router, this check can't tell whether loss is on "
                       "your Wi-Fi or local network or beyond it."),
+    LP.LOSS_NO_CONNECTION: ("CHECK_CONN_VERDICT_NO_CONNECTION",
+                            "Nothing got through - the connection is down, not just losing packets."),
 }
 # Network details rows: (NetworkDetails field, i18n key, English fallback, in the copied report).
 _DETAIL_ROWS = [
@@ -301,12 +303,17 @@ class ConnectionCheckSheet(QDialog):
     """The modal check sheet. ``gateway_ip`` is the standing probe's router (None = look it up)."""
 
     def __init__(self, config: Dict[str, Any], i18n, gateway_ip: Optional[str] = None,
-                 app_version: str = "", autostart: bool = True, parent=None) -> None:
+                 app_version: str = "", autostart: bool = True, parent=None,
+                 gateway_answered: bool = False) -> None:
         super().__init__(parent)
         self._config = config
         self._i18n = i18n
         self._app_version = app_version
         self._gateway_ip = gateway_ip
+        # The standing probe has seen this router answer (LatencyProbe.gateway_answered): 0 replies
+        # now is a lost connection, not a router that never answers pings.
+        self._gateway_answered = bool(gateway_answered)
+        self._link: str = LP.LINK_UNKNOWN       # latency_probe.link_state() at the end of the check
         self._include_internet = False          # the one-off tick; never written to config
         self._worker: Optional[CC.ConnectionCheck] = None
         self._echoes: Dict[str, List[Optional[float]]] = {}
@@ -410,6 +417,7 @@ class ConnectionCheckSheet(QDialog):
         if self._anchor_host:
             self._echoes[CC.HOP_ANCHOR] = []
         self._stats = {}
+        self._link = LP.LINK_UNKNOWN
         self._started_at = datetime.now()
         self._state = "running"
         self._reset_view()
@@ -417,6 +425,7 @@ class ConnectionCheckSheet(QDialog):
         w.gateway_resolved.connect(self._on_gateway)
         w.details_resolved.connect(self._on_details)
         w.echo_done.connect(self._on_echo)
+        w.link_resolved.connect(self._on_link)
         w.check_finished.connect(self._on_finished)
         self._worker = w
         reg = _check_registry()
@@ -438,7 +447,8 @@ class ConnectionCheckSheet(QDialog):
         if sip.isdeleted(w):
             return   # finished and already released by the registry
         for sig, slot in ((w.gateway_resolved, self._on_gateway), (w.details_resolved, self._on_details),
-                          (w.echo_done, self._on_echo), (w.check_finished, self._on_finished)):
+                          (w.echo_done, self._on_echo), (w.link_resolved, self._on_link),
+                          (w.check_finished, self._on_finished)):
             try:
                 sig.disconnect(slot)
             except Exception:
@@ -473,6 +483,9 @@ class ConnectionCheckSheet(QDialog):
         if hop in self._echoes:
             self._echoes[hop].append(None if ms is None else float(ms))
             self._refresh()
+
+    def _on_link(self, link) -> None:
+        self._link = str(link)
 
     def _on_finished(self, stats) -> None:
         self._worker = None   # done; the registry deleteLater()s it once its thread has ended
@@ -523,6 +536,14 @@ class ConnectionCheckSheet(QDialog):
             gw_card.status.setText(
                 f"<span style='color:{c['text_secondary']};'>"
                 f"{self._tr('CHECK_CONN_NO_ROUTER', 'No router found')}</span>")
+        lost = self.lost_reason()
+        if lost is not None:
+            # A dead link reads as one - never as a router that ignores pings (rc.2 VM session).
+            gw_card.status.setText(
+                f"<span style='color:{constants.network.latency.VERDICT_COLORS[LP.VERDICT_SLOW]};'>"
+                f"{self._tr('LATENCY_NO_CONNECTION', 'No connection')}</span>")
+            gw_card.note.setText(self._lost_note(lost))
+            gw_card.note.setVisible(True)
 
         sentence = self._attribution_text()
         self._sentence.setText(sentence)
@@ -562,10 +583,31 @@ class ConnectionCheckSheet(QDialog):
         pct = self._fmt_cell("loss_pct", st.loss_pct).rstrip("%")
         return self._tr("MONITOR_LATENCY_LOSS_FMT", "{pct}% loss").format(pct=pct)
 
+    def lost_reason(self) -> Optional[str]:
+        """CC.LOST_NO_LINK / CC.LOST_ROUTER once a finished check shows a lost connection, else None."""
+        if self._state != "done" or CC.HOP_GATEWAY not in self._stats:
+            return None
+        # The probe's record belongs to the router IT saw. A router this check looked up itself (the
+        # probe had none - its answering one had vanished) has proven nothing: an ICMP-silent new
+        # router must not read "was answering a moment ago".
+        answered = self._gateway_answered and (
+            not self._resolved_gw or self._resolved_gw == self._gateway_ip)
+        return CC.connection_lost(self._stats[CC.HOP_GATEWAY], bool(self._resolved_gw), self._link,
+                                  answered, self._stats.get(CC.HOP_ANCHOR))
+
+    def _lost_note(self, lost: str) -> str:
+        if lost == CC.LOST_NO_LINK:
+            return self._tr("CHECK_CONN_NO_LINK",
+                            "Your network adapter has no connection - check the cable or Wi-Fi.")
+        return self._tr("CHECK_CONN_ROUTER_LOST",
+                        "Your router was answering a moment ago and now answers nothing - "
+                        "the connection to it is lost.")
+
     def attribution_code(self) -> Optional[str]:
         if self._state != "done" or CC.HOP_GATEWAY not in self._stats:
             return None
-        return CC.check_attribution(self._stats[CC.HOP_GATEWAY], self._stats.get(CC.HOP_ANCHOR))
+        return CC.check_attribution(self._stats[CC.HOP_GATEWAY], self._stats.get(CC.HOP_ANCHOR),
+                                    lost=self.lost_reason())
 
     def _attribution_text(self) -> str:
         code = self.attribution_code()
@@ -609,21 +651,30 @@ class ConnectionCheckSheet(QDialog):
             if hop == CC.HOP_ANCHOR and st is None:
                 lines.append(f"{name}: {self._tr('CHECK_CONN_NOT_CHECKED', 'not checked')}")
                 continue
+            lost = self.lost_reason() if hop == CC.HOP_GATEWAY else None
             if hop == CC.HOP_GATEWAY and not addr:
-                lines.append(f"{name}: {self._tr('CHECK_CONN_NO_ROUTER', 'No router found')}")
+                word = (self._tr("LATENCY_NO_CONNECTION", "No connection") if lost
+                        else self._tr("CHECK_CONN_NO_ROUTER", "No router found"))
+                lines.append(f"{name}: {word}")
+                if lost:
+                    lines.append(f"  {self._lost_note(lost)}")
                 continue
             head = f"{name} {addr}" if addr else name
             cells = "  ".join(f"{_tr(self._i18n, key, default)}: {self._fmt_cell(field, getattr(st, field))}"
                               for field, key, default in _CELLS)
             verdict = ""
             if self._state == "done" and st is not None and st.sent:
-                if st.verdict is None:
+                if lost:
+                    verdict = f"  [{self._tr('LATENCY_NO_CONNECTION', 'No connection')}]"
+                elif st.verdict is None:
                     verdict = f"  [{self._tr('CHECK_CONN_NO_REPLY', 'No reply')}]"
                 else:
                     k, d = _VERDICT_KEYS[st.verdict]
                     loss = self._loss_text(st)
                     verdict = f"  [{self._tr(k, d)}{', ' + loss if loss else ''}]"
             lines.append(f"{head}{verdict}\n  {cells}")
+            if lost:
+                lines.append(f"  {self._lost_note(lost)}")
         details = [f"{_tr(self._i18n, key, default)}: {_copied_detail_text(self._details, field)}"
                    for field, key, default, copied in _DETAIL_ROWS
                    if copied and _copied_detail_text(self._details, field)]
@@ -672,13 +723,14 @@ def open_connection_check(main_widget, config: Dict[str, Any], i18n, parent=None
     The router address comes from the standing probe when it has one (no second WMI lookup)."""
     probe = getattr(main_widget, "latency_probe", None)
     gateway = getattr(probe, "gateway", None) if probe is not None else None
+    answered = getattr(probe, "gateway_answered", False) is True if probe is not None else False
     try:
         from netspeedtray import __version__
     except Exception:
         __version__ = ""
     try:
         sheet = ConnectionCheckSheet(config, i18n, gateway_ip=gateway, app_version=__version__,
-                                     parent=parent)
+                                     parent=parent, gateway_answered=answered)
         sheet.exec()
     except Exception as e:
         logging.getLogger("NetSpeedTray.ConnectionCheck").error(

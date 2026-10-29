@@ -206,7 +206,7 @@ _layout_landed = threading.Condition(_layout_lock)
 # group: the contiguous Start-led button run (uia_widgets.app_group_from_elements), for consumers that
 # must not count far-away buttons; landed: how many probe results have landed (a sequence number).
 _layout_state: dict = {"hwnd": 0, "apps": None, "widgets": None, "group": None, "overflow": None,
-                       "pending": False,
+                       "bar": None, "pending": False,
                        "done": False, "gen": 0, "running": False, "started": 0.0, "landed": 0}
 # A UIA call into a hung Explorer can block for a long time. Past this, the request counts as
 # finished WITHOUT a result (placement goes final on the classic HWND rect); a late result is dropped.
@@ -223,6 +223,22 @@ def _query_taskbar_layout_blocking(taskbar_hwnd: int):
         return None
 
 
+def _taskbar_window_rect(hwnd: int) -> Optional[Tuple[int, int, int, int]]:
+    """The taskbar window's own rect (physical px), or None. Never raises."""
+    try:
+        return valid_rect(tuple(win32gui.GetWindowRect(int(hwnd))))
+    except Exception:  # noqa: BLE001 - a dead handle, or no win32 in tests
+        return None
+
+
+def _rect_union(a, b) -> Optional[Tuple[int, int, int, int]]:
+    """The bounding rect of two optional rects; None only when both are."""
+    a, b = valid_rect(a), valid_rect(b)
+    if a is None or b is None:
+        return a or b
+    return min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])
+
+
 def _layout_worker() -> None:
     """Probe until the newest request has been answered (requests made meanwhile re-run it)."""
     while True:
@@ -231,9 +247,14 @@ def _layout_worker() -> None:
             if not _layout_state["pending"]:
                 _layout_state["running"] = False
                 return
+        bar_before = _taskbar_window_rect(hwnd)
         result = _query_taskbar_layout_blocking(hwnd)
+        bar = _rect_union(bar_before, _taskbar_window_rect(hwnd))   # an auto-hide bar may slide meanwhile
         overflow = None
-        if isinstance(result, tuple) and len(result) == 4:
+        if isinstance(result, tuple) and len(result) == 5:
+            apps, widgets, group, overflow, tray = result
+            _remember_probed_tray(hwnd, tray)
+        elif isinstance(result, tuple) and len(result) == 4:
             apps, widgets, group, overflow = result
         elif isinstance(result, tuple) and len(result) == 3:
             apps, widgets, group = result
@@ -245,7 +266,7 @@ def _layout_worker() -> None:
             if _layout_state["gen"] == gen and _layout_state["pending"]:
                 _layout_state.update(apps=valid_rect(apps), widgets=valid_rect(widgets),
                                      group=valid_rect(group), overflow=valid_rect(overflow),
-                                     pending=False, done=True,
+                                     bar=bar, pending=False, done=True,
                                      landed=_layout_state.get("landed", 0) + 1)
                 _layout_landed.notify_all()
                 logger.debug("Taskbar layout probe: apps=%s widgets=%s", apps, widgets)
@@ -269,7 +290,13 @@ def request_taskbar_layout_probe(taskbar_hwnd: Optional[int], keep_last: bool = 
             _layout_state.update(pending=True, started=time.monotonic())
         else:
             _layout_state.update(hwnd=int(taskbar_hwnd), apps=None, widgets=None, group=None,
-                                 overflow=None, pending=True, done=False, started=time.monotonic())
+                                 overflow=None, bar=None, pending=True, done=False,
+                                 started=time.monotonic())
+            # A fresh probe means a new dock (edge / thickness / DPI / widget height): the clock seen
+            # on the old layout is no longer trusted - after a live 100 -> 150 % change (#444) it still
+            # lies inside the same-height bar, but the clock grew. The DPI-scaled reserve answers
+            # until this probe lands.
+            _probed_tray.pop(int(taskbar_hwnd), None)
         start = not _layout_state["running"]
         _layout_state["running"] = True
     if start:
@@ -312,6 +339,35 @@ def taskbar_layout_overflow(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, 
         return _layout_state["overflow"]
 
 
+# The UIA tray span (physical px) per taskbar HWND, from the last probe of that taskbar. Kept apart from
+# _layout_state, which holds ONE taskbar at a time: with "Show on all taskbars" (#229/#434) the main
+# widget and every mirror probe their own bar, and a mirror on a Win11 SECONDARY side bar (no
+# TrayNotifyWnd) must still know where its clock is after another bar's probe has replaced the
+# layout cache. Bounded: a handful of taskbars; an Explorer restart brings new HWNDs.
+_probed_tray: dict = {}
+_PROBED_TRAY_MAX = 16
+
+
+def _remember_probed_tray(taskbar_hwnd: int, tray: Any) -> None:
+    rect = valid_rect(tray)
+    with _layout_lock:
+        if rect is None:
+            _probed_tray.pop(int(taskbar_hwnd), None)
+            return
+        if len(_probed_tray) >= _PROBED_TRAY_MAX and int(taskbar_hwnd) not in _probed_tray:
+            _probed_tray.pop(next(iter(_probed_tray)))
+        _probed_tray[int(taskbar_hwnd)] = rect
+
+
+def probed_tray_rect(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
+    """The tray span UIA last saw on ``taskbar_hwnd`` (physical px) - on a Win11 secondary taskbar,
+    its clock - or None when that taskbar has not been probed / showed no tray. Non-blocking."""
+    if not taskbar_hwnd:
+        return None
+    with _layout_lock:
+        return _probed_tray.get(int(taskbar_hwnd))
+
+
 def wait_for_taskbar_layout(taskbar_hwnd: Optional[int], timeout_s: float) -> bool:
     """Block up to ``timeout_s`` until the requested probe for ``taskbar_hwnd`` is no longer pending.
     True when it landed (or nothing was pending). For the FIRST side-bar placement only, so the
@@ -336,6 +392,26 @@ def taskbar_layout_group(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int
         if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
             return None
         return _layout_state["group"]
+
+
+def taskbar_layout_bar(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
+    """The taskbar window rect (physical px) read around the last landed probe, or None: what the
+    probe's rects must fit in to be in the same coordinate space (``group_fits_bar``)."""
+    with _layout_lock:
+        if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
+            return None
+        return _layout_state.get("bar")
+
+
+def group_fits_bar(group_rect, bar_rect,
+                   tolerance: int = constants.layout.APP_GROUP_BAR_FIT_TOLERANCE_PX) -> bool:
+    """``group_rect`` lies inside ``bar_rect`` (both physical px), within ``tolerance``. True when
+    either is unknown (nothing to check against: no change from before the check existed)."""
+    group, bar = valid_rect(group_rect), valid_rect(bar_rect)
+    if group is None or bar is None:
+        return True
+    return (group[0] >= bar[0] - tolerance and group[1] >= bar[1] - tolerance
+            and group[2] <= bar[2] + tolerance and group[3] <= bar[3] + tolerance)
 
 
 def taskbar_layout_landed_count(taskbar_hwnd: Optional[int]) -> int:

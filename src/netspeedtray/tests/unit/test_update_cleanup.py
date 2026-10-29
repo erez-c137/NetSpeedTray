@@ -1043,3 +1043,45 @@ def test_r2_l5_a_cross_drive_move_that_copied_fully_points_at_the_copy(
     monkeypatch.setattr(ui.shutil, "move", _copy_then_fail)
 
     assert _secure_updater()._move_to_downloads(str(ready)) == str(downloads / "NetSpeedTray-9.9.9")
+
+
+# ------------------------------------------- installed (Setup) builds are not "incomplete" (rc.2)
+
+def _installed(root: Path) -> Path:
+    """A Program Files install as Inno Setup lays it down: no portable.marker, an uninstaller."""
+    d = root / "NetSpeedTray"
+    (d / "_internal").mkdir(parents=True)
+    (d / ua.APP_EXE).write_bytes(b"MZinstalled")
+    (d / "_internal" / "base_library.zip").write_bytes(b"PK")
+    (d / "unins000.exe").write_bytes(b"MZ")
+    (d / "unins000.dat").write_bytes(b"dat")
+    return d
+
+
+def test_an_installed_build_does_not_log_an_incomplete_install(tmp_path, monkeypatch, caplog):
+    """rc.2 VM finding: every installed launch logged 'The running install looks incomplete'
+    because the sweep required portable.marker, which only the portable ZIP ships."""
+    install = _installed(tmp_path)
+    _run_as(monkeypatch, install)
+    with caplog.at_level("DEBUG", logger="NetSpeedTray.UpdateApplier"):
+        assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 0
+    assert not any("incomplete" in r.getMessage() for r in caplog.records)
+
+
+def test_an_installed_build_still_sweeps_nothing(tmp_path, monkeypatch):
+    """The quiet path keeps the old outcome: a .old- sibling of an installed tree is untouched."""
+    install = _installed(tmp_path)
+    bk = _portable(tmp_path, "NetSpeedTray.old-" + _STAMP)
+    _backdate(bk)
+    _run_as(monkeypatch, install)
+    assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 0
+    assert (bk / ua.APP_EXE).exists()
+
+
+def test_a_portable_install_missing_its_stdlib_still_reports_incomplete(tmp_path, monkeypatch, caplog):
+    install = _portable(tmp_path, "NetSpeedTray")
+    (install / "_internal" / "base_library.zip").unlink()
+    _run_as(monkeypatch, install)
+    with caplog.at_level("INFO", logger="NetSpeedTray.UpdateApplier"):
+        assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 0
+    assert any("looks incomplete" in r.getMessage() for r in caplog.records)

@@ -835,7 +835,14 @@ class OverviewTab(QWidget):
         internet anchor when the user opted into the public probe, the gateway otherwise
         (`latency_loss` is already that hop's loss; latency_probe.headline_hop is the rule).
         The ms is the hop's most recent successful RTT within its live window, so one lost ping does
-        not flip the pill to "Slow"; the loss is None (no subtext) until the window is long enough."""
+        not flip the pill to "Slow"; the loss is None (no subtext) until the window is long enough.
+        A lost connection (the latest sample's ``latency_link_lost``) reads "No connection" in the Slow
+        colour at once - never the window's last good ms, which outlived a pulled cable by ~2 min."""
+        label = self._latency_label(getattr(mw, "latency_headline_hop", None))
+        if getattr(mw, "latency_link_lost", False) is True:
+            color = constants.network.latency.VERDICT_COLORS["slow"]
+            word = self._tr("LATENCY_NO_CONNECTION", "No connection")
+            return f"<span style='color:{color};'>{label}: {word}</span>"
         gw = getattr(mw, "latency_gw", None)
         anchor = getattr(mw, "latency_anchor", None)
         raw_loss = getattr(mw, "latency_loss", None)
@@ -853,7 +860,6 @@ class OverviewTab(QWidget):
         word = self._tr(_VERDICT_KEYS[verdict][0], _VERDICT_KEYS[verdict][1])
         color = constants.network.latency.VERDICT_COLORS[verdict]
         sub = su.semantic_colors()["text_secondary"]
-        label = self._latency_label(getattr(mw, "latency_headline_hop", None))
         out = f"<span style='color:{color};'>{label}: {word}</span>"
         detail = []
         if ms is not None:

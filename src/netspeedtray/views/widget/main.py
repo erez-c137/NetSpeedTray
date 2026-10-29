@@ -240,6 +240,9 @@ class NetworkSpeedWidget(QWidget):
         # Most recent successful RTT of the headline hop within its live window - the pill's ms, so one
         # lost ping does not blank it (and the router's ms never stands in for the internet's).
         self.latency_headline_ms: Optional[float] = None
+        # The last sample said the connection is down (LatencySample.gw_link_lost): the pill reads
+        # "No connection" at once rather than the window's stale "Good" (rc.2 VM session).
+        self.latency_link_lost: bool = False
         from netspeedtray.core.latency_probe import LatencyLossWindows
         self._latency_loss_windows = LatencyLossWindows()
         # Local metrics endpoint (2.2 scope B) - created on first enable, None while never enabled.
@@ -639,6 +642,7 @@ class NetworkSpeedWidget(QWidget):
         self.latency_loss = (self.latency_loss_anchor if self.latency_headline_hop == HOP_ANCHOR
                              else self.latency_loss_gw)
         self.latency_headline_ms = windows.last_ms(self.latency_headline_hop)
+        self.latency_link_lost = bool(getattr(sample, "gw_link_lost", False))
         ws = getattr(self, "widget_state", None)
         if ws is not None:
             try:
@@ -717,6 +721,7 @@ class NetworkSpeedWidget(QWidget):
         self.latency_loss = self.latency_loss_gw = self.latency_loss_anchor = None
         self.latency_headline_hop = None
         self.latency_headline_ms = None
+        self.latency_link_lost = False
         self._latency_loss_windows = LatencyLossWindows()
 
     def apply_metrics_endpoint(self) -> None:

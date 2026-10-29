@@ -75,6 +75,12 @@ class LayoutConstants:
     # Minimum gap (logical px) kept between the widget's tray-side edge and the tray boundary /
     # the "^" show-hidden-icons chevron, so the widget never abuts it and steals its clicks (#161 pt1).
     TRAY_EDGE_MIN_GAP_PX: Final[int] = 8
+    # A Win11 SECONDARY side (left/right) taskbar has no TrayNotifyWnd, so before (or without) a UIA
+    # probe of its clock, this many logical px at the bar's bottom are kept for it - the vertical twin
+    # of DEFAULT_SECONDARY_CLOCK_RESERVE_PX. Probed live (VM, Win11 26300, 100 %, 2026-10-23): the
+    # clock button spans 1036..1072 on a 1080 px bar, so 44 = its top; equal to the probe, the widget
+    # does not move when the real clock rect lands.
+    SECONDARY_SIDE_CLOCK_RESERVE_PX: Final[int] = 44
     # Classic (Win10) taskbar toolbars (#324, find_toolbar_bands_rect): a ReBar band counts as "after
     # the task list" when it starts no more than this many physical px before the task band's end
     # (adjacent bands share the edge; slack for a gripper), and at most this many ReBar children are
@@ -85,6 +91,13 @@ class LayoutConstants:
     # scaled with the DPI; owner's probe 2026-10-22). Only an ESTIMATE for the #24 yield's "is the app
     # group near the widget" poll gating - the collision itself always uses UIA's real rects.
     APP_BUTTON_SLOT_PX: Final[int] = 44
+    # The #24 yield only trusts a UIA app group that lies inside the taskbar's own window rect (read
+    # just before and after the probe), within this many physical px. Right after a live display-scale
+    # change Explorer can report the buttons in a stale scale's coordinates for seconds (rc.2 final VM
+    # run, 150 -> 100 % with an auto-hide bar: a centred group read as 1007..1873 = 1.5 x its real
+    # 671..1249, a 10 s false step-aside); such a rect no longer fits the bar. Real buttons sit well
+    # inside it; the slack only absorbs rounding.
+    APP_GROUP_BAR_FIT_TOLERANCE_PX: Final[int] = 4
 
     def __init__(self) -> None:
         self.validate()

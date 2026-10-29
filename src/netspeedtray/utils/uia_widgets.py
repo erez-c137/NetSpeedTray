@@ -363,17 +363,36 @@ def _int_rect(rect) -> Optional[Tuple[int, int, int, int]]:
     return left, top, right, bottom
 
 
+def tray_extent_from_elements(elements) -> Optional[Tuple[int, int, int, int]]:
+    """Pure: the union of the bar's tray buttons (class ``SystemTray.*``) in physical px, or None.
+
+    On a Win11 SECONDARY taskbar (Shell_SecondaryTrayWnd) this is the only way to find its clock:
+    there is no TrayNotifyWnd child, but the clock is a ``SystemTray.OmniButton`` in the XAML island
+    (VM probe, Win11 26300, 2026-10-23: right side bar 0..1080, clock y 1036..1072). On the main bar
+    it is the tray (chevron .. Show desktop), the same span TrayNotifyWnd reports."""
+    tray = None
+    for cls, _aid, rect in elements:
+        if not (cls or "").startswith(_TRAY_CLASS_PREFIX):
+            continue
+        r = _int_rect(rect)
+        if r is None:
+            continue
+        tray = r if tray is None else (min(tray[0], r[0]), min(tray[1], r[1]),
+                                       max(tray[2], r[2]), max(tray[3], r[3]))
+    return tray
+
+
 def _layout_from_elements_full(elements, vertical: Optional[bool]):
     apps, widgets = taskbar_layout_from_elements(elements)
     if vertical is None:   # infer the axis from the union: a left/right bar's run is taller than wide
         vertical = apps is not None and (apps[3] - apps[1]) > (apps[2] - apps[0])
     return (apps, widgets, app_group_from_elements(elements, vertical),
-            overflow_button_from_elements(elements, vertical))
+            overflow_button_from_elements(elements, vertical), tray_extent_from_elements(elements))
 
 
 def query_taskbar_layout_full(taskbar_hwnd: int, vertical: Optional[bool] = None):
-    """``(apps_rect, widgets_rect, app_group_rect, overflow_rect)`` in physical px (see
-    ``app_group_from_elements`` / ``overflow_button_from_elements``),
+    """``(apps_rect, widgets_rect, app_group_rect, overflow_rect, tray_rect)`` in physical px (see
+    ``app_group_from_elements`` / ``overflow_button_from_elements`` / ``tray_extent_from_elements``),
     or None when UIA is unavailable. Same cost and rules as ``query_taskbar_layout`` - ONE FindAll."""
     ole32 = ctypes.oledll.ole32
     initialized = False
