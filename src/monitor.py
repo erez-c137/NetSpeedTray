@@ -62,6 +62,29 @@ if __name__ == "__main__":
     except Exception:
         pass
 
+
+def _run_shutdown_early() -> int:
+    """`--shutdown [--timeout N]` - run HERE, ahead of the PyQt6 / pywin32 / widget imports below.
+    It needs ctypes, the constants and logging, nothing else, but it used to run from main(), after
+    all of those had loaded: in a loaded VM (Windows Update plus Defender scanning each DLL of the
+    onedir on load) that took longer than the whole deadline above, so the process exited 1 before
+    it had posted the message at all - the running app was never asked to quit, and no log line
+    was written. Keep this path free of anything that pulls Qt in (a test pins it)."""
+    from netspeedtray.utils.config import ConfigManager
+    ConfigManager.setup_logging()
+    logger = logging.getLogger("NetSpeedTray.Main")
+    try:
+        from netspeedtray.core.shutdown_channel import run_shutdown_cli
+        code = run_shutdown_cli()
+    except Exception as e:
+        logger.error("Shutdown command errored: %s", e, exc_info=True)
+        return 2
+    return 2 if code is None else code
+
+
+if __name__ == "__main__" and "--shutdown" in sys.argv[1:]:
+    sys.exit(_run_shutdown_early())
+
 import win32api
 import win32event
 import winerror
@@ -433,7 +456,9 @@ def main() -> int:
     # the same message from its own [Code] and never runs this exe - see core/shutdown_channel.py).
     # Asks the running instance to quit through its tray-Exit path and waits for it to exit.
     # Headless and first: no QApplication, no mutex, and none of the update sweeps below - whatever
-    # runs this may itself be executing from an update temp dir.
+    # runs this may itself be executing from an update temp dir. The exe never gets here with
+    # `--shutdown` (it is dispatched at import, before the GUI imports - _run_shutdown_early); this
+    # stays for callers of main() itself.
     try:
         from netspeedtray.core.shutdown_channel import run_shutdown_cli
         shutdown_code = run_shutdown_cli()

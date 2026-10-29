@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from netspeedtray.utils.helpers import get_app_data_path
-from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.utils.timer_utils import snap_update_rate
 from netspeedtray import constants
 
