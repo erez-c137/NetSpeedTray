@@ -349,14 +349,16 @@ class AppOverlapYield(QObject):
             return
         # No group known yet (or the last probe found none): retry on the backed-off interval, so a
         # transient UIA failure at startup doesn't switch the yield off for the session.
-        if not (self._state.yielded or self._model is None or self._near(ctx)):
+        # A retreated widget (rc.3 full-bar fallback) sits ~a Widgets button away from the group - past
+        # SIDE_BAR_NEAR_SLOTS - yet must notice a background close to return: watched like a yield.
+        if not (self._state.yielded or self._retreated or self._model is None or self._near(ctx)):
             return
         # A stale span near the widget is not evidence that the next minute is safe. Likewise a
         # hidden widget must notice background closes promptly, without another foreground event:
         # 1 s while something moved recently, then the bounded idle back-off (_poll_probe).
         t = constants.timeouts
         interval = self._near_interval_ms
-        if (self._state.yielded or self._near(ctx)) and self._clock() < self._active_until:
+        if (self._state.yielded or self._retreated or self._near(ctx)) and self._clock() < self._active_until:
             interval = t.APP_YIELD_ACTIVE_RECHECK_MS
         if (self._clock() - self._last_probe_at) * 1000.0 >= interval - t.APP_YIELD_TICK_SLACK_MS:
             self._schedule(0)
@@ -544,7 +546,7 @@ class AppOverlapYield(QObject):
                     and (span is None or all(abs(a - b) < 1.0 for a, b in zip(span, self._model))))
             near = (span is not None and span_gap(ctx.widget, span)
                     < t.SIDE_BAR_NEAR_SLOTS * constants.layout.APP_BUTTON_SLOT_PX)
-            if self._state.yielded or near:
+            if self._state.yielded or self._retreated or near:
                 if not same:
                     self._mark_active()
                 elif self._clock() >= self._active_until:   # unchanged for a while: idle back-off

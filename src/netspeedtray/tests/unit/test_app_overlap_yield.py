@@ -1312,6 +1312,20 @@ def test_the_fallback_returns_after_two_clear_readings_and_never_flips_per_probe
     assert r.changes == 2                        # retreat + return: one re-place each
 
 
+def test_a_retreated_widget_is_rechecked_on_the_tick_to_notice_a_background_close(rig):
+    """Retreated, the widget sits a whole Widgets button (~150 px) right of the group - more than
+    SIDE_BAR_NEAR_SLOTS slots - so 'near' alone would stop the tick re-checks and only a foreground
+    change could bring it back. It is watched like a yield."""
+    r = rig(STEPPED[0], width=60)
+    r.stepped, r.tray_spot = (1460.0, 1520.0), (1766.0, 1826.0)   # a narrow widget: 246 px apart
+    r.start(left_aligned(31))                    # ends 1465: reaches the stepped spot only
+    assert r.y.retreated
+    r.widget_x = 1766.0
+    r.now += T.SIDE_BAR_NEAR_RECHECK_MS / 1000.0 + 0.1
+    r.y.sync()
+    assert r.pending_probe()
+
+
 def test_buttons_reaching_the_tray_spot_too_still_yield(rig):
     r = _fallback_rig(rig)
     r.start(left_aligned(36))                    # ends 1685: covers both spots
