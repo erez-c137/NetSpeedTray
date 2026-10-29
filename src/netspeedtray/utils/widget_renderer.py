@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
 from netspeedtray.utils.helpers import (has_dedicated_vram, format_speed, calculate_monotone_cubic_interpolation,
                                         memory_label_width, effective_display_mode, format_temperature,
-                                        hw_suffix_reference, temperature_unit)
+                                        hw_suffix_reference, temperature_unit, line_spacing_px)
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath, QFontDatabase
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
@@ -237,6 +237,7 @@ class RenderConfig:
     hide_arrows: bool = constants.config.defaults.DEFAULT_HIDE_ARROWS
     hide_unit_suffix: bool = constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX
     short_unit_labels: bool = constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS
+    line_spacing: int = constants.config.defaults.DEFAULT_LINE_SPACING
     max_samples: int = 1800 # Default 30 mins * 60s
     # Fixed mini-graph y-axis. graph_scale_ceiling is the advertised plan speed in bytes/sec - the larger
     # of down/up, since both series share one axis - and 0 means no plan is set, which keeps the graph
@@ -366,6 +367,7 @@ class RenderConfig:
                 gpu_label_color=str(config.get(
                     'gpu_label_color', constants.config.defaults.DEFAULT_GPU_LABEL_COLOR)),
                 short_unit_labels=bool(config.get('short_unit_labels', constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS)),
+                line_spacing=line_spacing_px(config.get('line_spacing')),
                 max_samples=max_samples,
                 graph_fixed_scale=bool(config.get('graph_fixed_scale', constants.config.defaults.DEFAULT_GRAPH_FIXED_SCALE)),
                 graph_scale_ceiling=max(0.0, scale_ceiling),
@@ -545,7 +547,7 @@ class WidgetRenderer:
             painter.setFont(self.font)
             line_height = self.metrics.height()
             ascent = self.metrics.ascent()
-            vertical_gap = constants.renderer.TWO_ROW_GAP_PX
+            vertical_gap = config.line_spacing
             margin = constants.renderer.TEXT_MARGIN
 
             # Right-align the whole readout inside its reserved slot (side_by_side) so the network hugs

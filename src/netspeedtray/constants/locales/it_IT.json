@@ -242,6 +242,7 @@
     "SWAP_UPLOAD_DOWNLOAD_LABEL": "Inverti ordine upload/download",
     "HIDE_ARROWS_LABEL": "Nascondi frecce",
     "HIDE_UNIT_SUFFIX_LABEL": "Nascondi suffisso unità",
+    "LINE_SPACING_LABEL": "Interlinea (px)",
     "SHORT_UNIT_LABELS_LABEL": "Etichette unità abbreviate (es. Mb)",
     "DISPLAY_FORMAT_GROUP": "Formato visualizzazione",
     "INTERFACE_LAYOUT_GROUP": "Layout interfaccia",

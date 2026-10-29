@@ -242,6 +242,7 @@
     "SWAP_UPLOAD_DOWNLOAD_LABEL": "החלף סדר העלאה/הורדה",
     "HIDE_ARROWS_LABEL": "הסתר חצים",
     "HIDE_UNIT_SUFFIX_LABEL": "הסתר סיומת יחידה",
+    "LINE_SPACING_LABEL": "ריווח שורות (px)",
     "SHORT_UNIT_LABELS_LABEL": "תוויות יחידה קצרות (למשל Mb)",
     "DISPLAY_FORMAT_GROUP": "פורמט תצוגה",
     "INTERFACE_LAYOUT_GROUP": "פריסת ממשק",

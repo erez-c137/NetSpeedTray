@@ -20,6 +20,17 @@ from datetime import datetime
 from netspeedtray import constants
 
 
+def line_spacing_px(value) -> int:
+    """The ``line_spacing`` config value as the px gap between the two speed rows.
+
+    Anything but a plain int (None, a bool, a string from a hand-edited config) is the default,
+    so the renderer that paints the rows and the layout that sizes them always agree.
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return constants.config.defaults.DEFAULT_LINE_SPACING
+
+
 def get_app_asset_path(asset_name: str) -> Path:
     """
     Get the path to an application asset in the assets directory.
