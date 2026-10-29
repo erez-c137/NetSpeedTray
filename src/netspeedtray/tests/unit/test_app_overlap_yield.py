@@ -138,6 +138,8 @@ class Rig:
         self.drop_key = drop_key
         self.saved_drop = saved_drop
         self.layout_key = None
+        self.stepped = None          # rc.3: the two default spots beside a Widgets button (or None)
+        self.tray_spot = None
         self.persisted = []
         self.now = 1000.0
         self.changes = 0
@@ -154,7 +156,7 @@ class Rig:
             return BUSY
         return OverlapContext(hwnd=self.hwnd, dpi=self.dpi, widget=(self.widget_x, self.widget_x + self.width),
                               centered=self.centered, drop_key=self.drop_key, saved_drop=self.saved_drop,
-                              layout_key=self.layout_key)
+                              layout_key=self.layout_key, stepped=self.stepped, tray_spot=self.tray_spot)
 
     def _persist(self, value):
         self.persisted.append(value)
@@ -899,7 +901,7 @@ def test_hidden_widget_is_judged_at_its_computed_position(q_app):
     with patch.object(pm._calculator, "calculate_position", return_value=ScreenPosition(1255, Y0)) as calc:
         ctx = pm._app_overlap_context()
     assert ctx.widget == (1255.0, 1255.0 + WIDGET_W)
-    calc.assert_called_once()
+    assert calc.called                            # (rc.3: also asked for both default spots)
     widget.isVisible.return_value = True          # shown: its real position
     assert pm._app_overlap_context().widget[0] == 1227.0
 
@@ -1241,3 +1243,100 @@ def test_the_bar_rect_spans_a_slide_during_the_probe(layout):
         taskbar_utils.request_taskbar_layout_probe(HWND)
         layout.land()
     assert taskbar_utils.taskbar_layout_bar(HWND) == (0, 1032, 1920, 1108)
+
+
+# --- rc.3: the full-bar fallback - stay at the rc.2 tray spot instead of hiding -------------------------
+# left_aligned(): Widgets button 1530..1690, apps from 101 in 44 px slots. Default spots for a 150 px
+# widget: left of the button (1372..1522, the rc.3 step) and the rc.2 tray spot (1676..1826).
+STEPPED = (1372.0, 1522.0)
+TRAY_SPOT = (1676.0, 1826.0)
+
+
+def _fallback_rig(rig):
+    r = rig(STEPPED[0])
+    r.stepped, r.tray_spot = STEPPED, TRAY_SPOT
+    return r
+
+
+def test_a_full_bar_keeps_the_widget_at_the_tray_spot_instead_of_hiding_it(rig):
+    """Owner decision (rc.3): app buttons reaching the stepped spot while the rc.2 spot is clear move
+    the widget there (visible on the button's padding, as rc.2) - never a yield."""
+    r = _fallback_rig(rig)
+    r.start(left_aligned(28))                    # ends 1333: 39 px clear of the stepped spot
+    assert not r.y.retreated and not r.y.yielded
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, overflow=True), advance=1.0)   # "..." ends 1377: reaches the stepped spot
+    assert r.y.retreated and not r.y.yielded and r.changes == 1   # re-placed, still shown
+    r.widget_x = TRAY_SPOT[0]                    # PositionManager places it with widgets_step=False
+    for _ in range(3):                           # same full bar: it stays put, no flapping
+        r.y.note_foreground_change()
+        r.probe(left_aligned(28, overflow=True), advance=1.0)
+        assert r.y.retreated and not r.y.yielded
+    assert r.changes == 1
+
+
+def test_the_fallback_returns_after_two_clear_readings_and_never_flips_per_probe(rig):
+    r = _fallback_rig(rig)
+    r.start(left_aligned(30))                    # ends 1421: reaches the stepped spot at once
+    assert r.y.retreated and not r.y.yielded
+    r.widget_x = TRAY_SPOT[0]
+    r.y.note_foreground_change()
+    r.probe(left_aligned(20), advance=1.0)       # apps closed: one clear reading is not enough
+    assert r.y.retreated and r.pending_probe()   # the confirmation is scheduled
+    r.probe(left_aligned(30), advance=0.1)       # back again before the confirmation: count restarts
+    assert r.y.retreated
+    r.y.note_foreground_change()
+    r.probe(left_aligned(20), advance=1.0)
+    assert r.y.retreated
+    r.probe(left_aligned(20), advance=0.5)       # second clear reading >= 300 ms later
+    assert not r.y.retreated and not r.y.yielded
+    assert r.changes == 2                        # retreat + return: one re-place each
+
+
+def test_buttons_reaching_the_tray_spot_too_still_yield(rig):
+    r = _fallback_rig(rig)
+    r.start(left_aligned(36))                    # ends 1685: covers both spots
+    assert r.y.yielded and not r.y.retreated
+
+
+def test_no_second_spot_means_todays_yield(rig):
+    """A centred bar, no Widgets button beside the tray or a user's drag: stepped/tray_spot are None
+    and the yield is exactly rc.2's."""
+    r = rig(STEPPED[0])
+    r.start(left_aligned(30))
+    assert r.y.yielded and not r.y.retreated
+
+
+def test_the_fallback_ends_when_the_second_spot_goes_away(rig):
+    r = _fallback_rig(rig)
+    r.start(left_aligned(30))
+    assert r.y.retreated
+    r.stepped = r.tray_spot = None               # e.g. Widgets turned off: one default spot again
+    r.widget_x = TRAY_SPOT[0]
+    r.y.note_foreground_change()
+    r.probe(left_aligned(30), advance=1.0)
+    assert not r.y.retreated
+
+
+def test_position_manager_places_at_the_tray_spot_while_retreated(q_app):
+    """The yield's fallback drives the calculator: widgets_step=False while retreated, and the context
+    carries both default spots when a Widgets button sits beside the tray."""
+    pm, tb, widget = _pm(config={"tray_offset_x": 0})
+    pm._app_overlap_info = tb
+    screen = tb.get_screen.return_value
+    screen.availableGeometry.return_value = QRect(0, 0, 1920, Y0)
+    tb.get_tray_rect.return_value = (1834, Y0, 1920, Y1)
+    tb.toolbars_rect = None
+    tb.widgets_extent = (1530, Y0, 1690, Y1)
+    tb.widgets_rect = None
+    with patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=0),             patch.object(taskbar_utils, "widgets_button_enabled", return_value=True):
+        ctx = pm._app_overlap_context()
+        assert ctx.stepped == (1372.0, 1522.0) and ctx.tray_spot == (1676.0, 1826.0)
+        assert pm.get_calculated_position().x == 1372
+        pm._app_yield._hwnd, pm._app_yield._retreated = HWND, True
+        assert pm.get_calculated_position().x == 1676
+        widget.isVisible.return_value = False      # hidden: judged where it WOULD go (the tray spot)
+        assert pm._app_overlap_context().widget[0] == 1676.0
+    pm._app_yield._hwnd = 0
+    pm._state.config["tray_offset_x"] = 10        # a pre-1.3.0 default is no drop key (rc.3 review)
+    assert pm._app_overlap_context().drop_key is None

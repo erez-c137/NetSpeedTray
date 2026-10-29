@@ -103,6 +103,12 @@ class OverlapContext:
     # What re-lays the bar's tray end without a new HWND: (TaskbarAl, tray left in physical px, Widgets
     # on). A change re-probes, so the Widgets box the default spot steps left of (rc.3) never goes stale.
     layout_key: Optional[tuple] = None
+    # A Widgets button beside the tray gives the DEFAULT spot two candidates (rc.3): left of the button
+    # (``stepped``, the normal one) and the rc.2 spot by the tray (``tray_spot``, on the button's
+    # padding). Logical px, the widget's width; both None when they coincide (no such button, a centred
+    # bar, a user's drag).
+    stepped: Optional[Span] = None
+    tray_spot: Optional[Span] = None
 
 
 def group_span(group_rect, dpi: float) -> Optional[Span]:
@@ -225,6 +231,12 @@ class AppOverlapYield(QObject):
         self._misfit_logged = False              # "buttons outside the taskbar" logged for this run
         self._last_group_rect = None             # the last judged UIA group (physical px), for the log
         self._layout_key: Optional[tuple] = None  # OverlapContext.layout_key at the last (re)probe
+        # The full-bar fallback (rc.3): the app buttons reach the stepped spot but not the tray spot, so
+        # the widget sits at the tray spot (visible, as in rc.2) instead of yielding. Back to the
+        # stepped spot only after two clear readings of it APP_YIELD_SHOW_CONFIRM_MS apart - the same
+        # rule as showing after a yield, so the widget never flips between the two spots per probe.
+        self._retreated = False
+        self._step_clear_since: Optional[float] = None
         self._probe_timer = self._timer(0, self._fire_probe)
         self._poll_timer = self._timer(t.SIDE_BAR_PROBE_POLL_MS, self._poll_probe)
         self._followup_timer = self._timer(t.SIDE_BAR_FOREGROUND_FOLLOWUP_MS, self._on_followup)
@@ -243,6 +255,12 @@ class AppOverlapYield(QObject):
         return self._enabled and not self._suspended and bool(self._hwnd) and self._state.yielded
 
     @property
+    def retreated(self) -> bool:
+        """True while the default spot is the rc.2 tray spot because the app buttons reach the spot
+        left of a Widgets button beside the tray (PositionManager places with widgets_step=False)."""
+        return self._enabled and not self._suspended and bool(self._hwnd) and self._retreated
+
+    @property
     def attached_hwnd(self) -> int:
         return self._hwnd
 
@@ -259,6 +277,8 @@ class AppOverlapYield(QObject):
             logger.info("App-button yield off: %s.", reason)
         self._hwnd = 0
         self._state.reset()
+        self._retreated = False
+        self._step_clear_since = None
         self._model = None
         self._model_known = False
         self._changes = 0
@@ -344,6 +364,8 @@ class AppOverlapYield(QObject):
             timer.stop()
         suppressed = self._state.suppressed
         self._state.reset()
+        self._retreated = False
+        self._step_clear_since = None
         self._model = None
         self._model_known = False
         self._changes = 0
@@ -531,7 +553,18 @@ class AppOverlapYield(QObject):
             self._model_known = True
             self._model_dpi = ctx.dpi
             self._changes = 0
-        reaches = group_reaches_widget(span, ctx.widget)
+        widget = ctx.widget
+        if landed or span is not None:
+            moved = self._judge_fallback(span, ctx, self._fired_at)
+            if ctx.stepped is not None and ctx.tray_spot is not None:
+                # Judge the spot the widget is (about to be) placed at, not a window still moving.
+                widget = ctx.tray_spot if self._retreated else ctx.stepped
+            if moved:
+                try:
+                    self._on_change()
+                except Exception as e:
+                    logger.error("App-yield placement update failed: %s", e, exc_info=True)
+        reaches = group_reaches_widget(span, widget)
         if reaches is None and self._state.yielded:
             if not self._hold_until:
                 # A transient unknown on this taskbar (window storm, UIA timed out): one bounded hold,
@@ -551,6 +584,49 @@ class AppOverlapYield(QObject):
         elif reaches is False and (self._persisted_drop is not None or ctx.saved_drop is not None):
             self._persist_drop(None, force=True)      # seen clear: the baseline is spent
         self._finish()
+
+    def _judge_fallback(self, span: Optional[Span], ctx: OverlapContext, at: float) -> bool:
+        """The full-bar fallback (rc.3, owner decision): with a Widgets button beside the tray, app
+        buttons that reach the spot left of it while the rc.2 tray spot is still clear put the widget
+        at the tray spot instead of hiding it. It returns to the stepped spot after two clear readings
+        of that spot APP_YIELD_SHOW_CONFIRM_MS apart. An unknown reading changes nothing. True when the
+        spot changed (the caller re-places the widget)."""
+        if ctx.stepped is None or ctx.tray_spot is None:
+            # No second spot (no button beside the tray any more, a drag, a centred bar): nothing held.
+            changed = self._retreated
+            self._retreated = False
+            self._step_clear_since = None
+            if changed:
+                logger.info("Widgets-button fallback over: the default spot has no alternative here.")
+            return changed
+        if span is None:
+            return False
+        on_stepped = group_reaches_widget(span, ctx.stepped)
+        if not self._retreated:
+            if on_stepped and not group_reaches_widget(span, ctx.tray_spot):
+                self._retreated = True
+                self._step_clear_since = None
+                logger.info("App buttons reach the spot left of the Widgets button (group %.0f..%.0f, "
+                            "spot %.0f..%.0f): staying by the tray instead (%.0f..%.0f).", span[0], span[1],
+                            ctx.stepped[0], ctx.stepped[1], ctx.tray_spot[0], ctx.tray_spot[1])
+                self._mark_active()
+                return True
+            return False
+        if on_stepped:
+            self._step_clear_since = None
+            return False
+        if self._step_clear_since is None:
+            self._step_clear_since = at
+            self._schedule(self._state.confirm_ms)
+            return False
+        if (at - self._step_clear_since) * 1000.0 >= self._state.confirm_ms - 0.5:
+            self._retreated = False
+            self._step_clear_since = None
+            logger.info("Room left of the Widgets button again: back to the default spot.")
+            self._mark_active()
+            return True
+        self._schedule(max(0, int(self._state.confirm_ms - (at - self._step_clear_since) * 1000.0)))
+        return False
 
     def _apply(self, action: Optional[str], span: Optional[Span], ctx: OverlapContext) -> None:
         if action == "confirm":
