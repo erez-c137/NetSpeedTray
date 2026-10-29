@@ -451,7 +451,7 @@
     "LATENCY_GOOD": "Jó",
     "LATENCY_OK": "OK",
     "LATENCY_SLOW": "Lassú",
-    "LATENCY_NO_CONNECTION": "Nincs kapcsolat.",
+    "LATENCY_NO_CONNECTION": "Nincs kapcsolat",
     "CHECK_CONN_ACTION": "Kapcsolat ellenőrzése",
     "CHECK_CONN_ACTION_TIP": "20 ping kérést küld az útválasztónak (és igény szerint az internet felé is), majd megjeleníti az eredményeket",
     "CHECK_CONN_TITLE": "Kapcsolatellenőrzés",
