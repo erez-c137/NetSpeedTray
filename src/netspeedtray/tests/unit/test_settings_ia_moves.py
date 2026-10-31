@@ -262,10 +262,13 @@ def test_hardware_appearance_header_and_throttle_position(dlg):
     assert len(header) == 1
     throttle = flat.index(_card_of(h.throttle_temp))
     assert flat.index(_card_of(h.show_temps)) < flat.index(note) < throttle
+    # The LHM connection expander (rc.2 G2/G3) sits with the LHM hint, between the note and throttle.
+    assert flat.index(h.lhm_web_server_hint) < flat.index(h.lhm_connection_section) < throttle
     assert throttle + 1 == flat.index(header[0])
     after = [flat.index(_card_of(h.label_style)), flat.index(_card_of(h.label_color)),
              flat.index(h.label_colors_container),
-             flat.index(next(x for x in flat if isinstance(x, SettingExpander)))]
+             flat.index(next(x for x in flat if isinstance(x, SettingExpander)
+                             and x is not h.lhm_connection_section))]
     assert flat.index(header[0]) < min(after) and after == sorted(after)
 
 

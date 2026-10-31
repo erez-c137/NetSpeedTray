@@ -17,6 +17,29 @@ class LhmConstants:
     HTTP_HOST: Final[str] = "127.0.0.1"
     HTTP_PORT: Final[int] = 8085
     HTTP_PATH: Final[str] = "/data.json"
+    # Settings > Hardware lets the user match LHM's own port choice (#187 asked for it). LHM accepts any
+    # TCP port, and this app only connects to it (never binds), so the whole range is valid.
+    MIN_PORT: Final[int] = 1
+    MAX_PORT: Final[int] = 65535
+
+    # LHM's optional HTTP Basic authentication (Options -> Remote Web Server -> Authentication). The
+    # password is kept in config.json only as a Windows DPAPI blob (CryptProtectData, current user),
+    # base64-encoded. This entropy is a public constant: it only stops a casual CryptUnprotectData of
+    # the blob without it - any program running as the same user can still decrypt it by passing this
+    # value. DPAPI's real boundary is the Windows user. Changing it orphans saved passwords.
+    DPAPI_ENTROPY: Final[bytes] = b"NetSpeedTray.LhmWebServerPassword.v1"
+    # The Authorization header leaves this process only for these hosts: a password must never travel
+    # to another machine, even if HTTP_HOST were ever made configurable.
+    AUTH_ALLOWED_HOSTS: Final[tuple] = ("127.0.0.1",)
+
+    # Client status, read by Settings > Hardware (polled while the page is visible).
+    STATUS_UNKNOWN: Final[str] = "unknown"          # not tried yet (temps/power off, or just reconfigured)
+    STATUS_OK: Final[str] = "ok"
+    STATUS_NOT_FOUND: Final[str] = "not_found"      # nothing answered: LHM not running / server off
+    STATUS_AUTH_REQUIRED: Final[str] = "auth_required"  # 401 and no credentials configured
+    STATUS_AUTH_FAILED: Final[str] = "auth_failed"  # 401 although credentials were sent
+    STATUS_OTHER: Final[str] = "other"              # answered, but not with LHM's data.json
+    STATUS_REFRESH_MS: Final[int] = 1000
 
     # Connecting to a listening loopback port takes well under a millisecond; this only bounds the
     # dropped-SYN case (nothing listening, on machines whose loopback does not reset). That attempt
@@ -41,8 +64,12 @@ class LhmConstants:
         self.validate()
 
     def validate(self) -> None:
-        if not 0 < self.HTTP_PORT < 65536:
-            raise ValueError("HTTP_PORT must be a valid TCP port.")
+        if not 1 <= self.MIN_PORT <= self.HTTP_PORT <= self.MAX_PORT <= 65535:
+            raise ValueError("HTTP_PORT must be a valid TCP port within MIN_PORT..MAX_PORT.")
+        if not self.DPAPI_ENTROPY:
+            raise ValueError("DPAPI_ENTROPY must not be empty.")
+        if self.HTTP_HOST not in self.AUTH_ALLOWED_HOSTS:
+            raise ValueError("HTTP_HOST must be a host credentials may be sent to.")
         if not self.HTTP_PATH.startswith("/"):
             raise ValueError("HTTP_PATH must be absolute.")
         if not 0 < self.CONNECT_TIMEOUT_SEC <= self.TOTAL_DEADLINE_SEC:

@@ -32,6 +32,7 @@ from netspeedtray.core.widget_state import WidgetState as CoreWidgetState
 from netspeedtray.utils.config import ConfigManager as CoreConfigManager
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils.styles import set_app_reduce_motion
+from netspeedtray.utils import color_scheme
 from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.core.input_handler import InputHandler
 from netspeedtray.utils.taskbar_utils import (
@@ -112,6 +113,11 @@ try:
     _WM_NST_SHUTDOWN = shutdown_channel.shutdown_message_id()
 except Exception:
     _WM_NST_SHUTDOWN = 0
+# A second launch's "show yourself" (#234, rc.2 W14) - same channel, same 0 guard.
+try:
+    _WM_NST_ACTIVATE = shutdown_channel.activate_message_id()
+except Exception:
+    _WM_NST_ACTIVATE = 0
 
 
 # double_click_action -> the i18n key of its Settings label (the same words the user picked it by).
@@ -131,6 +137,16 @@ def hover_hint_text(i18n, config: Dict[str, Any]) -> str:
     if key:
         lines.append(i18n.WIDGET_HOVER_DOUBLE_CLICK_HINT.format(action=getattr(i18n, key)))
     return "\n".join(lines)
+
+
+def widget_qt_scale(widget: Any) -> Optional[float]:
+    """Qt's device pixel ratio for ``widget``'s window right now, rounded (None when it can't be read).
+    What the font metrics the layout measures with follow - not always in step with the OS scale."""
+    try:
+        fn = getattr(widget, "devicePixelRatioF", None)
+        return round(float(fn()), 3) if callable(fn) else None
+    except Exception:
+        return None
 
 
 class NetworkSpeedWidget(QWidget):
@@ -164,8 +180,10 @@ class NetworkSpeedWidget(QWidget):
         self.current_font: QFont = None
         self.current_metrics: QFontMetrics = None
 
+        # Read the Windows (taskbar) mode before anything builds a RenderConfig, so the first frame
+        # paints in the right theme's colours. Nothing is written: the config holds both themes.
+        color_scheme.refresh_shell_theme()
         self._init_managers() # Initialize managers first
-        self.theme_manager.apply_theme_aware_defaults()
 
         # --- Declare all instance attributes for clarity ---
         self.widget_state: CoreWidgetState
@@ -179,6 +197,7 @@ class NetworkSpeedWidget(QWidget):
         self.monitor_thread: StatsMonitorThread
         self._cached_layout_mode: str = 'horizontal'  # taskbar-edge orientation; updated on taskbar changes
         self._dock_sig_seen: Optional[tuple] = None  # last taskbar dock_signature seen (#322)
+        self._qt_scale_seen: Optional[float] = None  # Qt's device pixel ratio the size was measured at
         self.monitor_window = None  # unified Monitor (Overview / Network / Hardware), lazy
         self.update_checker: Optional[UpdateChecker] = None
         self.app_icon: QIcon
@@ -221,6 +240,9 @@ class NetworkSpeedWidget(QWidget):
         # Most recent successful RTT of the headline hop within its live window - the pill's ms, so one
         # lost ping does not blank it (and the router's ms never stands in for the internet's).
         self.latency_headline_ms: Optional[float] = None
+        # The last sample said the connection is down (LatencySample.gw_link_lost): the pill reads
+        # "No connection" at once rather than the window's stale "Good" (rc.2 VM session).
+        self.latency_link_lost: bool = False
         from netspeedtray.core.latency_probe import LatencyLossWindows
         self._latency_loss_windows = LatencyLossWindows()
         # Local metrics endpoint (2.2 scope B) - created on first enable, None while never enabled.
@@ -249,8 +271,12 @@ class NetworkSpeedWidget(QWidget):
         self._is_context_menu_visible: bool = False
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         self._taskbar_lost_count: int = 0
+        self._no_taskbar_ticks: int = 0   # consecutive refreshes holding for a missing taskbar (W5)
         self._will_quit_app: bool = False # Flag to distinguish hide vs exit
         self._shutdown_armed_hwnd: int = 0  # HWND the --shutdown channel was armed on
+        # "Show on all taskbars" (#229): the MirrorManager while the setting is on, else None - and
+        # with it off nothing of views/widget/mirror.py is imported, built, connected or timed.
+        self._mirrors = None
         
         # Hooks for system events
         self.system_event_handler: SystemEventHandler
@@ -400,8 +426,10 @@ class NetworkSpeedWidget(QWidget):
             self.layout_manager.init_font()
 
         try:
-            # Position Manager
-            taskbar_info = get_taskbar_info()
+            # Position Manager. The widget's OWN taskbar from the start (preferred monitor, #72): a bare
+            # get_taskbar_info() seeded the primary's, which the owner fallback and every read of
+            # _state.taskbar_info before the first refresh then used (rc.2 W12).
+            taskbar_info = get_taskbar_info(preferred_screen_name=self.config.get("preferred_monitor"))
             window_state = WindowState(
                 config=self.config,
                 widget=self,
@@ -409,6 +437,12 @@ class NetworkSpeedWidget(QWidget):
                 font_metrics=self.current_metrics
             )
             self.position_manager = PositionManager(window_state, parent=self)
+            self.position_manager.on_side_no_room = self._maybe_show_side_no_room_notice
+            # #24: the app buttons reached the widget (or left it) - re-run the visibility gate. Late
+            # bound (looked up when called), like the persist hook below.
+            self.position_manager.on_app_yield_changed = lambda: self._on_app_yield_changed()
+            self.position_manager.on_app_yield_first = lambda: self._maybe_show_app_overlap_notice()
+            self.position_manager.on_app_yield_persist = lambda updates: self.update_config(updates)
             # Note: InputHandler is initialized in _init_ui_components() after tray_manager is created
             
             self.logger.debug("Managers initialized successfully.")
@@ -480,14 +514,37 @@ class NetworkSpeedWidget(QWidget):
             # #188: is the preferred monitor a taskbar-less display we should free-float on?
             free_float_active = self.position_manager.refresh_float_state() is not None
 
+            # No taskbar at all (Explorer restarting, rc.2 W5): hide and keep the last position until
+            # the new taskbar exists, rather than float at the screen-fallback spot. Bounded - past
+            # TASKBAR_ABSENT_HOLD_MS the old fallback applies. `is True`: a mocked manager is not.
+            # Debounced (#440 review L5): the first no-taskbar tick only holds the position; the widget
+            # hides from the second consecutive one, so one transient failed lookup can't flicker it.
+            if not free_float_active and self.position_manager.holding_for_taskbar(taskbar_info) is True:
+                ticks = getattr(self, "_no_taskbar_ticks", 0)
+                ticks = (ticks if isinstance(ticks, int) else 0) + 1
+                self._no_taskbar_ticks = ticks
+                if ticks >= constants.timeouts.TASKBAR_ABSENT_HIDE_AFTER_TICKS and self.isVisible():
+                    self.dismiss_hover_card()
+                    self.setVisible(False)
+                return
+            self._no_taskbar_ticks = 0
+
             # Allow user override to keep widget visible even when a fullscreen window is present
             keep_visible = self.config.get("keep_visible_fullscreen", False)
+            # #24 app-button yield: attach / detach for this taskbar first (floating detaches it).
+            self.position_manager.sync_app_overlap(taskbar_info)
             if free_float_active:
                 # The accessory display has no taskbar to hide behind, and the visibility/obstruction
                 # checks are judged against the (irrelevant) primary taskbar - so just keep it shown.
                 should_be_visible = True
             else:
                 should_be_visible = is_taskbar_visible(taskbar_info) and (keep_visible or not is_taskbar_obstructed(taskbar_info, hwnd))
+                # #24: a native horizontal Win11 bar whose app buttons reach the widget - it steps
+                # aside on this same hide path (never moves, #200). ANDed: neither this nor the
+                # fullscreen hide / keep_visible_fullscreen overrides the other. ``is True``: a stand-in
+                # position manager without the yield never hides the widget.
+                if self.position_manager.is_yielding_to_apps() is True:
+                    should_be_visible = False
 
             if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)
@@ -503,6 +560,8 @@ class NetworkSpeedWidget(QWidget):
                     # _float_refreshed=True: we already called refresh_float_state() above for the
                     # visibility check this tick, so don't re-enumerate taskbars inside (#188).
                     self.position_manager.update_position(fresh_taskbar_info=taskbar_info, _float_refreshed=True)
+                    # Side bars: the icon alignment and the bounded "apps near the widget" re-check.
+                    self.position_manager.side_bar_tick()
                 
                 # Always re-assert topmost status when visible to prevent falling behind taskbar (#77)
                 self._ensure_win32_topmost()
@@ -583,6 +642,7 @@ class NetworkSpeedWidget(QWidget):
         self.latency_loss = (self.latency_loss_anchor if self.latency_headline_hop == HOP_ANCHOR
                              else self.latency_loss_gw)
         self.latency_headline_ms = windows.last_ms(self.latency_headline_hop)
+        self.latency_link_lost = bool(getattr(sample, "gw_link_lost", False))
         ws = getattr(self, "widget_state", None)
         if ws is not None:
             try:
@@ -661,6 +721,7 @@ class NetworkSpeedWidget(QWidget):
         self.latency_loss = self.latency_loss_gw = self.latency_loss_anchor = None
         self.latency_headline_hop = None
         self.latency_headline_ms = None
+        self.latency_link_lost = False
         self._latency_loss_windows = LatencyLossWindows()
 
     def apply_metrics_endpoint(self) -> None:
@@ -963,12 +1024,40 @@ class NetworkSpeedWidget(QWidget):
     # _load_initial_config removed as it is now handled by ConfigController class
 
 
+    def _on_taskbar_alignment_changed(self) -> None:
+        """WM_SETTINGCHANGE saw TaskbarAl flip (rc.1 B3). On build 26200 this broadcast never arrives,
+        so the side-bar watcher also reads the value on its own hook and on the 1 s tick; this is
+        one more hint. The watcher re-decides once the re-laid bar has settled."""
+        pm = getattr(self, "position_manager", None)
+        if pm is None:
+            return
+        try:
+            pm.note_taskbar_alignment_hint()
+        except Exception as e:
+            self.logger.debug("alignment change handling failed: %s", e)
+
+    def _on_foreground_for_side_bar(self, _hwnd: int = 0) -> None:
+        """A new foreground window often means a new app button on the taskbar (side-bar watcher)."""
+        pm = getattr(self, "position_manager", None)
+        if pm is None or self.config.get("free_move", False):
+            return
+        try:
+            pm.note_foreground_change()
+        except Exception as e:
+            self.logger.debug("side-bar foreground hint failed: %s", e)
+
     def _on_theme_changed(self) -> None:
         """Delegates theme change handling."""
         # An open card (pinned ones last for minutes) keeps the old theme's colours: close it; the
         # next hover builds it in the new theme.
         self.dismiss_hover_card()
-        self.theme_manager.on_theme_changed()
+        self.theme_manager.on_theme_changed()   # refreshes the Windows-mode flag first
+        dialog = getattr(self, "settings_dialog", None)
+        if dialog is not None:
+            try:
+                dialog.on_taskbar_theme_changed()   # preview strip backdrop + colours
+            except Exception as e:
+                self.logger.debug("Settings preview theme refresh failed: %s", e)
 
 
 
@@ -1043,9 +1132,11 @@ class NetworkSpeedWidget(QWidget):
             # 1. System Event Handler (replaces manual WinEventHooks)
             self.system_event_handler.foreground_app_changed.connect(self._execute_refresh)
             self.system_event_handler.foreground_app_changed.connect(self._on_foreground_for_hover_card)
+            self.system_event_handler.foreground_app_changed.connect(self._on_foreground_for_side_bar)
             self.system_event_handler.taskbar_changed.connect(self.update_position)
             self._refresh_cached_layout_mode()
             self.system_event_handler.theme_changed.connect(self._on_theme_changed)
+            self.system_event_handler.taskbar_alignment_changed.connect(self._on_taskbar_alignment_changed)
             
             # Emergency-hide on unambiguous fullscreen - but honor the user's
             # "keep visible over fullscreen" choice (issue #107). Without this guard
@@ -1084,7 +1175,9 @@ class NetworkSpeedWidget(QWidget):
 
             self.system_event_handler.start()
 
-            
+            # Last, so the mirrors' slots run after the widget's own on every shared signal.
+            self.apply_mirrors()
+
             self.logger.debug("Signal connections and WinEventHooks established successfully.")
         except Exception as e:
             self.logger.error("Error setting up signal connections: %s", e, exc_info=True)
@@ -1222,7 +1315,7 @@ class NetworkSpeedWidget(QWidget):
     _HOVER_CARD_DELAY_MS = 350
     # Cache window for the (today, this-month) DB totals so rapid hovers don't hammer the DB.
     _HOVER_USAGE_TTL_SEC = 30.0
-    # Hover-opened cards that carry the "Click to keep this open" footer (fewer once pinned: 0).
+    # Hover-opened cards that carry the "Click the widget to keep this open" footer (once pinned: 0).
     _PIN_HINT_MAX_SHOWS = 5
 
     def invalidate_usage_cache(self) -> None:
@@ -1305,7 +1398,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.debug("pin hint retire failed: %s", e)
 
     def _pin_hint_text(self) -> Optional[str]:
-        """The "Click to keep this open" footer for a card opened by hover: on the first
+        """The "Click the widget to keep this open" footer for a card opened by hover: on the first
         _PIN_HINT_MAX_SHOWS such cards (its own counter - independent of the gesture hint's
         graduation, which may already be over for an upgrader), and never again once pinned."""
         try:
@@ -1398,8 +1491,8 @@ class NetworkSpeedWidget(QWidget):
             month_label = (self.i18n.USAGE_THIS_PERIOD_LABEL
                            if today is not None and getattr(self, "_hover_usage_period_start", None)
                            else None)
-            # "Click to keep this open" footer: on a card opened by hover only (a pinned card is
-            # already open), for the first few such cards.
+            # "Click the widget to keep this open" footer: on a card opened by hover only (a pinned
+            # card is already open), for the first few such cards.
             pin_hint = None if pinned else self._pin_hint_text()
             card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, power=power,
                                history_note=note, hardware=hardware, month_label=month_label,
@@ -1668,7 +1761,11 @@ class NetworkSpeedWidget(QWidget):
                 if key.upper() in stats:
                     stat: Dict[str, Any] = {"usage": usage}
                     if temps:
-                        stat["temp"] = temp
+                        stat["temp"] = temp   # Celsius; the card converts to temp_unit (rc.2 F8)
+                        from netspeedtray.utils.helpers import temperature_unit
+                        unit = temperature_unit(cfg)
+                        if unit != constants.hardware.temperature.CELSIUS:
+                            hw["temp_unit"] = unit   # absent = Celsius, the snapshot as before
                     if power:
                         stat["power"] = watts
                     hw[key] = stat
@@ -2034,6 +2131,10 @@ class NetworkSpeedWidget(QWidget):
                     self.logger.info("Shutdown requested by another process (installer/--shutdown) - exiting cleanly.")
                     QTimer.singleShot(0, self.fully_exit_application)
                     return True, 0
+                if _WM_NST_ACTIVATE and msg.message == _WM_NST_ACTIVATE:
+                    # A second launch (#234): deferred out of the native dispatch like the shutdown.
+                    QTimer.singleShot(0, self.show_from_second_launch)
+                    return True, 0
                 if msg.message == _WM_QUERYENDSESSION or (msg.message == _WM_ENDSESSION and msg.wParam):
                     # Logoff / shutdown / restart. The normal quit path (closeEvent -> cleanup) never
                     # runs: Windows terminates us soon after WM_ENDSESSION returns, so the essential
@@ -2111,8 +2212,8 @@ class NetworkSpeedWidget(QWidget):
         self.position_manager.enforce_topmost_status()
 
     def reset_to_default_position(self) -> None:
-        """Right-click > Reset position: back to the automatic spot by the tray - clears the
-        free-move spot AND the docked drag offsets, then re-places."""
+        """Right-click > Reset position: back to the automatic spot by the tray (or the side bar's
+        chosen gap) - clears the free-move spot AND the docked drag offsets, then re-places."""
         self.logger.info("Resetting widget position to default.")
         self._hide_usage_hover_card()
         defaults = constants.config.defaults
@@ -2122,15 +2223,232 @@ class NetworkSpeedWidget(QWidget):
                             'tray_offset_x': defaults.DEFAULT_TRAY_OFFSET_X,
                             'tray_offset_y': defaults.DEFAULT_TRAY_OFFSET_Y})
 
+    def show_from_second_launch(self) -> None:
+        """
+        The app was launched again while running (#234, rc.2 W14; the second process posts
+        ACTIVATE_MESSAGE_NAME and exits). Bring the widget back however it was lost: hidden -> shown;
+        re-placed and re-docked to the current taskbar; still off-screen -> the docked spot for this
+        session (nothing saved is cleared); re-seated above the taskbar if it was buried, with the
+        burial backoff forgotten so nothing defers it. The 1 s refresh then applies the usual rules
+        (an auto-hidden taskbar still hides it). A fullscreen app keeps it hidden, as always - unless
+        Keep visible in fullscreen is on. Never opens a window: a duplicate Run-key start at sign-in
+        must stay invisible.
+        """
+        try:
+            pm = getattr(self, "position_manager", None)
+            if pm is None:
+                return
+            self.logger.info("Another launch asked the widget to show itself (visible=%s).", self.isVisible())
+            # #24, first: the app-button yield stands down for this session (it would hide the widget
+            # again on the refresh below). Also under a fullscreen app - it comes back when that ends.
+            # Its own try: nothing about the yield may stop the widget coming back.
+            was_yielded = False
+            try:
+                was_yielded = self._stand_down_app_yield() is True
+            except Exception as e:
+                self.logger.debug("app-yield stand-down skipped: %s", e)
+            handler = getattr(self, "system_event_handler", None)
+            if (handler is not None and handler.is_fullscreen_active()
+                    and not self.config.get("keep_visible_fullscreen", False)):
+                self.logger.info("A fullscreen app is active - the widget comes back when it ends.")
+                return
+            self._taskbar_lost_count = 0
+            if not self.isVisible():
+                self.setVisible(True)
+            pm.reset_reseat_state()
+            pm.update_position()   # a saved spot on a monitor that is gone already falls back here
+            if self._is_off_screen():
+                # Still nowhere visible: the docked spot for THIS session only. Nothing saved is
+                # cleared - a duplicate start at sign-in can beat a slow monitor that holds the
+                # saved Free Move spot (#440 review L3); Reset position stays the explicit choice.
+                self.logger.info("The widget was off-screen - showing it at its docked spot for now.")
+                pm.move_to_default_for_session()
+            pm.ensure_topmost()
+            if pm.is_buried_behind_taskbar():
+                pm.reseat_above_taskbar()
+            QTimer.singleShot(0, self._execute_refresh)
+            if was_yielded:
+                # Last: only when the yield had hidden it (never over a fullscreen app - returned above).
+                self._explain_app_yield_stand_down()
+        except Exception as e:
+            self.logger.error("Bringing the widget back for a second launch failed: %s", e, exc_info=True)
+
+    def _is_off_screen(self) -> bool:
+        """True when the widget's centre is on no connected screen (e.g. a saved spot on an unplugged
+        monitor, or a stray position from elsewhere)."""
+        try:
+            return QApplication.screenAt(self.frameGeometry().center()) is None
+        except Exception:
+            return False
+
     def has_custom_position(self) -> bool:
         """Whether the widget sits where the user put it (a drag, or a saved free-move spot) - the
         tray menu offers Reset position only then."""
         defaults = constants.config.defaults
         cfg = self.config or {}
+        offset_x = cfg.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X)
+        # An older release's default offset (10 / 1 / 3) is not a move the user made (rc.2 W6).
+        default_x = offset_x == defaults.DEFAULT_TRAY_OFFSET_X or offset_x in defaults.LEGACY_DEFAULT_TRAY_OFFSETS_X
         return (cfg.get('position_x') is not None or cfg.get('position_y') is not None
-                or cfg.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X) != defaults.DEFAULT_TRAY_OFFSET_X
+                or not default_x
                 or cfg.get('tray_offset_y', defaults.DEFAULT_TRAY_OFFSET_Y) != defaults.DEFAULT_TRAY_OFFSET_Y)
 
+    def _maybe_show_side_no_room_notice(self) -> None:
+        """One-time heads-up (ever): a side taskbar's app buttons leave no free spot, so the widget sits
+        by the tray and may cover some of them - it can be dragged anywhere along the bar. Called by
+        PositionManager when its placement ends in "tray_no_room" (never while the user's own drag
+        is in force)."""
+        try:
+            if getattr(self, "_side_no_room_shown", False) or self.config.get("side_bar_no_room_notice_shown", False):
+                return
+            self._side_no_room_shown = True
+            self.update_config({"side_bar_no_room_notice_shown": True})
+            title = self.i18n.SIDE_BAR_NO_ROOM_TITLE
+            body = self.i18n.SIDE_BAR_NO_ROOM_BODY
+            # Deferred out of the reposition. A non-activating flyout, NOT a QMessageBox: this can fire
+            # while the user types in another app (apps opened after placement, rc.2 W1), and a modal
+            # message box took the keyboard away from it (rc.1 live test, W4).
+            QTimer.singleShot(0, lambda: self._show_notice_flyout(title, body))
+        except Exception as e:
+            self.logger.debug("side-bar no-room notice failed: %s", e)
+
+    def _on_app_yield_changed(self) -> None:
+        """The #24 yield flipped (its probe landed): apply it through the authoritative refresh, out
+        of the probe's poll callback. A hover card (pinned ones last minutes) goes with the widget."""
+        try:
+            if self.position_manager.is_yielding_to_apps() is True:
+                self.dismiss_hover_card()
+        except Exception as e:
+            self.logger.debug("hover card dismiss on app yield failed: %s", e)
+        QTimer.singleShot(0, self._execute_refresh)
+
+    def _stand_down_app_yield(self) -> bool:
+        """Step 1 of a second launch (show_from_second_launch): a yielded widget has no other way back
+        (no tray icon), so the #24 yield stands down for the rest of this session - BEFORE the show /
+        re-seat, so the refresh that follows can't hide it again. True when it was hidden by the yield."""
+        try:
+            pm = getattr(self, "position_manager", None)
+            if pm is None:
+                return False
+            was_yielded = pm.suspend_app_yield() is True
+            self.logger.info("Second launch: the app-button yield is off for this session (was yielded: %s).",
+                             was_yielded)
+            return was_yielded
+        except Exception as e:
+            self.logger.error("App-yield second-launch handling failed: %s", e, exc_info=True)
+            return False
+
+    def _explain_app_yield_stand_down(self) -> None:
+        """The last step of a second launch that brought a YIELDED widget back: a non-activating flyout
+        says why it had stepped aside and how to keep it visible for good. After the show / re-seat, so
+        it is anchored to the widget's real spot."""
+        try:
+            title = self.i18n.SIDE_BAR_NO_ROOM_TITLE
+            body = self._app_overlap_text(self.i18n.APP_OVERLAP_ACTIVATE_BODY)
+            QTimer.singleShot(self._ACTIVATE_FLYOUT_DELAY_MS, lambda: self._show_notice_flyout(title, body))
+        except Exception as e:
+            self.logger.debug("app-yield second-launch notice failed: %s", e)
+
+    # The flyout follows the show + the refresh it queues, so it sits next to the re-placed widget.
+    _ACTIVATE_FLYOUT_DELAY_MS = 250
+
+    def _app_overlap_text(self, template: str) -> str:
+        """Fill a #24 notice with the exact Settings words it points at (the switch, the window and the
+        page names), so it can never drift from the UI."""
+        try:
+            return template.format(setting=self.i18n.HIDE_WHEN_APPS_COVER_LABEL,
+                                   settings=self.i18n.SETTINGS_WINDOW_TITLE,
+                                   page=self.i18n.WIDGET_SETTINGS_GROUP)
+        except Exception:
+            return template
+
+    def _maybe_show_app_overlap_notice(self) -> None:
+        """One-time heads-up (ever), the first time the widget steps aside for app buttons on a
+        horizontal taskbar (#24): why it is gone, and how to get it back (start the app again, or the
+        Settings switch). Reuses the side-bar no-room title and flyout; non-activating."""
+        try:
+            if getattr(self, "_app_overlap_notice_shown", False) or self.config.get("app_overlap_notice_shown", False):
+                return
+            self._app_overlap_notice_shown = True
+            self.update_config({"app_overlap_notice_shown": True})
+            title = self.i18n.SIDE_BAR_NO_ROOM_TITLE
+            body = self._app_overlap_text(self.i18n.APP_OVERLAP_YIELD_BODY)
+            QTimer.singleShot(0, lambda: self._show_notice_flyout(title, body))
+        except Exception as e:
+            self.logger.debug("app-overlap notice failed: %s", e)
+
+    # The no-room notice is longer than a usage alert: give it time to be read.
+    _NOTICE_FLYOUT_DISMISS_MS = 30000
+
+    def _show_notice_flyout(self, title: str, body: str, action_text: Optional[str] = None,
+                            on_action=None) -> None:
+        """A one-time notice next to the widget that never takes focus (the data-cap alerts' flyout).
+        ``action_text`` / ``on_action``: an optional button (e.g. "Open folder")."""
+        try:
+            from netspeedtray.views.flyout import Flyout
+            from PyQt6 import sip
+            previous = getattr(self, "_notice_flyout", None)
+            if previous is not None and not sip.isdeleted(previous):
+                previous.close()
+            self._notice_flyout = Flyout(title, body, action_text=action_text if on_action else None,
+                                         auto_dismiss_ms=self._NOTICE_FLYOUT_DISMISS_MS)
+            if on_action is not None and action_text:
+                self._notice_flyout.action_clicked.connect(on_action)
+            geo = self.frameGeometry()
+            self._notice_flyout.show_at(QPoint(geo.left(), geo.top()))
+        except Exception as e:
+            self.logger.error("Error showing a notice: %s", e, exc_info=True)
+
+
+    def show_backup_notice(self, title: str, body: str, path: Optional[str] = None) -> None:
+        """Settings > Advanced > Back up history finished while Settings was closed (#334): say so in the
+        non-focus flyout, with "Open folder" when a copy was written - never a modal box with no visible
+        parent, which would take focus and block the Monitor."""
+        from netspeedtray.utils.helpers import reveal_in_explorer
+        self._show_notice_flyout(title, body, action_text=self.i18n.STATS_DETAIL_OPEN_FOLDER if path else None,
+                                 on_action=(lambda: reveal_in_explorer(path)) if path else None)
+
+    def apply_mirrors(self) -> None:
+        """
+        "Show on all taskbars" (#229): build the MirrorManager when the setting turns on, retire it
+        when it turns off, and re-size the live mirrors on any other apply. Off (the default) is a
+        plain dict lookup - the mirror module is not even imported.
+        """
+        want = bool(self.config.get("show_on_all_taskbars",
+                                    constants.config.defaults.DEFAULT_SHOW_ON_ALL_TASKBARS))
+        mgr = getattr(self, "_mirrors", None)
+        try:
+            if want and mgr is None:
+                from netspeedtray.views.widget.mirror import MirrorManager
+                self._mirrors = MirrorManager(self)
+                self._mirrors.start()
+            elif not want and mgr is not None:
+                self._mirrors = None
+                mgr.shutdown()
+                mgr.deleteLater()
+            elif mgr is not None:
+                mgr.apply_settings()
+        except Exception as e:
+            self.logger.error("Applying 'Show on all taskbars' failed: %s", e, exc_info=True)
+
+    def docked_taskbar(self) -> Optional[Tuple[int, Optional[str]]]:
+        """(HWND, screen name) of the taskbar this widget is docked to - the one the mirrors leave
+        alone; (0, None) while it free-floats on a taskbar-less display (#188); None when unknown
+        (a fallback taskbar at logon).
+
+        With Free Move the widget sits wherever it was dragged, so the screen is the one it is ON, not
+        the configured one: dragged onto monitor 2, monitor 2 gets no mirror and the primary does."""
+        pm = getattr(self, "position_manager", None)
+        if pm is None:
+            return None
+        if pm.is_free_float_active():
+            return 0, None
+        if self.config.get("free_move", False):
+            screen = QApplication.screenAt(self.frameGeometry().center()) or self.screen()
+            return (0, screen.name()) if screen is not None else None
+        info = pm._state.taskbar_info
+        hwnd = int(info.hwnd) if info is not None and info.hwnd else 0
+        return (hwnd, info.screen_name) if hwnd else None
 
     def apply_all_settings(self) -> None:
         """Delegates to ConfigController."""
@@ -2254,6 +2572,11 @@ class NetworkSpeedWidget(QWidget):
 
     def check_for_updates(self) -> None:
         """Manually trigger an update check (from menu)."""
+        from netspeedtray.core.update_checker import update_check_disabled_by_policy
+        if update_check_disabled_by_policy():
+            # The menu item is hidden under the policy (U1); a stale menu opened just before the
+            # policy landed must not wire the one-shot replies to a check that will never run.
+            return
         if self.update_checker:
             # update_available is already wired to _on_update_available at construction
             # (persistent, see __init__). Do NOT connect a second handler here: on a manual
@@ -2357,7 +2680,9 @@ class NetworkSpeedWidget(QWidget):
             from netspeedtray.views.temp_onboarding_dialog import (
                 TempOnboardingDialog, LHM_RELEASES_URL,
             )
-            dlg = TempOnboardingDialog(self.i18n, self)
+            # The port the user configured for LHM (Settings > Hardware), as the hint names it.
+            lhm_port = getattr(self.monitor_thread, "lhm_port", constants.lhm.HTTP_PORT)
+            dlg = TempOnboardingDialog(self.i18n, self, lhm_port=lhm_port)
             dlg.exec()
             if dlg.dismissed_forever():
                 self.update_config({"temp_onboarding_dismissed": True})
@@ -2399,9 +2724,10 @@ class NetworkSpeedWidget(QWidget):
     def _maybe_nudge_widgets_overlap(self, taskbar_info) -> None:
         """One-time heads-up (#200): if the widget currently overlaps the Win11 Widgets/weather panel's
         visible content, tell the user once that they can drag the widget wherever they like and it's
-        remembered. We deliberately never auto-move it - the panel's width changes with the weather, so
-        repositioning would make the widget jitter, and the user may want it right where it is. Fires at
-        most once, ever (session flag + persisted config flag)."""
+        remembered. A dragged widget is never auto-moved off it - the user may want it right where it
+        is. (Since rc.3 the DEFAULT spot steps left of a Widgets button beside the tray - its box keeps
+        one width across weather texts - so this mostly fires for drags.) Fires at most once, ever
+        (session flag + persisted config flag)."""
         try:
             if self._widgets_nudge_shown or self.config.get("widgets_overlap_nudge_shown", False):
                 # Nothing else reads the Widgets rect: stop probing for it (taskbar_utils).
@@ -2422,6 +2748,15 @@ class NetworkSpeedWidget(QWidget):
                 # their y-extents can tell an overlap apart (comparing x always "overlapped").
                 overlaps = rect_overlaps_y(self.y(), self.y() + self.height(), widgets_rect, dpi)
             else:
+                from netspeedtray.core.position_manager import user_placed_horizontal_offset
+                pm = getattr(self, "position_manager", None)
+                if (not user_placed_horizontal_offset(self.config)
+                        and not (pm is not None and pm.is_widgets_fallback_active())):
+                    # The default spot keeps clear of the button by construction (rc.3). An overlap
+                    # seen here is the #200 probe and the layout probe disagreeing for a moment while
+                    # the bar re-lays (rc.3 VM: a tray icon appearing slid the button under the
+                    # widget for one probe) - never a reason for a one-time, never-again notice.
+                    return
                 overlaps = rect_overlaps_x(self.x(), self.x() + self.width(), widgets_rect, dpi)
             if not overlaps:
                 return
@@ -2490,8 +2825,22 @@ class NetworkSpeedWidget(QWidget):
             if self.position_manager is not None and self.position_manager.is_free_float_active():
                 return False   # a free-floating widget isn't sized to a taskbar (#188)
             sig = dock_signature(taskbar_info)
-            if sig is None or sig == self._dock_sig_seen:
-                return False   # fallback taskbar now, or nothing changed
+            if sig is None:
+                return False   # fallback taskbar now
+            qt_scale = widget_qt_scale(self)
+            if sig == self._dock_sig_seen:
+                # Same dock - but a live display-scale change reaches the OS (the signature) and Qt (the
+                # widget's own device pixel ratio, which the font metrics follow) at different moments: a
+                # re-size run in between measured the text at the old scale (rc.2 live run: 87 px wide
+                # at 100% after 100 -> 150 -> 100, a fresh start is 85). Re-size once Qt catches up.
+                seen = getattr(self, "_qt_scale_seen", None)
+                if qt_scale is None or seen is None or abs(qt_scale - seen) < 1e-3:
+                    return False   # nothing changed
+                self._qt_scale_seen = qt_scale   # a failed resize can't retry every tick
+                self.logger.info("Display scale for the widget changed %s -> %s; re-sizing the widget.",
+                                 seen, qt_scale)
+                self.layout_manager.resize_widget_for_font()   # ends with update_position()
+                return True
             prev, self._dock_sig_seen = self._dock_sig_seen, sig   # a failed resize can't retry every tick
             self.logger.info("Taskbar dock geometry changed %s -> %s; re-sizing the widget.", prev, sig)
             self.layout_manager.resize_widget_for_font()   # ends with update_position()
@@ -2521,7 +2870,10 @@ class NetworkSpeedWidget(QWidget):
                     get_free_float_screen(self.config.get("preferred_monitor")) is not None:
                 self._cached_layout_mode = 'horizontal'
                 return
-            taskbar_info = get_taskbar_info()
+            # The widget's OWN taskbar (preferred monitor, #72) - the one it is sized and positioned
+            # against. A bare get_taskbar_info() read the primary's edge, wrong for a preferred bar
+            # on another edge (#229 design §3.7).
+            taskbar_info = get_taskbar_info(preferred_screen_name=self.config.get("preferred_monitor"))
             self._cached_layout_mode = self._layout_mode_for_edge(taskbar_info.get_edge_position())
         except Exception:
             pass  # Keep previous cached value
@@ -2692,6 +3044,13 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug("Performing widget cleanup...")
         failed: List[str] = []
 
+        def _mirrors() -> None:
+            # "Show on all taskbars" (#229): close every mirror while the data they paint still exists.
+            mgr = getattr(self, "_mirrors", None)
+            if mgr is not None:
+                self._mirrors = None
+                mgr.shutdown()
+
         def _hover_card() -> None:
             # Tear down the hover usage card + its armed timer first, before the data layer
             # (widget_state / monitor thread) goes away - otherwise a pending 350ms singleShot
@@ -2710,6 +3069,8 @@ class NetworkSpeedWidget(QWidget):
         def _position_manager() -> None:
             if getattr(self, 'position_manager', None):
                 self.position_manager.stop_monitoring()
+                self.position_manager.stop_side_watcher()
+                self.position_manager.stop_app_overlap()
 
         def _state_watcher() -> None:
             timer = getattr(self, '_state_watcher_timer', None)
@@ -2763,6 +3124,13 @@ class NetworkSpeedWidget(QWidget):
         def _position_config() -> None:
             self._capture_position_config()
 
+        def _history_backup() -> None:
+            # A running Settings > Advanced > Back up history (#334): interrupt its copy and give its
+            # thread a moment to delete the unfinished file + -journal. It only ever reads the live
+            # file, so a thread still running after the wait loses nothing (it is a daemon thread).
+            from netspeedtray.core.db import history_backup
+            history_backup.cancel_all(constants.timeouts.HISTORY_BACKUP_CANCEL_WAIT_MS / 1000.0)
+
         def _config_save() -> None:
             self.logger.debug("Performing final configuration save...")
             self.config_manager.save(self.config)
@@ -2774,9 +3142,10 @@ class NetworkSpeedWidget(QWidget):
         # * "config save" before "history flush": the DB step can wait DB_SHUTDOWN_WAIT_MS (15 s) for a
         #   busy database thread, and a logoff ends the process ~5 s in - the save must already be done.
         steps = (
+            ("mirrors", _mirrors),
             ("hover card", _hover_card), ("event hooks", _event_hooks),
             ("position manager", _position_manager), ("state watcher", _state_watcher),
-            ("monitor window", _monitor_window),
+            ("monitor window", _monitor_window), ("history backup", _history_backup),
             ("monitor thread", _monitor_thread), ("latency probe", _latency_probe),
             ("update checker", _update_checker),
             ("metrics endpoint", _metrics_endpoint), ("controller", _controller),

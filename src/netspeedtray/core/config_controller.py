@@ -8,7 +8,6 @@ handling loading, saving, application, and rollback of settings.
 import logging
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
-from PyQt6.QtGui import QColor
 
 from netspeedtray import constants
 from netspeedtray.utils.window_state import set_window_always_on_top
@@ -35,6 +34,7 @@ class ConfigController:
         # commit path - SettingsDialog re-emits on a 250ms throttle while you drag a slider - so a
         # native SetWindowPos here would fire several times a second. Only act on an actual change.
         self._last_keep_on_top: Optional[bool] = None
+        self._rolling_back = False   # re-entrancy guard for rollback_config's re-apply
 
     def _apply_keep_on_top(self, on_top: bool) -> None:
         """Push the always-on-top preference to the open auxiliary windows, once per change."""
@@ -139,21 +139,47 @@ class ConfigController:
 
         except Exception as e:
             self.logger.error(f"Failed to handle settings change: {e}", exc_info=True)
-            self.rollback_config(old_config)
+            self.rollback_config(old_config, save_to_disk=save_to_disk)
             raise
 
-    def rollback_config(self, old_config: Dict[str, Any]) -> None:
-        """Restores a previous configuration state."""
+    def rollback_config(self, old_config: Dict[str, Any], save_to_disk: bool = True) -> None:
+        """Restores a previous configuration state: in memory, on disk, and in the live components.
+
+        A failed apply_all_settings stops partway, so the renderer / controller / monitor thread may
+        already hold the new values while the rest still run the old ones. Saving the old config
+        alone left that half-applied state on screen until the next restart (rc.2 S8), so the
+        restored config goes back through the same apply path. If that re-apply fails too, it is
+        logged and swallowed - the caller re-raises the original error.
+
+        ``save_to_disk`` mirrors the failed call: a live-preview apply (save_to_disk=False) never wrote
+        the file, so its rollback must not either - the in-memory config it would save can hold
+        earlier previewed values that Cancel is about to revert (#432 review)."""
         self.logger.warning("Rolling back configuration changes due to apply failure.")
-        self.widget.config = old_config
+        restored = dict(old_config)
+        cfg = self.widget.config
+        if isinstance(cfg, dict):
+            # In place, so anything holding the widget's config dict sees the restored values too.
+            cfg.clear()
+            cfg.update(restored)
+        else:
+            self.widget.config = restored
+        if save_to_disk:
+            try:
+                self.config_manager.save(self.widget.config)
+                self.logger.info("Configuration rolled back and saved successfully.")
+            except Exception as e:
+                self.logger.error(f"CRITICAL: Error saving rolled-back configuration: {e}", exc_info=True)
+
+        if self._rolling_back:
+            return   # an apply that itself rolled back: never re-enter
+        self._rolling_back = True
         try:
-            self.config_manager.save(self.widget.config)
-            # Re-apply old settings to ensure consistency? 
-            # Ideally yes, but if apply failed, re-applying old might also fail or be redundant.
-            # For now, just saving state.
-            self.logger.info("Configuration rolled back and saved successfully.")
+            self.apply_all_settings()
+            self.logger.info("Rolled-back configuration re-applied.")
         except Exception as e:
-            self.logger.error(f"CRITICAL: Error saving rolled-back configuration: {e}", exc_info=True)
+            self.logger.error(f"CRITICAL: Re-applying the rolled-back configuration failed: {e}", exc_info=True)
+        finally:
+            self._rolling_back = False
 
     def apply_all_settings(self) -> None:
         """
@@ -187,11 +213,6 @@ class ConfigController:
                 self.logger.debug("Applying widget state config...")
                 w.widget_state.apply_config(w.config)
 
-            self.logger.debug("Synchronizing internal QColor objects.")
-            w.default_color = QColor(w.config.get("default_color", constants.config.defaults.DEFAULT_COLOR))
-            w.high_color = QColor(w.config.get("high_speed_color", constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR))
-            w.low_color = QColor(w.config.get("low_speed_color", constants.config.defaults.DEFAULT_LOW_SPEED_COLOR))
-
             # If the user disables temperature/power display, clear any stale values
             # so layout calculation and rendering immediately reflect the change.
             if not w.config.get("show_hardware_temps", False):
@@ -212,6 +233,11 @@ class ConfigController:
             # 3. AFTER resizing, update the position.
             self.logger.debug("Updating widget position...")
             w.update_position()
+
+            # 3a. "Show on all taskbars" (#229): build / retire / re-size the mirrors after the main
+            # widget has its new size. Nothing is built or connected while the setting is off.
+            if hasattr(w, "apply_mirrors"):
+                w.apply_mirrors()
             
             # 4. Manage Cycling Timer (stopped while "Show hardware in the hover card" collapses the
             # widget to network-only - nothing to rotate; the saved Auto-Cycle comes back with it off)

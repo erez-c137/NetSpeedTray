@@ -10,13 +10,34 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButt
 
 from netspeedtray import constants
 from netspeedtray.constants.styles import styles as tokens
+from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, ArrowStylePicker, SettingCard
-from netspeedtray.views.settings.pages._fluent import section_header, page_layout, LastValidHex
+from netspeedtray.views.settings.pages._fluent import (
+    section_header, page_layout, LastValidHex, ThemedColorPair, swatch_style)
 from netspeedtray.views.settings.pages.units import UnitsPage
 from netspeedtray.views.settings.pages.colors import ColorsPage
 
+
+def _qt_family(family: str) -> str:
+    """The family Qt knows a configured font name by. The default is the family "Segoe UI Variable"
+    (7a) itself; a pre-release "Segoe UI Variable Text" (an optical size, not a family) resolves to it -
+    QFontDatabase lists no styles for the optical size (the weight slider went dead and every Apply saved
+    weight 400), and QFontDialog opened on Tahoma. Without the variable font (Windows 10) it is the
+    Segoe UI the widget really draws. Every other name is returned unchanged."""
+    try:
+        from netspeedtray.utils.widget_renderer import make_widget_font
+        return make_widget_font(family, 9, int(constants.fonts.WEIGHT_NORMAL)).family() or family
+    except Exception:
+        return family
+
+
 class AppearancePage(QWidget):
     layout_changed = pyqtSignal()
+
+    # The colour keys this page's own fields hold (the embedded Color coding section has its own).
+    THEMED_STEMS = ("default_color", "arrow_up_color", "arrow_down_color")
+    COLOR_KEYS = tuple(f"{stem}_{suffix}" for stem in THEMED_STEMS
+                       for suffix in constants.config.defaults.THEME_SUFFIXES) + ("background_color",)
 
     def __init__(self, i18n, on_change: Callable[[], None], font_dialog_callback: Callable[[QFont, str], None], color_dialog_callback: Callable[[str], None]):
         super().__init__()
@@ -34,11 +55,11 @@ class AppearancePage(QWidget):
         self.current_arrow_font = QFont()
         
         # Last complete #RRGGBB per colour field (S8): a half-typed hex is never applied or saved.
+        # The text and arrow colours are themed pairs (<stem>_dark / <stem>_light, 2.2 rc.2).
         d = constants.config.defaults
-        self._hex = LastValidHex({"default_color": d.DEFAULT_COLOR,
-                                  "background_color": d.DEFAULT_BACKGROUND_COLOR,
-                                  "arrow_up_color": d.DEFAULT_ARROW_UP_COLOR,
-                                  "arrow_down_color": d.DEFAULT_ARROW_DOWN_COLOR})
+        self._hex = LastValidHex({k: d.DEFAULT_CONFIG[k] for k in self.COLOR_KEYS})
+        # Every colour field on this page (the Color coding section keeps its own): key -> (swatch, hex).
+        self._swatches: Dict[str, tuple] = {}
 
         self._setup_ui()
 
@@ -59,19 +80,16 @@ class AppearancePage(QWidget):
         layout.addWidget(SettingCard(self.i18n.FONT_FAMILY_LABEL,
                                      control=self._row(self.font_family_label, self.font_family_button)))
 
-        # Default text color (swatch + hex).
-        self.default_color_button = QPushButton()
-        self.default_color_button.setObjectName("default_color")
-        self.default_color_button.setFixedSize(36, 26)
-        self.default_color_button.setToolTip(self.i18n.DEFAULT_COLOR_TOOLTIP)
-        self.default_color_button.clicked.connect(lambda: self.open_color_dialog("default_color"))
-        self.default_color_input = QLineEdit()
-        self.default_color_input.setPlaceholderText("#FFFFFF")
-        self.default_color_input.setMaxLength(7)
-        self.default_color_input.setFixedWidth(90)
-        self.default_color_input.textChanged.connect(lambda t: self._on_hex_edited("default", t))
+        # Default text color: a dark-taskbar and a light-taskbar swatch (the colour scheme, #332). The
+        # note under it is the page's one explanation of the moon / sun pairs on every colour row.
         layout.addWidget(SettingCard(self.i18n.DEFAULT_COLOR_LABEL,
-                                     control=self._row(self.default_color_button, self.default_color_input)))
+                                     control=self._themed_pair("default_color", self.i18n.DEFAULT_COLOR_LABEL,
+                                                               self.i18n.DEFAULT_COLOR_TOOLTIP)))
+        self.themed_colors_note = QLabel(self.i18n.THEMED_COLORS_NOTE)
+        self.themed_colors_note.setWordWrap(True)
+        self.themed_colors_note.setStyleSheet(
+            f"color: {style_utils.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
+        layout.addWidget(self.themed_colors_note)
 
         # Font size.
         self.font_size = Win11Slider(editable=False)
@@ -105,7 +123,8 @@ class AppearancePage(QWidget):
         self.background_color_input = QLineEdit()
         self.background_color_input.setMaxLength(7)
         self.background_color_input.setFixedWidth(90)
-        self.background_color_input.textChanged.connect(lambda t: self._on_hex_edited("background", t))
+        self.background_color_input.textChanged.connect(lambda t: self._on_hex_edited("background_color", t))
+        self._swatches["background_color"] = (self.background_color_button, self.background_color_input)
         layout.addWidget(SettingCard(
             self.i18n.BACKGROUND_COLOR_LABEL,
             control=self._row(self.background_color_button, self.background_color_input)))
@@ -161,25 +180,23 @@ class AppearancePage(QWidget):
         arrow_c_layout = QVBoxLayout(self.arrow_colors_container)
         arrow_c_layout.setContentsMargins(0, 0, 0, 0)
         arrow_c_layout.setSpacing(tokens.SPACE_XS)
-        for key, label in (("arrow_up", self.i18n.ARROW_UP_COLOR_LABEL),
-                           ("arrow_down", self.i18n.ARROW_DOWN_COLOR_LABEL)):
-            # Widget names must be "{key}_color_button" / "{key}_color_input": SettingsDialog routes
-            # every non-threshold color back through set_color_input by that convention, so naming
-            # them this way needs zero routing changes.
-            button = QPushButton()
-            button.setObjectName(f"{key}_color")
-            button.setFixedSize(36, 26)
-            button.clicked.connect(lambda _=False, k=f"{key}_color": self.open_color_dialog(k))
-            line = QLineEdit()
-            line.setMaxLength(7)
-            line.setFixedWidth(90)
-            line.textChanged.connect(lambda t, k=key: self._on_hex_edited(k, t))
-            setattr(self, f"{key}_color_button", button)
-            setattr(self, f"{key}_color_input", line)
-            arrow_c_layout.addWidget(SettingCard(label, control=self._row(button, line)))
+        for stem, label in (("arrow_up_color", self.i18n.ARROW_UP_COLOR_LABEL),
+                            ("arrow_down_color", self.i18n.ARROW_DOWN_COLOR_LABEL)):
+            arrow_c_layout.addWidget(SettingCard(label, control=self._themed_pair(stem, label)))
         layout.addWidget(self.arrow_colors_container)
 
         layout.addStretch()
+
+    def _themed_pair(self, stem: str, title: str, tooltip: str = "") -> ThemedColorPair:
+        """A themed colour row's control. Its widgets are reachable as ``<key>_button`` / ``<key>_input``
+        (e.g. ``default_color_light_input``), and SettingsDialog routes a picked colour back through
+        set_color_input(key) - the full config key."""
+        pair = ThemedColorPair(self.i18n, stem, title, self.open_color_dialog, self._on_hex_edited, tooltip)
+        for key, button in pair.buttons.items():
+            setattr(self, f"{key}_button", button)
+            setattr(self, f"{key}_input", pair.inputs[key])
+            self._swatches[key] = (button, pair.inputs[key])
+        return pair
 
     def _row(self, *widgets) -> QWidget:
         """Pack widgets into a compact horizontal composite for a SettingCard's right-docked control."""
@@ -195,16 +212,18 @@ class AppearancePage(QWidget):
         # Main Font
         fam = config.get("font_family", constants.config.defaults.DEFAULT_FONT_FAMILY)
         self.font_family_label.setText(fam)
-        self.current_font.setFamily(fam)
+        self.current_font.setFamily(_qt_family(fam))
         self.font_size.setValue(int(config.get("font_size", constants.config.defaults.DEFAULT_FONT_SIZE)))
         self._update_weight_options(fam)
         self._set_slider_weight(config.get("font_weight", constants.fonts.WEIGHT_DEMIBOLD))
 
-        # Colors
-        for key in ["default", "background"]:
-            c = config.get(f"{key}_color", "#FFFFFF" if key == "default" else "#000000")
-            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {c}; border: 1px solid #5A5A5A; border-radius: 4px;")
-            getattr(self, f"{key}_color_input").setText(c)
+        # Colors (each themed key and the background) - a plain loop, no theme state (2.2 rc.2).
+        factory = constants.config.defaults.DEFAULT_CONFIG
+        for key, (button, line) in self._swatches.items():
+            c = str(config.get(key) or factory[key])
+            button.setStyleSheet(swatch_style(c))
+            line.setText(c)
+
         
         self.bg_opacity.setValue(int(config.get("background_opacity", 0)))
         
@@ -216,7 +235,7 @@ class AppearancePage(QWidget):
         self.use_separate_arrow_font.setChecked(bool(config.get("use_separate_arrow_font", False)))
         a_fam = config.get("arrow_font_family", fam) # Fallback to main
         self.arrow_font_family_label.setText(a_fam)
-        self.current_arrow_font.setFamily(a_fam)
+        self.current_arrow_font.setFamily(_qt_family(a_fam))
         
         main_size = int(config.get("font_size", constants.config.defaults.DEFAULT_FONT_SIZE))
         self.arrow_font_size.setValue(int(config.get("arrow_font_size", main_size)))
@@ -226,9 +245,6 @@ class AppearancePage(QWidget):
         self.arrow_font_container.setVisible(self.use_separate_arrow_font.isChecked())
 
         self.use_custom_arrow_colors.setChecked(bool(config.get("use_custom_arrow_colors", False)))
-        for key, cfg_key in (("arrow_up", "arrow_up_color"), ("arrow_down", "arrow_down_color")):
-            self.set_color_input(key, str(config.get(
-                cfg_key, getattr(constants.config.defaults, f"DEFAULT_{cfg_key.upper()}"))))
         self.arrow_colors_container.setVisible(self.use_custom_arrow_colors.isChecked())
 
         # Absorbed sections (units / color coding).
@@ -240,13 +256,11 @@ class AppearancePage(QWidget):
             "font_family": self.font_family_label.text(),
             "font_size": int(self.font_size.value()),
             "font_weight": self.allowed_font_weights[self.font_weight.value()] if 0 <= self.font_weight.value() < len(self.allowed_font_weights) else 400,
-            "default_color": self._hex.get("default_color", self.default_color_input.text()),
-            "background_color": self._hex.get("background_color", self.background_color_input.text()),
+            # The themed text / arrow colours (both halves of each pair) and the background.
+            **{key: self._hex.get(key, line.text()) for key, (_b, line) in self._swatches.items()},
             "background_opacity": self.bg_opacity.value(),
             # Arrow Config
             "use_custom_arrow_colors": self.use_custom_arrow_colors.isChecked(),
-            "arrow_up_color": self._hex.get("arrow_up_color", self.arrow_up_color_input.text()),
-            "arrow_down_color": self._hex.get("arrow_down_color", self.arrow_down_color_input.text()),
             "use_separate_arrow_font": self.use_separate_arrow_font.isChecked(),
             "arrow_font_family": self.arrow_font_family_label.text(),
             "arrow_font_size": int(self.arrow_font_size.value()),
@@ -275,18 +289,19 @@ class AppearancePage(QWidget):
         self.on_change()
 
     def set_color_input(self, key: str, hex_code: str):
-        if hasattr(self, f"{key}_color_input"):
-            getattr(self, f"{key}_color_input").setText(hex_code)
-            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {hex_code}; border: 1px solid #5A5A5A; border-radius: 4px;")
+        """Show a picked colour in the field of config key ``key`` (e.g. ``arrow_down_color_light``)."""
+        if key in self._swatches:
+            button, line = self._swatches[key]
+            line.setText(hex_code)
+            button.setStyleSheet(swatch_style(hex_code))
             self.on_change()
 
     def _on_hex_edited(self, key: str, text: str) -> None:
         """A colour hex field changed: only a complete #RRGGBB repaints the swatch and reaches the live
         preview; the keystrokes in between change nothing (S8)."""
-        if not self._hex.remember(f"{key}_color", text):
+        if not self._hex.remember(key, text):
             return
-        getattr(self, f"{key}_color_button").setStyleSheet(
-            f"background-color: {text.strip()}; border: 1px solid #5A5A5A; border-radius: 4px;")
+        self._swatches[key][0].setStyleSheet(swatch_style(text.strip()))
         self.on_change()
 
     def _on_font_weight_changed(self, idx: int):
@@ -305,6 +320,7 @@ class AppearancePage(QWidget):
         self.on_change()
 
     def _update_weight_options(self, family: str):
+        family = _qt_family(family)
         styles = QFontDatabase.styles(family)
         weights = []
         name_map = {}

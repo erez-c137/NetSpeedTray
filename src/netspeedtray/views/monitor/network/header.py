@@ -207,6 +207,7 @@ class NetworkHeader(QWidget):
         self._history_note.setMinimumWidth(constants.layout.MONITOR_HISTORY_NOTE_MIN_WIDTH)
         self._history_note.setMaximumWidth(constants.layout.MONITOR_HISTORY_NOTE_MAX_WIDTH)
         self._history_note.setVisible(False)
+        self._note_wanted = False   # set_totals asks for the note; _fit decides whether the band has room
         # Takes the free width first (up to its max) - the stretch after it only gets what's left.
         root.addWidget(self._history_note, 100, Qt.AlignmentFlag.AlignVCenter)
         root.addStretch(1)
@@ -295,7 +296,7 @@ class NetworkHeader(QWidget):
             return
         content_w = (self._down[1].sizeHint().width(), self._up[1].sizeHint().width(),
                      self._iface_btn.sizeHint().width(), self._timeline.sizeHint().width(),
-                     self._history_note.isVisible())
+                     self._note_wanted)
         if content_w == self._content_w:
             return
         self._content_w = content_w
@@ -326,18 +327,65 @@ class NetworkHeader(QWidget):
         Monitor's minimum width in every locale nothing overlaps or clips (M9)."""
         check_text = self._tr("CHECK_CONN_ACTION", "Check connection")
         lay = self.layout()
-        cur_min = lay.minimumSize().width()
+        # Measured with the history note at its full floor whenever it is wanted, whatever room it got
+        # last time - so the compact decision never depends on how the note was squeezed before.
+        note_full = (constants.layout.MONITOR_HISTORY_NOTE_MIN_WIDTH + lay.spacing()) if self._note_wanted else 0
+        cur_min = self._min_without_note() + note_full
         cur_check = self._check_btn.sizeHint().width()
         spacing_extra = (self._SPACING_WIDE - lay.spacing()) * max(0, lay.count() - 1)
         full_needed = cur_min - cur_check + self._full_check_width() + spacing_extra
         compact = full_needed > width
-        if compact == self._compact:
-            return
-        self._compact = compact
-        self._check_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly if compact
-                                           else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._check_btn.setAccessibleName(check_text)
-        lay.setSpacing(self._SPACING_COMPACT if compact else self._SPACING_WIDE)
+        if compact != self._compact:
+            self._compact = compact
+            self._check_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly if compact
+                                               else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            self._check_btn.setAccessibleName(check_text)
+            lay.setSpacing(self._SPACING_COMPACT if compact else self._SPACING_WIDE)
+        self._fit_note(width)
+
+    def _min_without_note(self) -> int:
+        """The band's minimum width leaving the history note out."""
+        lay = self.layout()
+        note = self._history_note
+        share = (note.minimumWidth() + lay.spacing()) if not note.isHidden() else 0
+        return lay.minimumSize().width() - share
+
+    def _iface_shortfall(self) -> int:
+        """How much wider than its eliding floor the interface button wants to be (its whole name, up
+        to its max). The note is a secondary caption, so it yields before the NIC name truncates to
+        "All (A…" / "Ether…" (#432 review)."""
+        btn = self._iface_btn
+        preferred = min(btn.sizeHint().width(), btn.maximumWidth())
+        return max(0, preferred - btn.minimumSizeHint().width())
+
+    def _fit_note(self, width: int) -> None:
+        """The D5 note takes only the room the controls leave (the NIC button counted at its full name):
+        its full floor when there is one, less down to MONITOR_HISTORY_NOTE_COMPACT_MIN_WIDTH, and below
+        that it hides and its text moves to the totals' tooltips. Holding its 160 px at the 660 px minimum squeezed the timeline and Live
+        pill below their own minimums in every locale (rc.2 S7)."""
+        note = self._history_note
+        # A compact flip in this same _fit resized "Check connection", which sits in the controls
+        # sub-layout; QLayout.invalidate() on the root doesn't reach sub-layouts, so their cached
+        # minimum would be measured stale until the next activate().
+        def _invalidate(lay) -> None:
+            lay.invalidate()
+            for i in range(lay.count()):
+                sub = lay.itemAt(i).layout()
+                if sub is not None:
+                    _invalidate(sub)
+        _invalidate(self.layout())
+        room = width - self._min_without_note() - self._iface_shortfall() - self.layout().spacing()
+        show = self._note_wanted and room >= constants.layout.MONITOR_HISTORY_NOTE_COMPACT_MIN_WIDTH
+        if show:
+            want_w = min(constants.layout.MONITOR_HISTORY_NOTE_MIN_WIDTH, room)
+            if note.minimumWidth() != want_w:
+                note.setMinimumWidth(want_w)
+        if note.isHidden() == show:
+            note.setVisible(show)
+        tip = note.full_text() if (self._note_wanted and not show) else ""
+        for lbl in (self._down[1], self._up[1]):
+            if lbl.toolTip() != tip:
+                lbl.setToolTip(tip)
 
     def _stat_block(self, label: str, glyph: str, c: dict) -> Tuple[QVBoxLayout, QLabel]:
         col = QVBoxLayout()
@@ -365,7 +413,13 @@ class NetworkHeader(QWidget):
         uv, uu = format_data_size(up_bytes, self._i18n, precision=1)
         self._down[1].setText(f"↓ {self._fmt(dv)} {du}")
         self._up[1].setText(f"↑ {self._fmt(uv)} {uu}")
-        self._history_note.setVisible(bool(reconstructed) and bool(self._history_note.full_text()))
+        self._note_wanted = bool(reconstructed) and bool(self._history_note.full_text())
+        if not self._note_wanted or not self.isVisible():
+            # Shown again on demand; _fit (via _refit / showEvent) trims it to the room the band has.
+            self._history_note.setVisible(self._note_wanted)
+            if not self._note_wanted:
+                for lbl in (self._down[1], self._up[1]):
+                    lbl.setToolTip("")
         # The timeline dropdown already names the window, so the totals no longer need a separate caption.
         self._refit()
 

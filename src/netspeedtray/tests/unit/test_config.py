@@ -45,7 +45,7 @@ def test_save_removes_null_keys_from_file(config_manager):
 def test_validate_config_corrects_invalid_values(config_manager):
     invalid_config = {
         "update_rate": -2,
-        "default_color": "not-a-hex-code",
+        "default_color_light": "not-a-hex-code",
         "color_coding": "not-a-boolean",
         "selected_interfaces": "not-a-list",
     }
@@ -53,7 +53,7 @@ def test_validate_config_corrects_invalid_values(config_manager):
         validated_config = config_manager._validate_config(invalid_config)
     
     assert validated_config["update_rate"] == constants.config.defaults.DEFAULT_UPDATE_RATE
-    assert validated_config["default_color"] == constants.config.defaults.DEFAULT_COLOR
+    assert validated_config["default_color_light"] == constants.config.defaults.DEFAULT_CONFIG["default_color_light"]
     assert validated_config["color_coding"] == constants.config.defaults.DEFAULT_COLOR_CODING
     assert validated_config["selected_interfaces"] == []
 
@@ -259,16 +259,16 @@ def test_unparseable_version_string_survives_load(tmp_path):
 
 def test_newer_version_is_not_stamped_down(config_manager):
     """4b: a config_version that parses HIGHER than the schema version must not be
-    stamped downward - '1.2' in must stay '1.2', not become '1.1'."""
-    result = config_manager._migrate_config({"config_version": "1.2"})
-    assert result["config_version"] == "1.2"
+    stamped downward - '1.9' in must stay '1.9', not become '1.3'."""
+    result = config_manager._migrate_config({"config_version": "1.9"})
+    assert result["config_version"] == "1.9"
 
 
 def test_newer_version_survives_full_load(tmp_path):
     """4b, end to end: load() of a newer-versioned config keeps the version."""
-    path = _write_config_file(tmp_path, {"config_version": "1.2", "font_size": 10})
+    path = _write_config_file(tmp_path, {"config_version": "1.9", "font_size": 10})
     loaded = ConfigManager(path).load()
-    assert loaded["config_version"] == "1.2"
+    assert loaded["config_version"] == "1.9"
     assert loaded["font_size"] == 10
 
 
@@ -422,7 +422,7 @@ def test_migration_from_1_1_is_written_to_disk(tmp_path):
         "the pristine pre-migration backup must hold the 1.1 file"
 
     on_disk = json.loads(path.read_text(encoding="utf-8"))
-    assert on_disk["config_version"] == constants.config.defaults.CONFIG_SCHEMA_VERSION == "1.2"
+    assert on_disk["config_version"] == constants.config.defaults.CONFIG_SCHEMA_VERSION == "1.4"
     assert "taskbar_height" not in on_disk
     assert on_disk["hardware_label_style"] == "icons"
     assert on_disk["hardware_label_color"] == "match_text"
@@ -547,7 +547,7 @@ def test_migration_is_not_persisted_when_the_backup_fails(tmp_path, caplog):
         cfg = manager.load()
         manager.load()                              # a reload in the same session
 
-    assert cfg["config_version"] == "1.2" and cfg["update_rate"] == 2.0   # migrated in memory
+    assert cfg["config_version"] == constants.config.defaults.CONFIG_SCHEMA_VERSION and cfg["update_rate"] == 2.0   # migrated in memory
     assert path.read_bytes() == before
     assert not path.with_name(f"{path.name}.bak.v1.1").exists()
     failures = [r for r in _config_records(caplog) if "Failed to back up config" in r.getMessage()]
@@ -555,22 +555,92 @@ def test_migration_is_not_persisted_when_the_backup_fails(tmp_path, caplog):
 
 
 def test_same_version_field_migration_takes_its_own_backup(tmp_path):
-    """A 2.2 beta wrote `taskbar_height` into a 1.2 file. Rewriting it to drop that key is a write
+    """A 2.2 beta wrote `taskbar_height` into a 1.4 file. Rewriting it to drop that key is a write
     over the user's file like any migration, so it keeps a copy first - under `.fields`, so it can
-    never pose as the `.bak.v1.2` a future 1.3 build must take of the file as it is then."""
-    original = {"config_version": "1.2", "taskbar_height": 40, "font_size": 13,
+    never pose as the `.bak.v1.4` a future 1.5 build must take of the file as it is then."""
+    original = {"config_version": "1.4", "taskbar_height": 40, "font_size": 13,
                 "widget_display_mode": "future_mode"}
     path = _write_config_file(tmp_path, original)
     ConfigManager(path).load()
 
-    assert json.loads(path.with_name(f"{path.name}.bak.v1.2.fields").read_text(encoding="utf-8")) \
+    assert json.loads(path.with_name(f"{path.name}.bak.v1.4.fields").read_text(encoding="utf-8")) \
         == original
-    assert not path.with_name(f"{path.name}.bak.v1.2").exists()
+    assert not path.with_name(f"{path.name}.bak.v1.4").exists()
     assert "taskbar_height" not in json.loads(path.read_text(encoding="utf-8"))
 
 
+def test_a_repeat_field_migration_snapshots_the_state_just_before_it(tmp_path):
+    """rc.2 D3: `.fields` keeps only the FIRST copy, so a second same-version field migration
+    rewrote the file with no backup of the state right before it. It must snapshot that state too,
+    keep the pristine copy as it was, and keep only the newest FIELD_MIGRATION_SNAPSHOTS_KEPT."""
+    from datetime import datetime as real_datetime
+    first = {"config_version": "1.4", "taskbar_height": 40, "font_size": 13}
+    path = _write_config_file(tmp_path, first)
+    ConfigManager(path).load()
+    pristine = path.with_name(f"{path.name}.bak.v1.4.fields")
+    kept = constants.config.defaults.FIELD_MIGRATION_SNAPSHOTS_KEPT
+
+    states = []
+    for i in range(kept + 2):
+        state = {"config_version": "1.4", "taskbar_height": 50 + i, "font_size": 14 + i}
+        states.append(state)
+        path.write_text(json.dumps(state), encoding="utf-8")
+
+        class _Clock(real_datetime):
+            @classmethod
+            def now(cls, tz=None, _i=i):
+                return real_datetime(2026, 10, 22, 12, 0, _i // 2)   # two per second: same-second ties
+        with patch("datetime.datetime", _Clock):
+            ConfigManager(path).load()
+        assert "taskbar_height" not in json.loads(path.read_text(encoding="utf-8"))
+
+    assert json.loads(pristine.read_text(encoding="utf-8")) == first
+    snaps = sorted(tmp_path.glob(f"{pristine.name}.*"),
+                   key=lambda p: p.name.replace(".fields.", ".fields.~"))
+    assert len(snaps) == kept
+    got = [json.loads(p.read_text(encoding="utf-8")) for p in snaps]
+    assert sorted(got, key=lambda d: d["font_size"]) == states[-kept:]
+
+
+def test_a_clock_set_back_never_prunes_the_snapshot_just_taken(tmp_path):
+    """Review L2: names sort by their timestamp, so with the clock set back the newest snapshot sorts
+    oldest. It holds the state this migration overwrites - it must survive the prune."""
+    from datetime import datetime as real_datetime
+    path = _write_config_file(tmp_path, {"config_version": "1.4", "taskbar_height": 40})
+    ConfigManager(path).load()
+    pristine = path.with_name(f"{path.name}.bak.v1.4.fields")
+    kept = constants.config.defaults.FIELD_MIGRATION_SNAPSHOTS_KEPT
+
+    def migrate_at(when, height):
+        path.write_text(json.dumps({"config_version": "1.4", "taskbar_height": height}), encoding="utf-8")
+
+        class _Clock(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return when
+        with patch("datetime.datetime", _Clock):
+            ConfigManager(path).load()
+
+    for i in range(kept):
+        migrate_at(real_datetime(2026, 10, 22, 12, 0, i), 50 + i)
+    migrate_at(real_datetime(2025, 1, 1, 0, 0, 0), 99)          # the clock is now a year behind
+    snaps = list(tmp_path.glob(f"{pristine.name}.*"))
+    assert len(snaps) == kept
+    assert any(json.loads(p.read_text(encoding="utf-8"))["taskbar_height"] == 99 for p in snaps)
+
+
+def test_a_failed_snapshot_blocks_the_repeat_field_migration(tmp_path):
+    path = _write_config_file(tmp_path, {"config_version": "1.4", "taskbar_height": 40})
+    ConfigManager(path).load()                                   # takes the pristine `.fields`
+    path.write_text(json.dumps({"config_version": "1.4", "taskbar_height": 41}), encoding="utf-8")
+    before = path.read_bytes()
+    with patch("netspeedtray.utils.config.shutil.copy2", side_effect=OSError("disk full")):
+        ConfigManager(path).load()
+    assert path.read_bytes() == before
+
+
 def test_same_version_field_migration_is_not_persisted_when_the_backup_fails(tmp_path):
-    path = _write_config_file(tmp_path, {"config_version": "1.2", "taskbar_height": 40})
+    path = _write_config_file(tmp_path, {"config_version": "1.4", "taskbar_height": 40})
     before = path.read_bytes()
     with patch("netspeedtray.utils.config.shutil.copy2", side_effect=OSError("disk full")):
         ConfigManager(path).load()
@@ -584,7 +654,7 @@ def test_read_only_config_migration_fails_once_and_does_not_loop(tmp_path, caplo
         manager = ConfigManager(path)
         with caplog.at_level(logging.INFO, logger="NetSpeedTray.Config"):
             cfg = manager.load()                    # must not raise
-            assert cfg["config_version"] == "1.2"   # runs on the migrated settings in memory
+            assert cfg["config_version"] == "1.4"   # runs on the migrated settings in memory
             manager.load()                          # a reload in the same session: no retry
             manager.save(dict(cfg))                 # unchanged: the no-op shortcut, no write
         failures = [r for r in _config_records(caplog)

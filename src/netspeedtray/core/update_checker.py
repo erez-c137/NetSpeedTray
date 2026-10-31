@@ -14,11 +14,50 @@ from typing import Optional, Tuple
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from netspeedtray import constants
+from netspeedtray.utils import https
 
 logger = logging.getLogger(f"{constants.app.APP_NAME}.UpdateChecker")
 
 RELEASES_URL = f"https://api.github.com/repos/{constants.app.GITHUB_OWNER}/{constants.app.GITHUB_REPO}/releases/latest"
 CHECK_INTERVAL_HOURS = 24
+
+
+_POLICY_TYPE_WARNED: set = set()   # (hive, registry type) pairs already logged
+
+
+def update_check_disabled_by_policy() -> bool:
+    """True when IT has turned update checks off: a nonzero REG_DWORD (or REG_QWORD)
+    ``DisableUpdateCheck`` under ``HKLM\\SOFTWARE\\Policies\\NetSpeedTray``, or the same under HKCU
+    (U1). The two hives are OR-ed: either one set disables, and neither can re-enable what the other
+    disabled. Read-only. A missing key, another value type (logged) or any read error means "no policy" - the
+    policy can only ever switch checks OFF, so failing open here never contacts anything the user
+    has not already allowed. Cheap enough to call on every check and every menu open, so a policy
+    pushed while the app runs applies without a restart."""
+    try:
+        import winreg
+    except ImportError:  # not Windows
+        return False
+    key_path = constants.app.POLICY_REGISTRY_KEY
+    value_name = constants.app.POLICY_DISABLE_UPDATE_CHECK_VALUE
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ) as key:
+                value, value_type = winreg.QueryValueEx(key, value_name)
+        except OSError:
+            continue   # no key / no value / no access: this hive sets nothing
+        if value_type not in (winreg.REG_DWORD, winreg.REG_QWORD):
+            # Most likely a REG_SZ "1" from a hand-written script: say so (once per hive and type -
+            # this runs on every menu open), or IT never learns why the policy "does nothing".
+            if (hive, value_type) in _POLICY_TYPE_WARNED:
+                continue
+            _POLICY_TYPE_WARNED.add((hive, value_type))
+            logger.warning("Ignoring the %s policy value under %s\\%s: it is registry type %s, not a "
+                           "REG_DWORD.", value_name,
+                           "HKLM" if hive == winreg.HKEY_LOCAL_MACHINE else "HKCU", key_path, value_type)
+            continue
+        if int(value) != 0:
+            return True
+    return False
 
 
 # Pre-release stage ordering. An unrecognised stage sorts ABOVE these but still
@@ -120,7 +159,7 @@ class _CheckWorker(QThread):
                 headers={"Accept": "application/vnd.github.v3+json",
                          "User-Agent": f"NetSpeedTray/{constants.app.VERSION}"}
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with https.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
 
             tag = data.get("tag_name", "")
@@ -176,6 +215,10 @@ class UpdateChecker(QObject):
 
     def should_check(self) -> bool:
         """Return True if enough time has passed since the last check."""
+        if update_check_disabled_by_policy():
+            logger.info("Update checks are disabled by policy (%s\\%s).",
+                        constants.app.POLICY_REGISTRY_KEY, constants.app.POLICY_DISABLE_UPDATE_CHECK_VALUE)
+            return False
         if not self.config.get("check_for_updates", True):
             return False
 
@@ -194,6 +237,12 @@ class UpdateChecker(QObject):
         """Start an async update check. Results arrive via signals."""
         if self._worker is not None and self._worker.isRunning():
             logger.debug("Update check already in progress, skipping.")
+            return
+        # The policy covers the manual check too (the per-user toggle does not): its point is that
+        # the machine never contacts GitHub and IT owns the version. The menu item is hidden as well
+        # (tray_manager); this is the backstop for any other caller.
+        if update_check_disabled_by_policy():
+            logger.info("Update check refused: disabled by policy.")
             return
 
         logger.info("Checking for updates...")

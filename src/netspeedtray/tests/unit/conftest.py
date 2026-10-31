@@ -77,7 +77,11 @@ class _NoLhmWebServer:
     """Stand-in for LhmHttpClient: LibreHardwareMonitor's web server is not running."""
 
     def __init__(self, *args, **kwargs):
+        from netspeedtray import constants
         self.calls = 0
+        self.host = constants.lhm.HTTP_HOST
+        self.port = constants.lhm.HTTP_PORT
+        self.status = constants.lhm.STATUS_NOT_FOUND
 
     def get_snapshot(self):
         self.calls += 1
@@ -85,6 +89,9 @@ class _NoLhmWebServer:
 
     def reset_backoff(self):
         pass
+
+    def configure(self, port, username="", password=""):
+        self.port = port
 
 
 @pytest.fixture(autouse=True)
@@ -99,19 +106,31 @@ def _no_real_lhm_web_server(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _pin_windows_theme(monkeypatch):
-    """Pin the Windows (taskbar) theme the automatic text colour follows, so no test depends on the
-    machine running it. Settings' live preview / Save / Cancel substitute the current theme's colour
-    for an AUTOMATIC default_color (#405); on a light-mode CI runner that turned the factory white
-    into black and failed exact-config assertions that pass on a dark-mode dev PC (PR #409).
+def _backups_not_quitting(monkeypatch):
+    """A widget ``cleanup()`` under test calls ``history_backup.cancel_all`` (the app is quitting), which
+    refuses every later backup for the rest of the process - right for the app, wrong for the next
+    test (#334). Each test starts with backups allowed."""
+    from netspeedtray.core.db import history_backup
+    monkeypatch.setattr(history_backup, "_cancelled", False)
 
-    Dark (white text) by default; NST_TEST_WINDOWS_THEME=light runs the suite under a light taskbar,
-    to prove a test doesn't depend on it. A test that needs a specific theme patches these names
-    itself, which overrides this floor."""
+
+@pytest.fixture(autouse=True)
+def _pin_windows_theme(monkeypatch):
+    """Pin the Windows (taskbar) theme the colour scheme resolves against, so no test depends on the
+    machine running it (on a light-mode CI runner the factory white text once turned black and failed
+    exact assertions that pass on a dark-mode dev PC, PR #409).
+
+    Dark by default; NST_TEST_WINDOWS_THEME=light runs the suite under a light taskbar, to prove a test
+    doesn't depend on it. The cached flag is cleared, so the first resolve reads the pinned value. A
+    test that needs a specific theme patches color_scheme itself (or passes ``light=``), which overrides
+    this floor."""
     import os
-    from netspeedtray import constants
+    from netspeedtray.utils import color_scheme
     light = os.environ.get("NST_TEST_WINDOWS_THEME", "dark").strip().lower() == "light"
-    colour = constants.color.BLACK if light else constants.color.WHITE
-    for target in ("netspeedtray.views.settings.dialog.shell_theme_text_color",
-                   "netspeedtray.views.widget.theme.shell_theme_text_color"):
-        monkeypatch.setattr(target, lambda: colour, raising=False)
+    monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1 if light else 0)
+    monkeypatch.setattr(color_scheme, "_shell_light", None)
+    # ...and no High Contrast / accent taskbar (legibility "L"): a dev PC with an accent bar must not
+    # change what the suite paints. Tests of those states patch read_taskbar_appearance themselves.
+    from netspeedtray.utils.taskbar_appearance import PLAIN
+    monkeypatch.setattr(color_scheme, "read_taskbar_appearance", lambda shell_light=False: PLAIN)
+    monkeypatch.setattr(color_scheme, "_appearance", None)

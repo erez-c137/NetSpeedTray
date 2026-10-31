@@ -32,7 +32,8 @@ from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.window_state import (restore_window_position, save_window_position,
                                              set_window_always_on_top)
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path, reveal_in_explorer
-from netspeedtray.utils.styles import is_dark_mode, shell_theme_text_color
+from netspeedtray.utils.styles import is_dark_mode
+from netspeedtray.utils import color_scheme
 from netspeedtray.utils.support_bundle import build_support_bundle
 from netspeedtray.utils.dwm import apply_win11_chrome
 
@@ -83,7 +84,8 @@ class SettingsDialog(QDialog):
         "location_onboarding_dismissed", "widgets_overlap_nudge_shown", "history_upgrade_notice_shown",
         "monitor_active_tab", "history_period", "history_period_slider_value", "history_period_chosen",
         "paused", "last_update_check", "skipped_version", "usage_alert_state", "start_with_windows",
-        "pin_hint_shown_count",
+        "pin_hint_shown_count", "side_bar_no_room_notice_shown", "app_overlap_notice_shown",
+        "app_overlap_drop_offset",
     )
 
     def __init__(
@@ -112,7 +114,6 @@ class SettingsDialog(QDialog):
         self.available_interfaces = available_interfaces or []
         self.primary_interface = primary_interface   # the routing interface, marked in the picker
         self.startup_enabled_initial_state = is_startup_enabled
-        self._user_chose_default_color = False
 
         self._ui_setup_done = False
         
@@ -295,7 +296,7 @@ class SettingsDialog(QDialog):
 
             # Instantiate Pages (2.0 IA)
             self.general_page = GeneralPage(self.i18n, self._schedule_settings_update)
-            self.widget_page = WidgetPage(self.i18n, self._schedule_settings_update)
+            self.widget_page = WidgetPage(self.i18n, self._schedule_settings_update, self._open_color_dialog)
             self.appearance_page = AppearancePage(
                 self.i18n,
                 self._schedule_settings_update,
@@ -308,7 +309,8 @@ class SettingsDialog(QDialog):
             self.units_page = self.appearance_page.units_section
 
             self.hardware_page = HardwarePage(self.i18n, self._schedule_settings_update,
-                                              self._open_color_dialog)
+                                              self._open_color_dialog,
+                                              lhm_status_provider=self._lhm_status)
             self.interfaces_page = InterfacesPage(
                 self.i18n,
                 self.available_interfaces,
@@ -321,6 +323,8 @@ class SettingsDialog(QDialog):
                 reset_page_callback=self._reset_advanced_page,
                 reset_all_callback=self._reset_all_to_defaults,
                 delete_history_callback=self._delete_all_history,
+                history_path_callback=self._history_db_path,
+                notify_callback=self._notify_backup_result,
             )
             # The Record-hardware-history card greys out live as CPU/GPU monitoring is switched.
             # The battery hover toggle counts too (#323) - see _sync_record_card.
@@ -370,9 +374,10 @@ class SettingsDialog(QDialog):
                 self.preview_widget = PreviewWidget(self.config, self.i18n, width=300, height=40)
                 ps_layout.addWidget(self.preview_widget)
                 ps_layout.addStretch(1)
-                # A subtle taskbar-ish backdrop so the preview reads as "on the taskbar".
-                c = "#2b2b2b" if is_dark_mode() else "#e8e8e8"
-                preview_strip.setStyleSheet(f"#previewStrip {{ background: {c}; border-radius: 6px; }}")
+                # A subtle taskbar-ish backdrop so the preview reads as "on the taskbar" - in the
+                # TASKBAR's theme (the Windows mode the colours resolve for), not the app mode.
+                self._preview_strip = preview_strip
+                self._paint_preview_backdrop()
                 content_layout.addWidget(preview_strip)
             except Exception as e:
                 self.logger.error("Could not build settings live-preview: %s", e, exc_info=True)
@@ -562,6 +567,12 @@ class SettingsDialog(QDialog):
         # so the endpoint's status now describes what the user just chose.
         self._refresh_metrics_status()
 
+    def _lhm_status(self):
+        """(status, port) of the running LibreHardwareMonitor client, for Settings > Hardware."""
+        mt = getattr(self.parent_widget, "monitor_thread", None)
+        status, port = getattr(mt, "lhm_status", None), getattr(mt, "lhm_port", None)
+        return (status, port) if isinstance(status, str) and isinstance(port, int) else None
+
     def _refresh_metrics_status(self) -> None:
         """Show the local metrics endpoint's live status (listening / port in use) under its address."""
         try:
@@ -632,53 +643,12 @@ class SettingsDialog(QDialog):
             # Save current window position
             settings["settings_window_pos"] = {"x": self.pos().x(), "y": self.pos().y()}
             
-            # The text colour is the user's own once they picked it in the dialog OR typed a different
-            # hex (S3: a typed one stayed "automatic" and the next launch's theme sync reset it).
-            typed = str(settings.get("default_color", "")).upper() != \
-                str(self.config.get("default_color", "")).upper()
-            if self._user_chose_default_color or typed:
-                settings["color_is_automatic"] = False
-            else:
-                # The dialog's working baseline: equal to original_config on open, the factory value
-                # after Reset all (which keeps original_config for Cancel - S5).
-                settings["color_is_automatic"] = self.config.get("color_is_automatic", True)
-
-            # A typed / picked colour set color_is_automatic False above, so the live theme colour
-            # below never overrides it (S3 + #405).
-            return self._with_live_auto_color(settings)
+            # No colour bookkeeping: the theme never writes the config (each themed colour is a
+            # dark/light pair, resolved by the renderer), so what the fields show is what is saved.
+            return settings
         except Exception as e:
             self.logger.error(f"Error collecting settings: {e}", exc_info=True)
             return {}
-
-    def _with_live_auto_color(self, cfg: Dict[str, Any],
-                              baseline: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """``cfg`` with an AUTOMATIC text colour taken from the current Windows theme.
-
-        The dialog loads ``default_color`` once, when it opens. If the Windows theme flips while it
-        is open, the theme manager re-colours the widget - and the next live-preview tick (or Cancel,
-        which re-applies ``original_config``) put the stale colour straight back. While the colour is
-        automatic and the user has not changed it here (no pick, no edit of the field), the theme owns
-        it, so the dialog passes the theme's colour instead of pinning the one it was opened with.
-
-        ``baseline`` is the config ``cfg``'s colour is compared with to tell "untouched" from "typed":
-        the dialog's working config by default (after Reset all that is the factory set, not the
-        pre-dialog config Cancel restores), ``original_config`` for the Cancel revert."""
-        # A colour picked in THIS session belongs to the session's settings - not to the pre-dialog
-        # config a Cancel restores: on that path (baseline given) the pick is being undone, so an
-        # automatic colour there still follows the theme (review item 2: pick, then Cancel, left a
-        # white-but-automatic text colour on a light taskbar).
-        if (self._user_chose_default_color and baseline is None) or not cfg.get("color_is_automatic", True):
-            return cfg
-        base = self.config if baseline is None else baseline
-        opened_with = str(base.get("default_color", "") or "").upper()
-        if str(cfg.get("default_color", "") or "").upper() != opened_with:
-            return cfg   # the user typed a colour into the field
-        live = shell_theme_text_color()
-        if not live or live.upper() == opened_with:
-            return cfg
-        out = dict(cfg)
-        out["default_color"] = live
-        return out
 
     # --- Callbacks ---
 
@@ -690,29 +660,47 @@ class SettingsDialog(QDialog):
             else:
                 self.appearance_page.set_arrow_font_family(font)
 
+    def _paint_preview_backdrop(self) -> None:
+        """The preview strip's backdrop follows the Windows (taskbar) mode, like the colours drawn on
+        it: with Windows dark and apps light (a common Win11 'Custom' mode), an app-mode backdrop put
+        the dark-taskbar colours on a light strip."""
+        strip = getattr(self, "_preview_strip", None)
+        if strip is None:
+            return
+        c = constants.color.PREVIEW_STRIP_LIGHT if color_scheme.shell_is_light() else constants.color.PREVIEW_STRIP_DARK
+        strip.setStyleSheet(f"#previewStrip {{ background: {c}; border-radius: 6px; }}")
+
+    def on_taskbar_theme_changed(self) -> None:
+        """A Windows Light/Dark flip (called by the widget after the theme manager refreshed the flag):
+        repaint the preview strip in the new taskbar theme and its colours."""
+        self._paint_preview_backdrop()
+        preview = getattr(self, "preview_widget", None)
+        if preview is not None:
+            try:
+                preview.set_config(self.get_settings() or self.config)   # re-resolves the colour pairs
+            except Exception as e:
+                self.logger.debug("Preview refresh after a theme flip failed: %s", e)
+
+    def _color_pages(self) -> list:
+        """The sections that hold colour fields, most specific first (Appearance's get_settings also
+        carries its embedded Color coding section's keys)."""
+        return [self.colors_page, self.appearance_page, self.hardware_page,
+                self.widget_page.mini_graph_section]
+
     def _open_color_dialog(self, key_name: str) -> None:
-        # Get current color from the correct page to set initial state
-        if key_name in ["high_speed_color", "low_speed_color"]:
-            current_settings = self.colors_page.get_settings()
-        elif key_name in HardwarePage.LABEL_COLOR_KEYS:
-            current_settings = self.hardware_page.get_settings()
-        else:
-            current_settings = self.appearance_page.get_settings()
-            
-        initial_hex = current_settings.get(key_name, "#FFFFFF")
-        
+        """Pick a colour for config key ``key_name`` (e.g. ``high_speed_color_light``) and show it in the
+        field of the section that owns the key - the first whose get_settings() has it. Every section
+        takes the full key in set_color_input (the old ``key.replace("_color", "")`` convention could not
+        express the _dark / _light suffixes)."""
+        page = next((pg for pg in self._color_pages() if key_name in pg.get_settings()), None)
+        if page is None:
+            self.logger.warning("No settings section owns colour key %r", key_name)
+            return
+        initial_hex = page.get_settings().get(key_name, "#FFFFFF")
+
         color = QColorDialog.getColor(QColor(initial_hex), self, self.i18n.SELECT_COLOR_TITLE)
         if color.isValid():
-            new_hex = color.name().upper()
-            if key_name in ["high_speed_color", "low_speed_color"]:
-                self.colors_page.set_color_input(key_name.replace("_color", ""), new_hex)
-            elif key_name in HardwarePage.LABEL_COLOR_KEYS:
-                self.hardware_page.set_color_input(key_name, new_hex)
-            else:
-                self.appearance_page.set_color_input(key_name.replace("_color", ""), new_hex)
-            
-            if key_name == "default_color":
-                self._user_chose_default_color = True
+            page.set_color_input(key_name, color.name().upper())
             self._schedule_settings_update()
 
     def export_support_bundle(self) -> None:
@@ -781,7 +769,6 @@ class SettingsDialog(QDialog):
         if not keep_baseline:
             self.original_config = config.copy()
             self.startup_enabled_initial_state = is_startup_enabled
-        self._user_chose_default_color = False
         self._init_ui_state()
 
     def _reset_advanced_page(self) -> None:
@@ -810,7 +797,7 @@ class SettingsDialog(QDialog):
         # shows (2.1.7 reset them too; without Reset all the user has no way back to their defaults)
         # - and keep RESET_ALL_KEEPS, the app's state, as it is. test_rc_settings_fixes requires every
         # DEFAULT_CONFIG key to be in one of the three, so a new key forces a decision.
-        owned = {"color_is_automatic"} | set(self.RESET_ALL_HIDDEN)
+        owned = set(self.RESET_ALL_HIDDEN)
         for page in self._pages():
             owned |= set(page.get_settings())
         owned -= set(self.RESET_ALL_KEEPS)
@@ -818,7 +805,6 @@ class SettingsDialog(QDialog):
         for k in owned:
             if k in factory:
                 reset[k] = factory[k]
-        self._user_chose_default_color = False
         # keep_baseline: Cancel after Reset all restores the config the dialog opened with (S5), and
         # the window-position save on Cancel then writes THAT, not the defaults, to disk.
         self.reset_with_config(reset, self.startup_enabled_initial_state, keep_baseline=True)
@@ -847,6 +833,17 @@ class SettingsDialog(QDialog):
         if box.clickedButton() is not delete_btn:
             return None
         return usage.isChecked()
+
+    def _history_db_path(self):
+        """The live history file for Settings > Advanced > Back up history (#334), or None."""
+        ws = getattr(self.parent_widget, "widget_state", None)
+        return getattr(ws, "history_db_path", None) if ws is not None else None
+
+    def _notify_backup_result(self, title: str, body: str, path) -> None:
+        """A backup that finished while Settings was closed: the widget's non-focus flyout (#334)."""
+        notify = getattr(self.parent_widget, "show_backup_notice", None)
+        if notify is not None:
+            notify(title, body, path)
 
     def _delete_all_history(self) -> None:
         """Settings > Advanced > Delete all history (2.2 item C). Immediate - not deferred to Save."""
@@ -999,9 +996,9 @@ class SettingsDialog(QDialog):
     def _revert_live_preview(self) -> None:
         self._update_timer.stop()   # a pending throttled apply must not land after the revert
         if hasattr(self.parent_widget, 'handle_settings_changed'):
-            self.parent_widget.handle_settings_changed(
-                self._with_live_auto_color(self.original_config, baseline=self.original_config),
-                save_to_disk=False)
+            # The pre-dialog config as it was: the theme never wrote into it (or into the live config),
+            # so after a Windows Light/Dark flip it still paints the right theme's colours.
+            self.parent_widget.handle_settings_changed(self.original_config, save_to_disk=False)
         # Save the position AFTER the revert: handle_settings_changed merges
         # original_config back into the live config, which would otherwise clobber
         # settings_window_pos with the value from when the dialog opened.

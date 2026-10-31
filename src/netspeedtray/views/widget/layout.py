@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import QWidget
 from netspeedtray import constants
 from netspeedtray.utils.taskbar_utils import (is_small_taskbar, get_taskbar_info, horizontal_taskbar_strip,
                                               vertical_taskbar_strip, dock_signature)
-from netspeedtray.utils.helpers import memory_label_width, effective_display_mode
+from netspeedtray.utils.helpers import (memory_label_width, effective_display_mode, hw_suffix_reference,
+                                        temperature_unit)
 
 
 if TYPE_CHECKING:
@@ -72,7 +73,8 @@ class WidgetLayoutManager:
         else:
             font_weight = QFont.Weight.Normal
 
-        font = QFont(font_family, font_size, font_weight)
+        from netspeedtray.utils.widget_renderer import make_widget_font
+        font = make_widget_font(font_family, font_size, font_weight)   # Segoe UI Variable -> Text opsz (7a)
         self.widget.setFont(font)
         self.widget.current_font = font # Update public attribute
         
@@ -94,7 +96,7 @@ class WidgetLayoutManager:
                     "bold": QFont.Weight.Bold
                 }.get(str(arrow_weight_raw).lower(), QFont.Weight.Normal)
                 
-            arrow_font = QFont(arrow_family, arrow_size, arrow_weight)
+            arrow_font = make_widget_font(arrow_family, arrow_size, arrow_weight)
         else:
             arrow_font = font
             
@@ -141,6 +143,11 @@ class WidgetLayoutManager:
                 self.widget._dock_sig_seen = None if float_screen is not None else dock_signature(taskbar_info)
             except Exception:
                 self.widget._dock_sig_seen = None
+            # ... and the display scale Qt measures the text at (NetworkSpeedWidget re-sizes when it moves).
+            try:
+                self.widget._qt_scale_seen = round(float(self.widget.devicePixelRatioF()), 3)
+            except Exception:
+                self.widget._qt_scale_seen = None
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
             if float_screen is not None:
                 edge = constants.TaskbarEdge.BOTTOM   # nominal; free-float doesn't dock to an edge
@@ -289,15 +296,11 @@ class WidgetLayoutManager:
                     show_temps = bool(self.widget.config.get("show_hardware_temps", False))
                     show_power = bool(self.widget.config.get("show_hardware_power", False))
                     # Compute suffix width based on which extras are enabled
-                    # Use 2-digit temp (99°C) and 3+1 power (250.0W) as realistic worst-case
-                    if show_temps and show_power:
-                        hw_suffix_width = self.metrics.horizontalAdvance(" (99°C, 250.0W)")
-                    elif show_power:
-                        hw_suffix_width = self.metrics.horizontalAdvance(" (250.0W)")
-                    elif show_temps:
-                        hw_suffix_width = self.metrics.horizontalAdvance(" (99°C)")
-                    else:
-                        hw_suffix_width = 0
+                    # Worst-case reference: 2-digit Celsius / 3-digit Fahrenheit temp and 3+1 power
+                    # (250.0W) - helpers.hw_suffix_reference, the string the renderer sizes from too.
+                    _suffix_ref = hw_suffix_reference(show_temps, show_power,
+                                                      temperature_unit(self.widget.config))
+                    hw_suffix_width = self.metrics.horizontalAdvance(" " + _suffix_ref) if _suffix_ref else 0
 
                     # Worst-case memory column, reserved for BOTH stacked rows so they align and never
                     # clip. Uses the machine TOTAL (used can never exceed it), not a live used value: a
@@ -369,14 +372,9 @@ class WidgetLayoutManager:
                     calculated_width = 0
                     show_temps = bool(self.widget.config.get("show_hardware_temps", False))
                     show_power = bool(self.widget.config.get("show_hardware_power", False))
-                    if show_temps and show_power:
-                        hw_suffix_w = self.metrics.horizontalAdvance(" (99°C, 250.0W)")
-                    elif show_power:
-                        hw_suffix_w = self.metrics.horizontalAdvance(" (250.0W)")
-                    elif show_temps:
-                        hw_suffix_w = self.metrics.horizontalAdvance(" (99°C)")
-                    else:
-                        hw_suffix_w = 0
+                    _suffix_ref = hw_suffix_reference(show_temps, show_power,
+                                                      temperature_unit(self.widget.config))
+                    hw_suffix_w = self.metrics.horizontalAdvance(" " + _suffix_ref) if _suffix_ref else 0
 
                     if display_mode in ["cpu_only", "combined"]:
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
@@ -401,14 +399,9 @@ class WidgetLayoutManager:
                     monitor_gpu = self.widget.config.get("monitor_gpu_enabled", False)
                     show_temps = bool(self.widget.config.get("show_hardware_temps", False))
                     show_power = bool(self.widget.config.get("show_hardware_power", False))
-                    if show_temps and show_power:
-                        hw_suffix_w = self.metrics.horizontalAdvance(" (99°C, 250.0W)")
-                    elif show_power:
-                        hw_suffix_w = self.metrics.horizontalAdvance(" (250.0W)")
-                    elif show_temps:
-                        hw_suffix_w = self.metrics.horizontalAdvance(" (99°C)")
-                    else:
-                        hw_suffix_w = 0
+                    _suffix_ref = hw_suffix_reference(show_temps, show_power,
+                                                      temperature_unit(self.widget.config))
+                    hw_suffix_w = self.metrics.horizontalAdvance(" " + _suffix_ref) if _suffix_ref else 0
                     if monitor_cpu:
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%") + hw_suffix_w
                         if monitor_ram:

@@ -20,6 +20,10 @@ class TaskbarConstants:
     PADDING: Final[int] = 4
     DPI_DEFAULT: Final[float] = 1.0
     VISIBILITY_SAFETY_TIMER_MS: Final[int] = 1500
+    # "Show accent color on Start and taskbar" (dark mode): which of AccentPalette's 8 shades (0 = lightest
+    # ... 6 = darkest, 7 = complement) Windows paints the taskbar with. Verified on build 26300 in the VM
+    # (utils/taskbar_appearance; legibility "L", 5a).
+    ACCENT_TASKBAR_PALETTE_INDEX: Final[int] = 5
 
     def __init__(self) -> None:
         self.validate()

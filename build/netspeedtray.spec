@@ -1,7 +1,47 @@
 # NetSpeedTray.spec
 import os
 
+
+def _remove_path_entries_shadowing_windows_icu():
+    """Keep foreign ICU DLLs out of PyInstaller's Qt dependency search.
+
+    Qt can import the Windows ICU forwarders by their unversioned names. A tool
+    such as Poppler may put incompatible DLLs with those names on PATH, which
+    PyInstaller then freezes into the app. QtCore fails to import on the target
+    machine ("The specified procedure could not be found"). Only exclude an
+    entry when System32 provides the same DLL, and never exclude System32 itself.
+    This affects the build process only, not the user's persistent PATH.
+    """
+    system32 = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32')
+    icu_names = tuple(
+        name for name in ('icuuc.dll', 'icuin.dll')
+        if os.path.isfile(os.path.join(system32, name))
+    )
+    if not icu_names:
+        return
+
+    kept = []
+    for entry in os.environ.get('PATH', '').split(os.pathsep):
+        candidate = entry.strip('"')
+        is_system32 = os.path.normcase(os.path.abspath(candidate)) == os.path.normcase(system32)
+        shadows_icu = any(os.path.isfile(os.path.join(candidate, name)) for name in icu_names)
+        if shadows_icu and not is_system32:
+            print(f'[netspeedtray.spec] Ignoring PATH entry with shadowing ICU DLLs: {entry}')
+            continue
+        kept.append(entry)
+    os.environ['PATH'] = os.pathsep.join(kept)
+
+
+_remove_path_entries_shadowing_windows_icu()
+
 block_cipher = None
+
+# version_info.txt is GENERATED (build.bat / build-exe-only.bat run create_version_info.py first) and
+# untracked since 2.2.0: the tracked copy went stale at 2.1.5 and every build dirtied the tree. A
+# hand-run PyInstaller without it gets this message instead of a bare file-not-found from EXE().
+if not os.path.isfile(os.path.join(SPECPATH, 'version_info.txt')):
+    raise SystemExit("[netspeedtray.spec] build/version_info.txt is missing - run build.bat, or "
+                     "'python create_version_info.py <version>' in build/ first.")
 
 # NO UPX, on purpose (2.2.0). UPX rewrites a PE file, which strips its Authenticode signature: the
 # 2.2.0-beta.3 zip shipped _socket.pyd, _sqlite3.pyd, sqlite3.dll, _ctypes.pyd, libffi-8.dll and the
@@ -26,12 +66,19 @@ my_hidden_imports = [
     'win32ts',
     'win32security',
     'win32com.shell.shell',
+    # Imported lazily by utils/secret_store.py (DPAPI for the LibreHardwareMonitor password). Without
+    # it a saved password silently never decrypts and LHM with authentication on answers 401.
+    'win32crypt',
     'matplotlib',
     'matplotlib.pyplot',
     'matplotlib.backends.backend_qtagg',
     'numpy',
     'signal',
     'wmi',
+    # Imported lazily by utils/https.py: the update checker/downloader verify TLS through Windows'
+    # chain engine with it, which fetches a missing root on demand. Without it a fresh Windows
+    # install fails every update check with CERTIFICATE_VERIFY_FAILED (rc.2 VM session).
+    'truststore',
 ]
 
 # Modules that get pulled in transitively but aren't used by NetSpeedTray.
@@ -305,6 +352,23 @@ for _need in _required_runtime_libs:
             f"broken). Check _drop_unused_qt_artifacts() and `my_excludes`."
         )
 print('[netspeedtray.spec] SSL runtime libs present: OpenSSL + _ssl/_hashlib OK.')
+
+# Same failure mode, one layer up: without truststore https.py silently falls back to OpenSSL's
+# view of the store and fresh installs cannot check for updates. Fail the build instead.
+if not any(name == 'truststore' or name.startswith('truststore.') for name, *_ in a.pure):
+    raise SystemExit("[netspeedtray.spec] FATAL: 'truststore' is missing from the bundle "
+                     "(pip install -r requirements.txt). Update checks would fail on fresh installs.")
+print('[netspeedtray.spec] truststore bundled: HTTPS verified by Windows.')
+
+# Regression guard (#425): Qt6Core.dll imports icuuc.dll/icuin.dll by bare name and must get
+# Windows' own copies from System32. PyInstaller never bundles those, so any ICU DLL in the
+# bundle came from a foreign PATH entry (e.g. Poppler) and would shadow System32 at runtime.
+_foreign_icu = sorted(n for n in _bundled_basenames if n in ('icuuc.dll', 'icuin.dll'))
+if _foreign_icu:
+    raise SystemExit(
+        f"[netspeedtray.spec] FATAL: foreign ICU DLL(s) bundled: {_foreign_icu}. QtCore would load "
+        f"them instead of System32's and fail at startup. Remove the PATH entry that provides them."
+    )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

@@ -35,7 +35,8 @@ from netspeedtray import constants
 from netspeedtray.constants import network, timeouts
 from netspeedtray.core import usage_snapshot
 from netspeedtray.core.db.history_reader import (
-    HistoryNotReadyError, HistoryReader, MeteredScope, V7HistoryReader, V8HistoryReader, VolumeResult,
+    DayVolume, HistoryNotReadyError, HistoryReader, MeteredScope, V7HistoryReader, V8HistoryReader,
+    VolumeResult,
 )
 from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
 from netspeedtray.core.db.writer_v8 import NetSample
@@ -334,6 +335,11 @@ class WidgetState(QObject):
                     conn.interrupt()
                 except Exception:
                     pass
+
+    @property
+    def history_db_path(self) -> Optional[Path]:
+        """The live history file (Settings > Advanced > Back up history reads it, read-only)."""
+        return getattr(self, "_db_path", None)
 
     @property
     def history_reader(self) -> HistoryReader:
@@ -1183,6 +1189,28 @@ class WidgetState(QObject):
         scope = WidgetState.metered_scope(self.config, names)
         return self.history_reader.metered_volume(start_time, end_time or datetime.now(), scope, poll_interval)
 
+    def usage_history_available(self) -> bool:
+        """False while the history is a 2.1 file waiting for its upgrade (the v7 backend has no per-day
+        volume): the usage table then says it will be available once the upgrade has finished."""
+        try:
+            return bool(getattr(self.history_reader, "SUPPORTS_DAILY_VOLUME", False))
+        except Exception:
+            return True                 # cannot tell: let the read itself answer
+
+    def get_metered_daily_volume(self, start_time: Optional[datetime],
+                                 end_time: Optional[datetime]) -> Optional[List[DayVolume]]:
+        """``get_metered_volume_for_period`` split by local day (#334's usage table): the same adapters
+        (``metered_scope``), so its today row is the hover card's / usage card's Today. None when
+        history cannot answer (no worker, a v7 file waiting for its upgrade, a failed read)."""
+        if not hasattr(self, 'db_worker') or not self.db_worker:
+            return None
+        try:
+            names = self.history_reader.interface_names()
+        except Exception:
+            names = None
+        scope = WidgetState.metered_scope(self.config, names)
+        return self.history_reader.daily_volume(start_time, end_time or datetime.now(), scope)
+
     def get_in_memory_speed_history(self) -> List[SpeedDataSnapshot]:
         """
         Retrieves the current in-memory speed history.
@@ -1244,6 +1272,17 @@ class WidgetState(QObject):
             self.flush_and_wait()
 
         return self.history_reader.speed_history(start_time, end_time, interface_name, return_raw, resolution)
+
+    def get_graph_coverage(self, start_time: datetime, end_time: datetime,
+                           interface_name: Optional[str] = None) -> Dict[str, Any]:
+        """What the network graph needs besides the rows ``get_speed_history`` returns (rc.2 S3/S4):
+        ``resolution`` - the tier the window is read at ('raw', 'minute', 'hour', 'day'; None if
+        unknown), which says what a point IS (a per-second rate or a per-bucket peak); ``measured`` -
+        the spans the app was measuring (``HistoryReader.measured_spans``; None when unknown), which
+        say whether a stretch with no rows was idle or unmeasured. Reads only, no flush barrier (call
+        it after ``get_speed_history``, which flushes)."""
+        return {"resolution": self.history_reader.speed_resolution(start_time, end_time, interface_name),
+                "measured": self.history_reader.measured_spans(start_time, end_time)}
 
 
     def get_distinct_interfaces(self) -> List[str]:

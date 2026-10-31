@@ -84,8 +84,12 @@ def _set_click_through(widget: QWidget, through: bool) -> bool:
         if new != ex:
             user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, new)
             # SetWindowLongW's return value can't tell failure from a previous style of 0: read back.
-            if bool(user32.GetWindowLongW(hwnd, _GWL_EXSTYLE) & _WS_EX_TRANSPARENT) != bool(through):
-                _warn_click_through_failed(through, f"style still 0x{ex & 0xFFFFFFFF:08X}")
+            after = user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+            if bool(after & _WS_EX_TRANSPARENT) != bool(through):
+                # The style read back AFTER the call (rc.2 W7: this logged the value from before it,
+                # which hid what the window really ended up with), next to what was asked for.
+                _warn_click_through_failed(
+                    through, f"style 0x{after & 0xFFFFFFFF:08X} after asking for 0x{new & 0xFFFFFFFF:08X}")
                 return False
         return True
     except Exception as e:
@@ -234,7 +238,9 @@ class UsageFlyout(QWidget):
             body.addWidget(bar)
             self._cap_labels = (used_lbl, pct_lbl, bar, cap_txt, gb)
 
-        # --- Footer: "Click to keep this open" (a card opened by hover; dropped once pinned) ---
+        # --- Footer: "Click the widget to keep this open" (a card opened by hover; dropped once
+        # pinned). Word-wrapped at 300 px, like the other text rows: a long translation wraps, never
+        # clips (test_hover_card_pin_hint_text pins this). ---
         if pin_hint:
             self._pin_hint_lbl = self._label(pin_hint, tokens.TYPE_CAPTION, self._c["text_secondary"])
             self._pin_hint_lbl.setWordWrap(True)
@@ -298,6 +304,12 @@ class UsageFlyout(QWidget):
     _HW_ROWS = (("cpu", "CPU"), ("ram", "RAM"), ("gpu", "GPU"), ("vram", "VRAM"))
     # Widest value each column can show, so a live update never makes the card jump in width.
     _HW_REFS = {"pct": "100%", "temp": "100°C", "power": "250.0 W", "mem": "99.9 / 99.9 GB"}
+    # (The "temp" reference follows the display unit - helpers.temperature_reference(hover=True).)
+
+    @staticmethod
+    def _temp_unit(hardware: dict) -> str:
+        """The snapshot's display unit: its "temp_unit" key, absent = Celsius (rc.2 F8)."""
+        return helpers.temperature_unit({"temperature_unit": hardware.get("temp_unit")})
 
     def _hardware_section(self, body: QVBoxLayout, hardware: dict) -> None:
         """CPU/GPU/memory (and the Wi-Fi identity) the side taskbar has no room for. Fixed-width,
@@ -308,8 +320,9 @@ class UsageFlyout(QWidget):
         grid.setVerticalSpacing(tokens.SPACE_S)
         grid.setColumnStretch(0, 1)
         fm = QFontMetrics(su.font(tokens.TYPE_BODY))
+        refs = dict(self._HW_REFS, temp=helpers.temperature_reference(self._temp_unit(hardware), hover=True))
         widths = {k: fm.horizontalAdvance(helpers.format_percent(100, self._i18n) if k == "pct" else v)
-                  for k, v in self._HW_REFS.items()}
+                  for k, v in refs.items()}
         # Temperature / power columns only when a stat carries them (the widget's own toggles).
         stat_cols = ["pct"] + [c for c in ("temp", "power")
                                if any(c in (hardware.get(k) or {}) for k in ("cpu", "gpu"))]
@@ -351,7 +364,8 @@ class UsageFlyout(QWidget):
     def update_hardware(self, hardware: Optional[dict]) -> None:
         """Refresh the hardware rows in place (the card stays up while the pointer rests on the widget).
         Keys: cpu/gpu -> {usage, temp, power}; ram/vram -> (used_gb, total_gb); vram_shared -> True
-        when the VRAM is an integrated GPU's shared memory; identity -> str. A missing reading shows an em dash, never a made-up 0."""
+        when the VRAM is an integrated GPU's shared memory; temp_unit -> "fahrenheit" (absent = Celsius; the
+        temps are Celsius; rc.2 F8); identity -> str. A missing reading shows an em dash, never a made-up 0."""
         if not hardware or not self._hw_values:
             return
         dash = "—"
@@ -371,7 +385,9 @@ class UsageFlyout(QWidget):
             self._hw_values[(key, "pct")].setText(
                 helpers.format_percent(int(round(usage)), self._i18n) if usage is not None else dash)
             if (key, "temp") in self._hw_values:
-                self._hw_values[(key, "temp")].setText(f"{temp:.0f}°C" if temp is not None else dash)
+                self._hw_values[(key, "temp")].setText(
+                    helpers.format_temperature(temp, self._temp_unit(hardware))
+                    if temp is not None else dash)
             if (key, "power") in self._hw_values:
                 self._hw_values[(key, "power")].setText(
                     f"{helpers.format_decimal(power, self._i18n, 1)} W" if power is not None else dash)
@@ -564,10 +580,11 @@ class UsageFlyout(QWidget):
         return self._pinned
 
     def set_pinned(self, pinned: bool) -> None:
-        """The card was clicked to stay open: drop the "Click to keep this open" line, re-place the
-        (now shorter) card against the widget, and make it take clicks - an informational card passes
-        the pointer through (native WS_EX_TRANSPARENT), but a pinned one sits there for minutes, and a
-        click on it must not press a button or drop a caret in the app behind it. Clicking it closes it
+        """The widget was clicked to keep the card open: drop the "Click the widget to keep this open"
+        line, re-place the (now shorter) card against the widget, and make it take clicks - an
+        informational card passes the pointer through (native WS_EX_TRANSPARENT), but a pinned one
+        sits there for minutes, and a click on it must not press a button or drop a caret in the app
+        behind it. Clicking it (or the widget again) closes it
         (``dismiss_requested``). Moves, resizes and restyles only - never activates (WS_EX_NOACTIVATE /
         WindowDoesNotAcceptFocus / WA_ShowWithoutActivating stay)."""
         pinned = bool(pinned)

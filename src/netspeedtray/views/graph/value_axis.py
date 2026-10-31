@@ -12,7 +12,7 @@ import math
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
-from matplotlib.ticker import Formatter
+from matplotlib.ticker import Formatter, MaxNLocator
 
 from netspeedtray import constants
 
@@ -47,29 +47,98 @@ def format_axis_value(value: float, decimals: int, decimal_separator: str = ".")
 
 
 class ValueAxisFormatter(Formatter):
-    """Formats y ticks with the precision their spacing needs, in the locale's decimal separator."""
+    """Formats y ticks with the precision their spacing needs, in the locale's decimal separator.
 
-    def __init__(self, i18n=None, suffix: str = ""):
+    ``scale`` multiplies each tick before it is printed: the speed axes are plotted in Mbps and shown
+    in the user's unit (``speed_axis_unit``), so 0.0125 Mbps prints as "12.5" on a Kbps axis."""
+
+    def __init__(self, i18n=None, suffix: str = "", scale: float = 1.0):
         self.i18n = i18n
         self.suffix = suffix
+        self.scale = float(scale) if scale and math.isfinite(scale) else 1.0
 
     def _sep(self) -> str:
         return getattr(self.i18n, "DECIMAL_SEPARATOR", ".") or "."
 
     def _decimals(self, values: Optional[Iterable[float]] = None) -> int:
         vals = sorted(values if values is not None else (getattr(self, "locs", None) or []))
-        return decimals_for_step(_tick_step(vals))
+        return decimals_for_step(_tick_step([v * self.scale for v in vals]))
 
     def format_ticks(self, values):
         self.set_locs(values)
         d = self._decimals(values)
-        return [format_axis_value(v, d, self._sep()) + self.suffix for v in values]
+        return [format_axis_value(v * self.scale, d, self._sep()) + self.suffix for v in values]
 
     def __call__(self, x, pos=None):
         # Outside a tick pass (no locs to measure a step from), keep the value's own precision.
-        vals = sorted(getattr(self, "locs", None) or [])
-        d = decimals_for_step(_tick_step(vals)) if len(vals) > 1 else decimals_for_step(x)
-        return format_axis_value(x, d, self._sep()) + self.suffix
+        vals = sorted(v * self.scale for v in (getattr(self, "locs", None) or []))
+        d = decimals_for_step(_tick_step(vals)) if len(vals) > 1 else decimals_for_step(x * self.scale)
+        return format_axis_value(x * self.scale, d, self._sep()) + self.suffix
+
+
+# ----------------------------------------------------------------------------- speed axis unit (S2)
+# The speed graphs used to print bare Mbps ticks under a "Download" label, whatever the user chose in
+# Settings (#56 asked for MB/s, #59 for bits vs bytes to be unambiguous) - while the hover, one inch
+# away, honoured unit_type. The axes are still PLOTTED in Mbps; only the ticks and the label convert.
+
+def speed_axis_unit(top_mbps: float, i18n, unit_type: str = "bits_decimal",
+                    force_mega: bool = False) -> Tuple[float, str]:
+    """``(scale, unit_label)`` for a speed axis whose top is ``top_mbps``: multiply an Mbps value by
+    ``scale`` to get the number to print in ``unit_label``.
+
+    One unit for the whole axis, chosen from its top the way ``format_speed`` picks one from a value:
+    bits or bytes and decimal (1000) or binary (1024) from ``unit_type``; kilo at the least
+    (``VALUE_AXIS_MIN_UNIT_TIER``), mega at the least with ``force_mega`` (the widget's "always Mbps"
+    mode). Always the LONG label ("MB/s", never the short "MB"): an axis with a bare "MB" reads as a
+    volume, not a rate."""
+    from netspeedtray.utils.helpers import get_unit_labels_for_type   # lazy: helpers imports Qt bits
+    units = constants.network.units
+    unit_type = unit_type if unit_type in ("bits_decimal", "bits_binary", "bytes_decimal",
+                                           "bytes_binary") else "bits_decimal"
+    is_binary = unit_type.endswith("_binary")
+    is_bytes = unit_type.startswith("bytes")
+    step = float(units.KIBI_DIVISOR if is_binary else units.KILO_DIVISOR)
+    # Mbps -> the base unit of unit_type (bits/s or bytes/s).
+    to_base = units.MEGA_DIVISOR / (units.BITS_PER_BYTE if is_bytes else 1)
+    top = max(0.0, float(top_mbps or 0.0)) * to_base if math.isfinite(top_mbps or 0.0) else 0.0
+    tier = max(constants.graph.VALUE_AXIS_MIN_UNIT_TIER, 2 if force_mega else 0)
+    while tier < 3 and top >= step ** (tier + 1):
+        tier += 1
+    labels = get_unit_labels_for_type(i18n, unit_type, False)
+    return to_base / step ** tier, labels[tier]
+
+
+class ScaledMaxNLocator(MaxNLocator):
+    """MaxNLocator that places ticks on round numbers OF THE DISPLAYED UNIT: an axis plotted in Mbps
+    but shown in MB/s gets ticks at 0, 5, 10 MB/s, not at 0, 25, 50 Mbps printed as 3.125, 6.25."""
+
+    def __init__(self, scale: float = 1.0, **kwargs):
+        super().__init__(**kwargs)
+        self.scale = float(scale) if scale and math.isfinite(scale) and scale > 0 else 1.0
+
+    def tick_values(self, vmin, vmax):
+        lo, hi = vmin * self.scale, vmax * self.scale
+        ticks = np.asarray(super().tick_values(lo, hi), dtype=float)
+        # Labels carry at most VALUE_AXIS_MAX_DECIMALS. On a tiny axis (an idle 0.1 Mbps floor shown
+        # in MB/s under "always Mbps" is 0-0.0125) a 2.5-step lands on 0.0025, which prints as
+        # "0.003" - the label would not be the tick. Retry without the 2.5 step (1/2/5 x 10^k steps
+        # need no extra digit), so every tick is exactly what its label says.
+        if ticks.size > 1 and not self._representable(float(np.min(np.diff(ticks)))):
+            steps = [s for s in self._steps if not self._is_quarter(s)] or [1, 2, 5, 10]
+            ticks = np.asarray(MaxNLocator(nbins=self._nbins, steps=steps, min_n_ticks=self._min_n_ticks,
+                                           integer=self._integer, symmetric=self._symmetric,
+                                           prune=self._prune).tick_values(lo, hi), dtype=float)
+        return ticks / self.scale
+
+    @staticmethod
+    def _representable(step: float) -> bool:
+        return decimals_for_step(step) < constants.graph.VALUE_AXIS_MAX_DECIMALS or \
+            abs(round(step, constants.graph.VALUE_AXIS_MAX_DECIMALS) - step) <= 1e-12
+
+    @staticmethod
+    def _is_quarter(step: float) -> bool:
+        """A step whose mantissa is 2.5 (2.5, 25, ...) - the only nice step that adds a digit."""
+        return step > 0 and abs(step / 10 ** math.floor(math.log10(step)) - 2.5) < 1e-9
 
 
 # ----------------------------------------------------------------------------- long-window clipping

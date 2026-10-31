@@ -27,17 +27,19 @@ by every reader that explains a loss (the on-demand connection check, 2.2 D3):
 """
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import logging
 import socket
 import statistics
 import struct
+import sys
 import threading
 import time
 from collections import deque
 from ctypes import wintypes
 from dataclasses import dataclass
-from typing import Any, Callable, Deque, Dict, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, Iterator, Optional, Tuple
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -55,6 +57,12 @@ LOSS_LOCAL = "local"                        # the gateway lost it: Wi-Fi / LAN
 LOSS_BEYOND_ROUTER = "beyond_router"        # clean gateway, lossy anchor: ISP or path
 LOSS_LOCAL_AND_BEYOND = "local_and_beyond"  # both, and the anchor lost more than the gateway explains
 LOSS_UNKNOWN = "unknown"                    # the gateway never answered: where the loss is can't be told
+LOSS_NO_CONNECTION = "no_connection"        # the link itself is down: nothing gets through at all
+
+# link_state() - is there a working link to the router? (psutil's adapter state; no packets sent)
+LINK_UP = "up"
+LINK_DOWN = "down"          # the router's adapter has no link, or no adapter has one at all
+LINK_UNKNOWN = "unknown"    # can't tell (no adapter on the router's subnet: PPPoE, some VPNs)
 
 VERDICT_GOOD = "good"
 VERDICT_OK = "ok"
@@ -86,6 +94,12 @@ class LatencySample:
     # link, so the gateway hop is NOT measured this cycle (no loss recorded, not a window cycle). The
     # anchor burst - when enabled - is still probed and recorded as usual.
     gw_excluded: bool = False
+    # The connection is lost right now: a router that HAS answered (since it became the gateway) lost
+    # this whole burst or vanished from the routing table, or no adapter has a link at all. The pill
+    # reads this as "No connection" at once instead of averaging silence into a 2-minute loss window
+    # (rc.2 VM session: a pulled cable left "Router: Good" up for ~2 min, then blank). A router that
+    # has never answered ICMP proves nothing, so its silence never sets this.
+    gw_link_lost: bool = False
 
     def __post_init__(self) -> None:
         if self.gw_sent is None:
@@ -115,14 +129,20 @@ def headline_hop(anchor_enabled: bool) -> str:
 
 
 def attribute_loss(gw_loss_pct: float, anchor_loss_pct: Optional[float],
-                   gw_answered: bool = True) -> str:
+                   gw_answered: bool = True, connection_lost: bool = False) -> str:
     """Where the loss happened, from each hop's loss % (anchor None = not probed). Reads the GATEWAY
     first so the internet is never blamed for loss the router already explains (anchor loss includes
     every gateway loss by construction - see the module docstring).
 
     ``gw_answered`` False = the gateway gave no reply at all over the span measured (many routers,
     mesh nodes and VPN gateways never answer ICMP). Its "loss" then proves nothing about Wi-Fi/LAN, so
-    it is never blamed: a clean anchor still reads as no loss, anything else is LOSS_UNKNOWN."""
+    it is never blamed: a clean anchor still reads as no loss, anything else is LOSS_UNKNOWN.
+
+    ``connection_lost`` True = the caller KNOWS the link is down (the router's adapter has no link, or
+    a router that had been answering lost every echo): LOSS_NO_CONNECTION - a dead link is not a
+    loss rate to attribute."""
+    if connection_lost:
+        return LOSS_NO_CONNECTION
     gw = float(gw_loss_pct or 0.0)
     an = None if anchor_loss_pct is None else float(anchor_loss_pct)
     if not gw_answered:
@@ -317,16 +337,151 @@ def icmp_burst(host: str, count: int = constants.network.latency.BURST_SIZE,
     return BurstResult(tuple(rtts), count)
 
 
+# The wmi module's (1.5.1, pinned) per-namespace class cache - the attribute _wmi_connection() clears.
+# Private: test_wmi_class_cache_attribute_exists_in_the_pinned_wmi fails CI if a bump renames it.
+WMI_CLASS_CACHE_ATTR = "_classes_map"
+_wmi_cache_missing_logged = False
+
+
+def preload_wmi() -> Optional[float]:
+    """Import the wmi module on the CALLING thread (the GUI thread, at startup); the import time in
+    ms, or None when wmi is unavailable. ``import wmi`` itself makes a COM object
+    (``wmi.obj = GetObject("winmgmts:")``) that lives as long as the module. Whichever thread imports
+    wmi first owns it, and when that is a worker that later calls CoUninitialize (the stats thread,
+    the probe, a Check connection's details thread), the object is released at interpreter exit after
+    its apartment is gone and pywin32 prints "Win32 exception occurred releasing IUnknown". The GUI
+    thread's apartment lasts the whole run. Measured ~11-15 ms once, after the app's own imports."""
+    t0 = time.perf_counter()
+    try:
+        import wmi  # noqa: F401  (already a dependency)
+    except Exception:
+        logger.debug("wmi not preloaded on the GUI thread.", exc_info=True)
+        return None
+    return (time.perf_counter() - t0) * 1000.0
+
+
+@contextlib.contextmanager
+def _wmi_connection() -> Iterator[Any]:
+    """A ``wmi.WMI()`` connection whose COM proxies are all released by plain reference counting, on
+    the calling thread, as soon as the caller drops its results - no garbage collection needed.
+
+    The wmi module caches each class it hands out (``_classes_map``) and every cached class points
+    back at its namespace: a reference cycle that holds the SWbemServices / SWbemObject proxies until
+    the cyclic GC happens to run - possibly on another thread, or after this thread's
+    CoUninitialize. Clearing the cache on the way out breaks that cycle (the only one a query leaves;
+    checked live with gc.DEBUG_SAVEALL), so the Check connection's details thread no longer needs a
+    whole-heap gc.collect() before CoUninitialize. A failed query (an exception) clears it too."""
+    import wmi  # already a dependency
+    conn = wmi.WMI()
+    try:
+        yield conn
+    finally:
+        global _wmi_cache_missing_logged
+        try:
+            # vars(): the namespace's __getattr__ forwards unknown names to COM.
+            classes = vars(conn).get(WMI_CLASS_CACHE_ATTR)
+            if isinstance(classes, dict):
+                classes.clear()
+            elif not _wmi_cache_missing_logged:
+                _wmi_cache_missing_logged = True
+                logger.debug("wmi namespace has no %s dict (wmi %s): WMI proxies are left for the "
+                             "cyclic GC.", WMI_CLASS_CACHE_ATTR, getattr(sys.modules.get("wmi"),
+                                                                       "__version__", "?"))
+        except Exception:
+            pass
+
+
+def link_state(gateway: Optional[str]) -> str:
+    """Whether the adapter that reaches ``gateway`` has a link (psutil ``isup`` = the adapter's
+    operational status; reads local state only, sends nothing). With a gateway: LINK_UP / LINK_DOWN
+    from the adapters holding an IPv4 address on its subnet, LINK_UNKNOWN when none does. With none:
+    LINK_DOWN when no adapter except loopback is up at all, else LINK_UNKNOWN (an always-up virtual
+    adapter - Hyper-V, VirtualBox, a VPN - can't be told from a real link). Never raises."""
+    try:
+        import ipaddress
+        import psutil
+        stats = psutil.net_if_stats()
+        addrs = psutil.net_if_addrs()
+    except Exception:
+        return LINK_UNKNOWN
+
+    def is_loopback(name: str) -> bool:
+        for a in addrs.get(name, ()):
+            if a.family == socket.AF_INET and str(a.address).startswith("127."):
+                return True
+        return "loopback" in name.lower()
+
+    if gateway:
+        try:
+            gw = ipaddress.IPv4Address(str(gateway))
+        except ValueError:
+            return LINK_UNKNOWN
+        on_subnet = []
+        for name, entries in addrs.items():
+            for a in entries:
+                if a.family != socket.AF_INET or not a.address or not a.netmask:
+                    continue
+                try:
+                    if gw in ipaddress.IPv4Network(f"{a.address}/{a.netmask}", strict=False):
+                        on_subnet.append(name)
+                        break
+                except ValueError:
+                    continue
+        if not on_subnet:
+            return LINK_UNKNOWN
+        return LINK_UP if any(getattr(stats.get(n), "isup", False) for n in on_subnet) else LINK_DOWN
+    up = [n for n, st in stats.items() if getattr(st, "isup", False) and not is_loopback(n)]
+    return LINK_UNKNOWN if up else LINK_DOWN
+
+
 def default_gateway_ip() -> Optional[str]:
     """The default gateway IPv4, via WMI (no admin). None if not found."""
     try:
-        import wmi  # already a dependency
-        for nic in wmi.WMI().Win32_NetworkAdapterConfiguration(IPEnabled=True):
-            gws = getattr(nic, "DefaultIPGateway", None)
-            if gws:
-                for g in gws:
-                    if g and ":" not in g:   # IPv4 only
-                        return str(g)
+        with _wmi_connection() as conn:
+            for nic in conn.Win32_NetworkAdapterConfiguration(IPEnabled=True):
+                gws = getattr(nic, "DefaultIPGateway", None)
+                if gws:
+                    for g in gws:
+                        if g and ":" not in g:   # IPv4 only
+                            return str(g)
+    except Exception:
+        return None
+    return None
+
+
+@dataclass(frozen=True)
+class NetworkDetails:
+    """The connection the default gateway is on, as the Check connection sheet shows it (#214)."""
+    adapter: str = ""
+    ipv4: Tuple[str, ...] = ()
+    ipv6: Tuple[str, ...] = ()
+    gateway: Optional[str] = None
+    dns: Tuple[str, ...] = ()
+
+
+def _strs(values: Any) -> Tuple[str, ...]:
+    return tuple(str(v) for v in (values or ()) if v)
+
+
+def network_details() -> Optional[NetworkDetails]:
+    """Adapter, addresses, IPv4 gateway and DNS servers of the adapter that has the default gateway -
+    the same adapter, found the same way (the first IP-enabled one with an IPv4 gateway), as
+    ``default_gateway_ip``. One read-only WMI query, no admin, nothing sent on the network. Needs COM
+    initialised on the calling thread. None when no adapter has an IPv4 gateway (or WMI failed).
+    IPv6 link-local addresses (fe80::) are left out: they are not reachable from anywhere else."""
+    try:
+        with _wmi_connection() as conn:
+            for nic in conn.Win32_NetworkAdapterConfiguration(IPEnabled=True):
+                gws = [g for g in _strs(getattr(nic, "DefaultIPGateway", None)) if ":" not in g]
+                if not gws:
+                    continue
+                addrs = _strs(getattr(nic, "IPAddress", None))
+                return NetworkDetails(
+                    adapter=str(getattr(nic, "Description", "") or ""),
+                    ipv4=tuple(a for a in addrs if ":" not in a),
+                    ipv6=tuple(a for a in addrs if ":" in a and not a.lower().startswith("fe80:")),
+                    gateway=gws[0],
+                    dns=_strs(getattr(nic, "DNSServerSearchOrder", None)))
     except Exception:
         return None
     return None
@@ -355,6 +510,9 @@ class LatencyProbe(QThread):
         self._gateway_ts = 0.0
         # Cycles since the gateway last answered; None = it has not answered (since it last changed).
         self._gw_cycles_since_reply: Optional[int] = None
+        # The gateway vanished from the routing table (lookup found none) while it was answering:
+        # the link went down under it. Cleared as soon as a gateway is found again.
+        self._vanished_gateway_answered = False
         # Set from the GUI thread on resume / a primary-route change: re-resolve before the next burst.
         self._gateway_stale = threading.Event()
         self._gateway_changed = False         # the gateway changed (or was re-resolved) this cycle
@@ -394,6 +552,13 @@ class LatencyProbe(QThread):
         """The default gateway this probe last looked up (None before the first cycle / none found)."""
         return self._gateway
 
+    @property
+    def gateway_answered(self) -> bool:
+        """Any thread: the current router has answered since it became the gateway - or, with none
+        found, the one that vanished had been answering. The Check connection sheet uses it to tell
+        "your router never answers pings" from "your router stopped answering"."""
+        return self._gw_cycles_since_reply is not None or self._vanished_gateway_answered
+
     def _pause(self, seconds: float) -> bool:
         """Wait up to ``seconds``; wakes at once on stop(). Returns False once stopping or once the
         master switch is off (True = go on), so a burst never sends another echo after either."""
@@ -415,6 +580,12 @@ class LatencyProbe(QThread):
         if force or self._gateway is None or (now - self._gateway_ts) > self._GATEWAY_REFRESH_SEC:
             gw = default_gateway_ip()
             if gw != self._gateway:
+                if gw is None:
+                    # The route is gone. Was the router it pointed at answering? Then the link died.
+                    self._vanished_gateway_answered = (self._gw_cycles_since_reply is not None
+                                                       or self._vanished_gateway_answered)
+                else:
+                    self._vanished_gateway_answered = False
                 self._gw_cycles_since_reply = None   # a new router has proven nothing yet
             # "Changing" = a DIFFERENT gateway than the one in use (not the probe's very first lookup).
             # A re-resolve that finds the same router changes nothing: its loss is real loss.
@@ -473,6 +644,14 @@ class LatencyProbe(QThread):
         gw_recently_answered = (
             self._gw_cycles_since_reply is not None
             and self._gw_cycles_since_reply <= lat.GATEWAY_REPLY_RECENT_CYCLES)
+        if self._gateway is None:
+            # No route at all (now, or since mid-cycle): lost if the router it pointed at was
+            # answering, or if no adapter has a link.
+            gw_link_lost = self._vanished_gateway_answered or link_state(None) == LINK_DOWN
+        elif gw_excluded:
+            gw_link_lost = False   # lost against the OLD router: says nothing about the new one
+        else:
+            gw_link_lost = gw_timed_out and (gw_recently_answered or link_state(gw_ip) == LINK_DOWN)
 
         anchor: Optional[BurstResult] = None
         anchor_enabled = bool(self._config.get("latency_public_enabled", False))
@@ -494,13 +673,15 @@ class LatencyProbe(QThread):
                 if anchor is None:
                     return None
 
+        if anchor is not None and anchor.rtts:
+            gw_link_lost = False   # the internet answered: the connection works, whatever the router does
         return LatencySample(
             gw_ms=gw.ms, anchor_ms=anchor.ms if anchor else None, gw_timed_out=gw_timed_out,
             anchor_timed_out=anchor is not None and not anchor.rtts,
             anchor_enabled=anchor_enabled, anchor_skipped=anchor_skipped,
             gw_sent=gw.sent, gw_lost=gw.lost,
             anchor_sent=anchor.sent if anchor else 0, anchor_lost=anchor.lost if anchor else 0,
-            gw_excluded=gw_excluded)
+            gw_excluded=gw_excluded, gw_link_lost=gw_link_lost)
 
     def _log_cycle_error(self, e: BaseException) -> None:
         """A failing cycle is never silent: WARNING (with the traceback) the first time, then DEBUG at

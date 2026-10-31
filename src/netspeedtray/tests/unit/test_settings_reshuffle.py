@@ -34,9 +34,11 @@ MANAGED_KEYS = {
     "widget_display_mode", "stack_hardware_stats", "widget_display_order",
     # Widget - mini graph (moved from Appearance, 2.2 IA pass)
     "graph_enabled", "history_minutes", "graph_opacity", "graph_fixed_scale", "graph_scale_headroom",
-    "graph_show_ceiling", "graph_split_directions",
-    # Appearance - font / color / arrows / background
-    "font_family", "font_size", "font_weight", "default_color",
+    "graph_show_ceiling", "graph_split_directions", "graph_upload_color_dark", "graph_upload_color_light",
+    "graph_download_color_dark", "graph_download_color_light",
+    # Appearance - font / color / arrows / background (the themed colours are dark/light pairs, 2.2 rc.2)
+    "font_family", "font_size", "font_weight", "default_color_dark", "default_color_light",
+    "arrow_up_color_dark", "arrow_up_color_light", "arrow_down_color_dark", "arrow_down_color_light",
     "background_color", "background_opacity",
     "use_separate_arrow_font", "arrow_font_family", "arrow_font_size",
     "arrow_up_symbol", "arrow_down_symbol",
@@ -44,8 +46,9 @@ MANAGED_KEYS = {
     "unit_type", "speed_display_mode", "decimal_places", "text_alignment",
     "swap_upload_download", "hide_arrows", "hide_unit_suffix", "short_unit_labels",
     # Appearance - color coding (was the Color Coding page)
-    "color_coding", "high_speed_threshold", "low_speed_threshold",
-    "high_speed_color", "low_speed_color",
+    "color_coding", "high_speed_threshold", "medium_speed_threshold", "low_speed_threshold",
+    "high_speed_color_dark", "high_speed_color_light", "medium_speed_color_dark", "medium_speed_color_light",
+    "low_speed_color_dark", "low_speed_color_light",
     # Hardware
     "monitor_cpu_enabled", "monitor_gpu_enabled", "monitor_ram_enabled", "monitor_vram_enabled",
     "show_hardware_temps", "show_hardware_power", "hardware_label_style",
@@ -79,8 +82,14 @@ ROUNDTRIP = {
     "hide_arrows": True,
     "short_unit_labels": False,
     "color_coding": True,
-    "high_speed_color": "#00FF00",
-    "low_speed_color": "#FFFF00",
+    "high_speed_color_dark": "#00FF00",
+    "high_speed_color_light": "#007700",
+    "low_speed_color_dark": "#FFFF00",
+    "low_speed_color_light": "#777700",
+    "medium_speed_color_light": "#123456",
+    "medium_speed_threshold": 4.5,
+    "graph_upload_color_light": "#224466",
+    "default_color_light": "#151618",
     "high_speed_threshold": 99.0,
     "low_speed_threshold": 3.0,
     "monitor_cpu_enabled": True,
@@ -168,12 +177,16 @@ def test_color_picker_routes_to_the_right_embedded_section(qtbot, monkeypatch):
     dlg = _dialog(qtbot, dict(constants.config.defaults.DEFAULT_CONFIG))
 
     monkeypatch.setattr(QColorDialog, "getColor", lambda *a, **k: QColor("#123456"))
-    dlg._open_color_dialog("high_speed_color")
-    assert dlg.appearance_page.colors_section.high_speed_color_input.text().upper() == "#123456"
+    dlg._open_color_dialog("high_speed_color_light")
+    assert dlg.appearance_page.colors_section.high_speed_color_light_input.text().upper() == "#123456"
 
     monkeypatch.setattr(QColorDialog, "getColor", lambda *a, **k: QColor("#ABCDEF"))
-    dlg._open_color_dialog("default_color")
-    assert dlg.appearance_page.default_color_input.text().upper() == "#ABCDEF"
+    dlg._open_color_dialog("default_color_dark")
+    assert dlg.appearance_page.default_color_dark_input.text().upper() == "#ABCDEF"
+
+    monkeypatch.setattr(QColorDialog, "getColor", lambda *a, **k: QColor("#FEDCBA"))
+    dlg._open_color_dialog("background_color")
+    assert dlg.appearance_page.background_color_input.text().upper() == "#FEDCBA"
 
 
 def test_enabling_a_hardware_monitor_switches_widget_out_of_network_only(qtbot):
@@ -188,14 +201,15 @@ def test_enabling_a_hardware_monitor_switches_widget_out_of_network_only(qtbot):
     assert dlg.get_settings()["widget_display_mode"] == "side_by_side"
 
 
-def test_color_is_automatic_flips_false_after_user_picks_default_colour(qtbot, monkeypatch):
-    """Picking an explicit default color must clear the implicit color_is_automatic flag, so the text
-    color stops auto-tracking the theme."""
+def test_picking_a_text_colour_writes_only_that_taskbars_half(qtbot, monkeypatch):
+    """Was: picking the default colour cleared color_is_automatic so the theme stopped overwriting it.
+    Since the 2.2 rc.2 colour scheme the theme never overwrites a colour; a pick sets the one half it
+    was made in, and nothing writes the retired flag."""
     from PyQt6.QtGui import QColor
     from PyQt6.QtWidgets import QColorDialog
-    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
-    cfg["color_is_automatic"] = True
-    dlg = _dialog(qtbot, cfg)
+    dlg = _dialog(qtbot, dict(constants.config.defaults.DEFAULT_CONFIG))
     monkeypatch.setattr(QColorDialog, "getColor", lambda *a, **k: QColor("#FF8800"))
-    dlg._open_color_dialog("default_color")
-    assert dlg.get_settings()["color_is_automatic"] is False
+    dlg._open_color_dialog("default_color_light")
+    s = dlg.get_settings()
+    assert (s["default_color_dark"], s["default_color_light"]) == ("#FFFFFF", "#FF8800")
+    assert "color_is_automatic" not in s

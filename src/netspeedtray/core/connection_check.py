@@ -20,8 +20,9 @@ from __future__ import annotations
 import math
 import statistics
 import threading
+import time
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -36,6 +37,11 @@ HOP_ANCHOR = LP.HOP_ANCHOR
 LOSS_LEVEL_NONE = "none"
 LOSS_LEVEL_SOME = "some"
 LOSS_LEVEL_HIGH = "high"
+
+# connection_lost() reasons: why a check that got no reply from the router is a LOST CONNECTION, not a
+# router that ignores pings (rc.2 VM session: a pulled cable read "That alone is not packet loss").
+LOST_NO_LINK = "no_link"            # the router's adapter (or every adapter) has no link
+LOST_ROUTER = "router_lost"         # the router had been answering the standing probe, and now is not
 
 
 @dataclass(frozen=True)
@@ -115,11 +121,31 @@ def hop_stats(rtts: Sequence[float], sent: int) -> HopStats:
         jitter_ms=jitter(rtts))
 
 
-def check_attribution(gw: HopStats, anchor: Optional[HopStats]) -> str:
+def connection_lost(gw: HopStats, gateway_known: bool, link: str, answered_before: bool,
+                    anchor: Optional[HopStats] = None) -> Optional[str]:
+    """Why the check reads as a lost connection (LOST_NO_LINK / LOST_ROUTER), or None.
+
+    Three cases look alike from the router's 0 replies and must not read alike: a router that has
+    NEVER answered pings (many don't - not packet loss, None here), one that answered the standing
+    probe before and now answers nothing (LOST_ROUTER), and no link at all - the adapter is down or no
+    default gateway exists (LOST_NO_LINK, from latency_probe.link_state). A router that answered any
+    echo of this check - nor one whose internet hop got through - is a lost connection, whatever
+    the adapter state claims."""
+    if gw.answered or (anchor is not None and anchor.answered):
+        return None
+    if link == LP.LINK_DOWN:
+        return LOST_NO_LINK
+    if answered_before and (not gateway_known or gw.sent):
+        return LOST_ROUTER
+    return None
+
+
+def check_attribution(gw: HopStats, anchor: Optional[HopStats], lost: Optional[str] = None) -> str:
     """The D1 rule (latency_probe.attribute_loss) on the check's own two hops. A router that answered
-    none of its echoes is never blamed for the loss - many routers simply do not answer pings."""
+    none of its echoes is never blamed for the loss - many routers simply do not answer pings - unless
+    ``lost`` (connection_lost) says the connection itself is down: LOSS_NO_CONNECTION."""
     return LP.attribute_loss(gw.loss_pct, anchor.loss_pct if anchor is not None else None,
-                             gw_answered=gw.answered)
+                             gw_answered=gw.answered, connection_lost=bool(lost))
 
 
 def anchor_host_for_check(config: Mapping[str, Any], include_internet: bool) -> Optional[str]:
@@ -134,7 +160,9 @@ class ConnectionCheck(QThread):
     """One check run. Signals carry plain data; the sheet owns all formatting."""
 
     gateway_resolved = pyqtSignal(object)   # the router IP (str) or None when none was found
+    details_resolved = pyqtSignal(object)   # latency_probe.NetworkDetails, or None (#214)
     echo_done = pyqtSignal(str, int, object)   # hop, 1-based echo index, rtt ms or None
+    link_resolved = pyqtSignal(str)         # latency_probe.LINK_*, read just before check_finished
     check_finished = pyqtSignal(object)     # {hop: HopStats}; NOT emitted for a cancelled run
 
     def __init__(self, gateway_ip: Optional[str], anchor_host: Optional[str],
@@ -168,27 +196,55 @@ class ConnectionCheck(QThread):
             self._stop_event.wait(seconds)
         return not self._stop_event.is_set()
 
-    def _resolve_gateway(self) -> Optional[str]:
-        if self._gateway_ip or not self._lookup_gateway:
-            return self._gateway_ip
-        # default_gateway_ip() uses WMI, which needs COM initialised on THIS thread (see LatencyProbe.run).
-        try:
-            import pythoncom
-            pythoncom.CoInitialize()
-        except Exception:
-            pythoncom = None
-        try:
-            return LP.default_gateway_ip()
-        finally:
+    def _start_details(self) -> Optional[Tuple[threading.Thread, Dict[str, Any], threading.Event]]:
+        """Read the connection's details (#214, one WMI query) on a DAEMON thread with its own COM
+        apartment, so a hung WMI service can never hold the check or the worker's end: run() waits for
+        it at most CHECK_DETAILS_TIMEOUT_S, and a thread still stuck after that is simply abandoned.
+        None when this check does no lookups (``lookup_gateway=False``)."""
+        if not self._lookup_gateway:
+            return None
+        box: Dict[str, Any] = {}
+        done = threading.Event()
+
+        def read() -> None:
             try:
-                if pythoncom is not None:
-                    # Free the WMI proxies while this apartment still exists; left to interpreter exit
-                    # they are released after CoUninitialize and pywin32 prints a Win32 exception.
-                    import gc
-                    gc.collect()
-                    pythoncom.CoUninitialize()
+                import pythoncom
+                pythoncom.CoInitialize()
             except Exception:
-                pass
+                pythoncom = None
+            try:
+                box["details"] = LP.network_details()
+            except Exception:
+                box["details"] = None
+            finally:
+                try:
+                    if pythoncom is not None:
+                        # No gc.collect() here: network_details() breaks the wmi module's one
+                        # reference cycle (latency_probe._wmi_connection), so every WMI proxy is
+                        # already released by refcount, in this apartment, before CoUninitialize.
+                        # A whole-heap collection held the GIL 0.1-0.25 s per check (a GUI hitch).
+                        pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+                done.set()
+
+        t = threading.Thread(target=read, name="ConnectionCheckDetails", daemon=True)
+        t.start()
+        return t, box, done
+
+    def _await_details(self, pending) -> Any:
+        """The details, or None (no lookup, WMI failed or found nothing, timed out, stopping). Wakes on
+        stop() at once."""
+        if pending is None:
+            return None
+        _t, box, done = pending
+        deadline = time.monotonic() + constants.network.latency.CHECK_DETAILS_TIMEOUT_S
+        while not done.is_set() and not self._stop_event.is_set():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None
+            done.wait(min(left, 0.05))
+        return box.get("details") if done.is_set() else None
 
     def _burst(self, hop: str, host: str, out: Dict[str, Any]) -> None:
         def on_echo(i: int, ms: Optional[float]) -> None:
@@ -201,9 +257,21 @@ class ConnectionCheck(QThread):
             out[hop] = None
 
     def run(self) -> None:
-        gw_ip = self._resolve_gateway()
+        pending = self._start_details()
+        gw_ip = self._gateway_ip
+        details_sent = False
+        if not gw_ip:
+            # No router from the standing probe: the details' gateway is the one lookup (a WMI failure
+            # means no router this check - never a second WMI query behind a failed one).
+            details = self._await_details(pending)
+            if self._stop_event.is_set():
+                return
+            gw_ip = details.gateway if details is not None else None
+            self.details_resolved.emit(details)
+            details_sent = True
         if self._stop_event.is_set():
             return
+        # A known router is pinged at once; its details arrive whenever WMI answers (below).
         self.gateway_resolved.emit(gw_ip)
         results: Dict[str, Any] = {}
         helper = None
@@ -216,8 +284,18 @@ class ConnectionCheck(QThread):
             self._burst(HOP_GATEWAY, gw_ip, results)
         if helper is not None:
             helper.join()
+        if not details_sent:
+            details = self._await_details(pending)
+            if self._stop_event.is_set():
+                return
+            self.details_resolved.emit(details)
         if self._stop_event.is_set():
             return
+        try:
+            link = LP.link_state(gw_ip)   # after the bursts: the adapter state they ran into
+        except Exception:
+            link = LP.LINK_UNKNOWN
+        self.link_resolved.emit(link)
         out: Dict[str, HopStats] = {}
         gw = results.get(HOP_GATEWAY)
         out[HOP_GATEWAY] = hop_stats(gw.rtts, gw.sent) if gw is not None else hop_stats((), 0)

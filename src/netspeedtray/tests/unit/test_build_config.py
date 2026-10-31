@@ -86,6 +86,17 @@ def test_release_pins_inno_setup():
     assert re.search(r"choco install innosetup --version=\d+\.\d+\.\d+", yml)
 
 
+def test_setup_installs_in_64_bit_mode_wherever_it_is_allowed_to_run():
+    """ArchitecturesAllowed=x64compatible lets Setup run on Windows 11 on ARM (x64 emulation), but
+    ArchitecturesInstallIn64BitMode=x64 (an alias of x64os since Inno 6.3) does not match ARM64, so
+    there Setup installed in 32-bit mode: Program Files (x86), the WOW6432Node uninstall key."""
+    iss = _read("build", "setup.iss")
+    allowed = re.search(r"^ArchitecturesAllowed=(\S+)\s*$", iss, re.M).group(1)
+    mode = re.search(r"^ArchitecturesInstallIn64BitMode=(\S+)\s*$", iss, re.M).group(1)
+    assert allowed == "x64compatible"
+    assert mode == allowed
+
+
 def test_a_previous_folder_on_a_missing_drive_falls_back_to_the_default():
     iss = _read("build", "setup.iss")
     wiz = re.search(r"procedure InitializeWizard\(\);(.*?)\nend;", iss, re.S).group(1)
@@ -226,3 +237,12 @@ def test_the_release_build_step_does_not_set_nst_venv():
     release = _read(".github", "workflows", "release.yml")
     assert "NST_VENV" not in release
     assert "python -m venv .venv" in release
+
+
+def test_the_spec_fails_the_build_on_a_bundled_foreign_icu_dll():
+    """#425 keeps PATH from shadowing System32's ICU; this guard catches it if anything slips past."""
+    spec = _read("build", "netspeedtray.spec")
+    guard = spec.index("_foreign_icu = ")
+    assert spec.index("_bundled_basenames = ") < guard < spec.index("pyz = PYZ(")
+    assert "'icuuc.dll', 'icuin.dll'" in spec[guard:guard + 200]
+    assert "raise SystemExit(" in spec[guard:guard + 300]

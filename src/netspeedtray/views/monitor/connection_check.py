@@ -10,6 +10,13 @@ Privacy: the internet hop runs only when the public probe is on in Settings, or 
 "Also check the internet (sends pings to <host>)" here - a one-off that is never saved, with the host
 named in the label. Changing the box restarts the check so it always matches what the box says.
 Nothing the sheet measures is persisted; the standing probe is the record.
+
+Network details (#214): the adapter the default gateway is on, its addresses and DNS servers, read once
+per check by the worker (one WMI query, nothing sent). "Copy figures" includes the adapter, PRIVATE
+IPv4 addresses and the DNS servers - like the router address the report already carries, they are
+local facts a helper needs - but NOT IPv6 addresses or a public IPv4 (a PC on a modem with no NAT):
+those are globally routable and identify the household (the #306 rule: a pasted report must not leak
+more than the problem needs).
 """
 from __future__ import annotations
 
@@ -49,7 +56,16 @@ _ATTRIBUTION_KEYS = {
     LP.LOSS_UNKNOWN: ("CHECK_CONN_VERDICT_UNKNOWN",
                       "Without replies from your router, this check can't tell whether loss is on "
                       "your Wi-Fi or local network or beyond it."),
+    LP.LOSS_NO_CONNECTION: ("CHECK_CONN_VERDICT_NO_CONNECTION",
+                            "Nothing got through - the connection is down, not just losing packets."),
 }
+# Network details rows: (NetworkDetails field, i18n key, English fallback, in the copied report).
+_DETAIL_ROWS = [
+    ("adapter", "CHECK_CONN_DETAILS_ADAPTER", "Adapter", True),
+    ("ipv4", "CHECK_CONN_DETAILS_IPV4", "IPv4 address", True),
+    ("ipv6", "CHECK_CONN_DETAILS_IPV6", "IPv6 address", False),
+    ("dns", "CHECK_CONN_DETAILS_DNS", "DNS servers", True),
+]
 # Stat cells per hop, in grid order: (field, i18n key, English fallback).
 _CELLS = [
     ("sent", "CHECK_CONN_SENT", "Sent"),
@@ -213,16 +229,91 @@ class _HopCard(QFrame):
         return cell, val
 
 
+class _DetailsCard(QFrame):
+    """Network details (#214): label / value rows, values selectable so an address can be copied."""
+
+    def __init__(self, i18n, c: Dict[str, str], parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("detailsCard")
+        self.setStyleSheet(
+            f"#detailsCard {{ background: {c['card_bg']}; border: 1px solid {c['card_stroke']};"
+            f" border-radius: 8px; }}")
+        box = QVBoxLayout(self)
+        box.setContentsMargins(16, 12, 16, 12)
+        box.setSpacing(8)
+        title = QLabel(_tr(i18n, "CHECK_CONN_DETAILS_TITLE", "Network details"))
+        title.setFont(su.font(tokens.TYPE_BODY_STRONG))
+        title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+        box.addWidget(title)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(4)
+        self.values: Dict[str, QLabel] = {}
+        self._rows: Dict[str, Tuple[QLabel, QLabel]] = {}
+        for i, (field, key, default, _copied) in enumerate(_DETAIL_ROWS):
+            name = QLabel(_tr(i18n, key, default))
+            name.setFont(su.font(tokens.TYPE_CAPTION))
+            name.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+            val = QLabel("")
+            val.setFont(su.font(tokens.TYPE_CAPTION))
+            val.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+            val.setWordWrap(True)
+            val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            grid.addWidget(name, i, 0, Qt.AlignmentFlag.AlignTop)
+            grid.addWidget(val, i, 1)
+            self.values[field] = val
+            self._rows[field] = (name, val)
+        grid.setColumnStretch(1, 1)
+        box.addLayout(grid)
+
+    def show_details(self, details) -> None:
+        """Fill the rows from a NetworkDetails; a field with nothing to show hides its row."""
+        for field, (name, val) in self._rows.items():
+            text = _detail_text(details, field)
+            val.setText(text)
+            name.setVisible(bool(text))
+            val.setVisible(bool(text))
+
+
+def _detail_text(details, field: str) -> str:
+    value = getattr(details, field, None) if details is not None else None
+    if isinstance(value, (tuple, list)):
+        return ", ".join(str(v) for v in value if v)
+    return str(value or "")
+
+
+def _copied_detail_text(details, field: str) -> str:
+    """``_detail_text`` for the pasted report. The own-address row keeps only PRIVATE addresses: a PC
+    connected straight to a modem (no NAT) holds a public IPv4, which identifies the household just
+    as an IPv6 one does (review L1). DNS servers stay: a resolver's address says nothing about you."""
+    if field != "ipv4":
+        return _detail_text(details, field)
+    import ipaddress
+    keep = []
+    for a in (getattr(details, field, None) or ()) if details is not None else ():
+        try:
+            if ipaddress.ip_address(str(a)).is_private:
+                keep.append(str(a))
+        except ValueError:
+            continue
+    return ", ".join(keep)
+
+
 class ConnectionCheckSheet(QDialog):
     """The modal check sheet. ``gateway_ip`` is the standing probe's router (None = look it up)."""
 
     def __init__(self, config: Dict[str, Any], i18n, gateway_ip: Optional[str] = None,
-                 app_version: str = "", autostart: bool = True, parent=None) -> None:
+                 app_version: str = "", autostart: bool = True, parent=None,
+                 gateway_answered: bool = False) -> None:
         super().__init__(parent)
         self._config = config
         self._i18n = i18n
         self._app_version = app_version
         self._gateway_ip = gateway_ip
+        # The standing probe has seen this router answer (LatencyProbe.gateway_answered): 0 replies
+        # now is a lost connection, not a router that never answers pings.
+        self._gateway_answered = bool(gateway_answered)
+        self._link: str = LP.LINK_UNKNOWN       # latency_probe.link_state() at the end of the check
         self._include_internet = False          # the one-off tick; never written to config
         self._worker: Optional[CC.ConnectionCheck] = None
         self._echoes: Dict[str, List[Optional[float]]] = {}
@@ -231,6 +322,7 @@ class ConnectionCheckSheet(QDialog):
         self._started_at: Optional[datetime] = None
         self._resolved_gw: Optional[str] = gateway_ip
         self._anchor_host: Optional[str] = None
+        self._details = None                    # latency_probe.NetworkDetails of the last check (#214)
         self.logger = logging.getLogger("NetSpeedTray.ConnectionCheck")
         lat = constants.network.latency
         self._total = lat.CHECK_ECHOES
@@ -262,6 +354,10 @@ class ConnectionCheckSheet(QDialog):
         }
         root.addWidget(self._cards[CC.HOP_GATEWAY])
         root.addWidget(self._cards[CC.HOP_ANCHOR])
+        # Network details (#214) - hidden until the worker has read them (and when it found none).
+        self._details_card = _DetailsCard(i18n, c)
+        self._details_card.setVisible(False)
+        root.addWidget(self._details_card)
 
         # One plain sentence from the D1 attribution rule, right under the figures it explains.
         self._sentence = QLabel("")
@@ -321,12 +417,15 @@ class ConnectionCheckSheet(QDialog):
         if self._anchor_host:
             self._echoes[CC.HOP_ANCHOR] = []
         self._stats = {}
+        self._link = LP.LINK_UNKNOWN
         self._started_at = datetime.now()
         self._state = "running"
         self._reset_view()
         w = CC.ConnectionCheck(self._gateway_ip, self._anchor_host)
         w.gateway_resolved.connect(self._on_gateway)
+        w.details_resolved.connect(self._on_details)
         w.echo_done.connect(self._on_echo)
+        w.link_resolved.connect(self._on_link)
         w.check_finished.connect(self._on_finished)
         self._worker = w
         reg = _check_registry()
@@ -347,7 +446,8 @@ class ConnectionCheckSheet(QDialog):
         self._worker = None
         if sip.isdeleted(w):
             return   # finished and already released by the registry
-        for sig, slot in ((w.gateway_resolved, self._on_gateway), (w.echo_done, self._on_echo),
+        for sig, slot in ((w.gateway_resolved, self._on_gateway), (w.details_resolved, self._on_details),
+                          (w.echo_done, self._on_echo), (w.link_resolved, self._on_link),
                           (w.check_finished, self._on_finished)):
             try:
                 sig.disconnect(slot)
@@ -372,10 +472,20 @@ class ConnectionCheckSheet(QDialog):
         self._resolved_gw = ip
         self._refresh()
 
+    def _on_details(self, details) -> None:
+        self._details = details
+        self._details_card.show_details(details)
+        self._details_card.setVisible(details is not None and any(
+            _detail_text(details, f) for f, _k, _d, _c in _DETAIL_ROWS))
+        self.adjustSize()
+
     def _on_echo(self, hop: str, index: int, ms) -> None:
         if hop in self._echoes:
             self._echoes[hop].append(None if ms is None else float(ms))
             self._refresh()
+
+    def _on_link(self, link) -> None:
+        self._link = str(link)
 
     def _on_finished(self, stats) -> None:
         self._worker = None   # done; the registry deleteLater()s it once its thread has ended
@@ -426,6 +536,14 @@ class ConnectionCheckSheet(QDialog):
             gw_card.status.setText(
                 f"<span style='color:{c['text_secondary']};'>"
                 f"{self._tr('CHECK_CONN_NO_ROUTER', 'No router found')}</span>")
+        lost = self.lost_reason()
+        if lost is not None:
+            # A dead link reads as one - never as a router that ignores pings (rc.2 VM session).
+            gw_card.status.setText(
+                f"<span style='color:{constants.network.latency.VERDICT_COLORS[LP.VERDICT_SLOW]};'>"
+                f"{self._tr('LATENCY_NO_CONNECTION', 'No connection')}</span>")
+            gw_card.note.setText(self._lost_note(lost))
+            gw_card.note.setVisible(True)
 
         sentence = self._attribution_text()
         self._sentence.setText(sentence)
@@ -465,10 +583,31 @@ class ConnectionCheckSheet(QDialog):
         pct = self._fmt_cell("loss_pct", st.loss_pct).rstrip("%")
         return self._tr("MONITOR_LATENCY_LOSS_FMT", "{pct}% loss").format(pct=pct)
 
+    def lost_reason(self) -> Optional[str]:
+        """CC.LOST_NO_LINK / CC.LOST_ROUTER once a finished check shows a lost connection, else None."""
+        if self._state != "done" or CC.HOP_GATEWAY not in self._stats:
+            return None
+        # The probe's record belongs to the router IT saw. A router this check looked up itself (the
+        # probe had none - its answering one had vanished) has proven nothing: an ICMP-silent new
+        # router must not read "was answering a moment ago".
+        answered = self._gateway_answered and (
+            not self._resolved_gw or self._resolved_gw == self._gateway_ip)
+        return CC.connection_lost(self._stats[CC.HOP_GATEWAY], bool(self._resolved_gw), self._link,
+                                  answered, self._stats.get(CC.HOP_ANCHOR))
+
+    def _lost_note(self, lost: str) -> str:
+        if lost == CC.LOST_NO_LINK:
+            return self._tr("CHECK_CONN_NO_LINK",
+                            "Your network adapter has no connection - check the cable or Wi-Fi.")
+        return self._tr("CHECK_CONN_ROUTER_LOST",
+                        "Your router was answering a moment ago and now answers nothing - "
+                        "the connection to it is lost.")
+
     def attribution_code(self) -> Optional[str]:
         if self._state != "done" or CC.HOP_GATEWAY not in self._stats:
             return None
-        return CC.check_attribution(self._stats[CC.HOP_GATEWAY], self._stats.get(CC.HOP_ANCHOR))
+        return CC.check_attribution(self._stats[CC.HOP_GATEWAY], self._stats.get(CC.HOP_ANCHOR),
+                                    lost=self.lost_reason())
 
     def _attribution_text(self) -> str:
         code = self.attribution_code()
@@ -512,21 +651,35 @@ class ConnectionCheckSheet(QDialog):
             if hop == CC.HOP_ANCHOR and st is None:
                 lines.append(f"{name}: {self._tr('CHECK_CONN_NOT_CHECKED', 'not checked')}")
                 continue
+            lost = self.lost_reason() if hop == CC.HOP_GATEWAY else None
             if hop == CC.HOP_GATEWAY and not addr:
-                lines.append(f"{name}: {self._tr('CHECK_CONN_NO_ROUTER', 'No router found')}")
+                word = (self._tr("LATENCY_NO_CONNECTION", "No connection") if lost
+                        else self._tr("CHECK_CONN_NO_ROUTER", "No router found"))
+                lines.append(f"{name}: {word}")
+                if lost:
+                    lines.append(f"  {self._lost_note(lost)}")
                 continue
             head = f"{name} {addr}" if addr else name
             cells = "  ".join(f"{_tr(self._i18n, key, default)}: {self._fmt_cell(field, getattr(st, field))}"
                               for field, key, default in _CELLS)
             verdict = ""
             if self._state == "done" and st is not None and st.sent:
-                if st.verdict is None:
+                if lost:
+                    verdict = f"  [{self._tr('LATENCY_NO_CONNECTION', 'No connection')}]"
+                elif st.verdict is None:
                     verdict = f"  [{self._tr('CHECK_CONN_NO_REPLY', 'No reply')}]"
                 else:
                     k, d = _VERDICT_KEYS[st.verdict]
                     loss = self._loss_text(st)
                     verdict = f"  [{self._tr(k, d)}{', ' + loss if loss else ''}]"
             lines.append(f"{head}{verdict}\n  {cells}")
+            if lost:
+                lines.append(f"  {self._lost_note(lost)}")
+        details = [f"{_tr(self._i18n, key, default)}: {_copied_detail_text(self._details, field)}"
+                   for field, key, default, copied in _DETAIL_ROWS
+                   if copied and _copied_detail_text(self._details, field)]
+        if details:
+            lines.append("  ".join(details))
         sentence = self._attribution_text()
         if sentence:
             lines.append(sentence)
@@ -570,13 +723,14 @@ def open_connection_check(main_widget, config: Dict[str, Any], i18n, parent=None
     The router address comes from the standing probe when it has one (no second WMI lookup)."""
     probe = getattr(main_widget, "latency_probe", None)
     gateway = getattr(probe, "gateway", None) if probe is not None else None
+    answered = getattr(probe, "gateway_answered", False) is True if probe is not None else False
     try:
         from netspeedtray import __version__
     except Exception:
         __version__ = ""
     try:
         sheet = ConnectionCheckSheet(config, i18n, gateway_ip=gateway, app_version=__version__,
-                                     parent=parent)
+                                     parent=parent, gateway_answered=answered)
         sheet.exec()
     except Exception as e:
         logging.getLogger("NetSpeedTray.ConnectionCheck").error(

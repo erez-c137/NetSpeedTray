@@ -44,6 +44,7 @@ class TrayIconManager(QObject):
         self.pause_action: Optional[QAction] = None
         self.pause_separator: Optional[QAction] = None
         self.reset_position_action: Optional[QAction] = None
+        self.update_action: Optional[QAction] = None
         # [(QAction, Segoe-Fluent-codepoint)] - icons are (re)tinted to the text color on each open.
         self._menu_icon_actions: list = []
 
@@ -120,6 +121,8 @@ class TrayIconManager(QObject):
 
             # --- Tier 4: App-level (least frequent) ---
             update_action = self.context_menu.addAction(self.i18n.CHECK_FOR_UPDATES_MENU_ITEM)
+            # Hidden while IT's DisableUpdateCheck policy is set (U1); refreshed on every open.
+            self.update_action = update_action
             if hasattr(self.widget, 'check_for_updates'):
                 update_action.triggered.connect(self.widget.check_for_updates)
 
@@ -217,12 +220,18 @@ class TrayIconManager(QObject):
                 self.reset_position_action.setVisible(show_reset)
             if self.pause_separator is not None:
                 self.pause_separator.setVisible(show_pause or show_reset)
+            if getattr(self, "update_action", None) is not None:
+                from netspeedtray.core.update_checker import update_check_disabled_by_policy
+                self.update_action.setVisible(not update_check_disabled_by_policy())
         except Exception as e:
             self.logger.error("Error refreshing dynamic menu items: %s", e, exc_info=True)
 
-    def show_context_menu(self) -> None:
+    def show_context_menu(self, anchor: Optional[QWidget] = None) -> None:
         """
         Calculates position and shows the context menu.
+
+        ``anchor``: the window the menu opens over - a "Show on all taskbars" mirror right-clicked on
+        another monitor (#229). None (every other caller) is the main widget, exactly as before.
         """
         if not self.context_menu:
             return
@@ -231,7 +240,7 @@ class TrayIconManager(QObject):
             self._dismiss_hover_card()   # before styling/positioning; aboutToShow repeats it
             self._apply_menu_style()
             self._refresh_dynamic_items()
-            menu_pos = self._calculate_menu_position()
+            menu_pos = self._calculate_menu_position(anchor)
 
             self.is_context_menu_visible = True
             if hasattr(self.widget, '_is_context_menu_visible'):
@@ -259,23 +268,25 @@ class TrayIconManager(QObject):
         except Exception as e:
             self.logger.error("Error showing context menu: %s", e, exc_info=True)
 
-    def _calculate_menu_position(self) -> QPoint:
+    def _calculate_menu_position(self, anchor: Optional[QWidget] = None) -> QPoint:
         """
-        Calculates the optimal global position for the context menu.
+        Calculates the optimal global position for the context menu, centred over ``anchor``'s
+        content (its own renderer's bounds) on ``anchor``'s screen; the main widget when None.
         """
+        target = anchor if anchor is not None else self.widget
         try:
             # Access renderer from widget if available. Use the full content union (network + any
             # CPU/GPU stats), not just the last-drawn segment, so the menu stays centered over the
             # whole widget when hardware monitoring widens it.
-            renderer = getattr(self.widget, 'renderer', None)
+            renderer = getattr(target, 'renderer', None)
             text_rect_local = renderer.get_content_bounds() if renderer else QRect()
 
             if not text_rect_local.isValid() or text_rect_local.isEmpty():
-                ref_global_pos = self.widget.mapToGlobal(self.widget.rect().center())
-                ref_top_global_y = self.widget.mapToGlobal(self.widget.rect().topLeft()).y()
+                ref_global_pos = target.mapToGlobal(target.rect().center())
+                ref_top_global_y = target.mapToGlobal(target.rect().topLeft()).y()
             else:
-                ref_global_pos = self.widget.mapToGlobal(text_rect_local.center())
-                ref_top_global_y = self.widget.mapToGlobal(text_rect_local.topLeft()).y()
+                ref_global_pos = target.mapToGlobal(text_rect_local.center())
+                ref_top_global_y = target.mapToGlobal(text_rect_local.topLeft()).y()
 
             menu_size = self.context_menu.sizeHint()
             menu_width = menu_size.width() if menu_size.width() > 0 else constants.ui.general.ESTIMATED_MENU_WIDTH
@@ -285,7 +296,7 @@ class TrayIconManager(QObject):
             target_y = ref_top_global_y - menu_height - constants.ui.general.MENU_PADDING_ABOVE
             target_pos = QPoint(int(round(target_x)), int(round(target_y)))
 
-            screen = self.widget.screen() or QApplication.primaryScreen()
+            screen = target.screen() or QApplication.primaryScreen()
             if screen:
                 screen_rect = screen.availableGeometry()
                 validated_x = max(screen_rect.left(), min(target_pos.x(), screen_rect.right() - menu_width + 1))
@@ -296,4 +307,4 @@ class TrayIconManager(QObject):
             return target_pos
         except Exception as e:
             self.logger.error("Error calculating menu position: %s", e, exc_info=True)
-            return self.widget.mapToGlobal(self.widget.rect().center())
+            return target.mapToGlobal(target.rect().center())

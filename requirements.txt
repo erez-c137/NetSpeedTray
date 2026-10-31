@@ -47,5 +47,7 @@ pywin32==311 ; sys_platform == "win32"
     #   wmi
 six==1.17.0
     # via python-dateutil
+truststore==0.10.4
+    # via -r requirements.in
 wmi==1.5.1 ; sys_platform == "win32"
     # via -r requirements.in

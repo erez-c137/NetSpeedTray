@@ -9,8 +9,8 @@ A single left click on the widget used to do nothing. Now:
 - the card never takes focus: it keeps WindowDoesNotAcceptFocus + WA_ShowWithoutActivating, and
   pinning only moves/resizes it. (The widget is a different matter: a click on it makes it the
   foreground window, as it always has - only its show is non-activating.);
-- a card opened by hover carries a "Click to keep this open" line while the gesture hint is still
-  teaching; pinning drops it.
+- a card opened by hover carries a "Click the widget to keep this open" line while the gesture hint
+  is still teaching; pinning drops it.
 
 Driven through the REAL InputHandler and the real NetworkSpeedWidget methods (bound to a light
 widget), never a launched app.
@@ -289,7 +289,7 @@ def test_the_widget_window_itself_still_shows_without_activating(q_app):
     assert widget.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
 
-# --- the "Click to keep this open" footer ---------------------------------------------------------
+# --- the "Click the widget to keep this open" footer ----------------------------------------------
 
 def _show_fake(**config):
     cfg = {"show_usage_on_hover": False, "show_hover_tips": True, **config}
@@ -531,6 +531,31 @@ def test_a_failed_click_through_change_warns_once_per_direction(q_app, caplog, f
         assert len(warnings) == 2, [r.getMessage() for r in warnings]
         assert "could not set" in warnings[0].getMessage()
         assert "could not clear" in warnings[1].getMessage()
+    finally:
+        card.deleteLater()
+
+
+def test_click_through_warning_logs_the_style_read_back_after_the_call(q_app, caplog):
+    """rc.2 W7: the warning printed the style from BEFORE SetWindowLongW, so it never showed what the
+    window really ended up with. It names the read-back value and the one asked for."""
+    import ctypes
+    import logging
+    from netspeedtray.views import usage_flyout as uf
+    user32 = ctypes.windll.user32
+    before = 0x08000000 | 0x00080000
+    after = before | 0x00000008            # something else changed, WS_EX_TRANSPARENT did not stick
+    reads = iter([before, after])
+    card = _card()
+    try:
+        with patch.object(user32, "GetWindowLongW", side_effect=lambda h, i: next(reads)), \
+                patch.object(user32, "SetWindowLongW", return_value=before), \
+                patch.object(uf, "_click_through_warned", set()), \
+                caplog.at_level(logging.WARNING, logger=uf.__name__):
+            assert uf._set_click_through(card, True) is False
+        (warning,) = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert f"0x{after:08X}" in warning
+        assert f"0x{before | uf._WS_EX_TRANSPARENT:08X}" in warning      # what was asked for
+        assert f"0x{before:08X}" not in warning
     finally:
         card.deleteLater()
 

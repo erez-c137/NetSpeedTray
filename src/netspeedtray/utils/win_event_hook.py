@@ -9,7 +9,7 @@ import logging
 import threading
 import ctypes
 from ctypes import wintypes, windll, byref
-from typing import Optional
+from typing import FrozenSet, Optional, Union
 
 import win32process
 
@@ -36,6 +36,8 @@ EVENT_OBJECT_LOCATIONCHANGE = 0x800B
 # window (#32769): explorer fires it right before it raises the taskbar over the widget.
 EVENT_OBJECT_REORDER = 0x8004
 EVENT_SYSTEM_MOVESIZEEND = 0x000B # Fired when a window finishes moving or resizing
+# idObject of an event about the window itself (not its caret / cursor / scroll bars / a child element).
+OBJID_WINDOW = 0
 WINEVENT_OUTOFCONTEXT = 0x0000
 # Drop events raised by our own process (e.g. the widget's own re-seat echoing back as a
 # reorder). The caller's periodic safety net still covers anything our own UI does.
@@ -79,15 +81,21 @@ class WinEventHook(QObject, threading.Thread):
     _internal_event_received = pyqtSignal(int)
 
     def __init__(self, event_to_watch: int, hwnd_to_watch: int = 0, debounce_ms: Optional[int] = None,
-                 parent=None, source_hwnd_filter: Optional[int] = None,
-                 skip_own_process: bool = False):
+                 parent=None, source_hwnd_filter: Optional[Union[int, FrozenSet[int]]] = None,
+                 skip_own_process: bool = False, object_id_filter: Optional[int] = None,
+                 process_scope: bool = False):
         """
         Initializes the hook.
 
         source_hwnd_filter: when set, events whose source HWND differs are dropped on the hook
         thread, before they cross into Qt - for a system-wide hook (hwnd_to_watch=0) on a
         frequent event where only one source matters (EVENT_OBJECT_REORDER on the desktop).
+        One HWND, or a frozenset of HWNDs (any of them passes); see set_source_hwnd_filter.
         skip_own_process: add WINEVENT_SKIPOWNPROCESS (ignore events our own process raises).
+        object_id_filter: when set, only events with this idObject pass (OBJID_WINDOW: the window
+        itself moved, not its caret or a child element).
+        process_scope: with hwnd_to_watch, hook that window's whole PROCESS (every thread) instead
+        of only its thread.
         """
         super().__init__(parent)
         threading.Thread.__init__(self)
@@ -105,6 +113,8 @@ class WinEventHook(QObject, threading.Thread):
         self.event_to_watch = event_to_watch
         self.hwnd_to_watch = hwnd_to_watch
         self.source_hwnd_filter = source_hwnd_filter
+        self.object_id_filter = object_id_filter
+        self.process_scope = process_scope
         self.c_callback = WINEVENTPROC(self.callback)
 
         self._debounced_timer = QTimer()
@@ -131,6 +141,8 @@ class WinEventHook(QObject, threading.Thread):
         if self.hwnd_to_watch != 0:
             try:
                 thread_id, process_id = win32process.GetWindowThreadProcessId(self.hwnd_to_watch)
+                if self.process_scope:
+                    thread_id = 0
             except Exception as e:
                 logger.error(f"Could not get process/thread for HWND {self.hwnd_to_watch}: {e}")
                 return
@@ -167,9 +179,23 @@ class WinEventHook(QObject, threading.Thread):
         Its ONLY job is to emit the internal signal to safely cross the thread boundary
         (after the optional source filter).
         """
-        if self.source_hwnd_filter is not None and (hwnd or 0) != self.source_hwnd_filter:
+        # idObject first: the cheapest test, and the one that drops the bulk of a process-scoped
+        # LOCATIONCHANGE stream (Explorer reports every cursor move as OBJID_CURSOR - rc.2 L4).
+        if self.object_id_filter is not None and idObject != self.object_id_filter:
             return
+        flt = self.source_hwnd_filter
+        if flt is not None:
+            if isinstance(flt, frozenset):
+                if (hwnd or 0) not in flt:
+                    return
+            elif (hwnd or 0) != flt:
+                return
         self._internal_event_received.emit(hwnd or 0)
+
+    def set_source_hwnd_filter(self, hwnds: Optional[Union[int, FrozenSet[int]]]) -> None:
+        """Replace the source filter while the hook runs (one attribute store, read by the hook
+        thread's callback - atomic in CPython)."""
+        self.source_hwnd_filter = hwnds
 
     def _handle_event_on_main_thread(self, hwnd: int):
         """

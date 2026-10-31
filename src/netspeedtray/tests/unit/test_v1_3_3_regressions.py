@@ -127,8 +127,9 @@ def test_update_config_rebuilds_pen_cache(q_app):
     renderer = WidgetRenderer(cfg, i18n)
 
     new_cfg = dict(cfg)
-    new_cfg["high_speed_color"] = "#abcdef"
-    new_cfg["low_speed_color"] = "#123456"
+    # The 2.2 rc.2 scheme: each colour is a dark/light pair; set both so the pinned theme can't matter.
+    new_cfg.update({"high_speed_color_dark": "#abcdef", "high_speed_color_light": "#abcdef",
+                    "low_speed_color_dark": "#123456", "low_speed_color_light": "#123456"})
     renderer.update_config(new_cfg)
 
     assert renderer._cached_pens["high"].color().name() == "#abcdef"

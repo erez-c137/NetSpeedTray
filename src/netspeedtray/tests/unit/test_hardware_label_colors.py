@@ -16,6 +16,7 @@ from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.utils import hardware_vendors as hv
 from netspeedtray.utils.config import ConfigManager
 from netspeedtray.utils.widget_renderer import WidgetRenderer
+from netspeedtray.tests.color_helpers import themed
 
 D = constants.config.defaults
 
@@ -185,7 +186,7 @@ def _renderer(**cfg_overrides):
     cfg.update({"monitor_cpu_enabled": True, "monitor_gpu_enabled": True, "show_hardware_temps": False,
                 "hardware_label_style": "text"})
     cfg.update(cfg_overrides)
-    return WidgetRenderer(cfg, I18nStrings("en_US"))
+    return WidgetRenderer(themed(cfg), I18nStrings("en_US"))
 
 
 def _paint_hw(r) -> np.ndarray:
@@ -310,7 +311,7 @@ def test_a_2_1_config_is_backed_up_before_the_label_style_migration(tmp_path):
     backup = path.with_name(f"{path.name}.bak.v1.1")
     assert backup.exists()
     assert json.loads(backup.read_text(encoding="utf-8")) == original
-    assert loaded["config_version"] == "1.2"
+    assert loaded["config_version"] == "1.4"
 
 
 def test_runtime_taskbar_height_is_neither_written_nor_preserved(tmp_path, caplog):
@@ -320,7 +321,7 @@ def test_runtime_taskbar_height_is_neither_written_nor_preserved(tmp_path, caplo
     from unittest.mock import MagicMock
     from netspeedtray.core.config_controller import ConfigController
     path = tmp_path / "config.json"
-    path.write_text(json.dumps({"config_version": "1.2", "taskbar_height": 48, "font_size": 10}),
+    path.write_text(json.dumps({"config_version": "1.4", "taskbar_height": 48, "font_size": 10}),
                     encoding="utf-8")
     cm = ConfigManager(path)
     with caplog.at_level(logging.WARNING):

@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from netspeedtray.utils.helpers import get_app_data_path
-from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.utils.timer_utils import snap_update_rate
 from netspeedtray import constants
 
@@ -469,6 +468,26 @@ class ConfigManager:
                              legacy_style, new_style, migrated["hardware_label_color"])
             changes_made = True
 
+        if self._migrate_color_scheme(migrated):
+            changes_made = True
+
+        # Pre-release 2.2 rc.2 builds stored the default font as its optical size ("Segoe UI Variable
+        # Text"), a name Qt can't resolve (2.1.7 after a rollback drew Tahoma). Read it as the family, at
+        # any version: no build ever offered the optical size as a choice, so it is never a user's pick.
+        for key in ("font_family", "arrow_font_family"):
+            value = migrated.get(key)
+            renamed = constants.fonts.FAMILY_RENAMES.get(value) if isinstance(value, str) else None
+            if renamed:
+                migrated[key] = renamed
+                changes_made = True
+                self.logger.info("Migrated %s %r -> %r", key, value, renamed)
+
+        # 1.4 (legibility "L"): once, for a file written before it - never re-run on a 1.4 file, where an
+        # old factory value (say a dark High of #00FF00) is the user's deliberate pick by then.
+        if version_parses and not loaded_is_newer and self._version_less_than(str(loaded_version), "1.4"):
+            if self._migrate_to_1_4(migrated):
+                changes_made = True
+
         # Version-based migrations (applied if loaded_version < target version)
         # Example structure for future versions:
         # if self._version_less_than(loaded_version, "2.0"):
@@ -496,6 +515,95 @@ class ConfigManager:
 
         return migrated
     
+    def _migrate_color_scheme(self, migrated: Dict[str, Any]) -> bool:
+        """
+        Schema 1.3 (2.2 rc.2): seed each themed colour's `<stem>_dark` / `<stem>_light` pair from the
+        pre-1.3 single key, in place. Returns True when it wrote anything.
+
+        Gated per stem on the pair being absent - not on the version - so it is idempotent, and a file
+        that went rc.2 -> rollback -> rc.2 keeps the pair this build wrote (the older build preserved it
+        as unknown keys). A stem with no legacy value is left for validation to fill with defaults.
+        - Text: `color_is_automatic` decides, never the stored hex. An automatic user on a light taskbar
+          has #000000 on disk (the old startup sync wrote it), and copying that would make the dark text
+          black. Automatic (or missing - the old default; or not a bool, which old validation also
+          reset to True) -> the white / black defaults. Fixed -> that colour on both taskbars, exactly
+          today's look (#332: a fixed #151618 stays #151618 until the user changes one).
+        - High / Low / both arrows: a custom colour is copied to both taskbars, so nobody's widget
+          changes (#168). The FACTORY value, which nobody chose, becomes the theme defaults instead: the
+          same on a dark taskbar, and readable on a light one (the white down arrow was invisible there).
+        - The legacy keys are left in the file, inert, so a rollback to rc.1 / 2.1.x reads the colours it
+          had. Edits made from here on do not carry back; that is accepted.
+        """
+        d = constants.config.defaults
+        wrote = False
+        for stem in d.THEMED_COLOR_STEMS:
+            dark_key, light_key = f"{stem}_dark", f"{stem}_light"
+            if dark_key in migrated or light_key in migrated:
+                continue
+            if stem == "default_color":
+                if "default_color" not in migrated and "color_is_automatic" not in migrated:
+                    continue
+                if migrated.get("color_is_automatic", True) is not False:
+                    seeded = d.THEMED_COLOR_DEFAULTS[stem]
+                elif self._is_hex(migrated.get("default_color")):
+                    seeded = (migrated["default_color"],) * 2
+                else:
+                    continue
+            elif stem in d.LEGACY_COLOR_KEYS:
+                old = migrated.get(stem)
+                if not self._is_hex(old):
+                    continue
+                # The pre-1.3 factory value - pinned, not today's dark default (High's moved in 1.4).
+                if old.upper() == d.LEGACY_COLOR_FACTORY[stem].upper():
+                    seeded = d.THEMED_COLOR_DEFAULTS[stem]
+                else:
+                    seeded = (old, old)
+            else:
+                continue   # new in 1.3 (Medium, graph colours): validation fills the defaults
+            migrated[dark_key], migrated[light_key] = seeded
+            wrote = True
+            self.logger.info("Migrated %s -> %s=%s, %s=%s", stem, dark_key, seeded[0], light_key, seeded[1])
+        return wrote
+
+    def _migrate_to_1_4(self, migrated: Dict[str, Any]) -> bool:
+        """
+        Schema 1.4 (2.2 rc.2, the legibility package "L"): move values still on an OLD factory default to
+        the new one, in place. Returns True when it wrote anything. The caller runs it once, for a file
+        older than 1.4.
+
+        - The dark High band colour, exactly #00FF00 (case-insensitive) -> #8CF2C3. Any other value is the
+          user's and stays. (A 2.1.x file reaches here already seeded by _migrate_color_scheme, which maps
+          its factory #00FF00 straight to the new pair; this covers a 1.3 file.)
+        - The font and the arrow font, exactly "Segoe UI" -> "Segoe UI Variable" (7a; drawn at its Text
+          optical size).
+        - The separate arrow font, on at exactly the old default (Segoe UI, 10 pt, DemiBold) -> off, so
+          the arrows follow the text font (7b). A changed arrow font keeps the option on.
+        Medium and the light colours were new in 1.3 (never shipped), so they need no step.
+        """
+        d = constants.config.defaults
+        wrote = False
+        for key, (old, new) in d.MIGRATE_1_4_DEFAULTS.items():
+            value = migrated.get(key)
+            if isinstance(value, str) and value.strip().lower() == old.lower():
+                migrated[key] = new
+                wrote = True
+                self.logger.info("Migrated %s %r -> %r (the old default; 1.4)", key, value, new)
+        family, size, weight = d.LEGACY_ARROW_FONT
+        arrow_family = migrated.get("arrow_font_family")
+        if (migrated.get("use_separate_arrow_font") is True
+                and isinstance(arrow_family, str)
+                and arrow_family.strip().lower() in (family.lower(), d.DEFAULT_ARROW_FONT_FAMILY.lower())
+                and migrated.get("arrow_font_size", size) == size
+                and migrated.get("arrow_font_weight", weight) == weight):
+            migrated["use_separate_arrow_font"] = False
+            wrote = True
+            self.logger.info("Migrated use_separate_arrow_font -> False (the old default arrow font; 1.4)")
+        return wrote
+
+    @staticmethod
+    def _is_hex(value: Any) -> bool:
+        return isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value) is not None
+
     def _version_less_than(self, version_a: str, version_b: str) -> bool:
         """
         Compare two semantic versions. Returns True if version_a < version_b.
@@ -700,17 +808,36 @@ class ConfigManager:
             validated["high_speed_threshold"] = constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD
             validated["low_speed_threshold"] = constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD
 
+        # Rule (#9): the optional Medium threshold is 0 (Off) or strictly between Low and High. Checked
+        # after the pair above settled; a misplaced Medium is reset ALONE, so a bad Medium entry never
+        # costs the user their High / Low. (The Settings spinboxes don't enforce the order, like High /
+        # Low's; the renderer ignores a misplaced Medium until this corrects it on the next load.)
+        try:
+            medium = float(validated.get("medium_speed_threshold") or 0.0)
+            low_f = float(validated["low_speed_threshold"])
+            high_f = float(validated["high_speed_threshold"])
+            if medium != 0.0 and not (low_f < medium < high_f):
+                self.logger.warning(
+                    "Medium speed threshold %s is not between low %s and high %s: turning it off.",
+                    medium, low_f, high_f)
+                validated["medium_speed_threshold"] = constants.config.defaults.DEFAULT_MEDIUM_SPEED_THRESHOLD
+        except (TypeError, ValueError, KeyError):
+            validated["medium_speed_threshold"] = constants.config.defaults.DEFAULT_MEDIUM_SPEED_THRESHOLD
+
         # Preserve unknown keys VERBATIM (v2.1.5 item 4c). They are usually settings
         # written by a NEWER build; a rollback must not strip them from disk. They
         # ride through save() too: save() drops None values and compares against
         # `_last_config` for its no-op shortcut, and both sides of that comparison
         # carry the same preserved keys, so the shortcut still fires.
         extra_keys = set(loaded_config.keys()) - set(schema.keys())
-        if extra_keys:
+        # The pre-1.3 colour keys are expected here (kept inert for a rollback): not worth a warning.
+        unknown = extra_keys - set(constants.config.defaults.LEGACY_COLOR_KEYS)
+        if unknown:
             self.logger.warning(
                 "Preserving unknown config fields (written by a newer version?): %s",
-                ", ".join(sorted(extra_keys)),
+                ", ".join(sorted(unknown)),
             )
+        if extra_keys:
             for key in extra_keys:
                 validated[key] = loaded_config[key]
 
@@ -738,8 +865,10 @@ class ConfigManager:
         (e.g. a 2.2 beta's `taskbar_height`): it is about to be rewritten too, so it gets its own
         `<name>.bak.v<version>.fields` copy - a separate name, so it can never stand in for the
         `.bak.v<version>` a later schema bump must take of the file as it is then. Like every
-        backup here, `.fields` keeps the FIRST copy ever made; later field migrations of the same
-        version leave it untouched.
+        backup here, `.fields` keeps the FIRST copy ever made. A LATER field migration of the same
+        version is about to rewrite a file that copy no longer matches, so it also snapshots the
+        file as it is now, to `.fields.<YYYYmmdd_HHMMSS>[_n]`, keeping the newest
+        FIELD_MIGRATION_SNAPSHOTS_KEPT of those (rc.2 D3; see _snapshot_before_field_migration).
 
         Returns True when a backup exists afterwards - none was needed, one was already there,
         or it was just copied - and False when it could not be made. A failure never blocks
@@ -757,6 +886,8 @@ class ConfigManager:
             if backup_path.exists():
                 self.logger.debug("Config backup %s already exists; keeping the pristine copy.",
                                   backup_path.name)
+                if same_version:
+                    return self._snapshot_before_field_migration(backup_path)
                 return True
             shutil.copy2(self.config_path, backup_path)
             self.logger.info(
@@ -771,6 +902,53 @@ class ConfigManager:
                                       "migrated settings in memory without saving them over the "
                                       "original.")
             return False
+
+    def _snapshot_before_field_migration(self, pristine: Path) -> bool:
+        """
+        Copy the on-disk config to `<pristine>.<YYYYmmdd_HHMMSS>[_n]` before a repeat same-version
+        field migration rewrites it, then prune to the newest FIELD_MIGRATION_SNAPSHOTS_KEPT.
+
+        Why a rolling set and not one more fixed name: the pristine `.fields` must never move (it is
+        the oldest state we hold), and a single "previous" slot would be overwritten by the very
+        migration it is meant to undo if that one is retried. Timestamped names sort by age, never
+        collide, and the cap bounds the disk use. The snapshot is taken before pruning, so a failed
+        prune can only leave one extra copy - never fewer than promised. Returns False only when the
+        snapshot itself could not be made (load() then does not write the migration).
+        """
+        from datetime import datetime
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        target = pristine.with_name(f"{pristine.name}.{stamp}")
+        n = 1
+        while target.exists():
+            target = pristine.with_name(f"{pristine.name}.{stamp}_{n}")
+            n += 1
+        try:
+            shutil.copy2(self.config_path, target)
+            self.logger.info("Snapshotted config to %s before a repeat field migration.", target.name)
+        except Exception:
+            if not self._backup_failure_logged:
+                self._backup_failure_logged = True
+                self.logger.exception("Failed to snapshot config before a field migration; running "
+                                      "on the migrated settings in memory without saving them.")
+            return False
+        try:
+            stamp_re = re.compile(re.escape(pristine.name) + r"\.(\d{8}_\d{6})(?:_(\d+))?$")
+            snapshots = []
+            for p in pristine.parent.iterdir():
+                m = stamp_re.match(p.name)
+                if m:   # age order: the zero-padded stamp, then the same-second counter
+                    snapshots.append(((m.group(1), int(m.group(2) or 0)), p))
+            snapshots.sort()
+            # Name order is age order only while the clock moves forward: with the clock set back, the
+            # snapshot just taken sorts OLDEST and would be pruned first (review L2). It is the one copy
+            # of the state this migration overwrites - never prune it; drop the oldest others instead.
+            others = [p for _, p in snapshots if p != target]
+            keep_others = max(0, constants.config.defaults.FIELD_MIGRATION_SNAPSHOTS_KEPT - 1)
+            for old in others[:max(0, len(others) - keep_others)]:
+                old.unlink()
+        except OSError as e:
+            self.logger.debug("Could not prune old field-migration snapshots: %s", e)
+        return True
 
     def load(self) -> Dict[str, Any]:
         """Loads and validates the configuration from the file."""

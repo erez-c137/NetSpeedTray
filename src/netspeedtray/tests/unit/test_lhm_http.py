@@ -435,7 +435,10 @@ def test_an_lhm_refusing_us_is_logged_once_at_info(serve, caplog, status, reason
     info = [r for r in caplog.records if r.levelname == "INFO"]
     assert len(info) == 1
     assert str(status) in info[0].getMessage()
-    assert "authentication" in info[0].getMessage()
+    # rc.2 G1: the advice names what to fix for each refusal - never "turn authentication off".
+    expected = "user name and password" if status == 401 else "Remote Web Server"
+    assert expected in info[0].getMessage()
+    assert "authentication off" not in info[0].getMessage()
 
 
 def test_raw_value_is_preferred_when_numeric():

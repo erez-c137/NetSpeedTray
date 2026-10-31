@@ -169,6 +169,20 @@ def get_machine_id() -> str:
         return uuid.uuid4().hex
 
 
+def threshold_units_per_mbps(unit_type: str) -> float:
+    """How many of the user's mega-position units (Mbps, MB/s, Mibps, MiB/s) make one decimal Mbps.
+
+    The speed thresholds are STORED in decimal Mbps - the unit _speed_band compares in, always - and the
+    Settings boxes show them in the user's own unit (rc.2: they used to show the Mbps number under a
+    MB/s label, so "5 MB/s" banded at 5 Mbps = 0.625 MB/s). Display = stored * this; stored = shown / this.
+    """
+    units = constants.network.units
+    per_unit_bits = units.MEBI_DIVISOR if str(unit_type).endswith("_binary") else units.MEGA_DIVISOR
+    if str(unit_type).startswith("bytes"):
+        per_unit_bits *= units.BITS_PER_BYTE
+    return units.MEGA_DIVISOR / per_unit_bits
+
+
 def get_unit_labels_for_type(i18n, unit_type: str, short_labels: bool = False) -> List[str]:
     """
     Returns a list of translated unit labels [base, kilo, mega, giga] for the given unit type.
@@ -462,6 +476,57 @@ def format_decimal(value: float, i18n, places: int = 1) -> str:
     s = f"{value:.{places}f}"
     sep = getattr(i18n, "DECIMAL_SEPARATOR", ".")
     return s.replace(".", sep) if sep and sep != "." else s
+
+
+def temperature_unit(config) -> str:
+    """The configured display unit ("celsius" / "fahrenheit"); anything unexpected reads as Celsius."""
+    t = constants.hardware.temperature
+    raw = (config.get("temperature_unit", t.CELSIUS) if hasattr(config, "get")
+           else getattr(config, "temperature_unit", t.CELSIUS))
+    return t.FAHRENHEIT if raw == t.FAHRENHEIT else t.CELSIUS
+
+
+def celsius_to_unit(celsius: float, unit: str) -> float:
+    """A Celsius reading in ``unit`` (only the display converts - every stored value is Celsius)."""
+    c = float(celsius)
+    return c * 9.0 / 5.0 + 32.0 if unit == constants.hardware.temperature.FAHRENHEIT else c
+
+
+def unit_to_celsius(value: float, unit: str) -> float:
+    """The inverse of celsius_to_unit (Settings' throttle slider shows the user's unit)."""
+    v = float(value)
+    return (v - 32.0) * 5.0 / 9.0 if unit == constants.hardware.temperature.FAHRENHEIT else v
+
+
+def temperature_symbol(unit: str) -> str:
+    t = constants.hardware.temperature
+    return t.SYMBOLS.get(unit, t.SYMBOLS[t.CELSIUS])
+
+
+def format_temperature(celsius: float, unit: str) -> str:
+    """A Celsius reading as the user's unit, rounded to a whole degree: "62°C" / "144°F". Rounded,
+    never truncated (#237: the taskbar's int() once disagreed with the Monitor's :.0f)."""
+    return f"{celsius_to_unit(celsius, unit):.0f}{temperature_symbol(unit)}"
+
+
+def temperature_reference(unit: str, hover: bool = False) -> str:
+    """The widest temperature the readout reserves room for in ``unit`` ("99°C" / "999°F"); see
+    constants.hardware.temperature."""
+    t = constants.hardware.temperature
+    table = t.HOVER_REFERENCE_NUMBER if hover else t.WIDGET_REFERENCE_NUMBER
+    return table.get(unit, table[t.CELSIUS]) + temperature_symbol(unit)
+
+
+def hw_suffix_reference(show_temps: bool, show_power: bool, unit: str) -> str:
+    """The widest "(temp, power)" suffix of a CPU/GPU row - the one string the renderer, the
+    side-bar fit and the layout all size from, so they cannot drift apart."""
+    if show_temps and show_power:
+        return f"({temperature_reference(unit)}, 250.0W)"
+    if show_power:
+        return "(250.0W)"
+    if show_temps:
+        return f"({temperature_reference(unit)})"
+    return ""
 
 
 def format_percent(value, i18n) -> str:

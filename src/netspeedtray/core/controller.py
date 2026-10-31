@@ -122,6 +122,12 @@ class StatsController(QObject):
         self._launch_reconciled: bool = False
         # Auto mode: the last primary the routing lookup actually found (see _aggregate_for_odometer).
         self._last_known_primary: Optional[str] = None
+        # Auto mode before ANY primary was found this session (an autostart at sign-in, Wi-Fi still
+        # connecting): every interface's exact deltas, summed, plus the wall time the first of those
+        # windows began. Charged to the primary once it first resolves (_flush_unrouted_backlog).
+        self._unrouted_deltas: Dict[str, List[float]] = {}
+        self._unrouted_since: Optional[float] = None
+        self._launch_wait_logged: bool = False
         
         from collections import deque
         self.recent_speeds: Dict[str, deque] = {}
@@ -199,7 +205,9 @@ class StatsController(QObject):
         def _keep(stat_type: str) -> bool:
             return hardware_persist_allowed(stat_type, self.config)
 
-        if 'cpu' in stats or 'gpu' in stats:
+        # RAM / VRAM can arrive without a CPU / GPU reading (their own switches, rc.2 G5), and so
+        # can the GPU-presence latch from a VRAM-only poll.
+        if any(k in stats for k in ('cpu', 'gpu', 'ram_used', 'vram_used', 'gpu_present')):
             cpu = stats.get('cpu')
             gpu = stats.get('gpu')
             ram_used = stats.get('ram_used')
@@ -409,9 +417,22 @@ class StatsController(QObject):
                 # its bytes are real (#13). The window began at the previous sample: bytes are
                 # charged to the period it began in.
                 if byte_deltas:
+                    holding = self._awaiting_first_primary()
+                    if holding:
+                        # No primary yet, so auto mode cannot tell which adapter it meters: hold the
+                        # deltas and charge the primary's share once it resolves (D1). counters=None:
+                        # handing the odometer this poll's counters would let its 30 s persist replace
+                        # the PREVIOUS session's snapshot - a quit or crash before a route appears would
+                        # then lose that closed window, the held bytes and the next launch's recovery.
+                        # Kept as it was, the snapshot still pairs the stored total (nothing added).
+                        self._hold_unrouted(byte_deltas, last_wall)
+                        charge = (0.0, 0.0)
+                    else:
+                        self._flush_unrouted_backlog()
+                        charge = self._aggregate_for_odometer(byte_deltas)
                     self._write_byte_sink(
                         "data-usage odometer", self.widget_state.add_usage_bytes,
-                        *self._aggregate_for_odometer(byte_deltas), counters=current_counters,
+                        *charge, counters=None if holding else current_counters,
                         sampled_at=sample_wall, window_start=last_wall,
                         primary=self._odometer_primary())
                 # v8 history: every interface's exact delta over the measured span (ending at this
@@ -611,6 +632,39 @@ class StatsController(QObject):
         return self._aggregate_for_display(byte_deltas, resolve_primary=False)
 
 
+    def _awaiting_first_primary(self) -> bool:
+        """Auto mode, and the routing lookup has not found a primary even once this session."""
+        return self.config.get("interface_mode", "auto") == "auto" and self._odometer_primary() is None
+
+
+    def _hold_unrouted(self, byte_deltas: Dict[str, Tuple[float, float]], window_start: float) -> None:
+        if self._unrouted_since is None:
+            self._unrouted_since = window_start
+        for name, (up, down) in byte_deltas.items():
+            acc = self._unrouted_deltas.setdefault(name, [0.0, 0.0])
+            acc[0] += up
+            acc[1] += down
+
+
+    def _flush_unrouted_backlog(self) -> None:
+        """Charge the bytes held while no primary existed (D1), once, now that one does. Only what
+        the current mode meters is charged - in auto mode the newly found primary, i.e. the adapter
+        that was coming up while it had no route yet. Before this, those polls aggregated to
+        nothing, and an autostart at sign-in with Wi-Fi still connecting lost them."""
+        if not self._unrouted_deltas:
+            return
+        held = {name: (v[0], v[1]) for name, v in self._unrouted_deltas.items()}
+        since, self._unrouted_deltas, self._unrouted_since = self._unrouted_since, {}, None
+        up, down = self._aggregate_for_odometer(held)
+        if up or down:
+            # counters=None: the odometer is already paired with the latest polled counters.
+            self._write_byte_sink("data-usage odometer", self.widget_state.add_usage_bytes,
+                                  up, down, counters=None, window_start=since,
+                                  primary=self._odometer_primary())
+            self.logger.info("Primary interface found: counted %.1f MB up / %.1f MB down that moved "
+                             "before it had a route.", up / 1e6, down / 1e6)
+
+
     def _maybe_reconcile_launch(self) -> None:
         """Same-boot launch reconciliation (audit item 2), at most once per session.
 
@@ -624,15 +678,31 @@ class StatsController(QObject):
         snapshot = self.widget_state.get_usage_launch_snapshot()
         if snapshot is None:
             return  # odometer not loaded yet - retry next poll
+        auto = self.config.get("interface_mode", "auto") == "auto"
+        if auto and isinstance(snapshot, dict) and snapshot:
+            self._update_primary_interface_name()
+            if self._odometer_primary() is None:
+                # No route yet (autostart at sign-in, Wi-Fi still connecting): which adapter auto
+                # meters is unknown, and comparing the snapshot's primary with None skipped the
+                # recovery outright (D1). Keep the launch counters and retry every poll until the
+                # primary first resolves; the live polls hold their bytes meanwhile, so nothing
+                # between the launch counters and that moment is lost or counted twice.
+                if not self._launch_wait_logged:
+                    self._launch_wait_logged = True
+                    self.logger.info("Launch reconciliation waits for the primary interface (no route yet).")
+                return
         counters, sampled_at = self._launch_counters
         self._launch_reconciled = True
         self._launch_counters = None
+        # Live polls already handed the odometer newer counters (the reconcile waited above, or for
+        # the odometer to load): pairing its total with the launch counters now would be stale.
+        stale_counters = self.last_interface_counters is not counters
         if not isinstance(snapshot, dict):
             return
         deltas, reason = usage_snapshot.reconcile_deltas(
             snapshot, counters, usage_snapshot.current_boot_time(), sampled_at)
         # Scope: only what the CURRENT interface mode meters, aggregated exactly like a live poll.
-        if self.config.get("interface_mode", "auto") == "auto":
+        if auto:
             self._update_primary_interface_name()
             current_primary = self._odometer_primary()
             if deltas and snapshot.get("primary") != current_primary:
@@ -646,8 +716,13 @@ class StatsController(QObject):
         up, down = self._aggregate_for_odometer(deltas) if deltas else (0.0, 0.0)
         # Always hand over the launch counters, even when nothing is recovered, so the snapshot the
         # odometer persists next matches the total it holds. The window began at the snapshot.
-        self.widget_state.add_usage_bytes(up, down, counters=counters, sampled_at=sampled_at,
-                                          window_start=snapshot.get("ts"), primary=self._odometer_primary())
+        if not stale_counters:
+            self.widget_state.add_usage_bytes(up, down, counters=counters, sampled_at=sampled_at,
+                                              window_start=snapshot.get("ts"),
+                                              primary=self._odometer_primary())
+        elif up or down:
+            self.widget_state.add_usage_bytes(up, down, counters=None, window_start=snapshot.get("ts"),
+                                              primary=self._odometer_primary())
         if up or down:
             self.logger.info("Launch reconciliation (%s): recovered %.1f MB up / %.1f MB down that "
                              "moved while the app was not running.", reason, up / 1e6, down / 1e6)

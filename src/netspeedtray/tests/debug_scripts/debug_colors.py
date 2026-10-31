@@ -23,9 +23,9 @@ def test_color_coding():
     # Setup config with color coding enabled
     config_dict = {
         "color_coding": True,
-        "default_color": "#FFFFFF",
-        "high_speed_color": "#00FF00", # Green
-        "low_speed_color": "#FFFF00",  # Yellow
+        "default_color_dark": "#FFFFFF",
+        "high_speed_color_dark": "#00FF00", # Green
+        "low_speed_color_dark": "#FFFF00",  # Yellow
         "high_speed_threshold": 5.0, # Mbps
         "low_speed_threshold": 1.0, # Mbps
         

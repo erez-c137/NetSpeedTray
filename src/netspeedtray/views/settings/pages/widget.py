@@ -2,8 +2,8 @@
 Widget Settings Page (2.0 IA).
 
 Everything about the on-taskbar widget itself - how its stats are laid out (display mode + order),
-where it sits and how it behaves on the taskbar (preferred monitor, free-move, free-float,
-keep-visible-in-fullscreen), and the mini graph. These controls used to be scattered across the
+where it sits and how it behaves on the taskbar (preferred monitor, show on all taskbars, free-move,
+free-float, keep-visible-in-fullscreen), and the mini graph. These controls used to be scattered across the
 General page (behavior, preferred monitor), the Hardware page (layout) and the Appearance page (mini
 graph); the 2.0 IA and the 2.2 IA pass gather them here so "the widget" is one place.
 
@@ -28,10 +28,12 @@ class WidgetPage(QWidget):
 
     layout_changed = pyqtSignal()
 
-    def __init__(self, i18n, on_change: Callable[[], None]):
+    def __init__(self, i18n, on_change: Callable[[], None],
+                 color_dialog_callback: Optional[Callable[[str], None]] = None):
         super().__init__()
         self.i18n = i18n
         self.on_change = on_change
+        self._color_dialog_callback = color_dialog_callback   # the Mini graph colour swatches
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -85,6 +87,22 @@ class WidgetPage(QWidget):
         self.preferred_monitor_combo.setMinimumWidth(220)
         self._populate_monitor_combo()   # (re)connects on_change itself - connecting here too doubled it
         layout.addWidget(SettingCard(self.i18n.PREFERRED_MONITOR_LABEL, control=self.preferred_monitor_combo))
+        # rc.2 W13: a chosen monitor with no taskbar of its own, with floating off, silently docked the
+        # widget to the PRIMARY taskbar. Say so right under the picker (see _sync_monitor_note).
+        self.monitor_note = QLabel("")
+        self.monitor_note.setWordWrap(True)
+        self.monitor_note.setStyleSheet(
+            f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
+        self.monitor_note.setVisible(False)
+        layout.addWidget(self.monitor_note)
+
+        # "Show on all taskbars" (#229): a copy of the widget on every other taskbar. Right under
+        # Preferred Monitor, which still picks where the main widget (the one you can drag) docks.
+        self.show_on_all_taskbars = Win11Toggle(label_text="")
+        self.show_on_all_taskbars.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.SHOW_ON_ALL_TASKBARS_LABEL,
+                                     description=self.i18n.SHOW_ON_ALL_TASKBARS_DESC,
+                                     control=self.show_on_all_taskbars))
 
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
@@ -93,6 +111,7 @@ class WidgetPage(QWidget):
         # #188: float the widget on a preferred monitor that has no taskbar of its own.
         self.free_float = Win11Toggle(label_text="")
         self.free_float.toggled.connect(self.on_change)
+        self.free_float.toggled.connect(lambda _checked: self._sync_monitor_note())
         self._free_float_card = SettingCard(
             getattr(self.i18n, "FREE_FLOAT_LABEL", "Float on a display without a taskbar"),
             control=self.free_float)
@@ -106,13 +125,21 @@ class WidgetPage(QWidget):
         layout.addWidget(SettingCard(self.i18n.KEEP_VISIBLE_FULLSCREEN_LABEL,
                                      control=self.keep_visible_fullscreen))
 
+        # #24: on a horizontal Win11 taskbar the widget steps aside while the app buttons reach it.
+        # Off = it stays put (and may cover them). The way back for a user who prefers that.
+        self.hide_when_apps_cover = Win11Toggle(label_text="")
+        self.hide_when_apps_cover.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.HIDE_WHEN_APPS_COVER_LABEL,
+                                     description=self.i18n.HIDE_WHEN_APPS_COVER_DESC,
+                                     control=self.hide_when_apps_cover))
+
         # NOTE: there is intentionally no tray-offset slider. Free Move (drag the widget anywhere) is the
         # reposition escape hatch; the auto-position uses sensible default offsets. tray_offset_x/y remain
         # in config for the position engine (position_manager) but aren't surfaced as fiddly px sliders.
 
         # --- Mini Graph (moved from Appearance, 2.2 IA pass) - LAST on the page, so its fixed-scale
         # reveal grows at the bottom and shifts nothing above it.
-        self.mini_graph_section = MiniGraphSection(self.i18n, self.on_change)
+        self.mini_graph_section = MiniGraphSection(self.i18n, self.on_change, self._color_dialog_callback)
         self.mini_graph_section.layout_changed.connect(self.layout_changed)
         layout.addWidget(self.mini_graph_section)
 
@@ -187,6 +214,30 @@ class WidgetPage(QWidget):
         if hasattr(self, "_free_float_card"):
             MiniGraphSection._set_card_enabled(self._free_float_card,
                                                self.preferred_monitor_combo.currentData() is not None)
+        self._sync_monitor_note()
+
+    def _sync_monitor_note(self) -> None:
+        """Show the "no taskbar on this monitor" note (rc.2 W13) when the chosen monitor is connected,
+        has no taskbar of its own and floating is off - the one case where the widget docks to the
+        primary taskbar instead. With floating on it floats there (#188); an unplugged monitor already
+        reads "(not connected)" in the list. Re-checked on every change and each time the page shows."""
+        note = getattr(self, "monitor_note", None)
+        if note is None or not hasattr(self, "free_float"):
+            return
+        name = self.preferred_monitor_combo.currentData()
+        show = False
+        if name and not self.free_float.isChecked():
+            try:
+                from netspeedtray.utils.taskbar_utils import get_free_float_screen
+                show = get_free_float_screen(name) is not None   # connected AND taskbar-less
+            except Exception:
+                show = False
+        if show:
+            note.setText(self.i18n.PREFERRED_MONITOR_NO_TASKBAR_NOTE.format(
+                option=self.i18n.FREE_FLOAT_LABEL))
+        if note.isVisibleTo(self) != show:
+            note.setVisible(show)
+            self.layout_changed.emit()
 
     def showEvent(self, event):  # type: ignore[override]
         """Refresh the monitor dropdown whenever the page becomes visible.
@@ -279,10 +330,15 @@ class WidgetPage(QWidget):
         idx = self.preferred_monitor_combo.findData(preferred_name)
         self.preferred_monitor_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
+        self.show_on_all_taskbars.setChecked(
+            config.get("show_on_all_taskbars", constants.config.defaults.DEFAULT_SHOW_ON_ALL_TASKBARS))
         self.free_move.setChecked(config.get("free_move", False))
         self.free_float.setChecked(config.get("free_float", True))
+        self._sync_monitor_note()
         self.keep_visible_fullscreen.setChecked(
             config.get("keep_visible_fullscreen", constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN))
+        self.hide_when_apps_cover.setChecked(
+            config.get("hide_when_apps_cover", constants.config.defaults.DEFAULT_HIDE_WHEN_APPS_COVER))
 
         self.mini_graph_section.load_settings(config)
 
@@ -296,8 +352,10 @@ class WidgetPage(QWidget):
                                     else getattr(self, "_stack_loaded", False),
             "widget_display_order": order,
             "preferred_monitor": self.preferred_monitor_combo.currentData(),
+            "show_on_all_taskbars": self.show_on_all_taskbars.isChecked(),
             "free_move": self.free_move.isChecked(),
             "free_float": self.free_float.isChecked(),
             "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
+            "hide_when_apps_cover": self.hide_when_apps_cover.isChecked(),
             **self.mini_graph_section.get_settings(),
         }

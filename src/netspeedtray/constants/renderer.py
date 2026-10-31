@@ -38,8 +38,11 @@ class RendererConstants:
     # --- Sizing and Scaling ---
     GRAPH_HEIGHT_PERCENTAGE: Final[float] = 0.8
     DEFAULT_ARROW_WIDTH: Final[int] = 5
-    # Min speed for y-axis scale, in bytes/sec (100 Kbps)
-    MIN_Y_SCALE: Final[int] = 12500
+    # Lowest top of the WIDGET mini graph's auto-fit axis, in bytes/sec: 125,000 B/s = 1 Mbps (legibility
+    # "L", 3a). At the old 12.5 KB/s (100 Kbps) floor, 1-9 KB/s of background chatter drew a half-full
+    # graph under a readout of 0.0 - the everyday-user review read it as "something is downloading".
+    # The Monitor window's axes are separate (views/graph) and keep their own floor.
+    MIN_Y_SCALE: Final[int] = 125000
     GRAPH_Y_AXIS_PADDING_FACTOR: Final[float] = 1.15 # Add 15% headroom
     # Gap between the upload and download panels when the graphs are split (a faint divider sits in it).
     GRAPH_SPLIT_GAP: Final[int] = 4
@@ -62,6 +65,33 @@ class RendererConstants:
     # all but invisible on a dark bar at 1x and only tinted the text behind it on a light one - the
     # Trend style's point is a clean line. Kept as a one-number switch.
     TREND_FILL_ALPHA: Final[int] = 0
+    # Top alpha of the Detailed style's fill gradient (fades to 0 at the bottom). 120 before the
+    # legibility package; with the blend now plain SourceOver (no additive "glow") 80 keeps the area
+    # readable as an area without washing out the digits it sits behind.
+    DETAILED_FILL_ALPHA: Final[int] = 80
+
+    # --- Erasing halo (legibility "L", item 1) ---
+    # With the mini graph on, the graph is drawn into its own layer and a soft outline around every text
+    # run (digits, units, arrows, hardware text and icons) is ERASED from that layer before it is
+    # composited, so the taskbar itself shows through around the glyphs: no colour to guess (a painted
+    # halo needs the real bar colour, and Windows never outlines taskbar text). Radius in logical px -
+    # the layers are device-pixel-ratio aware, so it scales with the display (1.5 px at 100 %, 2.25 at
+    # 150 %) - fully erased out to HALO_RADIUS_PX, then fading to nothing over HALO_FEATHER_PX.
+    HALO_RADIUS_PX: Final[float] = 1.5
+    HALO_FEATHER_PX: Final[float] = 1.0
+    HALO_DIRECTIONS: Final[int] = 16      # stamps per ring; 16 keeps a 2.5 px ring free of gaps
+
+    # Accent-coloured taskbar (legibility "L", 5a): any themed pen under this contrast against the real
+    # bar colour is painted in the default text colour instead (paint time only - the config is untouched).
+    # 3:1 is the WCAG non-text / large-text floor; a band colour on a same-hue accent bar fell to ~1.5:1.
+    ACCENT_PEN_MIN_CONTRAST: Final[float] = 3.0
+
+    # Which half of the colour scheme a backdrop gets (utils/color_scheme.backdrop_is_light): light -
+    # dark text - above this relative luminance. 0.1791 is where black and white text have EQUAL WCAG
+    # contrast (sqrt(1.05 * 0.05) - 0.05), so this picks the better-reading text on every backdrop; a
+    # 0.5 split would put white text on mid greys that black reads far better on (#808080: 3.9 vs
+    # 5.3:1). Both taskbar references sit far from it (#202020 0.014, #EEEEEE 0.855).
+    BACKDROP_LUMINANCE_SPLIT: Final[float] = 0.1791
 
     # Two-row readout geometry, shared by the renderer and the layout's fit check (#322): the gap
     # between the upload and download rows, and the CPU/GPU icon box (drawn up from the baseline).
@@ -80,7 +110,8 @@ class RendererConstants:
     # --- Side (LEFT/RIGHT) taskbar compact readout (the "fits" ladder T1-T5) ---
     # Tighter than ARROW_NUMBER_GAP / VALUE_UNIT_GAP: on a 48 px bar (44 px inside the margins) the
     # classic gaps alone cost 10 px. About one space wide in the default 9 pt font.
-    COMPACT_ARROW_GAP_PX: Final[int] = 2
+    # 3, not 2, since 2.2 rc.2 (7e): at 2 px the arrow's ink touched the first digit on a 48 px bar.
+    COMPACT_ARROW_GAP_PX: Final[int] = 3
     COMPACT_UNIT_GAP_PX: Final[int] = 3
     # Icon + gap in front of a compact CPU/GPU percent (the icon is HW_ICON_SIZE_PX wide).
     COMPACT_HW_ICON_GAP_PX: Final[int] = 2

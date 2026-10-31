@@ -78,10 +78,9 @@ def _changed(before, after):
 
 @pytest.mark.parametrize("opacity", [55.0, 10.5])
 def test_float_graph_opacity_loads_and_a_noop_save_changes_nothing(qtbot, opacity):
-    # color_is_automatic False: an automatic text colour follows the live Windows theme on Save
     # (#405) - legitimately a change on a light taskbar, and not what this test is about.
     cfg = dict(DEFAULTS, graph_opacity=opacity, keep_data=365, font_family="Consolas",
-               record_hardware_history=True, color_is_automatic=False)
+               record_hardware_history=True)
     dlg, _ = _make(qtbot, cfg)
     assert dlg._failed_pages == set()
     got = dlg.get_settings()
@@ -99,7 +98,7 @@ def test_a_page_that_fails_to_load_never_writes_its_keys(qtbot, monkeypatch):
         raise TypeError("simulated load failure")
     monkeypatch.setattr(HardwarePage, "load_settings", boom)
     cfg = dict(DEFAULTS, monitor_cpu_enabled=True, cpu_load_high_threshold=91,
-               keep_data=365, metrics_endpoint_port=9555, color_is_automatic=False)   # see above
+               keep_data=365, metrics_endpoint_port=9555)
     dlg, main = _make(qtbot, cfg)
     assert dlg._failed_pages == {"hardware"}
     got = dlg.get_settings()
@@ -142,64 +141,78 @@ def test_reopen_while_open_keeps_selected_interfaces(qtbot):
     assert sorted(dlg.get_settings()["selected_interfaces"]) == ["Ethernet", "Wi-Fi"]
 
 
-# --- S3: a text colour typed as hex is user-chosen ---------------------------------------------------
+# --- S3 / S5 / #405: the text colour across a Windows flip, Cancel and Reset all -----------------------
+# Rewritten for the 2.2 rc.2 colour scheme: each themed colour is a dark/light pair the renderer resolves
+# for the CURRENT Windows mode, and the theme never writes the config. The behaviours these tests pinned
+# with color_is_automatic and the dialog's _with_live_auto_color are kept, asserted on what is painted.
 
-def test_typed_default_color_is_marked_user_chosen(qtbot):
+def _light(monkeypatch):
+    """The Windows mode flips to light (while the dialog is open)."""
+    from netspeedtray.utils import color_scheme
+    monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1)
+    color_scheme.refresh_shell_theme()
+
+
+def _painted_text(cfg):
+    from netspeedtray.utils.widget_renderer import RenderConfig
+    return RenderConfig.from_dict(cfg).default_color
+
+
+def test_typed_default_color_is_kept(qtbot):
+    """S3: a colour typed as hex is the user's - it is saved as typed, into the field's own half."""
     from PyQt6.QtTest import QTest
     dlg, _ = _make(qtbot)
-    field = dlg.appearance_page.default_color_input
+    field = dlg.appearance_page.default_color_dark_input
     field.selectAll()
     QTest.keyClicks(field, "#FF8800")   # textEdited, like a real user
     s = dlg.get_settings()
-    assert s["default_color"].upper() == "#FF8800"
-    assert s["color_is_automatic"] is False
+    assert (s["default_color_dark"].upper(), s["default_color_light"]) == ("#FF8800", "#1B1B1B")
+    assert "color_is_automatic" not in s
 
 
 def test_typed_colour_survives_a_live_theme_flip(qtbot, monkeypatch):
-    """S3 + #405: while Settings is open a Windows Light/Dark flip makes the dialog pass the theme's
-    colour for an AUTOMATIC text colour. A typed hex is the user's choice: it must win, in the live
-    preview and on Save - while an untouched automatic colour still follows the theme."""
-    from netspeedtray.views.settings import dialog as D
-    dlg, main = _make(qtbot, dict(DEFAULTS, default_color="#FFFFFF", color_is_automatic=True))
-    monkeypatch.setattr(D, "shell_theme_text_color", lambda: "#000000")   # the theme flipped to light
-    assert dlg.get_settings()["default_color"] == "#000000"               # untouched: follows the theme
-    dlg.appearance_page.default_color_input.setText("#FF8800")
+    """S3 + #405: an untouched colour follows the flip in the preview; a typed one wins, in the live
+    preview and on Save."""
+    dlg, main = _make(qtbot)
+    _light(monkeypatch)                                        # the theme flipped to light
+    assert _painted_text(dlg.get_settings()) == "#1B1B1B"      # untouched: follows the theme
+    dlg.appearance_page.default_color_light_input.setText("#FF8800")
     _flush(dlg)
     s = dlg.get_settings()
-    assert (s["default_color"], s["color_is_automatic"]) == ("#FF8800", False)
-    assert main.config["default_color"] == "#FF8800" and main.config["color_is_automatic"] is False
+    assert (s["default_color_dark"], s["default_color_light"]) == ("#FFFFFF", "#FF8800")
+    assert _painted_text(main.config) == "#FF8800"
     dlg.save_button.click()
-    assert (main.saved[-1]["default_color"], main.saved[-1]["color_is_automatic"]) == ("#FF8800", False)
+    assert (main.saved[-1]["default_color_dark"], main.saved[-1]["default_color_light"]) == ("#FFFFFF", "#FF8800")
 
 
 def test_cancel_after_reset_all_follows_the_theme_for_an_automatic_colour(qtbot, monkeypatch):
-    """Cancel restores the pre-dialog config (S5); its automatic colour still takes the live theme
-    colour (#405), judged against that same pre-dialog config, not the reset one."""
-    from netspeedtray.views.settings import dialog as D
-    dlg, main = _make(qtbot, dict(DEFAULTS, default_color="#FFFFFF", color_is_automatic=True, font_size=8))
+    """Cancel restores the pre-dialog config (S5), and it paints the live theme's colour (#405)."""
+    dlg, main = _make(qtbot, dict(DEFAULTS, font_size=8))
     dlg.advanced_page.reset_all_btn.click()
     _flush(dlg)
-    monkeypatch.setattr(D, "shell_theme_text_color", lambda: "#000000")
+    _light(monkeypatch)
     dlg.cancel_button.click()
-    assert main.config["font_size"] == 8 and main.config["default_color"] == "#000000"
+    assert main.config["font_size"] == 8 and _painted_text(main.config) == "#1B1B1B"
 
 
 def test_pick_then_cancel_still_follows_the_theme(qtbot, monkeypatch):
-    """Review item 2: a colour picked in the session is undone by Cancel, so the restored automatic
-    colour follows the live theme - it used to stay white on a light taskbar."""
-    from netspeedtray.views.settings import dialog as D
-    dlg, main = _make(qtbot, dict(DEFAULTS, default_color="#FFFFFF", color_is_automatic=True))
-    monkeypatch.setattr(D, "shell_theme_text_color", lambda: "#000000")
-    dlg._user_chose_default_color = True          # what a pick in the colour dialog sets
-    dlg.appearance_page.set_color_input("default", "#123456")
+    """Review item 2: a colour picked in the session is undone by Cancel, and the restored colour
+    follows the live theme - it used to stay white on a light taskbar."""
+    dlg, main = _make(qtbot)
+    _light(monkeypatch)
+    dlg.appearance_page.set_color_input("default_color_light", "#123456")   # what a pick does
     _flush(dlg)
+    assert _painted_text(main.config) == "#123456"
     dlg.cancel_button.click()
-    assert (main.config["default_color"], main.config["color_is_automatic"]) == ("#000000", True)
+    assert (main.config["default_color_dark"], main.config["default_color_light"]) == ("#FFFFFF", "#1B1B1B")
+    assert _painted_text(main.config) == "#1B1B1B"
 
 
-def test_loading_a_colour_does_not_mark_it_user_chosen(qtbot):
-    dlg, _ = _make(qtbot, dict(DEFAULTS, default_color="#123456", color_is_automatic=True))
-    assert dlg.get_settings()["color_is_automatic"] is True
+def test_loading_a_colour_does_not_change_it(qtbot):
+    dlg, _ = _make(qtbot, dict(DEFAULTS, default_color_dark="#123456", default_color_light="#654321"))
+    s = dlg.get_settings()
+    assert (s["default_color_dark"], s["default_color_light"]) == ("#123456", "#654321")
+    assert "color_is_automatic" not in s
 
 
 # --- S4: keyboard page switching ----------------------------------------------------------------------
@@ -389,7 +402,7 @@ def test_reset_all_resets_hidden_settings_and_keeps_state(qtbot):
 def test_every_config_key_has_a_reset_all_decision(qtbot):
     """A new config key must be reset by a page, listed as hidden-but-reset, or kept as state."""
     dlg, _ = _make(qtbot)
-    owned = {"color_is_automatic"}
+    owned = set()
     for p in dlg._pages():
         owned |= set(p.get_settings())
     undecided = set(DEFAULTS) - owned - set(dlg.RESET_ALL_HIDDEN) - set(dlg.RESET_ALL_KEEPS)
@@ -427,18 +440,20 @@ def test_no_dead_settings_doors_on_the_widget():
 # --- S8: a half-typed hex never reaches the widget or the saved file ---------------------------------
 
 def test_half_typed_hex_keeps_the_last_valid_colour(qtbot):
-    # color_is_automatic False: a custom colour is the user's (an automatic one follows the live theme, #405)
-    cfg = dict(DEFAULTS, default_color="#ABCDEF", color_is_automatic=False, background_color="#101010",
-               high_speed_color="#00FF00", arrow_up_color="#11FF11")
+    cfg = dict(DEFAULTS, default_color_dark="#ABCDEF", background_color="#101010",
+               high_speed_color_light="#00FF00", arrow_up_color_dark="#11FF11",
+               graph_download_color_light="#22EE22")
     dlg, main = _make(qtbot, cfg)
-    dlg.appearance_page.default_color_input.setText("#AB")
+    dlg.appearance_page.default_color_dark_input.setText("#AB")
     dlg.appearance_page.background_color_input.setText("#1")
-    dlg.appearance_page.arrow_up_color_input.setText("")
-    dlg.colors_page.high_speed_color_input.setText("#00")
+    dlg.appearance_page.arrow_up_color_dark_input.setText("")
+    dlg.colors_page.high_speed_color_light_input.setText("#00")
+    dlg.widget_page.mini_graph_section.graph_download_color_light_input.setText("#2")
     _flush(dlg)
     s = dlg.get_settings()
-    assert (s["default_color"], s["background_color"], s["arrow_up_color"], s["high_speed_color"]) == \
-        ("#ABCDEF", "#101010", "#11FF11", "#00FF00")
-    assert main.config["default_color"] == "#ABCDEF"
-    dlg.appearance_page.default_color_input.setText("#123456")
-    assert dlg.get_settings()["default_color"] == "#123456"
+    assert (s["default_color_dark"], s["background_color"], s["arrow_up_color_dark"],
+            s["high_speed_color_light"], s["graph_download_color_light"]) == \
+        ("#ABCDEF", "#101010", "#11FF11", "#00FF00", "#22EE22")
+    assert main.config["default_color_dark"] == "#ABCDEF"
+    dlg.appearance_page.default_color_dark_input.setText("#123456")
+    assert dlg.get_settings()["default_color_dark"] == "#123456"

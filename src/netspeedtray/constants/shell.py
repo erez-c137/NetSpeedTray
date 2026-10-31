@@ -20,6 +20,11 @@ class ShellConstants:
     COMMON_BROWSER_PROCESSES: Final[Set[str]] = {
         "chrome.exe", "firefox.exe", "msedge.exe", "brave.exe", "opera.exe"
     }
+    # Remote Desktop Connection's (mstsc.exe) top-level window. Full-screen with "Use all my monitors"
+    # it is ONE window spanning every monitor, so the fullscreen test (window == its monitor) misses
+    # it and the local widget showed through the remote desktop (#132). A caption-less one covering
+    # the taskbar's whole monitor is treated as fullscreen; a windowed session keeps its caption.
+    RDP_CLIENT_WINDOW_CLASSES: Final[Set[str]] = {"TscShellContainerClass"}
 
 
     def __init__(self) -> None:

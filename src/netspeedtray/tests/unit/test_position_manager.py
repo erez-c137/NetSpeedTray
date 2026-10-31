@@ -188,13 +188,17 @@ class TestPositionCalculator(unittest.TestCase):
         screen_edge = self.mock_screen.geometry.return_value.right() + 1   # 1920
         self.assertEqual(pos.x, (screen_edge - reserve) - 100)
 
-    def test_widgets_rect_does_not_affect_placement(self):
-        """#200: positioning is deliberately independent of the Widgets/weather element - the widget
-        stays put (the nudge, not auto-move, handles the overlap). Present widgets_rect must be a no-op."""
-        base = self.calculator.calculate_position(self.mock_taskbar, (100, 40), {'tray_offset_x': 10})
+    def test_widgets_rect_does_not_affect_a_user_placed_widget(self):
+        """#200: a position the user CHOSE (a drag's tray_offset_x) is independent of the Widgets/weather
+        element - it stays put (the nudge, not auto-move, handles the overlap). Only the default spot
+        steps left of a Widgets button beside the tray (rc.3, test_widgets_button_gap.py); 10 is a
+        pre-1.3.0 default offset, so the user-placed case uses 50."""
+        base = self.calculator.calculate_position(self.mock_taskbar, (100, 40), {'tray_offset_x': 50})
         self.mock_taskbar.widgets_rect = (1400, 1040, 1650, 1080)   # weather right by the tray
-        with_widgets = self.calculator.calculate_position(self.mock_taskbar, (100, 40), {'tray_offset_x': 10})
-        self.assertEqual(base.x, with_widgets.x)   # identical - placement ignores widgets_rect
+        with_widgets = self.calculator.calculate_position(self.mock_taskbar, (100, 40), {'tray_offset_x': 50})
+        self.assertEqual(base.x, with_widgets.x)   # identical - a user's spot ignores widgets_rect
+        default = self.calculator.calculate_position(self.mock_taskbar, (100, 40), {'tray_offset_x': 0})
+        self.assertEqual(default.x, 1400 - constants.layout.WIDGETS_BUTTON_MIN_GAP_PX - 100)
 
     def test_calculate_position_fallback(self):
         """Test fallback when taskbar is invalid."""

@@ -7,6 +7,20 @@ from netspeedtray.constants.i18n import I18nStrings
 # 1 Mbps expressed in bytes/sec (1_000_000 bits / 8 bits-per-byte).
 MBPS_IN_BYTES = 125_000
 
+# The real canvas initializer, captured at import. Tests stub it through the ``stub_init`` fixture
+# (monkeypatch), never by assigning the class attribute: an assignment has no teardown, so every later
+# test in the session - pytest collects alphabetically - silently built renderers with a mocked init
+# (rc.2 S9, graph-plan 0.3). ``test_init_matplotlib_is_restored`` pins it.
+_REAL_INIT_MATPLOTLIB = GraphRenderer._init_matplotlib
+
+
+@pytest.fixture
+def stub_init(monkeypatch):
+    """Replace GraphRenderer._init_matplotlib for one test, undone at teardown."""
+    stub = MagicMock()
+    monkeypatch.setattr(GraphRenderer, "_init_matplotlib", stub)
+    return stub
+
 
 def test_speed_band_uses_canonical_mbps():
     """
@@ -68,15 +82,11 @@ def test_hw_percent_without_a_measurement_is_na():
     assert f(0) == "0%"
     assert f(0.0) == "0%"
 
-def test_peak_label_placement_logic():
-    # Mock dependencies for GraphRenderer
+def test_peak_label_placement_logic(stub_init):
+    # Mock dependencies for GraphRenderer (stub_init avoids actual window/canvas creation)
     parent_widget = MagicMock()
     i18n = MagicMock()
-    
-    # We need to mock _init_matplotlib to avoid actual window/canvas creation
-    with MagicMock() as mock_init:
-        GraphRenderer._init_matplotlib = mock_init
-        renderer = GraphRenderer(parent_widget, i18n)
+    renderer = GraphRenderer(parent_widget, i18n)
     
     ax = MagicMock()
     
@@ -114,7 +124,7 @@ def test_peak_label_placement_logic():
     print("Peak label placement tests passed!")
 
 
-def test_peak_label_is_localized():
+def test_peak_label_is_localized(stub_init):
     """The peak marker label must use the locale decimal separator AND the locale's
     speed unit, not a hardcoded '.'/'Mbps'. Regression guard for the graph-i18n fix:
     a German user's graph showed '12.3 Mbps' while the widget showed '12,3 Mbit/s'.
@@ -125,7 +135,6 @@ def test_peak_label_is_localized():
     from netspeedtray.constants.i18n import I18nStrings
 
     i18n = I18nStrings("de_DE")               # sep=',', MBITS_UNIT='Mbit/s'
-    GraphRenderer._init_matplotlib = MagicMock()
     renderer = GraphRenderer(MagicMock(), i18n)
 
     fig, ax = plt.subplots()
@@ -188,8 +197,8 @@ def test_apply_hw_ylim_fixed_vs_auto():
 # canvas.draw() (which hangs under pytest-qt); the visual integration is covered by the render smoke.
 
 def _mock_renderer():
+    # Callers request the ``stub_init`` fixture, so the stubbed init is undone after each test.
     from unittest.mock import MagicMock
-    GraphRenderer._init_matplotlib = MagicMock()
     r = GraphRenderer(MagicMock(), MagicMock())
     r.figure = MagicMock()
     r.canvas = MagicMock()
@@ -208,7 +217,7 @@ def _hw_list():
     return data, now
 
 
-def test_toggle_mode_dispatches_to_hwsingle_with_styles():
+def test_toggle_mode_dispatches_to_hwsingle_with_styles(stub_init):
     from datetime import datetime
     r = _mock_renderer()
     data, now = _hw_list()
@@ -220,7 +229,7 @@ def test_toggle_mode_dispatches_to_hwsingle_with_styles():
     r._plot_high_res.assert_not_called()                 # not the legacy path
 
 
-def test_standalone_single_stat_uses_legacy_path():
+def test_standalone_single_stat_uses_legacy_path(stub_init):
     from datetime import datetime
     r = _mock_renderer()
     data, now = _hw_list()
@@ -231,5 +240,7 @@ def test_standalone_single_stat_uses_legacy_path():
     r._plot_high_res.assert_called_once()
 
 
-if __name__ == "__main__":
-    test_peak_label_placement_logic()
+
+def test_init_matplotlib_is_restored():
+    """Runs after every stubbing test above (file order): none of them may leave the stub behind."""
+    assert GraphRenderer._init_matplotlib is _REAL_INIT_MATPLOTLIB

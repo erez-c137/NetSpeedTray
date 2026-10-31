@@ -1,3 +1,4 @@
+import bisect
 import logging
 import math
 from typing import List, Tuple, Optional
@@ -21,7 +22,8 @@ from netspeedtray.constants.renderer import RendererConstants
 from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation, format_decimal
 from netspeedtray.utils.mpl_fonts import configure_cjk_font
 from netspeedtray.views.graph.time_axis import apply_time_axis
-from netspeedtray.views.graph.value_axis import ValueAxisFormatter, clipped_axis_max, clipped_runs
+from netspeedtray.views.graph.value_axis import (ScaledMaxNLocator, ValueAxisFormatter, clipped_axis_max,
+                                                 clipped_runs, speed_axis_unit)
 import matplotlib.colors as mcolors
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
@@ -617,6 +619,18 @@ class GraphRenderer(QObject):
             if stat_type in ("cpu", "gpu") and hw_styles is not None:   # the Monitor's toggle layout
                 self._draw_hw_empty_message(self.ax_download, period_key, hw_styles, roles=(stat_type,))
             elif stat_type == "network":
+                # Since the reader stopped padding (S4) an empty window really is empty: a fresh install,
+                # a range before history starts, the first hour after boot. Keep the frame a reader can
+                # orient by - the requested time range, the time axis and the unit labels - under the
+                # note, instead of a bare 0-1 grid. The cleared lines are gone; never reuse them.
+                self._net_styles = hw_styles or {}
+                self.line_download = None
+                self.line_upload = None
+                self._clip_artists = {}
+                self._net_caption_artist = None
+                self._format_axes()
+                self._configure_axes(start_time, end_time, period_key, np.empty(0), np.empty(0),
+                                     np.empty(0), plotted_ts=None)
                 self._draw_net_empty_message(period_key, start_time, end_time, hw_styles)
             self.canvas.draw_idle()
             return None
@@ -629,6 +643,9 @@ class GraphRenderer(QObject):
             self._render_hwseparate(history_data, start_time, end_time, period_key, hw_styles)
         elif stat_type == "network":
             self._clear_net_empty_message()
+            # GraphHost's network styles: unit settings (S2), the stored resolution (S3) and the
+            # measured spans (S4). The standalone callers pass none and get the defaults.
+            self._net_styles = hw_styles or {}
             safe_data = [
                 (ts.timestamp() if isinstance(ts, datetime) else float(ts), float(up), float(dn))
                 for ts, up, dn in history_data
@@ -637,16 +654,24 @@ class GraphRenderer(QObject):
             timestamps = raw_data[:, 0]
             plot_datetimes = [datetime.fromtimestamp(t) for t in timestamps]
             plot_datetimes_array = np.array(plot_datetimes)
-            
+
             upload_mbps = (raw_data[:, 1] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
             download_mbps = (raw_data[:, 2] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
-            
-            plotted_ts, plotted_up, plotted_down = self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps, target_end_time=end_time)
+
+            # The Session view fits the x-axis to its data, so it has no leading/trailing silence.
+            ranged = period_key != "TIMELINE_SESSION"
+            resolution = self._net_styles.get("resolution")
+            plotted_ts, plotted_up, plotted_down = self._plot_high_res(
+                plot_datetimes_array, upload_mbps, download_mbps,
+                target_end_time=end_time if ranged else None, measured=self._net_styles.get("measured"),
+                start_time=start_time if ranged else None,
+                bin_seconds=constants.graph.RESOLUTION_BIN_SECONDS.get(resolution))
             self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down,
                                  plotted_ts=plotted_ts)
+            self._draw_net_caption(resolution if ranged else None)
             if not raw_data[:, 1:].any():
-                # Nothing but the reader's zero padding (an empty database / a range before the first
-                # sample): say so, rather than draw a flat 0 line that reads as "no traffic".
+                # Nothing but zero rows (an idle live Session, or only flagged empty intervals): say
+                # so, rather than draw a flat 0 line that reads as "no traffic".
                 self._draw_net_empty_message(period_key, start_time, end_time, hw_styles)
         elif stat_type in ("cpu", "gpu") and hw_styles is not None:
             # Monitor's "toggle" layout: a single CPU- or GPU-only line that must honor the same
@@ -763,6 +788,7 @@ class GraphRenderer(QObject):
             marker = "o" if len(dts) == 1 else None
             line, = ax.plot(dts, ys, color=color, linestyle=linestyle, linewidth=1.5, zorder=10,
                             label=label, marker=marker, markersize=2)
+            self._set_measured(line, dts, values[seg])   # the hover reads samples, not the smoothing
             first = first or line
         return first
 
@@ -951,6 +977,30 @@ class GraphRenderer(QObject):
         self._net_empty_artist = ax.text(
             0.5, 0.5, self._lbl(text), transform=ax.transAxes, ha="center", va="center",
             multialignment="center", color=self._current_text_color, alpha=0.55, fontsize=10)
+
+    def _draw_net_caption(self, resolution: Optional[str]) -> None:
+        """Name the statistic the network line shows when it is not the measured rate (S3).
+
+        Past 6 h each point is the PEAK of its minute / hour / day bucket, while the header above the
+        graph shows the window's volume; without a word on the graph the two read as a contradiction.
+        Top-left above the download axis (the clipped-axis peak, if any, is top-right)."""
+        old = getattr(self, "_net_caption_artist", None)
+        self._net_caption_artist = None
+        if old is not None:
+            try:
+                old.remove()
+            except (ValueError, NotImplementedError, AttributeError):
+                pass   # already gone with a cleared axes
+        key = constants.graph.NET_GRAPH_STAT_CAPTION_KEYS.get(resolution or "")
+        text = getattr(self.i18n, key, None) if key else None
+        if not text or self.ax_download is None:
+            return
+        g = constants.graph
+        self._net_caption_artist = self.ax_download.text(
+            0.0, 1.0, self._lbl(text), transform=self.ax_download.transAxes, ha="left", va="bottom",
+            fontsize=g.NET_GRAPH_CAPTION_FONTSIZE, alpha=g.NET_GRAPH_CAPTION_ALPHA,
+            color=getattr(self, "_current_text_color", style_constants.DARK_MODE_TEXT_COLOR),
+            clip_on=False, gid="net_graph_stat_caption")
 
     def _clear_net_empty_message(self) -> None:
         """The network lines are updated in place between renders, so the note must be taken down
@@ -1209,8 +1259,111 @@ class GraphRenderer(QObject):
 
         return agg_dates, up_peak, down_peak
 
-    def _plot_high_res(self, plot_datetimes, upload_mbps, download_mbps, target_end_time=None, color=None):
-        """Segmented Plotting with Gap Detection, Gradient Fills, and Fluid Interpolation"""
+    # --- measured samples behind each drawn line (S1) ------------------------------------------
+    # The network line is a spline through the samples (3 interpolated points between each pair at
+    # Week / short sessions) and the hardware lines may be smoothed, so the plotted array is mostly
+    # values nobody measured. Each labelled line therefore carries the samples it was drawn FROM, and
+    # the hover tooltip reads those (graph_hover.measured_xy).
+    MEASURED_ATTR = "_nst_measured_xy"
+
+    @classmethod
+    def _set_measured(cls, line, xs, ys) -> None:
+        """Attach the measured (x in matplotlib date numbers, y in the axis unit) samples to ``line``."""
+        try:
+            x = np.asarray(xs)
+            if x.size and (x.dtype == object or np.issubdtype(x.dtype, np.datetime64)):
+                x = mdates.date2num(list(x))
+            setattr(line, cls.MEASURED_ATTR, (np.asarray(x, dtype=float), np.asarray(ys, dtype=float)))
+        except Exception:
+            pass   # the hover falls back to the plotted data
+
+    # --- unmeasured time (S4) ---------------------------------------------------------------------
+
+    @classmethod
+    def _net_segments(cls, ts, up, down, measured=None, start_ts=None, end_ts=None,
+                      bin_seconds=None) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        """Split a speed series into the line segments to draw, deciding what each silence MEANS.
+
+        A silence is a stretch with no stored point: between two points further apart than
+        ``_gap_threshold``, before the first point (from ``start_ts``) or after the last (to
+        ``end_ts``). The v8 history writes no all-zero rows, so a silence is either measured idle (the
+        app ran, nothing moved) or unmeasured (the app was off, the PC asleep, or before the first
+        recorded session). ``measured`` is the merged running spans (epoch seconds) from
+        ``WidgetState.get_graph_coverage``: the parts of a silence inside them are drawn as zero, one
+        bin (``bin_seconds``) away from the neighbouring points; the rest breaks the line. The old
+        renderer drew every silence as a dashed zero line, which said "measured 0" about the night
+        the PC was off. ``measured`` None (the in-memory Session, a v7 file, a failed read) claims
+        nothing: every silence is a break. Returns ``[(ts, up, down), ...]`` in plot order."""
+        ts = np.asarray(ts, dtype=float)
+        up = np.asarray(up, dtype=float)
+        down = np.asarray(down, dtype=float)
+        if ts.size == 0:
+            return []
+        thr = cls._gap_threshold(ts)
+        if not bin_seconds or bin_seconds <= 0:
+            d = np.diff(ts)
+            d = d[d > 0]
+            bin_seconds = float(min(d.min(), thr)) if d.size else 1.0
+        # The resolution is read just after the rows, not in their snapshot; a roll-up committing in
+        # between could name a coarser bin than the rows have. Never step further than the data's own
+        # gap threshold, so a mismatch can only nudge where a zero run starts, never misplace it.
+        step = min(float(bin_seconds), thr)
+        spans = sorted((float(s), float(e)) for s, e in (measured or ()) if float(e) > float(s))
+        starts = [s for s, _ in spans]
+        segments: List[List[Tuple[float, float, float]]] = []
+        cur: List[Tuple[float, float, float]] = []
+
+        def close():
+            if cur:
+                segments.append(list(cur))
+                cur.clear()
+
+        def silence(a: float, b: float, left_point: bool, right_point: bool) -> None:
+            tail = a if left_point else None          # time of the last sample drawn in `cur`
+            first = max(0, bisect.bisect_right(starts, a) - 1)
+            for s, e in spans[first:]:
+                if s >= b:
+                    break
+                lo, hi = max(s, a), min(e, b)
+                if hi <= lo:
+                    continue
+                attached = tail is not None and lo - tail <= thr
+                if not attached:
+                    close()                           # unmeasured time before this run
+                x0 = max(lo, tail + step) if attached else lo
+                x1 = min(hi, b - step) if (right_point and b - hi <= thr) else hi
+                if x1 >= x0:
+                    cur.append((x0, 0.0, 0.0))
+                    if x1 > x0:
+                        cur.append((x1, 0.0, 0.0))
+                    tail = x1
+            if not (right_point and tail is not None and b - tail <= thr):
+                close()                               # unmeasured time after the last run
+
+        if start_ts is not None and ts[0] - float(start_ts) > thr:
+            silence(float(start_ts), ts[0], False, True)
+        for i in range(ts.size):
+            cur.append((ts[i], up[i], down[i]))
+            if i + 1 < ts.size and ts[i + 1] - ts[i] > thr:
+                silence(ts[i], ts[i + 1], True, True)
+        if end_ts is not None and float(end_ts) - ts[-1] > thr:
+            silence(ts[-1], float(end_ts), True, False)
+        close()
+        out = []
+        for seg in segments:
+            arr = np.asarray(seg, dtype=float)
+            out.append((arr[:, 0], arr[:, 1], arr[:, 2]))
+        return out
+
+    def _plot_high_res(self, plot_datetimes, upload_mbps, download_mbps, target_end_time=None, color=None,
+                       measured=None, start_time=None, bin_seconds=None):
+        """Segmented plotting with honest gaps, gradient fills and fluid interpolation.
+
+        ``_net_segments`` decides where the line breaks (unmeasured time) and where a silence is drawn
+        as zero (measured idle); nothing is bridged any more. One segment keeps the live fast path
+        (artists reused between refreshes); several are drawn fresh, each with its own fill. Every
+        line carries the samples it was drawn from (``_set_measured``) for the hover. Returns the
+        plotted (interpolated) arrays, which scale the axis."""
         if len(plot_datetimes) == 0:
             return plot_datetimes, upload_mbps, download_mbps
 
@@ -1218,120 +1371,89 @@ class GraphRenderer(QObject):
         color_down = color or constants.graph.DOWNLOAD_LINE_COLOR
         color_up = constants.graph.UPLOAD_LINE_COLOR
 
-        # Adaptive Gap Detection: Calculate threshold from data's natural interval
-        # A "gap" is when time between points is significantly larger than normal
         timestamps_float = np.array([dt.timestamp() for dt in plot_datetimes])
-        intervals = np.diff(timestamps_float)
-        gap_threshold = self._gap_threshold(timestamps_float)
-        gaps = intervals > gap_threshold
-        
-        # Prepare lists for collecting interpolated segments
-        final_ts, final_up, final_down = [], [], []
-        
+        segments = self._net_segments(
+            timestamps_float, upload_mbps, download_mbps, measured,
+            start_ts=start_time.timestamp() if start_time is not None else None,
+            end_ts=target_end_time.timestamp() if target_end_time is not None else None,
+            bin_seconds=bin_seconds)
+
         # Adaptive Quality: If we have > 600 points, interpolation is visually redundant.
         # Skip it to save CPU.
         ENABLE_SPLINE = len(plot_datetimes) <= RendererConstants.SPLINE_INTERPOLATION_POINT_THRESHOLD
-        
-        if np.any(gaps):
+        final_ts, final_up, final_down = [], [], []
+
+        def dense(seg_ts, seg_up, seg_down):
+            dts = np.array([datetime.fromtimestamp(t) for t in seg_ts])
+            d_ts, d_up, d_down = self._process_plot_segment(dts, seg_up, seg_down, enable_spline=ENABLE_SPLINE)
+            return dts, list(d_ts), np.asarray(d_up, dtype=float), np.asarray(d_down, dtype=float)
+
+        if len(segments) > 1:
             # Segmented mode - multiple disconnected line segments
             self.ax_download.clear()
             self.ax_upload.clear()
-            
+
             # Reapply correct formatting based on whether this is a hardware plot
             if color:
                 self._format_hardware_axes(getattr(self, '_last_stat_type', 'cpu'))
             else:
                 self._format_axes()
-                
-            self.line_download = None # Sentinel
-            
-            gap_indices = np.where(gaps)[0] + 1
-            segments_ts = np.split(plot_datetimes, gap_indices)
-            segments_up = np.split(upload_mbps, gap_indices)
-            segments_down = np.split(download_mbps, gap_indices)
-            
-            prev_seg_end = None  # Track end of previous segment for bridging
-            
-            for seg_idx, (ts, up, down) in enumerate(zip(segments_ts, segments_up, segments_down)):
-                if len(ts) == 0: continue
-                
-                # === GAP BRIDGING: Draw flat line at 0 between segments ===
-                if prev_seg_end is not None:
-                    # Draw a bridge from previous segment end to this segment start
-                    # Goes down to 0, across, then back up (like ECG flatline)
-                    bridge_start = prev_seg_end
-                    bridge_end = ts[0]
-                    
-                    # Flat line at 0 across the gap
-                    bridge_ts = [bridge_start, bridge_end]
-                    bridge_zero = [0.0, 0.0]
-                    
-                    self.ax_download.plot(bridge_ts, bridge_zero, color=color_down, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
-                    self.ax_upload.plot(bridge_ts, bridge_zero, color=color_up, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
-                
-                # Process and interpolate this segment
-                seg_ts, seg_up, seg_down = self._process_plot_segment(ts, up, down, enable_spline=ENABLE_SPLINE)
-                
-                # Plot
-                # label= is what the hover tooltip keys on; the dashed gap bridges stay unlabelled
-                # on purpose so the hover never reads a synthesized zero as a measurement.
-                self.ax_download.plot(seg_ts, seg_down, color=color_down, linewidth=1.5, zorder=10,
-                                      label=self.i18n.DOWNLOAD_LABEL)
-                self.ax_upload.plot(seg_ts, seg_up, color=color_up, linewidth=1.5, zorder=10,
-                                    label=self.i18n.UPLOAD_LABEL)
-                
-                # Add Gradient (per segment)
-                self._apply_gradient_fill(self.ax_download, np.array(seg_ts), seg_down, color_down, 'download',
-                                          reuse=False)
-                self._apply_gradient_fill(self.ax_upload, np.array(seg_ts), seg_up, color_up, 'upload',
-                                          reuse=False)
-                
-                # Accrue for return (just raw or interpolated? detailed return allows tooltips to snap to curve)
-                final_ts.extend(seg_ts)
-                final_up.extend(seg_up)
-                final_down.extend(seg_down)
-                
-                # Track for next iteration
-                prev_seg_end = ts[-1]
 
-            # === TRAILING BRIDGE: Bridge from last point to now ===
-            if target_end_time is not None:
-                last_ts = plot_datetimes[-1]
-                gap_to_now = (target_end_time - last_ts).total_seconds()
-                
-                if gap_to_now > gap_threshold:
-                    bridge_ts = [last_ts, target_end_time]
-                    bridge_zero = [0.0, 0.0]
-                    self.ax_download.plot(bridge_ts, bridge_zero, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
-                    self.ax_upload.plot(bridge_ts, bridge_zero, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
-                
+            self.line_download = None # Sentinel
+
+            for seg_ts, seg_up, seg_down in segments:
+                dts, d_ts, d_up, d_down = dense(seg_ts, seg_up, seg_down)
+                # A lone sample is a point, not a zero-length (invisible) line.
+                marker = "o" if len(dts) == 1 else None
+                # label= is what the hover tooltip keys on.
+                ld, = self.ax_download.plot(d_ts, d_down, color=color_down, linewidth=1.5, zorder=10,
+                                            label=self.i18n.DOWNLOAD_LABEL, marker=marker, markersize=2)
+                lu, = self.ax_upload.plot(d_ts, d_up, color=color_up, linewidth=1.5, zorder=10,
+                                          label=self.i18n.UPLOAD_LABEL, marker=marker, markersize=2)
+                self._set_measured(ld, dts, seg_down)
+                self._set_measured(lu, dts, seg_up)
+
+                # Add Gradient (per segment)
+                self._apply_gradient_fill(self.ax_download, np.array(d_ts), d_down, color_down, 'download',
+                                          reuse=False)
+                self._apply_gradient_fill(self.ax_upload, np.array(d_ts), d_up, color_up, 'upload',
+                                          reuse=False)
+                final_ts.extend(d_ts)
+                final_up.extend(d_up)
+                final_down.extend(d_down)
         else:
             # FAST PATH: Single continuous line
-            # Process and interpolate the whole chunk
-            dense_ts, dense_up, dense_down = self._process_plot_segment(plot_datetimes, upload_mbps, download_mbps, enable_spline=ENABLE_SPLINE)
-            
+            seg_ts, seg_up, seg_down = segments[0]
+            dts, dense_ts, dense_up, dense_down = dense(seg_ts, seg_up, seg_down)
             final_ts, final_up, final_down = dense_ts, dense_up, dense_down
-            
+            marker = "o" if len(dts) == 1 else None
+
             if self.line_download is not None and self.line_download.axes is not None:
                 try:
                     self.line_download.set_data(dense_ts, dense_down)
                     self.line_upload.set_data(dense_ts, dense_up)
+                    self.line_download.set_marker(marker)
+                    self.line_upload.set_marker(marker)
                 except Exception as e:
                     self.logger.debug(f"High-res update failed, rebuilding: {e}")
                     self.line_download, = self.ax_download.plot(dense_ts, dense_down, color=color_down, linewidth=1.5, zorder=10,
-                                                                label=self.i18n.DOWNLOAD_LABEL)
+                                                                label=self.i18n.DOWNLOAD_LABEL, marker=marker, markersize=2)
                     self.line_upload, = self.ax_upload.plot(dense_ts, dense_up, color=color_up, linewidth=1.5, zorder=10,
-                                                            label=self.i18n.UPLOAD_LABEL)
+                                                            label=self.i18n.UPLOAD_LABEL, marker=marker, markersize=2)
             else:
                 self.line_download, = self.ax_download.plot(
-                    dense_ts, dense_down, 
-                    color=color_down, linewidth=1.5, zorder=10, label=self.i18n.DOWNLOAD_LABEL
+                    dense_ts, dense_down,
+                    color=color_down, linewidth=1.5, zorder=10, label=self.i18n.DOWNLOAD_LABEL,
+                    marker=marker, markersize=2
                 )
                 self.line_upload, = self.ax_upload.plot(
-                    dense_ts, dense_up, 
-                    color=color_up, linewidth=1.5, zorder=10, label=self.i18n.UPLOAD_LABEL
+                    dense_ts, dense_up,
+                    color=color_up, linewidth=1.5, zorder=10, label=self.i18n.UPLOAD_LABEL,
+                    marker=marker, markersize=2
                 )
-            
+            self._set_measured(self.line_download, dts, seg_down)
+            self._set_measured(self.line_upload, dts, seg_up)
+
             # Apply premium gradient fills
             self._apply_gradient_fill(
                 self.ax_download, np.array(dense_ts), dense_down,
@@ -1342,18 +1464,7 @@ class GraphRenderer(QObject):
                 color_up, 'upload'
             )
 
-            # === TRAILING BRIDGE (Fast Path): Bridge from last point to now ===
-            if target_end_time is not None:
-                last_ts = plot_datetimes[-1]
-                gap_to_now = (target_end_time - last_ts).total_seconds()
-                
-                if gap_to_now > gap_threshold:
-                    bridge_ts = [last_ts, target_end_time]
-                    bridge_zero = [0.0, 0.0]
-                    self.ax_download.plot(bridge_ts, bridge_zero, color=color_down, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
-                    self.ax_upload.plot(bridge_ts, bridge_zero, color=color_up, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
-
-        # Return the INTERPOLATED data so interactions snap to the smooth line
+        # Return the INTERPOLATED data: it is what the axis must fit (the hover reads the samples).
         return np.array(final_ts), np.array(final_up), np.array(final_down)
 
     def _process_plot_segment(self, ts_dates, upload_data, download_data, enable_spline: bool = True):
@@ -1449,14 +1560,25 @@ class GraphRenderer(QObject):
         self.ax_upload.set_yscale('linear')
         self.ax_download.set_yscale('linear')
         
-        # Set smart integer ticks based on the Y-axis range
-        self._set_smart_y_ticks(self.ax_upload, y_top_up)
-        self._set_smart_y_ticks(self.ax_download, y_top_down)
-        
+        # Each axis is shown in the user's unit (S2): one unit per axis, picked from its top the way the
+        # widget picks one from a value; the data stays in Mbps and only ticks + label convert.
+        styles = getattr(self, "_net_styles", None) or {}
+        unit_type = styles.get("unit_type", "bits_decimal")
+        force_mega = bool(styles.get("force_mega", False))
+        scale_up, unit_up = speed_axis_unit(y_top_up, self.i18n, unit_type, force_mega)
+        scale_down, unit_down = speed_axis_unit(y_top_down, self.i18n, unit_type, force_mega)
+
+        # Ticks on round numbers of the displayed unit
+        self._set_smart_y_ticks(self.ax_upload, y_top_up, scale_up)
+        self._set_smart_y_ticks(self.ax_download, y_top_down, scale_down)
+
         # Labels carry exactly the precision the tick step needs ("0.5, 1, 1.5"), in the locale's
         # decimal separator - the old int(x) for x >= 1 printed 1.5 as "1" ("0.0, 0.5, 1, 1, 2").
-        self.ax_upload.yaxis.set_major_formatter(ValueAxisFormatter(self.i18n))
-        self.ax_download.yaxis.set_major_formatter(ValueAxisFormatter(self.i18n))
+        self.ax_upload.yaxis.set_major_formatter(ValueAxisFormatter(self.i18n, scale=scale_up))
+        self.ax_download.yaxis.set_major_formatter(ValueAxisFormatter(self.i18n, scale=scale_down))
+        text_color = getattr(self, "_current_text_color", style_constants.LIGHT_MODE_TEXT_COLOR)
+        self.ax_download.set_ylabel(self._lbl(f"{self.i18n.DOWNLOAD_LABEL} ({unit_down})"), color=text_color)
+        self.ax_upload.set_ylabel(self._lbl(f"{self.i18n.UPLOAD_LABEL} ({unit_up})"), color=text_color)
 
         self.ax_upload.set_ylim(bottom=0, top=y_top_up)
         self.ax_download.set_ylim(bottom=0, top=y_top_down)
@@ -1464,15 +1586,17 @@ class GraphRenderer(QObject):
         # Points the axis no longer reaches stay on the line (the hover reads their true value); mark
         # them so they never silently vanish. A no-op off the long windows, where nothing is clipped.
         self._mark_clipped(self.ax_download, plotted_ts, download_mbps, y_top_down,
-                           constants.graph.DOWNLOAD_LINE_COLOR)
+                           constants.graph.DOWNLOAD_LINE_COLOR, scale_down, unit_down)
         self._mark_clipped(self.ax_upload, plotted_ts, upload_mbps, y_top_up,
-                           constants.graph.UPLOAD_LINE_COLOR)
+                           constants.graph.UPLOAD_LINE_COLOR, scale_up, unit_up)
 
         # X-Axis Formatting
         self._configure_xaxis_format(period_key)
 
-    def _mark_clipped(self, ax, xs, ys, top: float, color_hex: str) -> None:
-        """Caret markers on the top edge for each run of points above ``top``, plus the true peak.
+    def _mark_clipped(self, ax, xs, ys, top: float, color_hex: str, scale: float = 1.0,
+                      unit: Optional[str] = None) -> None:
+        """Caret markers on the top edge for each run of points above ``top``, plus the true peak
+        (stated in the axis unit: ``scale`` converts Mbps to it, ``unit`` names it; Mbps by default).
 
         Called on every axis configuration, so it first removes its previous marks (a re-render of
         the same period does not rebuild the axes). The markers are a scatter collection, not a
@@ -1504,8 +1628,8 @@ class GraphRenderer(QObject):
                 gid="value_axis_clip_markers")]
             peak = max(ry for _, ry in runs)
             # Through _lbl like every axis label: matplotlib does no bidi, so Hebrew would read reversed.
-            text = self._lbl(f"{self.i18n.GRAPH_PEAK_SHORT} {format_decimal(peak, self.i18n, 1)} "
-                             f"{self.i18n.MBITS_UNIT}")
+            text = self._lbl(f"{self.i18n.GRAPH_PEAK_SHORT} {format_decimal(peak * scale, self.i18n, 1)} "
+                             f"{unit or self.i18n.MBITS_UNIT}")
             artists.append(ax.text(
                 1.0, 1.0, text, transform=ax.transAxes, ha="right", va="bottom",
                 fontsize=g.VALUE_AXIS_CLIP_PEAK_FONTSIZE, alpha=g.VALUE_AXIS_CLIP_PEAK_ALPHA,
@@ -1515,19 +1639,20 @@ class GraphRenderer(QObject):
         except Exception as e:
             self.logger.debug("clip markers skipped: %s", e)
 
-    def _set_smart_y_ticks(self, ax, y_max: float):
+    def _set_smart_y_ticks(self, ax, y_max: float, scale: float = 1.0):
         """
-        Sets intelligent Y-axis tick locations using Matplotlib's MaxNLocator.
+        Sets intelligent Y-axis tick locations using Matplotlib's MaxNLocator, on round numbers of
+        the displayed unit (``scale`` converts the plotted Mbps to it).
         This provides clean, non-overlapping labels regardless of the data scale.
         """
-        from matplotlib.ticker import MaxNLocator
-        
         if y_max <= 0:
             ax.set_yticks([0])
             return
         
         # Use MaxNLocator for robust, nicely-spaced ticks without overlap
-        ax.yaxis.set_major_locator(MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10], min_n_ticks=3))
+        g = constants.graph
+        ax.yaxis.set_major_locator(ScaledMaxNLocator(scale, nbins=g.VALUE_AXIS_LOCATOR_BINS,
+                                                     steps=list(g.VALUE_AXIS_LOCATOR_STEPS), min_n_ticks=3))
 
 
     def _get_nice_y_axis_top(self, max_speed: float) -> float:

@@ -468,10 +468,96 @@ def _worker(tmp_path, z, *, app_dir, staging_target):
 @pytest.fixture
 def checksums(monkeypatch):
     from netspeedtray.core import update_installer as ui
+    from netspeedtray.utils.signature_verifier import VerifyResult
+
     def _for(z):
         line = f"{ui._sha256_file(str(z)).upper()} NetSpeedTray-Portable-9.9.9.zip"
         monkeypatch.setattr(ui, "_fetch_checksums", lambda url: line)
+        # A real release's EXE is SignPath-signed (U8 gate); these fakes stand in for one.
+        monkeypatch.setattr(ui, "verify_file", lambda path: VerifyResult(True, "trusted",
+                                                                         subject_cn="SignPath Foundation"))
     return _for
+
+
+# ------------------------------------------------------------- U8: the staged EXE must be signed
+
+def test_u8_an_unsigned_portable_exe_is_refused_and_nothing_is_staged(
+        tmp_path, root, checksums, monkeypatch):
+    """The checksum matches, but the EXE inside is not signed by the pinned publisher: fail
+    closed. Nothing is staged (neither for the swap nor in Downloads), `staged` never fires, and
+    `untrusted` carries the reason. The REAL verifier (WinVerifyTrust) runs on the fake EXE."""
+    from netspeedtray.core import update_installer as ui
+    from netspeedtray.utils import signature_verifier
+    install = _portable(tmp_path / "Apps", "NetSpeedTray")
+    (tmp_path / "Downloads").mkdir()
+    z = _release_zip(tmp_path)
+    checksums(z)
+    seen = []
+
+    def real_verify(path):
+        seen.append(path)
+        return signature_verifier.verify_file(path)
+    monkeypatch.setattr(ui, "verify_file", real_verify)   # undo the fixture's "signed" stand-in
+
+    w = _worker(tmp_path, z, app_dir=str(install), staging_target=str(root / "NetSpeedTray-9.9.9"))
+    staged, untrusted = [], []
+    w.staged.connect(staged.append)
+    w.untrusted.connect(untrusted.append)
+    w._run_portable()
+
+    assert staged == []
+    assert len(untrusted) == 1 and "WinVerifyTrust failed" in untrusted[0]
+    assert len(seen) == 1 and os.path.basename(seen[0]) == "NetSpeedTray.exe"
+    assert list(root.iterdir()) == [], "nothing staged for the swap"
+    assert list((tmp_path / "Downloads").iterdir()) == [], "nothing staged in Downloads"
+    assert _exe(install) == "old", "the running version is untouched"
+
+
+def test_u8_a_wrong_publisher_is_refused(tmp_path, root, checksums, monkeypatch):
+    """Validly signed - by someone else. The publisher pin refuses it just the same."""
+    from netspeedtray.core import update_installer as ui
+    from netspeedtray.utils.signature_verifier import VerifyResult
+    (tmp_path / "Downloads").mkdir()
+    z = _release_zip(tmp_path)
+    checksums(z)
+    monkeypatch.setattr(ui, "verify_file", lambda p: VerifyResult(
+        False, "subject CN mismatch: 'Evil Corp'", subject_cn="Evil Corp"))
+    w = _worker(tmp_path, z, app_dir=str(tmp_path / "missing"), staging_target=str(root / "x"))
+    staged, untrusted = [], []
+    w.staged.connect(staged.append)
+    w.untrusted.connect(untrusted.append)
+    w._run_portable()
+    assert staged == [] and untrusted == ["subject CN mismatch: 'Evil Corp'"]
+    assert list((tmp_path / "Downloads").iterdir()) == []
+
+
+def test_u8_the_updater_says_why_and_keeps_the_current_version(q_app, monkeypatch, tmp_path):
+    """SecureUpdater's answer to `untrusted`: drop the download, show the signature message (not
+    the generic one), open the release page, hand nothing off."""
+    from types import SimpleNamespace
+    from netspeedtray.core import update_installer as ui
+    tmp = tmp_path / "NetSpeedTray-update-x"
+    tmp.mkdir()
+    (tmp / "NetSpeedTray-Portable.zip").write_bytes(b"PK")
+    i18n = SimpleNamespace(UPDATE_SIGNATURE_FAILED_MESSAGE="SIG", UPDATE_FALLBACK_MESSAGE="GENERIC",
+                           UPDATE_AVAILABLE_TITLE="Update")
+    up = ui.SecureUpdater(None, "", "https://example/release", i18n, portable=True,
+                          portable_url="https://example/p.zip", latest_version="9.9.9")
+    up._tmpdir = str(tmp)
+    up._active = True
+    shown, opened, launched = [], [], []
+    monkeypatch.setattr(ui, "_info_box", lambda parent, title, text: shown.append(text))
+    import webbrowser
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
+    up.launching.connect(lambda: launched.append(True))
+
+    up._on_untrusted("WinVerifyTrust failed (0x800B0100)")
+
+    assert shown == ["SIG"]
+    assert opened == ["https://example/release"]
+    assert launched == []
+    assert not tmp.exists(), "the unverified download is deleted"
+    assert up.is_running() is False
 
 
 def test_a_hands_off_update_is_staged_in_the_app_folder_not_downloads(
@@ -957,3 +1043,45 @@ def test_r2_l5_a_cross_drive_move_that_copied_fully_points_at_the_copy(
     monkeypatch.setattr(ui.shutil, "move", _copy_then_fail)
 
     assert _secure_updater()._move_to_downloads(str(ready)) == str(downloads / "NetSpeedTray-9.9.9")
+
+
+# ------------------------------------------- installed (Setup) builds are not "incomplete" (rc.2)
+
+def _installed(root: Path) -> Path:
+    """A Program Files install as Inno Setup lays it down: no portable.marker, an uninstaller."""
+    d = root / "NetSpeedTray"
+    (d / "_internal").mkdir(parents=True)
+    (d / ua.APP_EXE).write_bytes(b"MZinstalled")
+    (d / "_internal" / "base_library.zip").write_bytes(b"PK")
+    (d / "unins000.exe").write_bytes(b"MZ")
+    (d / "unins000.dat").write_bytes(b"dat")
+    return d
+
+
+def test_an_installed_build_does_not_log_an_incomplete_install(tmp_path, monkeypatch, caplog):
+    """rc.2 VM finding: every installed launch logged 'The running install looks incomplete'
+    because the sweep required portable.marker, which only the portable ZIP ships."""
+    install = _installed(tmp_path)
+    _run_as(monkeypatch, install)
+    with caplog.at_level("DEBUG", logger="NetSpeedTray.UpdateApplier"):
+        assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 0
+    assert not any("incomplete" in r.getMessage() for r in caplog.records)
+
+
+def test_an_installed_build_still_sweeps_nothing(tmp_path, monkeypatch):
+    """The quiet path keeps the old outcome: a .old- sibling of an installed tree is untouched."""
+    install = _installed(tmp_path)
+    bk = _portable(tmp_path, "NetSpeedTray.old-" + _STAMP)
+    _backdate(bk)
+    _run_as(monkeypatch, install)
+    assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 0
+    assert (bk / ua.APP_EXE).exists()
+
+
+def test_a_portable_install_missing_its_stdlib_still_reports_incomplete(tmp_path, monkeypatch, caplog):
+    install = _portable(tmp_path, "NetSpeedTray")
+    (install / "_internal" / "base_library.zip").unlink()
+    _run_as(monkeypatch, install)
+    with caplog.at_level("INFO", logger="NetSpeedTray.UpdateApplier"):
+        assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 0
+    assert any("looks incomplete" in r.getMessage() for r in caplog.records)

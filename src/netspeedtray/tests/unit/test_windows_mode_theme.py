@@ -151,28 +151,45 @@ def test_a_real_settingchange_reaches_the_filter_through_qt(handler):
         w.deleteLater()
 
 
-def test_theme_manager_recolours_from_the_windows_mode():
-    widget = types.SimpleNamespace(config={"color_is_automatic": True, "default_color": WHITE},
-                                   renderer=MagicMock(), update=MagicMock())
-    with patch("netspeedtray.views.widget.theme.shell_theme_text_color", return_value=BLACK):
-        WidgetThemeManager(widget).on_theme_changed()
-    assert widget.config["default_color"] == BLACK
+def test_theme_manager_recolours_from_the_windows_mode(monkeypatch):
+    """The flip re-colours the widget from the Windows mode. Since the 2.2 rc.2 colour scheme it does so
+    by re-resolving the dark/light pair (the renderer's text pen), never by writing default_color."""
+    from netspeedtray.utils import color_scheme
+    from netspeedtray.utils.widget_renderer import WidgetRenderer
+    from netspeedtray.constants.i18n import I18nStrings
+    config = dict(constants.config.defaults.DEFAULT_CONFIG)
+    monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 0)
+    color_scheme.refresh_shell_theme()
+    widget = types.SimpleNamespace(config=config, renderer=WidgetRenderer(config, I18nStrings("en_US")),
+                                   update=MagicMock())
+    assert widget.renderer.config.default_color == WHITE
+    monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1)
+    WidgetThemeManager(widget).on_theme_changed()
+    assert widget.renderer.config.default_color == constants.color.TEXT_LIGHT
+    assert widget.config == constants.config.defaults.DEFAULT_CONFIG   # nothing written
+    widget.update.assert_called_once()
 
 
 # --- Settings dialog --------------------------------------------------------------------------------
+# #405: while Settings is open a Windows flip must not be undone by the dialog - neither by its preview
+# tick nor by Cancel - and a colour the user owns must survive the flip. The old automatic colour needed
+# _with_live_auto_color for that; with the dark/light pairs the dialog passes the pairs untouched and
+# the renderer resolves the CURRENT theme, so the same assertions hold with no workaround.
 
-def _fake_dialog(opened_with=WHITE, automatic=True, user_chose=False):
-    original = {"default_color": opened_with, "color_is_automatic": automatic, "font_size": 9}
+PAIR = {"default_color_dark": WHITE, "default_color_light": BLACK}
+
+
+def _fake_dialog(opened_with=None, page_returns=None):
+    original = dict(PAIR if opened_with is None else opened_with, font_size=9)
     fake = types.SimpleNamespace(
-        original_config=dict(original), config=dict(original), _user_chose_default_color=user_chose,
+        original_config=dict(original), config=dict(original),
         parent_widget=MagicMock(), hide=MagicMock(), logger=MagicMock(),
         pos=lambda: types.SimpleNamespace(x=lambda: 0, y=lambda: 0))
     for page in ("general_page", "widget_page", "hardware_page", "interfaces_page", "advanced_page"):
         setattr(fake, page, types.SimpleNamespace(get_settings=lambda: {}))
-    fake.appearance_page = types.SimpleNamespace(get_settings=lambda: {"default_color": opened_with})
-    # Pre-fix there is no such method: an identity stand-in, so the behaviour checks below fail.
-    method = SettingsDialog.__dict__.get("_with_live_auto_color", lambda self, cfg: cfg)
-    fake._with_live_auto_color = types.MethodType(method, fake)
+    shown = dict(page_returns if page_returns is not None else
+                 {k: v for k, v in original.items() if k.startswith("default_color")})
+    fake.appearance_page = types.SimpleNamespace(get_settings=lambda: dict(shown))
     # The dialog surface these paths use since the RC Settings fixes: pages via _pages() (pages that
     # failed to load are skipped, C1), and Cancel -> reject() -> _revert_live_preview() (Esc too, S1).
     fake._pages = types.MethodType(SettingsDialog._pages, fake)
@@ -182,16 +199,24 @@ def _fake_dialog(opened_with=WHITE, automatic=True, user_chose=False):
 
 
 @pytest.fixture
-def theme_is_light():
-    with patch("netspeedtray.views.settings.dialog.shell_theme_text_color", return_value=BLACK, create=True):
-        yield
+def theme_is_light(monkeypatch):
+    """The Windows mode flipped to light while the dialog was open."""
+    from netspeedtray.utils import color_scheme
+    monkeypatch.setattr(color_scheme, "read_system_uses_light_theme", lambda: 1)
+    color_scheme.refresh_shell_theme()
+
+
+def _painted_text(cfg):
+    from netspeedtray.utils.widget_renderer import RenderConfig
+    return RenderConfig.from_dict({**constants.config.defaults.DEFAULT_CONFIG, **cfg}).default_color
 
 
 def test_preview_tick_does_not_pin_the_stale_automatic_colour(theme_is_light):
     fake = _fake_dialog()
     settings = SettingsDialog.get_settings(fake)
-    assert settings["default_color"] == BLACK
-    assert settings["color_is_automatic"] is True
+    assert _painted_text(settings) == BLACK                     # the live preview paints the new theme
+    assert {k: settings[k] for k in PAIR} == PAIR               # ...without pinning either half
+    assert "color_is_automatic" not in settings
 
 
 def test_cancel_does_not_restore_the_stale_automatic_colour(theme_is_light):
@@ -199,15 +224,19 @@ def test_cancel_does_not_restore_the_stale_automatic_colour(theme_is_light):
     with patch("netspeedtray.views.settings.dialog.save_window_position"):
         SettingsDialog._cancel_and_close(fake)
     (reverted,), kwargs = fake.parent_widget.handle_settings_changed.call_args
-    assert reverted["default_color"] == BLACK
+    assert _painted_text(reverted) == BLACK
     assert reverted["font_size"] == 9 and kwargs == {"save_to_disk": False}
-    assert fake.original_config["default_color"] == WHITE   # the snapshot itself is not mutated
+    assert fake.original_config == dict(PAIR, font_size=9)      # the snapshot itself is not mutated
 
 
 @pytest.mark.parametrize("case", ["manual_colour", "picked_in_dialog", "typed_in_field"])
 def test_a_colour_the_user_owns_is_kept(theme_is_light, case):
-    fake = _fake_dialog(automatic=(case != "manual_colour"), user_chose=(case == "picked_in_dialog"))
-    if case == "typed_in_field":
-        fake.appearance_page = types.SimpleNamespace(get_settings=lambda: {"default_color": "#00FF00"})
-    expected = "#00FF00" if case == "typed_in_field" else WHITE
-    assert SettingsDialog.get_settings(fake)["default_color"] == expected
+    if case == "manual_colour":      # a fixed pre-1.3 colour migrates to the same value on both taskbars
+        fake = _fake_dialog(opened_with={"default_color_dark": "#151618", "default_color_light": "#151618"})
+        expected = "#151618"
+    else:                            # picked or typed: either way the field now holds it
+        fake = _fake_dialog(page_returns=dict(PAIR, default_color_light="#00FF00"))
+        expected = "#00FF00"
+    settings = SettingsDialog.get_settings(fake)
+    assert _painted_text(settings) == expected
+    assert settings["default_color_dark"] == ("#151618" if case == "manual_colour" else WHITE)
