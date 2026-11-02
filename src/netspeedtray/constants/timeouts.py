@@ -156,14 +156,6 @@ class TimeoutConstants:
     # ~1 s meanwhile; past this a still-unknown layout shows the widget (it is the app's only surface).
     # Covers three 5 s probe timeouts. Never stacked with APP_YIELD_NEW_TASKBAR_HOLD_MS.
     APP_YIELD_UNKNOWN_HOLD_MS: Final[int] = 15000
-    # A second launch this soon after the running widget was created is a duplicate START (the Run key
-    # and a Startup-folder shortcut at sign-in, an installer's launch racing the user's), not the user
-    # asking for a yielded widget back (#373): it never suspends the #24 yield or shows its notice. The
-    # Run value carries no flag to tell a sign-in start apart, and a duplicate can only reach a widget
-    # that already exists (the activate message needs its armed window), so the first instance's own
-    # age is the signal - measured from the moment its window first became reachable (armed at the
-    # end of the widget's __init__), so a slow startup (a v7 -> v8 migration) never eats the window.
-    SECOND_LAUNCH_STARTUP_GRACE_MS: Final[int] = 30000
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
     # Explorer restart (rc.2 W5): between the old taskbar going away and the new one existing there

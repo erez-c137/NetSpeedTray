@@ -274,9 +274,6 @@ class NetworkSpeedWidget(QWidget):
         self._no_taskbar_ticks: int = 0   # consecutive refreshes holding for a missing taskbar (W5)
         self._will_quit_app: bool = False # Flag to distinguish hide vs exit
         self._shutdown_armed_hwnd: int = 0  # HWND the --shutdown channel was armed on
-        # time.monotonic() when a second launch could first reach us (the first arming) - a second
-        # launch soon after that is a duplicate start, not a request (SECOND_LAUNCH_STARTUP_GRACE_MS).
-        self._reachable_since: Optional[float] = None
         # "Show on all taskbars" (#229): the MirrorManager while the setting is on, else None - and
         # with it off nothing of views/widget/mirror.py is imported, built, connected or timed.
         self._mirrors = None
@@ -1980,8 +1977,6 @@ class NetworkSpeedWidget(QWidget):
                 return
             if shutdown_channel.arm_window(hwnd):
                 self._shutdown_armed_hwnd = hwnd
-                if self._reachable_since is None:   # the first arming only, never a re-arm
-                    self._reachable_since = time.monotonic()
         except Exception as e:
             self.logger.debug("Arming the shutdown channel failed: %s", e)
 
@@ -2138,7 +2133,9 @@ class NetworkSpeedWidget(QWidget):
                     return True, 0
                 if _WM_NST_ACTIVATE and msg.message == _WM_NST_ACTIVATE:
                     # A second launch (#234): deferred out of the native dispatch like the shutdown.
-                    QTimer.singleShot(0, self.show_from_second_launch)
+                    # wParam: the second process's own verdict - a duplicate start at sign-in (#373).
+                    duplicate = int(msg.wParam or 0) == constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE
+                    QTimer.singleShot(0, lambda: self.show_from_second_launch(sign_in_duplicate=duplicate))
                     return True, 0
                 if msg.message == _WM_QUERYENDSESSION or (msg.message == _WM_ENDSESSION and msg.wParam):
                     # Logoff / shutdown / restart. The normal quit path (closeEvent -> cleanup) never
@@ -2228,7 +2225,7 @@ class NetworkSpeedWidget(QWidget):
                             'tray_offset_x': defaults.DEFAULT_TRAY_OFFSET_X,
                             'tray_offset_y': defaults.DEFAULT_TRAY_OFFSET_Y})
 
-    def show_from_second_launch(self) -> None:
+    def show_from_second_launch(self, sign_in_duplicate: bool = False) -> None:
         """
         The app was launched again while running (#234, rc.2 W14; the second process posts
         ACTIVATE_MESSAGE_NAME and exits). Bring the widget back however it was lost: hidden -> shown;
@@ -2241,10 +2238,11 @@ class NetworkSpeedWidget(QWidget):
 
         The #24 app-button yield (#373): only a widget the yield had HIDDEN makes the yield stand down
         for the session (it is the user asking for it back). A widget that was not yielded - still
-        starting, mid-hysteresis, in the full-bar fallback by the tray - keeps the yield working. A
-        duplicate start right after this instance became reachable (SECOND_LAUNCH_STARTUP_GRACE_MS:
-        Run key + Startup shortcut at sign-in, an installer launch racing the user's) touches the
-        yield not at all, and a yielded widget then simply stays aside (no flash, no notice).
+        starting, mid-hysteresis, in the full-bar fallback by the tray - keeps the yield working.
+        ``sign_in_duplicate`` (the activate message's wParam, decided by the SECOND process from the
+        session's logon time - see shutdown_channel.is_sign_in_duplicate): a duplicate autostart (Run
+        key + a Startup shortcut) touches the yield not at all, and a yielded widget then simply stays
+        aside (no flash, no notice). A user's launch right after Setup's Finish-page launch is NOT one.
         """
         try:
             pm = getattr(self, "position_manager", None)
@@ -2257,13 +2255,13 @@ class NetworkSpeedWidget(QWidget):
             # widget coming back.
             was_yielded = False
             try:
-                if self._second_launch_is_duplicate_start():
+                if sign_in_duplicate:
                     if pm.is_yielding_to_apps() is True:
-                        self.logger.info("Second launch right after startup: a duplicate start - the "
-                                         "app-button yield keeps the widget aside.")
+                        self.logger.info("Second launch: a duplicate start at sign-in - the app-button "
+                                         "yield keeps the widget aside.")
                         return
-                    self.logger.info("Second launch right after startup: a duplicate start - the "
-                                     "app-button yield is left as it is.")
+                    self.logger.info("Second launch: a duplicate start at sign-in - the app-button "
+                                     "yield is left as it is.")
                 else:
                     was_yielded = self._stand_down_app_yield() is True
             except Exception as e:
@@ -2343,15 +2341,6 @@ class NetworkSpeedWidget(QWidget):
             self.logger.debug("hover card dismiss on app yield failed: %s", e)
         QTimer.singleShot(0, self._execute_refresh)
 
-    def _second_launch_is_duplicate_start(self) -> bool:
-        """True when a second launch came within SECOND_LAUNCH_STARTUP_GRACE_MS of this instance first
-        becoming reachable (its window armed): a duplicate start, not the user asking for the widget
-        (#373). The Run value carries no flag, so this instance's own age is the signal."""
-        since = getattr(self, "_reachable_since", None)
-        if since is None:
-            return False
-        return (time.monotonic() - since) * 1000.0 < constants.timeouts.SECOND_LAUNCH_STARTUP_GRACE_MS
-
     def _stand_down_app_yield(self) -> bool:
         """Step 1 of a second launch (show_from_second_launch): a yielded widget has no other way back
         (no tray icon), so the #24 yield stands down for the rest of this session - BEFORE the show /
@@ -2376,15 +2365,26 @@ class NetworkSpeedWidget(QWidget):
         """The last step of a second launch that brought a YIELDED widget back: a non-activating flyout
         says why it had stepped aside and how to keep it visible for good. After the show / re-seat, so
         it is anchored to the widget's real spot. Once ever (``second_launch_notice_shown``, #373) - the
-        stand-down itself happens on every such launch."""
+        stand-down itself happens on every such launch. The flag is saved only once the flyout really
+        showed (it is shown after a delay, and a failed show must not use up the one notice)."""
         try:
             if getattr(self, "_second_launch_notice_shown", False) or self.config.get("second_launch_notice_shown", False):
                 return
-            self._second_launch_notice_shown = True
-            self.update_config({"second_launch_notice_shown": True})
+            self._second_launch_notice_shown = True   # this session: no second one queued meanwhile
             title = self.i18n.SECOND_LAUNCH_SHOWN_TITLE
             body = self._app_overlap_text(self.i18n.APP_OVERLAP_ACTIVATE_BODY)
-            QTimer.singleShot(self._ACTIVATE_FLYOUT_DELAY_MS, lambda: self._show_notice_flyout(title, body))
+            QTimer.singleShot(self._ACTIVATE_FLYOUT_DELAY_MS,
+                              lambda: self._show_second_launch_notice(title, body))
+        except Exception as e:
+            self.logger.debug("app-yield second-launch notice failed: %s", e)
+
+    def _show_second_launch_notice(self, title: str, body: str) -> None:
+        """The delayed half of _explain_app_yield_stand_down: show, then persist the once-ever flag."""
+        try:
+            if self._show_notice_flyout(title, body) is True:
+                self.update_config({"second_launch_notice_shown": True})
+            else:
+                self._second_launch_notice_shown = False   # not shown: the next launch may try again
         except Exception as e:
             self.logger.debug("app-yield second-launch notice failed: %s", e)
 
@@ -2420,9 +2420,9 @@ class NetworkSpeedWidget(QWidget):
     _NOTICE_FLYOUT_DISMISS_MS = 30000
 
     def _show_notice_flyout(self, title: str, body: str, action_text: Optional[str] = None,
-                            on_action=None) -> None:
+                            on_action=None) -> bool:
         """A one-time notice next to the widget that never takes focus (the data-cap alerts' flyout).
-        ``action_text`` / ``on_action``: an optional button (e.g. "Open folder")."""
+        ``action_text`` / ``on_action``: an optional button (e.g. "Open folder"). True once shown."""
         try:
             from netspeedtray.views.flyout import Flyout
             from PyQt6 import sip
@@ -2435,8 +2435,10 @@ class NetworkSpeedWidget(QWidget):
                 self._notice_flyout.action_clicked.connect(on_action)
             geo = self.frameGeometry()
             self._notice_flyout.show_at(QPoint(geo.left(), geo.top()))
+            return True
         except Exception as e:
             self.logger.error("Error showing a notice: %s", e, exc_info=True)
+            return False
 
 
     def show_backup_notice(self, title: str, body: str, path: Optional[str] = None) -> None:

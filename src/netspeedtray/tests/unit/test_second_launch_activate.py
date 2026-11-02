@@ -20,6 +20,13 @@ from netspeedtray import constants
 from netspeedtray.core import shutdown_channel as sc
 
 
+@pytest.fixture(autouse=True)
+def _signed_in_long_ago(monkeypatch):
+    """The sign-in verdict reads the REAL session: a test run within minutes of signing in would flip
+    wParam. Pin it to "long ago" (tests of the verdict itself override this)."""
+    monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 10_000.0)
+
+
 def _fake_desktop(monkeypatch, windows, own_pid=999):
     monkeypatch.setattr(sc, "_enum_top_level_windows", lambda: [w[0] for w in windows])
     props = {w[0]: w[2] for w in windows}
@@ -42,7 +49,57 @@ def test_second_launch_signals_this_users_instance_only(monkeypatch):
     post = MagicMock(return_value=True)
     monkeypatch.setattr(sc, "_post", post)
     assert sc.request_activate() is True
-    post.assert_called_once_with(0x20, sc.activate_message_id())
+    post.assert_called_once_with(0x20, sc.activate_message_id(), constants.app.ACTIVATE_WPARAM_USER)
+
+
+def test_a_launch_soon_after_sign_in_says_so_in_wparam(monkeypatch):
+    """#373: the SECOND process decides whether it is a duplicate autostart (session logon time) and
+    says so in wParam; the running app only reads the flag."""
+    _fake_desktop(monkeypatch, [(0x20, 200, True)])
+    monkeypatch.setattr(sc, "_other_user_pids", lambda: set())
+    post = MagicMock(return_value=True)
+    monkeypatch.setattr(sc, "_post", post)
+    monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 12.0)
+    assert sc.request_activate() is True
+    post.assert_called_once_with(0x20, sc.activate_message_id(), constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE)
+
+
+@pytest.mark.parametrize("since,expected", [
+    (5.0, True),
+    (constants.app.SIGN_IN_DUPLICATE_WINDOW_S - 1, True),
+    (constants.app.SIGN_IN_DUPLICATE_WINDOW_S + 1, False),
+    (None, False),          # logon time unknown (a zero LogonTime, a failed query)
+    (-30.0, False),         # the clock was set back since sign-in
+])
+def test_sign_in_verdict(monkeypatch, since, expected):
+    monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: since)
+    assert sc.is_sign_in_duplicate() is expected
+
+
+def test_a_failing_sign_in_check_is_a_normal_user_launch(monkeypatch):
+    def boom():
+        raise OSError("wtsapi32 unavailable")
+    monkeypatch.setattr(sc, "_session_seconds_since_logon", boom)
+    assert sc.is_sign_in_duplicate() is False
+    _fake_desktop(monkeypatch, [(0x20, 200, True)])
+    monkeypatch.setattr(sc, "_other_user_pids", lambda: set())
+    post = MagicMock(return_value=True)
+    monkeypatch.setattr(sc, "_post", post)
+    assert sc.request_activate() is True
+    post.assert_called_once_with(0x20, sc.activate_message_id(), constants.app.ACTIVATE_WPARAM_USER)
+
+
+def test_the_real_session_logon_time_reads_sanely():
+    """The real WTSSessionInfo query (read-only): a WTSINFOW-sized answer, a non-negative age within the
+    machine's uptime (+ a minute for a clock adjusted after sign-in)."""
+    import ctypes as _c
+    assert _c.sizeof(sc._WTSINFOW) == 216          # the x64 layout wtsapi32 returns
+    since = sc._session_seconds_since_logon()
+    if since is None:
+        pytest.skip("this session reports no logon time")
+    k32 = _c.windll.kernel32
+    k32.GetTickCount64.restype = _c.c_ulonglong
+    assert -60.0 <= since <= k32.GetTickCount64() / 1000.0 + 60.0
 
 
 def test_unknown_owner_is_still_asked(monkeypatch):
@@ -173,8 +230,19 @@ def test_widget_routes_the_activate_message(monkeypatch):
                                  show_from_second_launch=MagicMock())
     _ref, addr = _msg(sc.activate_message_id())
     assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", addr) == (True, 0)
-    assert scheduled == [fake.show_from_second_launch]
+    assert len(scheduled) == 1
+    scheduled[0]()
+    fake.show_from_second_launch.assert_called_once_with(sign_in_duplicate=False)
     fake.fully_exit_application.assert_not_called()
+    # wParam 1: the second process's sign-in verdict; anything else is a plain activate.
+    for wparam, expected in ((1, True), (7, False)):
+        scheduled.clear()
+        fake.show_from_second_launch.reset_mock()
+        ref, addr = _msg(sc.activate_message_id())
+        ref.wParam = wparam
+        assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", addr) == (True, 0)
+        scheduled[0]()
+        fake.show_from_second_launch.assert_called_once_with(sign_in_duplicate=expected)
 
 
 def _show_fake(*, visible, off_screen, buried=True, fullscreen=False, keep_visible=False):

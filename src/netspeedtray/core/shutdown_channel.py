@@ -136,8 +136,8 @@ def _window_pid(hwnd: int) -> int:
     return int(pid.value)
 
 
-def _post(hwnd: int, message: int) -> bool:
-    return bool(_user32.PostMessageW(hwnd, message, 0, 0))
+def _post(hwnd: int, message: int, wparam: int = 0) -> bool:
+    return bool(_user32.PostMessageW(hwnd, message, wparam, 0))
 
 
 def _wait_for_exit(pid: int, hwnd: int, timeout: float) -> bool:
@@ -249,6 +249,75 @@ def _other_user_pids() -> Optional[set]:
         return None
 
 
+class _WTSINFOW(ctypes.Structure):
+    """wtsapi32.h WTSINFOW (WTSQuerySessionInformationW, WTSSessionInfo). The times are FILETIMEs."""
+    _fields_ = [
+        ("State", ctypes.c_int),
+        ("SessionId", wintypes.DWORD),
+        ("IncomingBytes", wintypes.DWORD),
+        ("OutgoingBytes", wintypes.DWORD),
+        ("IncomingFrames", wintypes.DWORD),
+        ("OutgoingFrames", wintypes.DWORD),
+        ("IncomingCompressedBytes", wintypes.DWORD),
+        ("OutgoingCompressedBytes", wintypes.DWORD),
+        ("WinStationName", wintypes.WCHAR * 32),    # WINSTATIONNAME_LENGTH
+        ("Domain", wintypes.WCHAR * 17),            # DOMAIN_LENGTH
+        ("UserName", wintypes.WCHAR * 21),          # USERNAME_LENGTH + 1
+        ("ConnectTime", ctypes.c_longlong),
+        ("DisconnectTime", ctypes.c_longlong),
+        ("LastInputTime", ctypes.c_longlong),
+        ("LogonTime", ctypes.c_longlong),
+        ("CurrentTime", ctypes.c_longlong),
+    ]
+
+
+_WTS_CURRENT_SERVER_HANDLE = None
+_WTS_CURRENT_SESSION = 0xFFFFFFFF
+_WTS_SESSION_INFO = 24          # WTS_INFO_CLASS.WTSSessionInfo
+_FILETIME_TICKS_PER_S = 10_000_000
+
+
+def _session_seconds_since_logon() -> Optional[float]:
+    """Seconds since this session signed in, from ONE WTSSessionInfo query (CurrentTime - LogonTime, so
+    no clock of ours is involved). None when it can't be told (any failure, a zero LogonTime)."""
+    wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
+    query = wtsapi32.WTSQuerySessionInformationW
+    query.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_int,
+                      ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD)]
+    query.restype = wintypes.BOOL
+    free = wtsapi32.WTSFreeMemory
+    free.argtypes = [ctypes.c_void_p]
+    free.restype = None
+    buf = ctypes.c_void_p()
+    size = wintypes.DWORD()
+    if not query(_WTS_CURRENT_SERVER_HANDLE, _WTS_CURRENT_SESSION, _WTS_SESSION_INFO,
+                 ctypes.byref(buf), ctypes.byref(size)) or not buf.value:
+        return None
+    try:
+        if size.value < ctypes.sizeof(_WTSINFOW):
+            return None
+        info = _WTSINFOW.from_address(buf.value)
+        if info.LogonTime <= 0 or info.CurrentTime <= 0:
+            return None
+        return (info.CurrentTime - info.LogonTime) / _FILETIME_TICKS_PER_S
+    finally:
+        free(buf)
+
+
+def is_sign_in_duplicate() -> bool:
+    """A second launch's own verdict (#373): True when this session signed in less than
+    SIGN_IN_DUPLICATE_WINDOW_S ago - a duplicate autostart, not the user asking for the widget. Any
+    failure (or a clock set back since logon) is a normal user launch: False."""
+    try:
+        since = _session_seconds_since_logon()
+        if since is None or since < 0:
+            return False
+        return since < constants.app.SIGN_IN_DUPLICATE_WINDOW_S
+    except Exception as e:
+        logger.debug("Could not read the session's logon time: %s", e)
+        return False
+
+
 def request_activate() -> bool:
     """
     A second launch (the per-user instance mutex is taken, #234): ask THIS user's running widget to show
@@ -257,6 +326,10 @@ def request_activate() -> bool:
     known to be another user's (a "Run as different user" copy) is skipped, matching the per-user
     mutex; one whose owner can't be told (an elevated instance of ours, or no listing at all) is
     asked anyway - it can only become visible.
+
+    The wParam says who is asking (#373): ACTIVATE_WPARAM_SIGN_IN_DUPLICATE when this process starts
+    within SIGN_IN_DUPLICATE_WINDOW_S of the session's sign-in (``is_sign_in_duplicate``), else
+    ACTIVATE_WPARAM_USER.
 
     True if a running instance was signalled. Never waits: the second process exits right after.
     """
@@ -272,10 +345,14 @@ def request_activate() -> bool:
     if not targets:
         logger.info("Second launch: no running widget of this user on this desktop to bring back.")
         return False
+    duplicate = is_sign_in_duplicate()
+    wparam = (constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE if duplicate
+              else constants.app.ACTIVATE_WPARAM_USER)
     sent = False
     for hwnd, pid in targets:
-        if _post(hwnd, msg):
-            logger.info("Second launch: asked the running widget (pid %s) to show itself.", pid)
+        if _post(hwnd, msg, wparam):
+            logger.info("Second launch: asked the running widget (pid %s) to show itself%s.", pid,
+                        " (a duplicate start at sign-in)" if duplicate else "")
             sent = True
         else:
             logger.warning("Second launch: PostMessage to HWND %s (pid %s) failed (err %s).",

@@ -88,15 +88,18 @@ ALSO
   *Under the hood: `AppOverlapYield.suspend_for_session()` suspended unconditionally and only
   reported whether it had been yielded; it now returns False and changes nothing unless `yielded`
   is true at that moment (still starting, mid-hysteresis and the full-bar fallback by the tray all
-  read False). A second launch within `SECOND_LAUNCH_STARTUP_GRACE_MS` (30 s) of the running
-  instance's first `arm_window` - the earliest an activate message can reach it - is treated as a
-  duplicate start (Run key + a Startup shortcut, an installer launch racing a manual one): the
-  yield is left alone and a yielded widget stays aside. The Run value carries no flag that would
-  tell a sign-in start apart, so the running instance's own age is the signal.*
+  read False). A duplicate autostart at sign-in (the Run key plus a Startup shortcut) leaves the
+  yield alone: the SECOND process checks the session's sign-in time (`WTSQuerySessionInformationW`
+  / `WTSSessionInfo`, `CurrentTime - LogonTime` from one query) and, under
+  `SIGN_IN_DUPLICATE_WINDOW_S` (120 s), posts `NetSpeedTray_Activate_v1` with wParam 1; any failure
+  means wParam 0, a normal launch. The running app's own age is deliberately not used: Setup's
+  Finish-page launch followed by the user's own launch seconds later is exactly this bug's path.
+  Builds before rc.4 ignore wParam.*
 - **The "staying visible" notice after a second launch shows once, under its own title.** It came
   on every second launch that found the widget stepped aside, titled "No free spot on the taskbar"
   like two other notices. It now has its own title and a once-ever flag
-  (`second_launch_notice_shown`, kept by Reset all). ([#373])
+  (`second_launch_notice_shown`, kept by Reset all), saved only once the flyout has actually
+  shown. ([#373])
 
 ### Localization
 
