@@ -124,11 +124,16 @@ updater, WinGet and the Store never offer prereleases.*
 
 ### Localization
 
-- One new string, the notice's title (`SECOND_LAUNCH_SHOWN_TITLE`), in all 16 languages - first
+- One new string, the notice's title (`SECOND_LAUNCH_SHOWN_TITLE`), in all 17 languages - first
   drafts, corrections welcome. ([#373])
+- **Bengali** - 17 languages now, picked automatically on Bengali Windows (Bangladesh or India).
+  The Monitor graphs' axis labels, legends and captions stay in English for now: the graph engine
+  can't join Bengali letters yet. ([#457], thanks [@Askeleid])
 
 [#332]: https://github.com/erez-c137/NetSpeedTray/issues/332
 [#373]: https://github.com/erez-c137/NetSpeedTray/issues/373
+[#457]: https://github.com/erez-c137/NetSpeedTray/pull/457
+[@Askeleid]: https://github.com/Askeleid
 [@relu616]: https://github.com/relu616
 
 ## [2.2.0-rc.3] - October 29, 2026

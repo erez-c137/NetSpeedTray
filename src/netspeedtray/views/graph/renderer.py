@@ -20,7 +20,7 @@ from netspeedtray import constants
 from netspeedtray.constants import styles as style_constants
 from netspeedtray.constants.renderer import RendererConstants
 from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation, format_decimal
-from netspeedtray.utils.mpl_fonts import configure_cjk_font
+from netspeedtray.utils.mpl_fonts import configure_cjk_font, graph_i18n
 from netspeedtray.views.graph.time_axis import apply_time_axis
 from netspeedtray.views.graph.value_axis import (ScaledMaxNLocator, ValueAxisFormatter, clipped_axis_max,
                                                  clipped_runs, speed_axis_unit)
@@ -41,7 +41,11 @@ class GraphRenderer(QObject):
     def __init__(self, parent_widget: QWidget, i18n, logger=None):
         super().__init__()
         self.logger = logger or logging.getLogger(__name__)
-        self.i18n = i18n
+        # Every string matplotlib draws comes from self.i18n. For a locale whose script matplotlib
+        # can't shape (mpl_fonts.MPL_UNSHAPED_LOCALES - Bengali) that is en_US; ui_i18n keeps the
+        # UI language for the Qt hover readout (ui_series_label).
+        self.ui_i18n = i18n
+        self.i18n = graph_i18n(i18n)
         self.parent_widget = parent_widget
 
         # Ensure non-Latin graph labels render with real glyphs instead of tofu boxes: CJK (ja/ko/zh,
@@ -867,6 +871,21 @@ class GraphRenderer(QObject):
         """Reshape an axis/legend label for RTL (Hebrew) matplotlib rendering; no-op for LTR locales."""
         from netspeedtray.utils.mpl_fonts import shape_rtl
         return shape_rtl(text, getattr(self.i18n, "language", None))
+
+    # The i18n keys a plotted line carries as its matplotlib label (network + hardware series).
+    _SERIES_LABEL_KEYS = ("DOWNLOAD_LABEL", "UPLOAD_LABEL", "ORDER_TYPE_CPU", "ORDER_TYPE_GPU",
+                          "MONITOR_TILE_RAM")
+
+    def ui_series_label(self, label: str) -> str:
+        """A line's matplotlib label in the UI language, for Qt text (the hover readout). Identity
+        unless the graph draws English for this locale (graph_i18n), where the English series name
+        maps back to the UI-language one."""
+        if self.i18n is self.ui_i18n:
+            return label
+        for key in self._SERIES_LABEL_KEYS:
+            if label == getattr(self.i18n, key, None):
+                return getattr(self.ui_i18n, key, label)
+        return label
 
     def _hw_role_label(self, role: str) -> str:
         """The name a hardware series carries as its matplotlib label - one place, so the legend and

@@ -1,6 +1,6 @@
 # Translators
 
-NetSpeedTray's UI is available in 14 languages - including Hebrew, its first right-to-left locale - thanks to the community contributors below. Each name represents real time and care invested in making the app feel native to its users - thank you.
+NetSpeedTray's UI is available in 17 languages - including Hebrew, its first right-to-left locale - thanks to the community contributors below. Each name represents real time and care invested in making the app feel native to its users - thank you.
 
 If you'd like to contribute a translation or improve an existing one, see the locale files in [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/) and open a pull request. The `en_US.json` file is the source of truth - all other locales must keep key parity with it (enforced by [`test_locales_parity.py`](src/netspeedtray/tests/unit/test_locales_parity.py)).
 
@@ -18,6 +18,7 @@ If you'd like to contribute a translation or improve an existing one, see the lo
 | Turkish | `tr_TR` | [@lezgintekay](https://github.com/lezgintekay) - **ongoing maintainer** | [#249](https://github.com/erez-c137/NetSpeedTray/pull/249) |
 | Italian | `it_IT` | [@parmacvn-beep](https://github.com/parmacvn-beep) (Mirko) | [#277](https://github.com/erez-c137/NetSpeedTray/issues/277) |
 | Hungarian | `hu_HU` | [@cscsanaki](https://github.com/cscsanaki) | [#302](https://github.com/erez-c137/NetSpeedTray/pull/302) |
+| Bengali | `bn_BD` | [@Askeleid](https://github.com/Askeleid) | [#457](https://github.com/erez-c137/NetSpeedTray/pull/457) |
 | Simplified Chinese | `zh_CN` | [@RainThings](https://github.com/RainThings) | [#209](https://github.com/erez-c137/NetSpeedTray/pull/209) |
 | Traditional Chinese (Taiwan) | `zh_TW` | [@raylolhue](https://github.com/raylolhue), with terminology improvements from [@in2002-tw](https://github.com/in2002-tw) and native polish from [@tony8077616](https://github.com/tony8077616) | [#199](https://github.com/erez-c137/NetSpeedTray/pull/199), [#215](https://github.com/erez-c137/NetSpeedTray/pull/215) |
 | Hebrew (RTL) | `he_IL` | [@rami123](https://github.com/rami123) (initiated the locale) — remaining strings AI-assisted, **pending native review** | [#165](https://github.com/erez-c137/NetSpeedTray/pull/165) |

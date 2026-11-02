@@ -143,6 +143,32 @@ def font(token: tuple) -> QFont:
     return f
 
 
+# UI languages whose script the Segoe families lack, and the Windows font that has it (#457). Qt
+# already falls back per run of that script, but a script-neutral mark after Latin text - the
+# Bengali danda "।" after ")" or "</b>" - is resolved from the Latin side and lands on Fixedsys, a
+# bitmap tick. Registering the script's font as a substitute of the Segoe families fixes that. A
+# substitute is consulted only for glyphs the family lacks, so Latin, arrows, CJK, Hebrew and emoji
+# render exactly as before.
+SCRIPT_FONT_FALLBACKS = {"bn_BD": ("Nirmala UI",)}
+
+
+def apply_script_font_fallbacks(language: Optional[str]) -> list:
+    """Register SCRIPT_FONT_FALLBACKS[language] as substitutes of the app's Segoe families. Call once
+    at startup (a language change needs a restart). Returns the families changed ([] = no-op)."""
+    subs = SCRIPT_FONT_FALLBACKS.get(str(language or ""))
+    if not subs:
+        return []
+    families = []
+    for family in (style_constants.FONT_FAMILY_VARIABLE, style_constants.FONT_FALLBACK):
+        if family in families:
+            continue
+        for sub in subs:
+            if sub.lower() not in (x.lower() for x in QFont.substitutes(family)):   # Qt stores them lower-cased
+                QFont.insertSubstitution(family, sub)
+        families.append(family)
+    return families
+
+
 def semantic_colors() -> dict:
     """
     Theme-resolved semantic surface tokens for the *current* OS theme. One source of

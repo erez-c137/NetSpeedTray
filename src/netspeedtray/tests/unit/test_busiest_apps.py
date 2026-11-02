@@ -79,7 +79,7 @@ def test_every_locale_renamed_the_card():
     from pathlib import Path
     import netspeedtray.constants as c
     files = sorted((Path(c.__file__).parent / "locales").glob("*.json"))
-    assert len(files) == 16
+    assert len(files) == 17
     old = {"Top talkers", "Top-Verbraucher", "Más activas", "Applications les plus actives",
            "צרכנים מובילים", "Legnagyobb adatforgalmú alkalmazások", "App più attive", "通信量の多いアプリ",
            "주요 사용 앱", "Meest actief", "Najaktywniejsze aplikacje", "Самые активные",
