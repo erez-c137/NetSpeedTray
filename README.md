@@ -313,7 +313,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **Support Bundle** - one-click sanitized zip of logs + config + system info for bug reports
 
 ### Localization
-- **16 languages:** English, Korean, French, German, Russian, Spanish, Dutch, Polish, Slovenian, Japanese, Simplified Chinese, Traditional Chinese, Hebrew (RTL), Turkish, Italian, Hungarian
+- **17 languages:** English, Korean, French, German, Russian, Spanish, Dutch, Polish, Slovenian, Japanese, Simplified Chinese, Traditional Chinese, Hebrew (RTL), Turkish, Italian, Hungarian, Bengali
 - 100% key parity across all locales
 
 </details>
@@ -350,7 +350,7 @@ I'm not doing this for the money - but I'd be lying if I said a little support d
 
 ## Translators
 
-NetSpeedTray's UI lives in 16 languages thanks to the people below. Each translation is real time and care - if you use NetSpeedTray in your language, please give them a star and a thank-you.
+NetSpeedTray's UI lives in 17 languages thanks to the people below. Each translation is real time and care - if you use NetSpeedTray in your language, please give them a star and a thank-you.
 
 | Language | Locale | Translator |
 |---|---|---|
@@ -366,6 +366,7 @@ NetSpeedTray's UI lives in 16 languages thanks to the people below. Each transla
 | 🇹🇷 Turkish | `tr_TR` | [@lezgintekay](https://github.com/lezgintekay) - ongoing maintainer |
 | 🇮🇹 Italian | `it_IT` | [@parmacvn-beep](https://github.com/parmacvn-beep) (Mirko) |
 | 🇭🇺 Hungarian | `hu_HU` | [@cscsanaki](https://github.com/cscsanaki) |
+| 🇧🇩 Bengali | `bn_BD` | [@Askeleid](https://github.com/Askeleid) |
 | 🇮🇱 Hebrew (RTL) | `he_IL` | [@rami123](https://github.com/rami123) - **native-speaker review welcome** |
 | 🇩🇪 German | `de_DE` | Maintainer - **native-speaker review welcome** |
 | 🇪🇸 Spanish | `es_ES` | Maintainer - **native-speaker review welcome** |

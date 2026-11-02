@@ -24,6 +24,7 @@ WIDGET_TERM = {
     "it_IT": "widget", "nl_NL": "widget", "hu_HU": "widget", "tr_TR": "widget",
     "pl_PL": "widż", "ru_RU": "виджет", "sl_SI": "gradnik", "he_IL": "יישומון",
     "ja_JP": "ウィジェット", "ko_KR": "위젯", "zh_CN": "小部件", "zh_TW": "小工具",
+    "bn_BD": "উইজেট",
 }
 
 LOCALES = sorted(p.stem for p in LOCALES_DIR.glob("*.json"))
