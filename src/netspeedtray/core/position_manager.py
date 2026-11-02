@@ -1615,8 +1615,8 @@ class PositionManager(QObject):
         self._app_yield.detach("shutting down")
 
     def suspend_app_yield(self) -> bool:
-        """A second launch asked for the widget (#440): no yield for the rest of this session. True
-        when the widget was yielded at that moment."""
+        """A second launch asked for the widget (#440): when it was yielded at that moment, no yield for
+        the rest of this session, and True; otherwise the yield stays on (#373) and False."""
         return self._app_yield.suspend_for_session()
 
     def _persist_app_drop(self, value: Optional[int]) -> None:

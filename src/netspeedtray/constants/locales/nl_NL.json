@@ -584,6 +584,7 @@
     "SIDE_BAR_NO_ROOM_BODY": "De app-knoppen vullen je taakbalk, dus NetSpeedTray staat naast het systeemvak en kan er enkele bedekken. Je kunt het overal langs de taakbalk slepen - de plek wordt onthouden. Om dat ongedaan te maken, klik je er met de rechtermuisknop op en kies je 'Positie herstellen'. (Dit bericht verschijnt niet meer.)",
     "APP_OVERLAP_YIELD_BODY": "De app-knoppen op je taakbalk hebben NetSpeedTray bereikt, dus het gaat even opzij en komt terug zodra er weer ruimte is. Wil je het nu terug, start NetSpeedTray dan opnieuw. Wil je het altijd zien, zet dan '{setting}' uit in {settings} > {page}. (Dit bericht verschijnt niet meer.)",
     "APP_OVERLAP_ACTIVATE_BODY": "De taakbalk is hier vol, dus NetSpeedTray was opzij gegaan. Tot de volgende start blijft het zichtbaar. Sleep het naar een vrije plek, of zet '{setting}' uit in {settings} > {page}.",
+    "SECOND_LAUNCH_SHOWN_TITLE": "Voorlopig zichtbaar",
     "HOVER_CARD_PIN_HINT": "Klik op de widget om dit open te houden",
     "INTEGRATIONS_GROUP": "Integraties",
     "METRICS_ENDPOINT_LABEL": "Lokaal metrics-eindpunt",

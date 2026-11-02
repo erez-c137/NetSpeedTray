@@ -85,7 +85,7 @@ class SettingsDialog(QDialog):
         "monitor_active_tab", "history_period", "history_period_slider_value", "history_period_chosen",
         "paused", "last_update_check", "skipped_version", "usage_alert_state", "start_with_windows",
         "pin_hint_shown_count", "side_bar_no_room_notice_shown", "app_overlap_notice_shown",
-        "app_overlap_drop_offset",
+        "app_overlap_drop_offset", "second_launch_notice_shown",
     )
 
     def __init__(

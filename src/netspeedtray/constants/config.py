@@ -402,6 +402,7 @@ class ConfigConstants:
         "widgets_overlap_nudge_shown": False,  # one-time #200 nudge: widget overlaps the Widgets/weather panel
         "side_bar_no_room_notice_shown": False,  # one-time heads-up: a side taskbar's apps leave no free spot
         "app_overlap_notice_shown": False,  # one-time heads-up: the widget stepped aside for app buttons (#24)
+        "second_launch_notice_shown": False,  # one-time: a second launch brought a yielded widget back (#373)
         # The tray_offset_x the user dropped the widget at ON the app buttons (#24 drop baseline): the
         # yield stays off for that spot, across restarts, until a probe sees it clear once. None = none.
         "app_overlap_drop_offset": None,
@@ -571,6 +572,7 @@ class ConfigConstants:
         "widgets_overlap_nudge_shown": {"type": bool, "default": False},
         "side_bar_no_room_notice_shown": {"type": bool, "default": False},
         "app_overlap_notice_shown": {"type": bool, "default": False},
+        "second_launch_notice_shown": {"type": bool, "default": False},
         "app_overlap_drop_offset": {"type": (int, type(None)), "default": None},
         "cpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
         "cpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
