@@ -277,17 +277,29 @@ _WTS_SESSION_INFO = 24          # WTS_INFO_CLASS.WTSSessionInfo
 _FILETIME_TICKS_PER_S = 10_000_000
 
 
+_wts_api: Optional[Tuple[object, object]] = None
+
+
+def _wts_functions():
+    """(WTSQuerySessionInformationW, WTSFreeMemory), loaded and typed once."""
+    global _wts_api
+    if _wts_api is None:
+        wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
+        query = wtsapi32.WTSQuerySessionInformationW
+        query.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_int,
+                          ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD)]
+        query.restype = wintypes.BOOL
+        free = wtsapi32.WTSFreeMemory
+        free.argtypes = [ctypes.c_void_p]
+        free.restype = None
+        _wts_api = (query, free)
+    return _wts_api
+
+
 def _session_seconds_since_logon() -> Optional[float]:
     """Seconds since this session signed in, from ONE WTSSessionInfo query (CurrentTime - LogonTime, so
     no clock of ours is involved). None when it can't be told (any failure, a zero LogonTime)."""
-    wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
-    query = wtsapi32.WTSQuerySessionInformationW
-    query.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_int,
-                      ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD)]
-    query.restype = wintypes.BOOL
-    free = wtsapi32.WTSFreeMemory
-    free.argtypes = [ctypes.c_void_p]
-    free.restype = None
+    query, free = _wts_functions()
     buf = ctypes.c_void_p()
     size = wintypes.DWORD()
     if not query(_WTS_CURRENT_SERVER_HANDLE, _WTS_CURRENT_SESSION, _WTS_SESSION_INFO,

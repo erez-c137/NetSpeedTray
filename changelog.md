@@ -92,7 +92,8 @@ ALSO
   yield alone: the SECOND process checks the session's sign-in time (`WTSQuerySessionInformationW`
   / `WTSSessionInfo`, `CurrentTime - LogonTime` from one query) and, under
   `SIGN_IN_DUPLICATE_WINDOW_S` (120 s), posts `NetSpeedTray_Activate_v1` with wParam 1; any failure
-  means wParam 0, a normal launch. The running app's own age is deliberately not used: Setup's
+  means wParam 0, a normal launch. Only the first flagged activation of an instance is ignored - a
+  later one, flagged too, is the user starting it again within the window. The running app's own age is deliberately not used: Setup's
   Finish-page launch followed by the user's own launch seconds later is exactly this bug's path.
   Builds before rc.4 ignore wParam.*
 - **The "staying visible" notice after a second launch shows once, under its own title.** It came

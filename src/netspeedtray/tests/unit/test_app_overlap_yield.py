@@ -895,6 +895,22 @@ def test_sign_in_duplicate_leaves_a_yielded_widget_aside(layout, q_app):
     assert "second_launch_notice_shown" not in w.config
 
 
+def test_only_the_first_sign_in_duplicate_is_ignored(layout, q_app):
+    """#373 re-review: a deliberate launch within the sign-in window also arrives flagged. Only the
+    FIRST flagged activation of an instance is the duplicate autostart; the next one, flagged too, is
+    the user - it stands down and explains."""
+    from netspeedtray.views.widget import main as main_mod
+    pm, _tb = _yielded_pm(layout)
+    w, order = _second_launch_widget(pm)
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch(sign_in_duplicate=True)
+    assert pm._app_yield.suspended is False and order == []
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch(sign_in_duplicate=True)
+    assert pm._app_yield.suspended and pm.is_yielding_to_apps() is False
+    assert order[0] == ("setVisible", True) and order[-1] == ("flyout", "t2", "a S W P")
+
+
 def test_sign_in_duplicate_while_not_yielded_still_shows_and_reseats(layout, q_app):
     from netspeedtray.views.widget import main as main_mod
     pm, tb, _widget = _pm()

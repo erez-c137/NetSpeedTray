@@ -2242,7 +2242,9 @@ class NetworkSpeedWidget(QWidget):
         ``sign_in_duplicate`` (the activate message's wParam, decided by the SECOND process from the
         session's logon time - see shutdown_channel.is_sign_in_duplicate): a duplicate autostart (Run
         key + a Startup shortcut) touches the yield not at all, and a yielded widget then simply stays
-        aside (no flash, no notice). A user's launch right after Setup's Finish-page launch is NOT one.
+        aside (no flash, no notice). Only the FIRST such activation of this instance is taken as the
+        duplicate: any later one, even flagged, is the user starting it again within the sign-in window
+        and stands down as usual. A user's launch right after Setup's Finish-page launch is NOT one.
         """
         try:
             pm = getattr(self, "position_manager", None)
@@ -2255,7 +2257,8 @@ class NetworkSpeedWidget(QWidget):
             # widget coming back.
             was_yielded = False
             try:
-                if sign_in_duplicate:
+                if sign_in_duplicate and not getattr(self, "_sign_in_duplicate_seen", False):
+                    self._sign_in_duplicate_seen = True   # one duplicate per instance; later = the user
                     if pm.is_yielding_to_apps() is True:
                         self.logger.info("Second launch: a duplicate start at sign-in - the app-button "
                                          "yield keeps the widget aside.")
