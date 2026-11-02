@@ -52,6 +52,11 @@ def no_retry_sleep(monkeypatch):
     monkeypatch.setattr(constants.timeouts, "DB_CHECKPOINT_RETRY_SLEEP", 0.0)
 
 
+def _current_period_key() -> str:
+    """The odometer only counts within its period, so a hardcoded month expires (it did on 2026-11-01)."""
+    return WidgetState._compute_period_key(1)
+
+
 def _make_v7(d: Path, usage=None) -> Path:
     db = d / DB
     w = LegacyV7Worker(db)
@@ -61,7 +66,8 @@ def _make_v7(d: Path, usage=None) -> Path:
     F.populate(w.conn)
     if usage:
         w.conn.execute("INSERT OR REPLACE INTO usage_counter (id, cumulative_up, cumulative_down, anchor_up, "
-                       "anchor_down, period_key, updated_ts) VALUES (1, ?, ?, ?, ?, '2026-10-01', 0)", usage)
+                       "anchor_down, period_key, updated_ts) VALUES (1, ?, ?, ?, ?, ?, 0)",
+                       (*usage, _current_period_key()))
         w.conn.commit()
     w._close_connection()
     return db
@@ -740,7 +746,7 @@ def test_a_vacuum_failure_after_the_commit_is_a_done_delete_not_a_failed_one(tmp
     OLD 5e9 total back over the (already deleted) odometer."""
     w = _migrated_worker(tmp_path)
     w.conn.execute("INSERT OR REPLACE INTO usage_counter (id, cumulative_up, cumulative_down, anchor_up, "
-                   "anchor_down, period_key, updated_ts) VALUES (1, 5e9, 5e9, 0, 0, '2026-10-01', 0)")
+                   "anchor_down, period_key, updated_ts) VALUES (1, 5e9, 5e9, 0, 0, ?, 0)", (_current_period_key(),))
     got = []
     w.history_deleted.connect(got.append)
     with patch.object(writer_v8.WriterV8, "incremental_vacuum",
