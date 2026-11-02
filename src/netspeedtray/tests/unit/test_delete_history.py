@@ -283,7 +283,8 @@ def test_widget_state_delete_clears_series_and_pending_batches(sync_state):
 def test_widget_state_delete_keeps_odometer_unless_opted(sync_state):
     s = sync_state
     s._usage = {"cumulative_up": 500.0, "cumulative_down": 900.0,
-                "anchor_up": 100.0, "anchor_down": 100.0, "period_key": "2026-10-01"}
+                "anchor_up": 100.0, "anchor_down": 100.0,
+                "period_key": WidgetState._compute_period_key(1)}
     s._usage_loaded = True
     s.delete_all_history(include_usage=False)
     assert s._usage["cumulative_up"] == 500.0
@@ -294,7 +295,8 @@ def test_widget_state_delete_keeps_odometer_unless_opted(sync_state):
 def test_widget_state_delete_with_usage_resets_odometer(sync_state):
     s = sync_state
     s._usage = {"cumulative_up": 500.0, "cumulative_down": 900.0,
-                "anchor_up": 100.0, "anchor_down": 100.0, "period_key": "2026-10-01"}
+                "anchor_up": 100.0, "anchor_down": 100.0,
+                "period_key": WidgetState._compute_period_key(1)}
     s._usage_loaded = True
     s.delete_all_history(include_usage=True)
     # Nothing changes - and nothing about the odometer is queued - until the delete has answered: a
