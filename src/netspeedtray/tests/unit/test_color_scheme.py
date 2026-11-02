@@ -339,6 +339,70 @@ def test_a_fixed_text_colour_is_kept_on_both_taskbars():
     assert (out["default_color_dark"], out["default_color_light"]) == ("#151618", "#151618")
 
 
+@pytest.mark.parametrize("stored", ["#FFFFFF", "#ffffff"])
+def test_a_fixed_factory_white_takes_the_light_default(stored, shell):
+    """#332: 2.1.7 set color_is_automatic false for good once any colour was picked, so a 'fixed'
+    factory white is not a light-taskbar choice: dark stays white, light gets the near-black, and that
+    is what a light taskbar paints."""
+    out = _migrate({"config_version": "1.1", "default_color": stored, "color_is_automatic": False})
+    assert (out["default_color_dark"], out["default_color_light"]) == ("#FFFFFF", "#1B1B1B")
+    assert out["default_color"] == stored and out["color_is_automatic"] is False   # legacy keys inert
+    shell("light")
+    assert RenderConfig.from_dict(out).default_color == "#1B1B1B"
+    shell("dark")
+    assert RenderConfig.from_dict(out).default_color == "#FFFFFF"
+
+
+def _file_1_4(**over):
+    """An rc.2 / rc.3 (schema 1.4) file: the pairs, plus the inert legacy keys a 2.1.x upgrade left."""
+    cfg = dict(D.DEFAULT_CONFIG, config_version="1.4")
+    cfg.update(over)
+    return cfg
+
+
+def test_the_1_5_step_repairs_a_white_pair_seeded_from_the_stuck_flag(tmp_path, shell):
+    """#332 on a file already through the old seeding: both halves white AND the legacy flag false."""
+    path = tmp_path / "NetSpeedTray_Config.json"
+    original = _file_1_4(default_color="#FFFFFF", color_is_automatic=False,
+                         default_color_dark="#FFFFFF", default_color_light="#ffffff",
+                         arrow_down_color_dark="#FFFFFF", arrow_down_color_light="#FFFFFF")
+    path.write_text(json.dumps(original), encoding="utf-8")
+    loaded = ConfigManager(config_path=path).load()
+    assert (loaded["default_color_dark"], loaded["default_color_light"]) == ("#FFFFFF", "#1B1B1B")
+    # Arrow colours and the legacy keys are never touched.
+    assert (loaded["arrow_down_color_dark"], loaded["arrow_down_color_light"]) == ("#FFFFFF", "#FFFFFF")
+    assert loaded["default_color"] == "#FFFFFF" and loaded["color_is_automatic"] is False
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["config_version"] == "1.5" and on_disk["default_color_light"] == "#1B1B1B"
+    assert json.loads((tmp_path / "NetSpeedTray_Config.json.bak.v1.4").read_text(encoding="utf-8")) == original
+    shell("light")
+    assert RenderConfig.from_dict(loaded).default_color == "#1B1B1B"
+    # Once on 1.5 the user may set white/white again, and it stays.
+    on_disk["default_color_light"] = "#FFFFFF"
+    path.write_text(json.dumps(on_disk), encoding="utf-8")
+    assert ConfigManager(config_path=path).load()["default_color_light"] == "#FFFFFF"
+
+
+@pytest.mark.parametrize("legacy", [{}, {"color_is_automatic": True}, {"color_is_automatic": "false"}])
+def test_the_1_5_step_leaves_a_chosen_white_pair_alone(legacy):
+    """Both halves white WITHOUT 2.1.7's flag still false in the file: the user's pick on 2.2."""
+    cfg = _file_1_4(default_color_dark="#FFFFFF", default_color_light="#FFFFFF", **legacy)
+    for key in ("default_color", "color_is_automatic"):
+        if key not in legacy:
+            cfg.pop(key, None)
+    out = _migrate(cfg)
+    assert (out["default_color_dark"], out["default_color_light"]) == ("#FFFFFF", "#FFFFFF")
+    assert out["config_version"] == "1.5"
+
+
+def test_the_1_5_step_leaves_other_fixed_pairs_alone():
+    """Only white/white is the old seeding's signature: a fixed #151618 pair (or a mixed one) stays."""
+    for dark, light in (("#151618", "#151618"), ("#FFFFFF", "#151618"), ("#151618", "#FFFFFF")):
+        out = _migrate(_file_1_4(default_color=dark, color_is_automatic=False,
+                                 default_color_dark=dark, default_color_light=light))
+        assert (out["default_color_dark"], out["default_color_light"]) == (dark, light)
+
+
 def test_custom_band_and_arrow_colours_are_copied_to_both_taskbars():
     out = _migrate(_legacy(high_speed_color="#FF3366", low_speed_color="#33CCFF",
                            arrow_up_color="#FFAA00", arrow_down_color="#00AAFF"))
@@ -370,7 +434,7 @@ def test_legacy_keys_stay_in_the_file_untouched_for_a_rollback():
     out = _migrate(before)
     for key in D.LEGACY_COLOR_KEYS:
         assert out[key] == before[key], key
-    assert out["config_version"] == D.CONFIG_SCHEMA_VERSION == "1.4"
+    assert out["config_version"] == D.CONFIG_SCHEMA_VERSION == "1.5"
 
 
 def test_the_migration_is_idempotent_and_keeps_newer_pairs():
@@ -392,7 +456,7 @@ def test_load_backs_up_the_1_2_file_once_and_persists_the_migration(tmp_path):
     bak = tmp_path / "NetSpeedTray_Config.json.bak.v1.2"
     assert bak.exists() and json.loads(bak.read_text(encoding="utf-8")) == original
     on_disk = json.loads(path.read_text(encoding="utf-8"))
-    assert on_disk["config_version"] == "1.4" and on_disk["default_color_light"] == "#151618"
+    assert on_disk["config_version"] == "1.5" and on_disk["default_color_light"] == "#151618"
     assert on_disk["default_color"] == "#151618" and on_disk["color_is_automatic"] is False
     assert loaded["default_color_dark"] == "#151618"
     bak.write_text("pristine", encoding="utf-8")

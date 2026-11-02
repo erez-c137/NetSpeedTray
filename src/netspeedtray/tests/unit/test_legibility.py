@@ -399,7 +399,7 @@ def test_a_2_1_7_user_on_defaults_gets_every_new_default(tmp_path):
     assert out["default_color_light"] == "#1B1B1B"
     assert out["font_family"] == "Segoe UI Variable"
     assert out["use_separate_arrow_font"] is False
-    assert out["config_version"] == "1.4"
+    assert out["config_version"] == "1.5"
     assert path.with_name(path.name + ".bak.v1.2").exists()
     assert json.loads(path.read_text(encoding="utf-8"))["high_speed_color_dark"] == "#8CF2C3"
 
@@ -425,7 +425,7 @@ def test_a_1_3_file_on_the_old_green_moves_once(tmp_path, old):
 
 def test_a_1_4_file_keeps_a_deliberate_green(tmp_path):
     """Once on 1.4, #00FF00 / Segoe UI are the user's picks: never moved again."""
-    cfg = dict(D.DEFAULT_CONFIG, high_speed_color_dark="#00FF00", font_family="Segoe UI",
+    cfg = dict(D.DEFAULT_CONFIG, config_version="1.4", high_speed_color_dark="#00FF00", font_family="Segoe UI",
                use_separate_arrow_font=True, arrow_font_family="Segoe UI")
     out, _ = _load(tmp_path, cfg)
     assert out["high_speed_color_dark"] == "#00FF00" and out["font_family"] == "Segoe UI"
@@ -433,7 +433,7 @@ def test_a_1_4_file_keeps_a_deliberate_green(tmp_path):
 
 
 def test_the_1_4_defaults_are_the_decided_ones():
-    assert D.CONFIG_SCHEMA_VERSION == "1.4"
+    assert D.CONFIG_SCHEMA_VERSION == "1.5"   # 1.5 (#332) moved no default
     assert D.DEFAULT_FONT_FAMILY == D.DEFAULT_ARROW_FONT_FAMILY == "Segoe UI Variable"
     assert D.DEFAULT_USE_SEPARATE_ARROW_FONT is False
     assert D.THEMED_COLOR_DEFAULTS["graph_upload_color"] == ("#6F86A6", "#6A7FA3")

@@ -48,7 +48,11 @@ class ConfigConstants:
     # of exactly #00FF00, the font "Segoe UI" (-> "Segoe UI Variable"), the separate 10 pt DemiBold Segoe UI
     # arrow font - to the new
     # defaults; anything else is the user's choice and stays. The bump keeps a `.bak.v1.3` (or `.bak.v1.2`).
-    CONFIG_SCHEMA_VERSION: Final[str] = "1.4"
+    # 1.5 (2.2 rc.4, #332): a one-time step (utils/config._migrate_to_1_5) gives a light-taskbar text of
+    # #1B1B1B to a file whose text pair is white/white only because 2.1.7's stuck `color_is_automatic:
+    # false` was seeded onto both halves (the legacy flag, still False in the file, is the signature).
+    # The bump keeps a `.bak.v1.4`.
+    CONFIG_SCHEMA_VERSION: Final[str] = "1.5"
     # A same-version field migration (e.g. dropping a beta's key) rewrites the file without a schema
     # bump. The first `.bak.v<ver>.fields` copy is kept forever (the pristine one); each LATER such
     # migration also snapshots the file as it was just before it, as `.fields.<timestamp>`, and only

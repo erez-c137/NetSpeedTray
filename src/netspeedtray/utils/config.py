@@ -488,6 +488,12 @@ class ConfigManager:
             if self._migrate_to_1_4(migrated):
                 changes_made = True
 
+        # 1.5 (#332): once, for a file written before it - the white/white text pair a 2.2 prerelease
+        # seeded from 2.1.7's stuck "fixed" factory white. On a 1.5 file a white/white pair is a choice.
+        if version_parses and not loaded_is_newer and self._version_less_than(str(loaded_version), "1.5"):
+            if self._migrate_to_1_5(migrated):
+                changes_made = True
+
         # Version-based migrations (applied if loaded_version < target version)
         # Example structure for future versions:
         # if self._version_less_than(loaded_version, "2.0"):
@@ -527,7 +533,8 @@ class ConfigManager:
           has #000000 on disk (the old startup sync wrote it), and copying that would make the dark text
           black. Automatic (or missing - the old default; or not a bool, which old validation also
           reset to True) -> the white / black defaults. Fixed -> that colour on both taskbars, exactly
-          today's look (#332: a fixed #151618 stays #151618 until the user changes one).
+          today's look (#332: a fixed #151618 stays #151618 until the user changes one). Except a fixed
+          factory #FFFFFF, which takes the white / near-black defaults (see _migrate_to_1_5).
         - High / Low / both arrows: a custom colour is copied to both taskbars, so nobody's widget
           changes (#168). The FACTORY value, which nobody chose, becomes the theme defaults instead: the
           same on a dark taskbar, and readable on a light one (the white down arrow was invisible there).
@@ -546,7 +553,13 @@ class ConfigManager:
                 if migrated.get("color_is_automatic", True) is not False:
                     seeded = d.THEMED_COLOR_DEFAULTS[stem]
                 elif self._is_hex(migrated.get("default_color")):
-                    seeded = (migrated["default_color"],) * 2
+                    if migrated["default_color"].upper() == d.DEFAULT_COLOR.upper():
+                        # #332: 2.1.7 turned the flag off for good the moment a colour was picked, so a
+                        # fixed FACTORY white is not a light-taskbar choice - copying it to both halves
+                        # left white text on a light bar forever. It takes the theme defaults instead.
+                        seeded = d.THEMED_COLOR_DEFAULTS[stem]
+                    else:
+                        seeded = (migrated["default_color"],) * 2
                 else:
                     continue
             elif stem in d.LEGACY_COLOR_KEYS:
@@ -599,6 +612,31 @@ class ConfigManager:
             wrote = True
             self.logger.info("Migrated use_separate_arrow_font -> False (the old default arrow font; 1.4)")
         return wrote
+
+    def _migrate_to_1_5(self, migrated: Dict[str, Any]) -> bool:
+        """
+        Schema 1.5 (2.2 rc.4, #332): repair the text pair a 2.2 prerelease seeded from 2.1.7's stuck flag,
+        in place. Returns True when it wrote anything. The caller runs it once, for a file older than 1.5.
+
+        2.1.7 set `color_is_automatic` to False for good the moment any text colour was picked - even the
+        factory white - and the 1.3 seeding copied a fixed colour to both taskbars, so those users got
+        white text on a light taskbar. _migrate_color_scheme now seeds a fixed #FFFFFF as the theme
+        defaults; this covers a file that already went through the old seeding (rc.2 / rc.3, schema 1.4).
+        Only when BOTH halves are exactly white AND the legacy flag is still in the file and False - the
+        old seeding's signature (the legacy keys ride through every save, inert). A user who set both
+        halves to white on 2.2 without ever having the 2.1.x flag is left alone. Nothing else is touched.
+        """
+        d = constants.config.defaults
+        white = d.DEFAULT_COLOR.upper()
+        dark, light = migrated.get("default_color_dark"), migrated.get("default_color_light")
+        if (migrated.get("color_is_automatic") is False
+                and self._is_hex(dark) and dark.upper() == white
+                and self._is_hex(light) and light.upper() == white):
+            migrated["default_color_light"] = d.THEMED_COLOR_DEFAULTS["default_color"][1]
+            self.logger.info("Migrated default_color_light %r -> %r (2.1.7's stuck fixed white; #332, 1.5)",
+                             light, migrated["default_color_light"])
+            return True
+        return False
 
     @staticmethod
     def _is_hex(value: Any) -> bool:

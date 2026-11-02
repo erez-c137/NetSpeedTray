@@ -75,6 +75,29 @@ ALSO
 
 ---
 
+## [2.2.0-rc.4] - Unreleased
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+> **Upgrading:** the settings file moves to schema 1.5 and the 1.4 file is kept beside it as
+> `NetSpeedTray_Config.json.bak.v1.4`. Only the light-taskbar text color can change, and only for
+> the white-on-light case below.
+
+### Fixed
+
+- **White text on a light taskbar is fixed for 2.1.7 upgraders.** Picking any text color in 2.1.7
+  switched automatic color off for good, so a factory white came across as white on both taskbars.
+  It now gets the near-black light-taskbar default; any other color you picked stays. ([#332])
+
+  *Under the hood: the 1.3 seeding (`_migrate_color_scheme`) copied a fixed color to both halves,
+  and `paint_colors` only rescues the factory light value. A fixed `#FFFFFF` now seeds the theme
+  defaults (`#FFFFFF` / `#1B1B1B`); a new one-time 1.5 step repairs files rc.2/rc.3 already seeded,
+  only when both halves are `#FFFFFF` AND the inert legacy `color_is_automatic` is still `false` in
+  the file. A white/white pair without that flag is a 2.2 choice and stays. Arrows are untouched.*
+
+[#332]: https://github.com/erez-c137/NetSpeedTray/issues/332
+
 ## [2.2.0-rc.3] - October 29, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app
