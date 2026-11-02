@@ -154,3 +154,66 @@ def test_bengali_registers_nirmala_as_segoe_substitute(q_app):
             QFont.removeSubstitutions(f)
             for s in before[f]:
                 QFont.insertSubstitution(f, s)
+
+
+# --------------------------------------------------------------------------- the Hardware graph
+
+class _HwCanvas(FigureCanvasAgg):
+    """Agg canvas with the two Qt calls the hardware layouts make (apply_theme's palette)."""
+
+    def palette(self):
+        return MagicMock()
+
+    def setPalette(self, _pal):
+        pass
+
+
+def _hw_init(self):
+    from netspeedtray.constants import styles as style_constants
+    self.figure = Figure(figsize=(9.3, 4.3), dpi=100)
+    self.canvas = _HwCanvas(self.figure)
+    self._is_dark_mode = False
+    self._current_text_color = style_constants.LIGHT_MODE_TEXT_COLOR
+    self._current_grid_color = style_constants.GRID_COLOR_LIGHT
+    self._setup_standard_axes()
+
+
+@pytest.fixture
+def agg_hw(monkeypatch):
+    monkeypatch.setattr(GraphRenderer, "_init_matplotlib", _hw_init)
+
+
+def _hw_series(seed, n=24 * 30):
+    rng = np.random.default_rng(seed)
+    start = END - timedelta(hours=n)
+    return [((start + timedelta(hours=i)).timestamp(), float(v)) for i, v in enumerate(rng.uniform(5, 90, n))]
+
+
+def _render_hw(lang, stat, empty=False):
+    r = GraphRenderer(MagicMock(), I18nStrings(lang))
+    if stat in ("cpu", "gpu"):                       # the Monitor's toggle layout: one series
+        data = [] if empty else _hw_series(1 if stat == "cpu" else 2)
+    else:
+        data = ({"cpu": [], "gpu": [], "ram": []} if empty
+                else {"cpu": _hw_series(1), "gpu": _hw_series(2), "ram": _hw_series(3)})
+    r.render(data, END - timedelta(days=30), END, "TIMELINE_MONTH", stat_type=stat,
+             hw_styles={"history_off": {"cpu": None, "gpu": None}})
+    r.figure.canvas.draw()
+    return _figure_texts(r.figure)
+
+
+HW_CASES = [(stat, empty) for stat in ("hwcombined", "hwseparate", "cpu", "gpu") for empty in (False, True)]
+
+
+@pytest.mark.parametrize("stat,empty", HW_CASES)
+def test_bengali_hardware_graph_draws_exactly_the_english_text(agg_hw, stat, empty):
+    en = _render_hw("en_US", stat, empty)
+    bn = _render_hw("bn_BD", stat, empty)
+    assert any(re.search("[A-Za-z]{3}", t) for t in en), en         # words were drawn at all
+    assert bn == en
+    assert not any(_BENGALI.search(t) for t in bn)
+
+
+@pytest.mark.parametrize("stat,empty", HW_CASES)
+def test_german_hardware_graph_stays_german(agg_hw, stat, empty):
+    assert _render_hw("de_DE", stat, empty) != _render_hw("en_US", stat, empty)
