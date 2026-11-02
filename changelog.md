@@ -126,9 +126,23 @@ updater, WinGet and the Store never offer prereleases.*
   logical px around its Qt origin, not as physical / scale. Nothing probed a mirror's bar (mirrors
   have no #24 yield), so a tray-less top/bottom bar now gets a background UIA layout probe on every
   new dock and at most every 30 s (`request_background_layout_probe`), which never takes the
-  one-taskbar slot the side-bar placement and the yield work from; and the layout cache keeps each
-  bar's last landed result per HWND, so one bar's probe no longer blanks every other bar's Widgets
-  box. The main taskbar's placement is unchanged.*
+  one-taskbar slot the side-bar placement and the yield work from (a slot request that waits for one
+  gets its full timeout from when its own probe starts); and the layout cache keeps each bar's last
+  landed result per HWND (least recently landed evicted first), so one bar's probe no longer blanks
+  every other bar's Widgets box. A cached result answers for 90 s at most and drops the Widgets box
+  as soon as the button is turned off; a re-check reseeded from it never counts as a fresh landing
+  (`taskbar_layout_landed_count` is now per bar). The main taskbar's placement is unchanged.*
+
+- **Side taskbars, the task-list safe zone and the app-button step-aside use the right coordinates
+  on a scaled monitor that isn't the main one.** On a monitor at another scale above, below or left
+  of the main one, they worked from positions off by up to a whole screen. ([#373])
+
+  *Under the hood: the same Qt-origin rule as above. `side_bar_geometry` (bar, tray, apps, Widgets,
+  overflow), the secondary side clock, `vertical_taskbar_strip`'s window-based x, the task-list
+  bounds in placement and drag limits, the side-bar watcher's model and the #24 yield's
+  `group_span` / `tray_spot_clear` divided physical px by the scale - right only on the primary, at
+  the virtual-desktop origin. They now convert around the screen's Qt origin
+  (`physical_to_logical`); on the primary that is still exactly `px / scale`.*
 
 [#332]: https://github.com/erez-c137/NetSpeedTray/issues/332
 [#373]: https://github.com/erez-c137/NetSpeedTray/issues/373

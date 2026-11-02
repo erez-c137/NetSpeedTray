@@ -292,7 +292,10 @@ CLOCKS = {A: (1800, 1032, 1920, 1080), B: (3720, 1032, 3840, 1080), C: (5640, 10
 def layout():
     tbu._layout_state.update(FRESH)
     tbu._probed_tray.clear()
+    # The Widgets toggle (TaskbarDa) is pinned on: cached reads drop the box while it is off, and the
+    # suite must not depend on the machine's setting. Tests of the toggle patch it themselves.
     with patch.object(tbu, "_start_layout_worker"), \
+            patch.object(tbu, "_widgets_button_enabled", return_value=True), \
             patch.object(tbu, "_query_taskbar_layout_blocking",
                          side_effect=lambda h: (APPS[h], WIDGETS[h], None, None, CLOCKS[h])):
         yield
@@ -395,3 +398,227 @@ def test_the_primary_bar_with_a_tray_is_never_background_probed(monkeypatch):
     pm, calls = _manager(tb, monkeypatch)
     pm.get_calculated_position()
     assert calls == []
+
+
+# --- review round (PR #473) ------------------------------------------------------------------------
+
+class _Clock:
+    """A settable time.monotonic for the layout cache's ages and timeouts."""
+    def __init__(self, now=1000.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+@pytest.fixture
+def clock():
+    c = _Clock()
+    with patch.object(tbu.time, "monotonic", c):
+        yield c
+
+
+@pytest.fixture
+def widgets_on():
+    with patch.object(tbu, "_widgets_button_enabled", return_value=True):
+        yield
+
+
+def test_a_reseeded_recheck_that_times_out_is_not_a_landing(layout, clock, widgets_on):
+    """Review 1: a keep_last re-check of a bar out of the slot reseeds the slot from the cache. When
+    that probe then times out, the caller (the #24 yield, the side-bar watcher) compares the landed
+    count with the one it read BEFORE the request - a cached layout must never count as fresh."""
+    _probe(A)
+    _probe(B)
+    before = tbu.taskbar_layout_landed_count(A)
+    tbu.request_taskbar_layout_probe(A, keep_last=True)       # reseeded, never probed
+    clock.now += tbu.LAYOUT_PROBE_TIMEOUT_S + 1
+    assert tbu.taskbar_layout_snapshot(A)[2] is False          # the re-check timed out
+    assert tbu.taskbar_layout_landed_count(A) == before        # ... and did not "land"
+    _probe(A, keep_last=True)                                  # a real landing does move it
+    assert tbu.taskbar_layout_landed_count(A) > before
+
+
+def test_a_landing_for_another_bar_does_not_move_this_bars_count(layout, clock, widgets_on):
+    _probe(A)
+    before = tbu.taskbar_layout_landed_count(A)
+    _probe(B)
+    REAL_BACKGROUND_PROBE(C)
+    tbu._layout_worker()
+    assert tbu.taskbar_layout_landed_count(A) == before
+
+
+def test_a_cached_layout_ages_out(layout, clock, widgets_on):
+    """Review 2: the main bar answering from its own cached probe while another bar holds the slot
+    must not keep placing the widget from a layout nobody re-probed."""
+    _probe(A)
+    _probe(B)
+    clock.now += tbu.LAYOUT_CACHE_MAX_AGE_S - 1
+    assert tbu.taskbar_layout_snapshot(A)[:2] == (APPS[A], WIDGETS[A])
+    clock.now += 2
+    assert tbu.taskbar_layout_snapshot(A) == (None, None, False)     # what it read before #373
+    assert tbu.taskbar_layout_for(A)[2] is None
+    tbu.request_taskbar_layout_probe(A, keep_last=True)              # too old to reseed from
+    assert tbu.taskbar_layout_snapshot(A) == (None, None, True)
+
+
+def test_a_widgets_button_turned_off_drops_its_cached_box_at_once(layout, clock):
+    with patch.object(tbu, "_widgets_button_enabled", return_value=True):
+        _probe(A)
+        _probe(B)
+    with patch.object(tbu, "_widgets_button_enabled", return_value=False):
+        assert tbu.taskbar_layout_snapshot(A) == (APPS[A], None, False)
+        assert tbu.taskbar_layout_for(A)[2] is None
+
+
+def test_a_slot_request_waiting_on_a_background_probe_gets_its_full_timeout(layout, clock, widgets_on):
+    """Review 3: a slot request made while a background probe runs waits for it; its timeout counts
+    from when its own probe starts."""
+    seen = {}
+
+    def query(h):
+        if h == C:                                   # the background probe takes 3 s ...
+            tbu.request_taskbar_layout_probe(A)      # ... and a slot request arrives meanwhile
+            clock.now += 3.0
+        else:
+            seen["started_at_probe"] = tbu._layout_state["started"]
+            clock.now += 3.0                         # 6 s after the request, 3 s into its own probe
+            seen["pending"] = tbu.taskbar_layout_snapshot(A)[2]
+        return APPS[h], WIDGETS[h], None, None, CLOCKS[h]
+
+    with patch.object(tbu, "_query_taskbar_layout_blocking", side_effect=query):
+        REAL_BACKGROUND_PROBE(C)
+        tbu._layout_worker()
+    assert seen["started_at_probe"] == 1003.0
+    assert seen["pending"] is True                   # not timed out: the probe lands
+    assert tbu.taskbar_layout_snapshot(A) == (APPS[A], WIDGETS[A], False)
+
+
+def test_a_hung_background_probe_does_not_extend_the_slots_timeout(layout, clock, widgets_on):
+    def query(h):
+        if h == C:
+            tbu.request_taskbar_layout_probe(A)
+            clock.now += tbu.LAYOUT_PROBE_TIMEOUT_S + 1      # a hung Explorer
+        return APPS[h], WIDGETS[h], None, None, CLOCKS[h]
+
+    with patch.object(tbu, "_query_taskbar_layout_blocking", side_effect=query):
+        REAL_BACKGROUND_PROBE(C)
+        tbu._layout_worker()
+    assert tbu._layout_state["started"] == 1000.0
+
+
+def test_the_per_hwnd_cache_evicts_the_least_recently_landed(layout, clock):
+    """Review 4: a bar that lands again moves to the back; the oldest landing goes first."""
+    with tbu._layout_lock:
+        for h in range(1, tbu._LAYOUT_BY_HWND_MAX + 1):
+            tbu._store_landed_layout(h, {"apps": APPS[A]})
+        tbu._store_landed_layout(1, {"apps": APPS[A]})          # bar 1 lands again
+        tbu._store_landed_layout(999, {"apps": APPS[A]})        # one too many
+    assert 1 in tbu._layout_by_hwnd and 2 not in tbu._layout_by_hwnd
+    assert len(tbu._layout_by_hwnd) == tbu._LAYOUT_BY_HWND_MAX
+
+
+def test_a_primary_bar_without_a_tray_window_is_never_background_probed(monkeypatch, probed_tray):
+    """Review 5: ExplorerPatcher / StartAllBack builds can give the PRIMARY bar no TrayNotifyWnd."""
+    tb = _secondary_bar()
+    tb.is_primary = True
+    pm, calls = _manager(tb, monkeypatch)
+    pm.get_calculated_position()
+    assert calls == []
+
+
+def test_the_task_list_safe_zone_converts_around_the_screen_origin(probed_tray):
+    """Review 6: a 150 % monitor LEFT of the primary, native x -3840 (Qt (-3840, 0, 2560, 1440)), with a
+    classic task list ending at physical -840 = logical -1840. tasklist / scale put the safe zone at -560
+    and snapped the widget onto it."""
+    tb = _secondary_bar(x0=-3840, width=2560, dpi=1.5)
+    tb.tasklist_rect = (-3840, 1548, -840, 1620)
+    x = _x(tb)
+    assert x == -3840 + 2560 - RESERVE - W                       # the reserve spot, no snap
+    assert x > -1840
+
+
+# Side bars: a RIGHT bar on a 150 % monitor ABOVE the primary - Qt (0, -2160, 2560, 1440), the bar
+# physical (3768, -2160, 3840, 0).
+def _offset_side_bar(apps=None):
+    tb = MagicMock()
+    tb.hwnd, tb.dpi_scale = 7070, 1.5
+    tb.rect = (3768, -2160, 3840, 0)
+    tb.tasklist_rect = tb.widgets_extent = tb.widgets_rect = None
+    tb.apps_extent = apps
+    tb.get_tray_rect.return_value = None
+    tb.get_edge_position.return_value = E.RIGHT
+    s = MagicMock()
+    s.geometry.return_value = QRect(0, -2160, 2560, 1440)
+    s.availableGeometry.return_value = QRect(0, -2160, 2512, 1440)
+    tb.get_screen.return_value = s
+    return tb
+
+
+def test_side_bar_geometry_converts_around_the_screen_origin(probed_tray):
+    """Review 7: bar_top read -1440 (= -2160 / 1.5) instead of the screen's top, -2160."""
+    from netspeedtray.core.position_manager import side_bar_geometry
+    geo = side_bar_geometry(_offset_side_bar(apps=(3768, -1860, 3840, -1500)), 1.5)
+    assert geo.bar_top == -2160
+    assert geo.apps_top == -2160 + 300 / 1.5 and geo.apps_bottom == -2160 + 660 / 1.5
+    assert geo.tray_top == -720 - constants.layout.SECONDARY_SIDE_CLOCK_RESERVE_PX
+
+
+def test_a_probed_side_clock_converts_around_the_screen_origin(probed_tray):
+    from netspeedtray.core.position_manager import side_bar_geometry
+    tb = _offset_side_bar()
+    probed_tray[tb.hwnd] = (3768, -66, 3840, -12)
+    assert side_bar_geometry(tb, 1.5).tray_top == -2160 + (2160 - 66) / 1.5
+
+
+def test_vertical_strip_x_from_the_window_converts_around_the_screen_origin():
+    """Review 7: another appbar shares the edge, so the strip's x comes from the bar window - on a
+    150 % monitor at native x -3840 that was rect / scale (-2542) instead of -3822."""
+    tb = MagicMock()
+    tb.rect = (-3813, 0, -3741, 2160)                 # 72 px wide, 27 px in from the screen's left
+    s = MagicMock()
+    s.geometry.return_value = QRect(-3840, 0, 2560, 1440)
+    s.availableGeometry.return_value = QRect(-3840 + 60, 0, 2500, 1440)     # 60 px reserved
+    tb.get_screen.return_value = s
+    x_origin, thickness = tbu.vertical_taskbar_strip(tb, E.LEFT, 1.5)
+    assert x_origin == -3840 + 27 / 1.5 and thickness == 48
+
+
+def test_the_side_bar_watcher_converts_around_the_screen_origin():
+    from netspeedtray.core import side_bar_watcher as sbw
+    w = sbw.SideBarWatcher.__new__(sbw.SideBarWatcher)
+    w._start_hwnd = 1
+    ctx = sbw.SideWatchContext(hwnd=7070, dpi=1.5, widget=(0.0, 1.0), user_placed=False, y_origin=-2160.0)
+    with patch.object(sbw, "_window_rect", return_value=(3768, -2094, 3840, -2028)):
+        assert w._start_top(ctx) == -2160 + 66 / 1.5
+
+
+def test_the_yield_group_span_converts_around_the_screen_origin():
+    """Review 8: the #24 yield's group span divided by the scale."""
+    from netspeedtray.core.app_overlap_yield import group_span
+    assert group_span((5370, 0, 5580, 10), 1.5, 1920.0) == (4220.0, 4360.0)
+    assert group_span((300, 0, 600, 10), 1.5) == (200.0, 400.0)          # the primary: rect / dpi
+
+
+def test_the_yields_tray_spot_check_converts_around_the_screen_origin(probed_tray):
+    """Review 8: tray_spot_clear compared the weather text at physical / scale. On a 150 % screen at
+    x 1920 the text at logical 4250..4330 read as 3667..3720 - "clear" of the tray spot at 4320."""
+    x0 = 1920
+    tb = _secondary_bar(x0=x0, width=2560, dpi=1.5, widgets=(x0 + 2300, x0 + 2440))
+    tb.is_primary = False
+    content = (int(x0 + 2330 * 1.5), 1548, int(x0 + 2410 * 1.5), 1620)   # logical 4250..4330
+    widget = MagicMock()
+    widget.width.return_value, widget.height.return_value = W, H
+    widget.pos.return_value = types.SimpleNamespace(x=lambda: 4127, y=lambda: 1032)
+    widget._dragging = widget._is_context_menu_visible = False
+    pm = PositionManager(WindowState(config=dict(CFG, hide_when_apps_cover=True), widget=widget,
+                                     taskbar_info=tb), side_watcher_enabled=False)
+    pm._app_overlap_info = tb
+    with patch.object(tbu, "taskbar_layout_widgets_content", return_value=content), \
+            patch.object(tbu, "current_dpi_for_hwnd", return_value=None), \
+            patch.object(tbu, "widgets_button_enabled", return_value=True), \
+            patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=0):
+        ctx = pm._app_overlap_context()
+    assert ctx.stepped == (4127.0, 4127.0 + W) and ctx.tray_spot == (4320.0, 4320.0 + W)
+    assert ctx.tray_spot_clear is False
+    assert ctx.x_origin == x0

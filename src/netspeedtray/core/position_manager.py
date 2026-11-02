@@ -244,7 +244,8 @@ _FROM_INFO = object()
 
 
 def _secondary_side_clock_top(taskbar_info: TaskbarInfo, rect: Optional[Tuple[int, int, int, int]],
-                              scale: float, bar_top: float, bar_bottom: float) -> float:
+                              scale: float, bar_top: float, bar_bottom: float,
+                              y_origin: float = 0.0) -> float:
     """Where the tray end starts (logical y) on a side bar with no tray rect - a Win11 SECONDARY
     taskbar (Shell_SecondaryTrayWnd has no TrayNotifyWnd), or a main bar whose tray is not ready.
 
@@ -252,7 +253,8 @@ def _secondary_side_clock_top(taskbar_info: TaskbarInfo, rect: Optional[Tuple[in
     it, because the tray end used to be the bar's bottom edge). Prefer the clock UIA last saw on
     THIS bar - only when it lies inside the bar's current rect, in its lower half, so a rect probed
     on an older layout of the same HWND can't be used - else reserve
-    SECONDARY_SIDE_CLOCK_RESERVE_PX, the horizontal path's clock-width reserve turned on end."""
+    SECONDARY_SIDE_CLOCK_RESERVE_PX, the horizontal path's clock-width reserve turned on end.
+    ``y_origin``: the screen's Qt y origin the physical rect converts around (#373)."""
     try:
         probed = taskbar_utils.valid_rect(
             taskbar_utils.probed_tray_rect(getattr(taskbar_info, "hwnd", None)))
@@ -261,7 +263,7 @@ def _secondary_side_clock_top(taskbar_info: TaskbarInfo, rect: Optional[Tuple[in
     if probed is not None and rect is not None:
         inside = (probed[0] >= rect[0] and probed[2] <= rect[2]
                   and probed[1] >= rect[1] and probed[3] <= rect[3])
-        top = probed[1] / scale
+        top = taskbar_utils.physical_to_logical(probed[1], y_origin, scale)
         if inside and top > (bar_top + bar_bottom) / 2.0:
             return top
     return max(bar_top, bar_bottom - constants.layout.SECONDARY_SIDE_CLOCK_RESERVE_PX)
@@ -283,19 +285,27 @@ def side_bar_geometry(taskbar_info: TaskbarInfo, dpi_scale: float, *, apps: Any 
         return None
     scale = dpi_scale if dpi_scale and dpi_scale > 0 else 1.0
     full = screen.geometry()
-    bar_top = rect[1] / scale if rect else float(full.top())
-    bar_bottom = rect[3] / scale if rect else float(full.bottom() + 1)
+    # Physical y -> logical y around the screen's Qt origin (taskbar_utils.physical_to_logical, #373):
+    # exactly y / scale on the primary (origin 0); a scaled monitor above or below it keeps its native
+    # top in Qt, where y / scale put a bar at (3768, -2160, 3840, 0) at -1440 instead of -2160.
+    y0 = float(full.top())
+
+    def ly(v: float) -> float:
+        return taskbar_utils.physical_to_logical(v, y0, scale)
+
+    bar_top = ly(rect[1]) if rect else float(full.top())
+    bar_bottom = ly(rect[3]) if rect else float(full.bottom() + 1)
     tray = taskbar_utils.valid_rect(taskbar_info.get_tray_rect())
     if tray:
-        tray_top = tray[1] / scale
+        tray_top = ly(tray[1])
     else:
-        tray_top = _secondary_side_clock_top(taskbar_info, rect, scale, bar_top, bar_bottom)
+        tray_top = _secondary_side_clock_top(taskbar_info, rect, scale, bar_top, bar_bottom, y0)
 
     if apps is _FROM_INFO:
         apps = getattr(taskbar_info, "apps_extent", None)
     apps = taskbar_utils.valid_rect(apps)
-    apps_top = apps[1] / scale if apps else None
-    apps_bottom = apps[3] / scale if apps else None
+    apps_top = ly(apps[1]) if apps else None
+    apps_bottom = ly(apps[3]) if apps else None
 
     # Never park the widget on the Widgets button. With Center alignment it sits at the TOP of a side
     # bar (above Start): the widget may start below it. With "Top" alignment Win11 moves it down to
@@ -309,7 +319,7 @@ def side_bar_geometry(taskbar_info: TaskbarInfo, dpi_scale: float, *, apps: Any 
     widgets = (taskbar_utils.valid_rect(widgets)
                or taskbar_utils.valid_rect(getattr(taskbar_info, "widgets_rect", None)))
     if widgets is not None:
-        w_top, w_bottom = widgets[1] / scale, widgets[3] / scale
+        w_top, w_bottom = ly(widgets[1]), ly(widgets[3])
         if apps_top is not None and apps_bottom is not None:
             above = w_bottom <= apps_top
             below = w_top >= apps_bottom
@@ -324,8 +334,8 @@ def side_bar_geometry(taskbar_info: TaskbarInfo, dpi_scale: float, *, apps: Any 
     overflow = taskbar_utils.valid_rect(overflow)
     return SideBarGeometry(bar_top=bar_top, tray_top=tray_top, limit_top=limit_top,
                            apps_top=apps_top, apps_bottom=apps_bottom, end_top=end_top,
-                           overflow_top=overflow[1] / scale if overflow else None,
-                           overflow_bottom=overflow[3] / scale if overflow else None)
+                           overflow_top=ly(overflow[1]) if overflow else None,
+                           overflow_bottom=ly(overflow[3]) if overflow else None)
 
 
 def side_bar_y_limits(geo: SideBarGeometry, widget_height: int) -> Tuple[int, int]:
@@ -638,7 +648,9 @@ class PositionCalculator:
 
         # left_boundary is the right edge of the task list/app-icons region when available.
         tasklist_rect = taskbar_info.tasklist_rect
-        left_boundary = round(tasklist_rect[2] / dpi_scale) if tasklist_rect else full_geom.left()
+        # Around the screen's Qt origin (#373): x / scale only on the primary.
+        left_boundary = (round(taskbar_utils.physical_to_logical(tasklist_rect[2], full_geom.left(), dpi_scale))
+                         if tasklist_rect else full_geom.left())
 
         x = round(right_boundary - widget_width - offset)
 
@@ -799,7 +811,8 @@ class PositionCalculator:
 
         # Safety check: avoid overlapping top-side icons on vertical taskbars.
         tasklist_rect = taskbar_info.tasklist_rect
-        top_boundary = round(tasklist_rect[3] / dpi_scale) if tasklist_rect else full_geom.top()
+        top_boundary = (round(taskbar_utils.physical_to_logical(tasklist_rect[3], full_geom.top(), dpi_scale))
+                        if tasklist_rect else full_geom.top())
         if y < top_boundary:
             logger.warning("Calculated position overlaps taskbar icons; snapping to safe zone.")
             y = round(top_boundary + constants.layout.DEFAULT_PADDING)
@@ -865,7 +878,7 @@ class PositionCalculator:
                 # Keep the same tray-side gap as the auto-placement, so a user can't drag the widget
                 # flush against the "^" chevron (#161 pt1).
                 right_boundary = (round(taskbar_info.get_tray_rect()[0] / dpi_scale) - widget_width - constants.layout.TRAY_EDGE_MIN_GAP_PX) if taskbar_info.get_tray_rect() else (screen.geometry().right() - widget_width)
-                left_boundary = (round(taskbar_info.tasklist_rect[2] / dpi_scale) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().left()
+                left_boundary = (round(taskbar_utils.physical_to_logical(taskbar_info.tasklist_rect[2], screen.geometry().left(), dpi_scale)) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().left()
                 
                 constrained_x = max(left_boundary, min(desired_pos.x(), right_boundary))
                 return QPoint(constrained_x, fixed_y)
@@ -884,7 +897,7 @@ class PositionCalculator:
 
                 # Keep within the safe zone, but allow bottom-alignment as calculated choice
                 bottom_boundary = (round(taskbar_info.get_tray_rect()[1] / dpi_scale) - widget_height - constants.layout.DEFAULT_PADDING) if taskbar_info.get_tray_rect() else (screen.geometry().bottom() - widget_height)
-                top_boundary = (round(taskbar_info.tasklist_rect[3] / dpi_scale) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().top()
+                top_boundary = (round(taskbar_utils.physical_to_logical(taskbar_info.tasklist_rect[3], screen.geometry().top(), dpi_scale)) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().top()
                 
                 constrained_y = max(top_boundary, min(desired_pos.y(), bottom_boundary))
                 return QPoint(fixed_x, constrained_y)
@@ -1374,9 +1387,13 @@ class PositionManager(QObject):
         for a mirror (built without the #24 yield) or for the main widget with the yield off. A
         background probe on a new dock, then at most every TRAYLESS_BAR_LAYOUT_REFRESH_S; it never
         takes the one-taskbar slot the side-bar placement and the yield work from. The primary bar
-        (it has a tray rect) and classic task-list bars are left alone."""
+        (with or without a tray rect) and classic task-list bars are left alone."""
         try:
             if taskbar_info is None or not getattr(taskbar_info, "hwnd", 0):
+                return
+            # The primary bar never: even one without a TrayNotifyWnd (ExplorerPatcher / StartAllBack
+            # builds) - its probes belong to the slot owners (the #24 yield, the side placement).
+            if getattr(taskbar_info, "is_primary", False) is True:
                 return
             if taskbar_info.get_tray_rect() is not None:
                 return
@@ -1560,8 +1577,10 @@ class PositionManager(QObject):
             return None
         dpi = info.dpi_scale if info.dpi_scale > 0 else 1.0
         top = float(widget.pos().y())
+        y_origin = taskbar_utils.screen_origin(info)[1]   # Qt's screen origin (#373)
         return SideWatchContext(hwnd=int(info.hwnd), dpi=dpi, widget=(top, top + widget.height()),
-                                user_placed=user_placed_side_offset(self._state.config))
+                                user_placed=user_placed_side_offset(self._state.config),
+                                y_origin=y_origin)
 
     def note_foreground_change(self) -> None:
         """The widget saw a foreground change: a new app's button may be growing the app group toward
@@ -1639,6 +1658,9 @@ class PositionManager(QObject):
             return BUSY
         width = float(widget.width())
         left = float(widget.pos().x())
+        # The screen's Qt x origin: the UIA rects (physical px) convert to logical px around it
+        # (taskbar_utils.physical_to_logical, #373) - 0 on the primary, where that is rect / dpi.
+        x_origin = taskbar_utils.screen_origin(info)[0]
         # The two default spots when a Widgets button sits beside the tray (rc.3): left of it
         # (``stepped``) and the rc.2 spot by the tray (``tray_spot``). Both None when they coincide (no
         # such button, a centred bar, a user's drag): the yield then has no fallback to weigh.
@@ -1658,9 +1680,11 @@ class PositionManager(QObject):
             content = taskbar_utils.valid_rect(
                 taskbar_utils.taskbar_layout_widgets_content(int(info.hwnd)))
             if content is not None:
-                tray_spot_clear = (tray_x >= content[2] / dpi + constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
+                c_left = taskbar_utils.physical_to_logical(content[0], x_origin, dpi)
+                c_right = taskbar_utils.physical_to_logical(content[2], x_origin, dpi)
+                tray_spot_clear = (tray_x >= c_right + constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
                                    or tray_x + width + constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
-                                   <= content[0] / dpi)
+                                   <= c_left)
         offset = self._state.config.get("tray_offset_x", constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
         # A drag's offset - the same rule the placement uses, so a pre-1.3.0 default (10 / 1 / 3) is no
         # drop key either.
@@ -1677,7 +1701,7 @@ class PositionManager(QObject):
         except Exception:
             tray_left = None
         layout_key = (align, tray_left, taskbar_utils.widgets_button_enabled())
-        return OverlapContext(hwnd=int(info.hwnd), dpi=dpi, widget=(left, left + width),
+        return OverlapContext(hwnd=int(info.hwnd), dpi=dpi, widget=(left, left + width), x_origin=x_origin,
                               centered=None if align is None else align == 1,
                               drop_key=drop_key, saved_drop=saved if isinstance(saved, int) else None,
                               layout_key=layout_key, stepped=stepped, tray_spot=tray_spot,

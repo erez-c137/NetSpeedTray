@@ -113,15 +113,20 @@ class OverlapContext:
     # "Mostly cloudy" the rc.2 spot drew the arrow and "0.0" over the text). False also when the
     # content extent is unknown - hiding is better than colliding: the yield then steps aside instead.
     tray_spot_clear: bool = False
+    # The screen's Qt x origin (QScreen.geometry().left()): physical UIA rects convert to logical px
+    # around it (taskbar_utils.physical_to_logical, #373). 0 on the primary.
+    x_origin: float = 0.0
 
 
-def group_span(group_rect, dpi: float) -> Optional[Span]:
-    """The app group's x span in logical px from its physical UIA rect, or None."""
+def group_span(group_rect, dpi: float, x_origin: float = 0.0) -> Optional[Span]:
+    """The app group's x span in logical px from its physical UIA rect, or None. ``x_origin``: the
+    screen's Qt x origin (0 on the primary, where this is rect / dpi)."""
     rect = taskbar_utils.valid_rect(group_rect)
     if rect is None:
         return None
     scale = dpi if dpi and dpi > 0 else 1.0
-    return rect[0] / scale, rect[2] / scale
+    return (taskbar_utils.physical_to_logical(rect[0], x_origin, scale),
+            taskbar_utils.physical_to_logical(rect[2], x_origin, scale))
 
 
 def group_reaches_widget(group: Optional[Span], widget: Span,
@@ -554,7 +559,7 @@ class AppOverlapYield(QObject):
         if ctx is None:
             self._finish()
             return
-        span = group_span(group_rect, ctx.dpi) if landed else None
+        span = group_span(group_rect, ctx.dpi, ctx.x_origin) if landed else None
         self._last_group_rect = group_rect
         if landed:
             t = constants.timeouts

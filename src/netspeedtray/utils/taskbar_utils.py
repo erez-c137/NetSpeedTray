@@ -201,6 +201,20 @@ def physical_to_logical(value: float, origin: float, scale: float) -> float:
     return origin + (value - origin) / scale
 
 
+def screen_origin(taskbar_info: Any) -> Tuple[float, float]:
+    """``(x, y)``: the Qt origin of ``taskbar_info``'s screen (QScreen.geometry().topLeft()), what its
+    physical rects convert around; (0, 0) - the primary's, where physical / scale is exact - when it
+    can't be read (no screen, a mocked one)."""
+    try:
+        geo = taskbar_info.get_screen().geometry()
+        x, y = geo.left(), geo.top()
+        if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (x, y)):
+            return float(x), float(y)
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0, 0.0
+
+
 def monitor_device_name_for_hwnd(hwnd: Optional[int]) -> Optional[str]:
     """The GDI device name (``\\\\.\\DISPLAY2``) of the monitor ``hwnd`` is on - what Qt reports as
     ``QScreen.name()`` on Windows - or None (no such window, any API failure)."""
@@ -312,29 +326,51 @@ LAYOUT_PROBE_TIMEOUT_S = 5.0
 # was requested last - so with "Show on all taskbars" (#229/#434) every mirror's probe used to evict the
 # others': the main widget's bar (and each mirror's) flipped to "no layout known" whenever another bar
 # was probed, and its Widgets-button box came and went. A bar that is not in the slot now answers from
-# here: its own last result, never another bar's. Bounded like _probed_tray; an Explorer restart brings
-# new HWNDs, so an old bar's entry is never answered for a new bar.
+# here: its own last result, never another bar's. Bounded like _probed_tray (least recently landed goes
+# first); an Explorer restart brings new HWNDs, so an old bar's entry is never answered for a new bar.
 _layout_by_hwnd: dict = {}
 _LAYOUT_BY_HWND_MAX = 16
+# A cached (out-of-slot) result older than this answers as "unknown" - what a bar out of the slot read
+# before #373 - so a layout nobody re-probed (a Widgets button since turned off, a weather text since
+# grown, an alignment flip) can't keep placing the widget. Three background-refresh periods: a bar that
+# is refreshed (a mirror, a tray-less bar under the main widget) never ages out.
+LAYOUT_CACHE_MAX_AGE_S = 3 * constants.timeouts.TRAYLESS_BAR_LAYOUT_REFRESH_S
 # Background probes (request_background_layout_probe): bars to probe into _layout_by_hwnd once the slot
-# has nothing pending, oldest first. They never touch the slot, its gen or its landed count.
+# has nothing pending, oldest first. They never take the slot or its gen.
 _layout_background: list = []
 _LAYOUT_ENTRY_KEYS = ("apps", "widgets", "group", "overflow", "widgets_content", "bar")
+# A process-wide sequence number for landed probes: each entry carries the number of its landing, and
+# taskbar_layout_landed_count answers it PER BAR - a reseeded or timed-out request never moves it, so a
+# cached result can never pass for a fresh landing.
+_landing_seq = 0
 
 
 def _store_landed_layout(taskbar_hwnd: int, entry: dict) -> None:
-    """Remember a landed probe for ``taskbar_hwnd`` (caller holds _layout_lock)."""
+    """Remember a FRESH probe result for ``taskbar_hwnd`` (caller holds _layout_lock)."""
+    global _landing_seq
     h = int(taskbar_hwnd)
-    if len(_layout_by_hwnd) >= _LAYOUT_BY_HWND_MAX and h not in _layout_by_hwnd:
+    _layout_by_hwnd.pop(h, None)                    # re-inserted last: least recently landed is first
+    if len(_layout_by_hwnd) >= _LAYOUT_BY_HWND_MAX:
         _layout_by_hwnd.pop(next(iter(_layout_by_hwnd)))
-    _layout_by_hwnd[h] = {k: entry.get(k) for k in _LAYOUT_ENTRY_KEYS}
+    _landing_seq += 1
+    stored = {k: entry.get(k) for k in _LAYOUT_ENTRY_KEYS}
+    stored.update(ts=time.monotonic(), seq=_landing_seq)
+    _layout_by_hwnd[h] = stored
 
 
 def _cached_layout_entry(taskbar_hwnd: Optional[int]) -> Optional[dict]:
-    """The landed layout of a bar that is NOT in the slot (caller holds _layout_lock), or None."""
+    """The landed layout of a bar that is NOT in the slot (caller holds _layout_lock), or None - also
+    when it is older than LAYOUT_CACHE_MAX_AGE_S. With the Widgets button turned off in Settings
+    (TaskbarDa = 0) its box is dropped from the answer at once, whatever the entry's age."""
     if not taskbar_hwnd:
         return None
-    return _layout_by_hwnd.get(int(taskbar_hwnd))
+    entry = _layout_by_hwnd.get(int(taskbar_hwnd))
+    if entry is None or time.monotonic() - entry.get("ts", 0.0) > LAYOUT_CACHE_MAX_AGE_S:
+        return None
+    if (entry.get("widgets") is not None or entry.get("widgets_content") is not None) \
+            and not _widgets_button_enabled():
+        entry = dict(entry, widgets=None, widgets_content=None)
+    return entry
 
 
 def _query_taskbar_layout_blocking(taskbar_hwnd: int):
@@ -375,6 +411,7 @@ def _layout_worker() -> None:
             else:
                 _layout_state["running"] = False
                 return
+        probe_start = time.monotonic()
         bar_before = _taskbar_window_rect(hwnd)
         result = _query_taskbar_layout_blocking(hwnd)
         bar = _rect_union(bar_before, _taskbar_window_rect(hwnd))   # an auto-hide bar may slide meanwhile
@@ -405,6 +442,13 @@ def _layout_worker() -> None:
                     _store_landed_layout(hwnd, entry)
                 logger.debug("Taskbar layout background probe (HWND %s): apps=%s widgets=%s",
                              hwnd, apps, widgets)
+                # A slot request made while this background probe ran has waited for it: its timeout
+                # counts from now, when its own probe starts - unless the background probe itself
+                # outlasted the timeout (a hung Explorer: the slot request then times out as before).
+                now = time.monotonic()
+                if (_layout_state["pending"] and _layout_state["started"] >= probe_start
+                        and now - probe_start <= LAYOUT_PROBE_TIMEOUT_S):
+                    _layout_state["started"] = now
             elif _layout_state["gen"] == gen and _layout_state["pending"]:
                 _layout_state.update(entry, pending=False, done=True,
                                      landed=_layout_state.get("landed", 0) + 1)
@@ -438,8 +482,11 @@ def request_taskbar_layout_probe(taskbar_hwnd: Optional[int], keep_last: bool = 
             _layout_state.update(pending=True, started=time.monotonic())
         elif keep_last and cached is not None:
             # A re-check of a bar whose result another bar's probe moved out of the slot (#373): its
-            # own last result keeps answering until this one lands, as for a bar still in the slot.
-            _layout_state.update(cached, hwnd=h, pending=True, done=True, started=time.monotonic())
+            # own last result (not older than LAYOUT_CACHE_MAX_AGE_S) keeps answering until this one
+            # lands, as for a bar still in the slot. It is NOT a landing: the per-bar landed count
+            # (taskbar_layout_landed_count) moves only when this request's own probe lands.
+            _layout_state.update({k: cached.get(k) for k in _LAYOUT_ENTRY_KEYS},
+                                 hwnd=h, pending=True, done=True, started=time.monotonic())
         else:
             _layout_by_hwnd.pop(h, None)
             _layout_state.update(hwnd=int(taskbar_hwnd), apps=None, widgets=None, group=None,
@@ -460,8 +507,10 @@ def request_background_layout_probe(taskbar_hwnd: Optional[int]) -> None:
     """Refresh ``taskbar_hwnd``'s layout (Widgets button, clock) WITHOUT taking the one-taskbar slot
     (#373): for a top/bottom bar with no TrayNotifyWnd - a Win11 secondary taskbar, docked to by the
     main widget on a preferred monitor or by a "Show on all taskbars" mirror. The result lands in the
-    per-HWND cache (and _probed_tray) once the slot has nothing pending, so the slot's owner (a side
-    bar's placement, the #24 yield) is never superseded, re-timed or handed an extra landing.
+    per-HWND cache (and _probed_tray) once the slot has nothing pending: the slot's owner (a side bar's
+    placement, the #24 yield) is never superseded and its bar's landed count never moves for another
+    bar. A slot request made while a background probe is running waits for that one UIA call only;
+    its timeout then counts from when its own probe starts (see _layout_worker).
 
     When the slot already holds this bar, a keep_last re-check of it instead (nothing if one is in
     flight). Non-blocking; a bar already queued is not queued twice."""
@@ -624,12 +673,17 @@ def group_fits_bar(group_rect, bar_rect,
 
 
 def taskbar_layout_landed_count(taskbar_hwnd: Optional[int]) -> int:
-    """How many probe results have landed (for ``taskbar_hwnd``; -1 for another taskbar): a caller
-    that notes it before a request knows its probe landed - rather than timed out - when it grows."""
+    """The landing number of ``taskbar_hwnd``'s last FRESH probe result (0 when none, or none kept): a
+    caller that notes it before a request knows its probe landed - rather than timed out - when it
+    grows. Per bar (#373 review): it used to be the slot's count, -1 for a bar out of the slot, and a
+    keep_last re-check that reseeded the slot from the per-HWND cache then read a timed-out probe as a
+    landing of that (possibly long-stale) cached layout. The numbers come from one process-wide
+    sequence, so a landing always moves its bar's count past any value read before."""
     with _layout_lock:
-        if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd):
+        if not taskbar_hwnd:
             return -1
-        return int(_layout_state.get("landed", 0))
+        entry = _layout_by_hwnd.get(int(taskbar_hwnd))
+        return int(entry.get("seq", 0)) if entry is not None else 0
 
 
 def find_classic_layout_hwnds(taskbar_hwnd: int) -> Tuple[int, int, int]:
@@ -1699,7 +1753,7 @@ def vertical_taskbar_strip(taskbar_info: TaskbarInfo, edge: constants.TaskbarEdg
         # Another appbar shares the edge: the reserved band is wider than the taskbar, and the
         # taskbar may not be the part touching the screen edge - take x from its window. Safe here:
         # a bar that reserves work area is not auto-hiding, so the rect doesn't slide (#135).
-        x_origin = rect[0] / scale
+        x_origin = physical_to_logical(rect[0], full_geom.left(), scale)   # around Qt's screen origin
     elif edge == constants.TaskbarEdge.RIGHT:
         x_origin = (full_geom.right() + 1) - thickness
     else:

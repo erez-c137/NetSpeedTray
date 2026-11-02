@@ -65,6 +65,9 @@ class SideWatchContext:
     dpi: float
     widget: Span              # the widget's span along the bar
     user_placed: bool         # the user's drag offset is in force: collisions are theirs to keep
+    # The screen's Qt y origin (QScreen.geometry().top()): physical rects convert to logical px around
+    # it (taskbar_utils.physical_to_logical, #373). 0 on the primary.
+    y_origin: float = 0.0
 
 
 def span_gap(a: Span, b: Span) -> float:
@@ -276,7 +279,7 @@ class SideBarWatcher(QObject):
         rect = _window_rect(self._start_hwnd)
         if rect is None:
             return None
-        return rect[1] / (ctx.dpi or 1.0)
+        return taskbar_utils.physical_to_logical(rect[1], ctx.y_origin, ctx.dpi or 1.0)
 
     def _slot(self, ctx: SideWatchContext) -> float:
         """One button slot along the bar, logical px: the Start window's length, else Win11's 44 px."""
@@ -291,7 +294,8 @@ class SideBarWatcher(QObject):
             apps, _widgets, _pending = taskbar_utils.taskbar_layout_snapshot(self._hwnd)
             if apps is not None:
                 scale = ctx.dpi or 1.0
-                self._model = (apps[1] / scale, apps[3] / scale)
+                self._model = (taskbar_utils.physical_to_logical(apps[1], ctx.y_origin, scale),
+                               taskbar_utils.physical_to_logical(apps[3], ctx.y_origin, scale))
         return self._model
 
     def _predicted(self, ctx: SideWatchContext) -> Optional[Span]:
@@ -387,7 +391,8 @@ class SideBarWatcher(QObject):
             return
         if ctx is not None and apps is not None:
             scale = ctx.dpi or 1.0
-            model = (apps[1] / scale, apps[3] / scale)
+            model = (taskbar_utils.physical_to_logical(apps[1], ctx.y_origin, scale),
+                     taskbar_utils.physical_to_logical(apps[3], ctx.y_origin, scale))
             t = constants.timeouts
             if self._model is not None and all(abs(a - b) < 1.0 for a, b in zip(model, self._model)):
                 self._near_interval_ms = min(self._near_interval_ms * 2, t.SIDE_BAR_NEAR_RECHECK_MAX_MS)
