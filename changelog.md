@@ -124,14 +124,18 @@ updater, WinGet and the Store never offer prereleases.*
   right half, else the reserve; the step runs without a tray rect (a button in the bar's right half
   that reaches past the reserve still counts); and a secondary screen's physical rects convert to
   logical px around its Qt origin, not as physical / scale. Nothing probed a mirror's bar (mirrors
-  have no #24 yield), so a tray-less top/bottom bar now gets a background UIA layout probe on every
+  have no #24 yield), so a tray-less bar (any edge) now gets a background UIA layout probe on every
   new dock and at most every 30 s (`request_background_layout_probe`), which never takes the
   one-taskbar slot the side-bar placement and the yield work from (a slot request that waits for one
   gets its full timeout from when its own probe starts); and the layout cache keeps each bar's last
   landed result per HWND (least recently landed evicted first), so one bar's probe no longer blanks
-  every other bar's Widgets box. A cached result answers for 90 s at most and drops the Widgets box
-  as soon as the button is turned off; a re-check reseeded from it never counts as a fresh landing
-  (`taskbar_layout_landed_count` is now per bar). The main taskbar's placement is unchanged.*
+  every other bar's Widgets box. A cached result answers for the app buttons for 90 s at most but
+  keeps its Widgets box (dropping it moved a side-bar mirror onto the weather 90 s after launch in
+  the VM); every layout read, the #200 probe's included, drops the Widgets box as soon as the button
+  is turned off in Settings; a re-check reseeded from the cache never counts as a fresh landing
+  (`taskbar_layout_landed_count` is now per bar). The main taskbar's placement is otherwise
+  unchanged; it only moves back by the clock within a second of Widgets being turned off, instead
+  of up to ~15 s.*
 
 - **Side taskbars, the task-list safe zone and the app-button step-aside use the right coordinates
   on a scaled monitor that isn't the main one.** On a monitor at another scale above, below or left

@@ -1382,9 +1382,9 @@ class PositionManager(QObject):
         )
 
     def _refresh_trayless_bar_layout(self, taskbar_info: Optional[TaskbarInfo]) -> None:
-        """Keep THIS bar's probed layout fresh when it is a TOP/BOTTOM bar with no tray rect - a Win11
-        secondary taskbar (#373): its clock and Widgets/weather button are XAML with no HWND, so the
-        default spot can only clear them from a UIA probe of this very HWND. Nothing else probed one
+        """Keep THIS bar's probed layout fresh when it has no tray rect - a Win11 secondary taskbar on
+        any edge (#373): its clock and Widgets/weather button are XAML with no HWND, so the default
+        spot can only clear them from a UIA probe of this very HWND. Nothing else probed one
         for a mirror (built without the #24 yield) or for the main widget with the yield off. A
         background probe on a new dock, then at most every TRAYLESS_BAR_LAYOUT_REFRESH_S; it never
         takes the one-taskbar slot the side-bar placement and the yield work from. The primary bar
@@ -1400,9 +1400,9 @@ class PositionManager(QObject):
                 return
             if taskbar_utils.valid_rect(getattr(taskbar_info, "tasklist_rect", None)) is not None:
                 return
-            if taskbar_info.get_edge_position() not in (constants.taskbar.edge.TOP,
-                                                        constants.taskbar.edge.BOTTOM):
-                return
+            # Every edge: a SIDE bar's placement reads the same per-HWND cache (side_bar_geometry's
+            # Widgets box), and a mirror on one that nothing re-probed aged out of it - the #473 VM
+            # run's DISPLAY2 mirror dropped onto the weather button 90 s after launch.
             key = (int(taskbar_info.hwnd), taskbar_utils.dock_signature(taskbar_info))
             now = time.monotonic()
             if (key == self._trayless_probe_key

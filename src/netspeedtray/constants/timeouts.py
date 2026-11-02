@@ -123,7 +123,7 @@ class TimeoutConstants:
     # costs at most this, once, and the provisional decision is re-done as soon as the probe lands.
     SIDE_BAR_FIRST_LAYOUT_WAIT_MS: Final[int] = 250
     SIDE_BAR_NEAR_SLOTS: Final[int] = 3
-    # A TOP/BOTTOM bar with no TrayNotifyWnd (a Win11 secondary taskbar, #373) gets a background UIA
+    # A bar with no TrayNotifyWnd (a Win11 secondary taskbar on any edge, #373) gets a background UIA
     # layout probe - its clock and Widgets/weather button - on every new dock, and again at most this
     # often while the widget (or a "Show on all taskbars" mirror) sits on it: the weather text resizes
     # the button and seconds widen the clock. The same cadence as the #200 Widgets probe's TTL.

@@ -295,7 +295,7 @@ def layout():
     # The Widgets toggle (TaskbarDa) is pinned on: cached reads drop the box while it is off, and the
     # suite must not depend on the machine's setting. Tests of the toggle patch it themselves.
     with patch.object(tbu, "_start_layout_worker"), \
-            patch.object(tbu, "_widgets_button_enabled", return_value=True), \
+            patch.object(tbu, "_widgets_toggle_on", return_value=True), \
             patch.object(tbu, "_query_taskbar_layout_blocking",
                          side_effect=lambda h: (APPS[h], WIDGETS[h], None, None, CLOCKS[h])):
         yield
@@ -420,7 +420,7 @@ def clock():
 
 @pytest.fixture
 def widgets_on():
-    with patch.object(tbu, "_widgets_button_enabled", return_value=True):
+    with patch.object(tbu, "_widgets_toggle_on", return_value=True):
         yield
 
 
@@ -449,24 +449,27 @@ def test_a_landing_for_another_bar_does_not_move_this_bars_count(layout, clock, 
 
 
 def test_a_cached_layout_ages_out(layout, clock, widgets_on):
-    """Review 2: the main bar answering from its own cached probe while another bar holds the slot
-    must not keep placing the widget from a layout nobody re-probed."""
+    """Review 2 / #473 VM: past LAYOUT_CACHE_MAX_AGE_S a bar out of the slot no longer answers for its
+    app buttons, but keeps its Widgets box (turning Widgets off drops it at once - next test)."""
     _probe(A)
     _probe(B)
     clock.now += tbu.LAYOUT_CACHE_MAX_AGE_S - 1
     assert tbu.taskbar_layout_snapshot(A)[:2] == (APPS[A], WIDGETS[A])
     clock.now += 2
-    assert tbu.taskbar_layout_snapshot(A) == (None, None, False)     # what it read before #373
-    assert tbu.taskbar_layout_for(A)[2] is None
-    tbu.request_taskbar_layout_probe(A, keep_last=True)              # too old to reseed from
-    assert tbu.taskbar_layout_snapshot(A) == (None, None, True)
+    # The app buttons answer "unknown" (as before #373); the Widgets box is KEPT (#473 VM: dropping it
+    # moved a side-bar mirror onto the weather button 90 s after launch).
+    assert tbu.taskbar_layout_snapshot(A) == (None, WIDGETS[A], False)
+    assert tbu.taskbar_layout_for(A)[2] == WIDGETS[A]
+    assert tbu.taskbar_layout_group(A) is None
+    tbu.request_taskbar_layout_probe(A, keep_last=True)              # reseeded: the box only
+    assert tbu.taskbar_layout_snapshot(A) == (None, WIDGETS[A], True)
 
 
 def test_a_widgets_button_turned_off_drops_its_cached_box_at_once(layout, clock):
-    with patch.object(tbu, "_widgets_button_enabled", return_value=True):
+    with patch.object(tbu, "_widgets_toggle_on", return_value=True):
         _probe(A)
         _probe(B)
-    with patch.object(tbu, "_widgets_button_enabled", return_value=False):
+    with patch.object(tbu, "_widgets_toggle_on", return_value=False):
         assert tbu.taskbar_layout_snapshot(A) == (APPS[A], None, False)
         assert tbu.taskbar_layout_for(A)[2] is None
 
@@ -554,7 +557,7 @@ def test_the_task_list_safe_zone_converts_around_the_screen_origin(probed_tray):
 # physical (3768, -2160, 3840, 0).
 def _offset_side_bar(apps=None):
     tb = MagicMock()
-    tb.hwnd, tb.dpi_scale = 7070, 1.5
+    tb.hwnd, tb.dpi_scale, tb.height = 7070, 1.5, 2160
     tb.rect = (3768, -2160, 3840, 0)
     tb.tasklist_rect = tb.widgets_extent = tb.widgets_rect = None
     tb.apps_extent = apps
@@ -675,3 +678,58 @@ def test_vertical_drag_limit_task_list_converts_around_the_screen_origin(probed_
     tb.tasklist_rect = (3768, -2160, 3840, -1500)
     d = PositionCalculator().constrain_drag_position(QPoint(2520, -2100), tb, QSize(48, 40))
     assert d.y() == -1720 + constants.layout.DEFAULT_PADDING
+
+
+# --- VM run (#473): DISPLAY2 at 150 % above-left, RIGHT bars, weather on, mirrors on --------------------
+
+def test_a_mirror_on_a_trayless_side_bar_keeps_its_layout_fresh(monkeypatch, probed_tray):
+    """The DISPLAY2 mirror sat above the weather button, then 90 s after launch dropped onto it: nothing
+    re-probed its SIDE bar (the background refresh was TOP/BOTTOM only), so the cached layout aged out."""
+    tb = _offset_side_bar()
+    tb.is_primary = False
+    pm, calls = _manager(tb, monkeypatch)
+    pm.get_calculated_position()
+    assert calls == [tb.hwnd]
+    pm._trayless_probe_at -= constants.timeouts.TRAYLESS_BAR_LAYOUT_REFRESH_S + 1
+    pm.get_calculated_position()
+    assert calls == [tb.hwnd, tb.hwnd]
+
+
+def test_an_aged_out_side_bar_layout_keeps_the_widget_above_the_weather(layout, clock):
+    """Even unrefreshed, an aged cache must never put the widget onto the weather button: the side
+    bar's tray end stays the Widgets box's top."""
+    from netspeedtray.core.position_manager import side_bar_geometry
+    hwnd = 0xD2
+    widgets = (3768, -400, 3840, -250)                       # "Top" alignment: just above the tray
+    with patch.object(tbu, "_query_taskbar_layout_blocking",
+                      side_effect=lambda h: ((3768, -1900, 3840, -1600), widgets, None, None, None)
+                      if h == hwnd else (APPS[h], WIDGETS[h], None, None, CLOCKS[h])):
+        _probe(hwnd)
+        _probe(A)                                            # another bar takes the slot
+    clock.now += tbu.LAYOUT_CACHE_MAX_AGE_S + 60
+    tb = _offset_side_bar()
+    tb.hwnd = hwnd
+    with patch.object(tbu, "find_apps_rect", return_value=None):
+        _apps, _src, tb.widgets_extent, _pending = tbu.taskbar_layout_for(hwnd)
+    geo = side_bar_geometry(tb, 1.5)
+    assert geo.end == -2160 + (2160 - 400) / 1.5             # the Widgets box's top, not the clock
+
+
+def test_widgets_turned_off_drops_the_slot_bars_box_at_once(layout):
+    """The primary main widget took ~15 s to move back by the clock after Widgets was turned off (mirrors
+    ~1 s): the bar IN the slot kept answering its probed box until the next re-probe."""
+    _probe(A)
+    with patch.object(tbu, "_widgets_toggle_on", return_value=False):
+        assert tbu.taskbar_layout_snapshot(A) == (APPS[A], None, False)
+        assert tbu.taskbar_layout_for(A)[2] is None
+    assert tbu.taskbar_layout_snapshot(A) == (APPS[A], WIDGETS[A], False)   # back on: as probed
+
+
+def test_widgets_turned_off_drops_the_200_probes_cached_rect_at_once(monkeypatch):
+    """... and the #200 probe's 30 s cache (widgets_rect, the fallback the primary steps by)."""
+    monkeypatch.setattr(tbu, "_widgets_state", {"rect": (1606, 1032, 1758, 1080), "ts": 1e12,
+                                                "querying": False, "hwnd": 0x1})
+    monkeypatch.setattr(tbu, "_widgets_probe_enabled", True)
+    assert tbu.get_widgets_rect(0x1) == (1606, 1032, 1758, 1080)
+    monkeypatch.setattr(tbu, "_widgets_toggle_on", lambda: False, raising=False)
+    assert tbu.get_widgets_rect(0x1) is None

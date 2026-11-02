@@ -146,6 +146,9 @@ def _fresh_per_taskbar_layout_cache(monkeypatch):
     the background probe import the real function at module level (before this patch applies)."""
     from netspeedtray.utils import taskbar_utils
     monkeypatch.setattr(taskbar_utils, "request_background_layout_probe", lambda _hwnd: None)
+    # The Widgets toggle (TaskbarDa) is pinned ON: layout reads drop the Widgets box while it is off
+    # (#473), and no test may depend on the machine's setting. Tests of the toggle patch it themselves.
+    monkeypatch.setattr(taskbar_utils, "_widgets_toggle_on", lambda: True, raising=False)
     taskbar_utils._layout_by_hwnd.clear()
     del taskbar_utils._layout_background[:]
     yield

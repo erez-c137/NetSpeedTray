@@ -330,11 +330,15 @@ LAYOUT_PROBE_TIMEOUT_S = 5.0
 # first); an Explorer restart brings new HWNDs, so an old bar's entry is never answered for a new bar.
 _layout_by_hwnd: dict = {}
 _LAYOUT_BY_HWND_MAX = 16
-# A cached (out-of-slot) result older than this answers as "unknown" - what a bar out of the slot read
-# before #373 - so a layout nobody re-probed (a Widgets button since turned off, a weather text since
-# grown, an alignment flip) can't keep placing the widget. Three background-refresh periods: a bar that
-# is refreshed (a mirror, a tray-less bar under the main widget) never ages out.
+# A cached (out-of-slot) result older than this no longer answers for the APP buttons (apps, group,
+# overflow, bar) - they come and go all the time; the classic HWND rect / "unknown" answers instead, as
+# for a bar out of the slot before #373. The Widgets box (and its content) is KEPT: it only changes with
+# the weather text or the Widgets toggle, and dropping it moved a side-bar mirror from above the weather
+# button onto it 90 s after launch (#473 VM run: DISPLAY2 at 150 %, right bars, weather on). A box the
+# user turned off is dropped at once instead (the TaskbarDa check). Three background-refresh periods: a
+# bar that is refreshed (every tray-less bar a widget or mirror docks on) never ages out.
 LAYOUT_CACHE_MAX_AGE_S = 3 * constants.timeouts.TRAYLESS_BAR_LAYOUT_REFRESH_S
+_APP_ENTRY_KEYS = ("apps", "group", "overflow", "bar")
 # Background probes (request_background_layout_probe): bars to probe into _layout_by_hwnd once the slot
 # has nothing pending, oldest first. They never take the slot or its gen.
 _layout_background: list = []
@@ -358,19 +362,34 @@ def _store_landed_layout(taskbar_hwnd: int, entry: dict) -> None:
     _layout_by_hwnd[h] = stored
 
 
+def _widgets_toggle_on() -> bool:
+    """Taskbar settings > Widgets is on (TaskbarDa, a microsecond registry read). Its own name so the
+    test suite can pin it without replacing the registry reader its own tests exercise."""
+    return _widgets_button_enabled()
+
+
 def _cached_layout_entry(taskbar_hwnd: Optional[int]) -> Optional[dict]:
-    """The landed layout of a bar that is NOT in the slot (caller holds _layout_lock), or None - also
-    when it is older than LAYOUT_CACHE_MAX_AGE_S. With the Widgets button turned off in Settings
-    (TaskbarDa = 0) its box is dropped from the answer at once, whatever the entry's age."""
+    """The landed layout of a bar that is NOT in the slot (caller holds _layout_lock), or None. Older
+    than LAYOUT_CACHE_MAX_AGE_S: the app-button rects are dropped, the Widgets box is kept. With the
+    Widgets button turned off in Settings (TaskbarDa = 0) its box is dropped at once."""
     if not taskbar_hwnd:
         return None
     entry = _layout_by_hwnd.get(int(taskbar_hwnd))
-    if entry is None or time.monotonic() - entry.get("ts", 0.0) > LAYOUT_CACHE_MAX_AGE_S:
+    if entry is None:
         return None
+    if time.monotonic() - entry.get("ts", 0.0) > LAYOUT_CACHE_MAX_AGE_S:
+        entry = dict(entry, **{k: None for k in _APP_ENTRY_KEYS})
     if (entry.get("widgets") is not None or entry.get("widgets_content") is not None) \
-            and not _widgets_button_enabled():
+            and not _widgets_toggle_on():
         entry = dict(entry, widgets=None, widgets_content=None)
     return entry
+
+
+def _widgets_if_on(rect: Any) -> Any:
+    """``rect`` (a Widgets box / content rect), or None while the Widgets button is turned off."""
+    if rect is None:
+        return None
+    return rect if _widgets_toggle_on() else None
 
 
 def _query_taskbar_layout_blocking(taskbar_hwnd: int):
@@ -561,7 +580,10 @@ def taskbar_layout_snapshot(taskbar_hwnd: Optional[int]):
                 _layout_state.update(pending=False, done=True, apps=None, widgets=None, group=None,
                                      overflow=None)
         if _layout_state["done"]:
-            return _layout_state["apps"], _layout_state["widgets"], bool(_layout_state["pending"])
+            # A Widgets button turned off since the last probe is gone NOW, not at the next probe
+            # (#473 VM: the main widget took ~15 s to move back by the clock, mirrors ~1 s).
+            return (_layout_state["apps"], _widgets_if_on(_layout_state["widgets"]),
+                    bool(_layout_state["pending"]))
         return None, None, bool(_layout_state["pending"])
 
 
@@ -575,7 +597,7 @@ def taskbar_layout_widgets_content(taskbar_hwnd: Optional[int]) -> Optional[Tupl
             return cached.get("widgets_content") if cached is not None else None
         if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
             return None
-        return _layout_state.get("widgets_content")
+        return _widgets_if_on(_layout_state.get("widgets_content"))
 
 
 def taskbar_layout_overflow(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
@@ -824,6 +846,8 @@ def get_widgets_rect(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, in
     """
     if not taskbar_hwnd:
         return None
+    if not _widgets_toggle_on():
+        return None          # turned off: no button, whatever the 30 s cache still holds (#473 VM)
     now = time.monotonic()
     start_refresh = False
     with _widgets_lock:
