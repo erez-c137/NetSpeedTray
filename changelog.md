@@ -75,6 +75,37 @@ ALSO
 
 ---
 
+## [2.2.0-rc.4] - Unreleased
+
+### Fixed
+
+- **Starting NetSpeedTray again no longer turns off "Hide while app buttons cover the widget" when
+  the widget wasn't hidden.** A second launch switched the yield off for the whole session every
+  time, so the widget then sat over the app buttons until the next restart, with no explanation.
+  Now only a widget the yield had actually hidden is brought back and kept visible; otherwise the
+  yield keeps working. ([#373], reported by [@relu616])
+
+  *Under the hood: `AppOverlapYield.suspend_for_session()` suspended unconditionally and only
+  reported whether it had been yielded; it now returns False and changes nothing unless `yielded`
+  is true at that moment (still starting, mid-hysteresis and the full-bar fallback by the tray all
+  read False). A second launch within `SECOND_LAUNCH_STARTUP_GRACE_MS` (30 s) of the running
+  instance's first `arm_window` - the earliest an activate message can reach it - is treated as a
+  duplicate start (Run key + a Startup shortcut, an installer launch racing a manual one): the
+  yield is left alone and a yielded widget stays aside. The Run value carries no flag that would
+  tell a sign-in start apart, so the running instance's own age is the signal.*
+- **The "staying visible" notice after a second launch shows once, under its own title.** It came
+  on every second launch that found the widget stepped aside, titled "No free spot on the taskbar"
+  like two other notices. It now has its own title and a once-ever flag
+  (`second_launch_notice_shown`, kept by Reset all). ([#373])
+
+### Localization
+
+- One new string, the notice's title (`SECOND_LAUNCH_SHOWN_TITLE`), in all 16 languages - first
+  drafts, corrections welcome. ([#373])
+
+[#373]: https://github.com/erez-c137/NetSpeedTray/issues/373
+[@relu616]: https://github.com/relu616
+
 ## [2.2.0-rc.3] - October 29, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app

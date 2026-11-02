@@ -746,16 +746,30 @@ def test_second_launch_suspends_the_yield_for_the_session(rig):
     assert r.y.suspend_for_session() is False    # a second one: it was not yielded
 
 
-def _second_launch_widget(pm, *, fullscreen=False, visible=False):
+def test_second_launch_while_not_yielded_does_not_suspend(rig):
+    """#373: a second launch that finds the widget NOT yielded (still starting, mid-hysteresis) leaves
+    the yield working - relu616's widget sat over the app buttons for a whole session."""
+    r = rig(1380)
+    r.start(left_aligned(3))                     # plenty of room: shown
+    assert not r.y.yielded
+    assert r.y.suspend_for_session() is False
+    assert not r.y.suspended and r.y.attached_hwnd == HWND
+
+
+def _second_launch_widget(pm, *, fullscreen=False, visible=False, config=None, reachable_since=None):
     """A stand-in widget running the REAL second-launch methods (#440's show_from_second_launch and the
-    #24 stand-down / explanation), recording the order things happen in."""
+    #24 stand-down / explanation), recording the order things happen in. ``config`` is shared across
+    stand-ins to model a restart; ``reachable_since`` is the instance's first arming (monotonic)."""
     from netspeedtray.views.widget import main as main_mod
     W = main_mod.NetworkSpeedWidget
     order = []
-    i18n = types.SimpleNamespace(SIDE_BAR_NO_ROOM_TITLE="t", APP_OVERLAP_ACTIVATE_BODY="a {setting} {settings} {page}",
+    i18n = types.SimpleNamespace(SIDE_BAR_NO_ROOM_TITLE="t", SECOND_LAUNCH_SHOWN_TITLE="t2",
+                                 APP_OVERLAP_ACTIVATE_BODY="a {setting} {settings} {page}",
                                  HIDE_WHEN_APPS_COVER_LABEL="S", SETTINGS_WINDOW_TITLE="W", WIDGET_SETTINGS_GROUP="P")
-    w = types.SimpleNamespace(logger=MagicMock(), i18n=i18n, config={}, position_manager=pm,
-                              _taskbar_lost_count=3, _ACTIVATE_FLYOUT_DELAY_MS=W._ACTIVATE_FLYOUT_DELAY_MS)
+    w = types.SimpleNamespace(logger=MagicMock(), i18n=i18n, config={} if config is None else config,
+                              position_manager=pm, _taskbar_lost_count=3, _reachable_since=reachable_since,
+                              _ACTIVATE_FLYOUT_DELAY_MS=W._ACTIVATE_FLYOUT_DELAY_MS)
+    w.update_config = lambda updates: w.config.update(updates)
     shown = {"v": visible}
     w.isVisible = lambda: shown["v"]
     w.setVisible = lambda v: (order.append(("setVisible", v)), shown.update(v=v))
@@ -764,9 +778,16 @@ def _second_launch_widget(pm, *, fullscreen=False, visible=False):
     w._show_notice_flyout = lambda title, body: order.append(("flyout", title, body))
     w.system_event_handler = types.SimpleNamespace(is_fullscreen_active=lambda: fullscreen)
     for name in ("show_from_second_launch", "_stand_down_app_yield", "_explain_app_yield_stand_down",
-                 "_app_overlap_text"):
-        setattr(w, name, getattr(W, name).__get__(w))
+                 "_app_overlap_text", "_second_launch_is_duplicate_start"):
+        if hasattr(W, name):
+            setattr(w, name, getattr(W, name).__get__(w))
     return w, order
+
+
+def _stub_placement(pm):
+    for name in ("reset_reseat_state", "update_position", "ensure_topmost", "reseat_above_taskbar"):
+        setattr(pm, name, MagicMock(name=name))
+    pm.is_buried_behind_taskbar = MagicMock(return_value=False)
 
 
 def _yielded_pm(layout):
@@ -777,9 +798,7 @@ def _yielded_pm(layout):
     layout.land(left_aligned(28, overflow=True))
     pm._app_yield._poll_probe()
     assert pm.is_yielding_to_apps() is True
-    for name in ("reset_reseat_state", "update_position", "ensure_topmost", "reseat_above_taskbar"):
-        setattr(pm, name, MagicMock(name=name))
-    pm.is_buried_behind_taskbar = MagicMock(return_value=False)
+    _stub_placement(pm)
     return pm, tb
 
 
@@ -793,22 +812,114 @@ def test_second_launch_un_yields_first_then_shows_then_explains(layout, q_app):
     # 1. the yield is off before anything is shown; 2. #440's show + re-place; 3. the flyout, last.
     assert order[0] == ("setVisible", True)
     assert ("update_position", False) in order and ("refresh", False) in order
-    assert order[-1] == ("flyout", "t", "a S W P")
+    assert order[-1] == ("flyout", "t2", "a S W P")   # its own title (#373 R3), not the side-bar one
     assert pm._app_yield.suspended and pm.is_yielding_to_apps() is False
+    assert w.config["second_launch_notice_shown"] is True
 
 
 def test_second_launch_without_a_yield_shows_no_flyout(layout, q_app):
     from netspeedtray.views.widget import main as main_mod
     pm, tb, _widget = _pm()
-    for name in ("reset_reseat_state", "update_position", "ensure_topmost", "reseat_above_taskbar"):
-        setattr(pm, name, MagicMock(name=name))
-    pm.is_buried_behind_taskbar = MagicMock(return_value=False)
+    _stub_placement(pm)
     w, order = _second_launch_widget(pm)
     with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
         w.show_from_second_launch()
     assert ("setVisible", True) in order
     assert not [o for o in order if o[0] == "flyout"]
-    assert pm._app_yield.suspended                 # still off for the session (cheap, consistent)
+    assert not pm._app_yield.suspended             # #373: nothing to stand down, the yield stays on
+
+
+def test_second_launch_while_starting_keeps_the_yield_for_the_next_full_bar(layout, q_app):
+    """#373 (relu616, rc.3): the second launch came while the widget was NOT yielded - attached, its
+    first probe still out. The yield must stay on: the full-bar reading that lands next hides it."""
+    from netspeedtray.views.widget import main as main_mod
+    pm, tb, _widget = _pm()
+    pm.sync_app_overlap(tb)
+    pm._app_yield._probe_timer.stop()
+    pm._app_yield._fire_probe()                    # in flight, nothing landed yet
+    assert pm.is_yielding_to_apps() is False
+    _stub_placement(pm)
+    w, order = _second_launch_widget(pm)
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch()
+    assert pm._app_yield.suspended is False
+    assert not [o for o in order if o[0] == "flyout"]
+    layout.land(left_aligned(28, overflow=True))
+    pm._app_yield._poll_probe()
+    assert pm.is_yielding_to_apps() is True        # the yield still works
+
+
+def test_second_launch_notice_shows_once_ever(layout, q_app):
+    """#373 R3: the stand-down happens on every second launch that finds the widget yielded, but its
+    notice only the first time ever (``second_launch_notice_shown`` persists across restarts)."""
+    from netspeedtray.views.widget import main as main_mod
+    config = {}
+    flyouts = []
+    for _session in range(2):                      # a restart in between: a fresh pm + widget, same config
+        pm, _tb = _yielded_pm(layout)
+        w, order = _second_launch_widget(pm, config=config)
+        with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+            w.show_from_second_launch()
+        assert pm._app_yield.suspended and pm.is_yielding_to_apps() is False
+        flyouts += [o for o in order if o[0] == "flyout"]
+    assert len(flyouts) == 1
+    assert config["second_launch_notice_shown"] is True
+
+
+def test_duplicate_start_right_after_startup_does_not_suspend(layout, q_app):
+    """#373: a second launch within SECOND_LAUNCH_STARTUP_GRACE_MS of this instance becoming reachable
+    is a duplicate start (Run key + Startup shortcut, an installer launch racing the user's): the yield
+    is untouched, a yielded widget stays aside, no notice."""
+    import time
+    from netspeedtray.views.widget import main as main_mod
+    pm, _tb = _yielded_pm(layout)
+    w, order = _second_launch_widget(pm, reachable_since=time.monotonic())
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch()
+    assert pm._app_yield.suspended is False and pm.is_yielding_to_apps() is True
+    assert order == []                             # no show, no flyout
+    assert "second_launch_notice_shown" not in w.config
+    # Past the grace, the same launch is the user asking: stand down + notice.
+    grace_s = constants.timeouts.SECOND_LAUNCH_STARTUP_GRACE_MS / 1000.0
+    w._reachable_since = time.monotonic() - grace_s - 1.0
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch()
+    assert pm._app_yield.suspended and order[-1][0] == "flyout"
+
+
+def test_duplicate_start_while_not_yielded_still_shows_and_reseats(layout, q_app):
+    import time
+    from netspeedtray.views.widget import main as main_mod
+    pm, tb, _widget = _pm()
+    _stub_placement(pm)
+    w, order = _second_launch_widget(pm, reachable_since=time.monotonic())
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch()
+    assert ("setVisible", True) in order and not [o for o in order if o[0] == "flyout"]
+    pm.ensure_topmost.assert_called_once_with()
+    assert pm._app_yield.suspended is False
+
+
+def test_first_arming_starts_the_duplicate_start_clock_once(q_app, monkeypatch):
+    from netspeedtray.views.widget import main as main_mod
+    W = main_mod.NetworkSpeedWidget
+    monkeypatch.setattr(main_mod.shutdown_channel, "arm_window", lambda hwnd: True)
+    hwnds = iter([0x10, 0x20])
+    w = types.SimpleNamespace(logger=MagicMock(), _shutdown_armed_hwnd=0, _reachable_since=None,
+                              winId=lambda: next(hwnds))
+    clock = [100.0, 500.0]
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: clock.pop(0) if clock else 999.0)
+    W._arm_shutdown_channel(w)
+    assert w._shutdown_armed_hwnd == 0x10 and w._reachable_since == 100.0
+    W._arm_shutdown_channel(w)                     # a re-arm on a new HWND (#327 re-dock)
+    assert w._shutdown_armed_hwnd == 0x20 and w._reachable_since == 100.0
+
+
+def test_second_launch_notice_flag_is_kept_by_reset_all():
+    from netspeedtray.views.settings.dialog import SettingsDialog
+    assert "second_launch_notice_shown" in SettingsDialog.RESET_ALL_KEEPS
+    assert constants.config.defaults.DEFAULT_CONFIG["second_launch_notice_shown"] is False
+    assert constants.config.defaults.VALIDATION_SCHEMA["second_launch_notice_shown"]["type"] is bool
 
 
 def test_second_launch_under_fullscreen_stands_down_but_shows_nothing(layout, q_app):

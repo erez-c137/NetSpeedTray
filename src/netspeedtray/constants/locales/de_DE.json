@@ -584,6 +584,7 @@
     "SIDE_BAR_NO_ROOM_BODY": "Die App-Schaltflächen füllen deine Taskleiste, daher sitzt NetSpeedTray neben dem Infobereich und kann einige davon verdecken. Du kannst es an eine beliebige Stelle der Taskleiste ziehen – die Position wird gemerkt. Zum Rückgängigmachen mit der rechten Maustaste darauf klicken und „Position zurücksetzen“ wählen. (Diese Meldung wird nicht mehr angezeigt.)",
     "APP_OVERLAP_YIELD_BODY": "Die App-Schaltflächen deiner Taskleiste haben NetSpeedTray erreicht. Es macht daher Platz und kehrt zurück, sobald wieder Raum ist. Um es sofort zurückzuholen, starte NetSpeedTray erneut. Damit es dauerhaft sichtbar bleibt, deaktiviere „{setting}“ unter {settings} > {page}. (Diese Meldung wird nicht mehr angezeigt.)",
     "APP_OVERLAP_ACTIVATE_BODY": "Die Taskleiste ist hier voll, daher hatte NetSpeedTray Platz gemacht. Bis zum nächsten Start bleibt es sichtbar. Ziehe es an eine freie Stelle oder deaktiviere „{setting}“ unter {settings} > {page}.",
+    "SECOND_LAUNCH_SHOWN_TITLE": "Vorerst sichtbar",
     "HOVER_CARD_PIN_HINT": "Auf das Widget klicken, damit die Karte offen bleibt",
     "INTEGRATIONS_GROUP": "Integrationen",
     "METRICS_ENDPOINT_LABEL": "Lokaler Metrik-Endpunkt",

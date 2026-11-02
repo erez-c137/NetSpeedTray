@@ -584,6 +584,7 @@
     "SIDE_BAR_NO_ROOM_BODY": "Gumbi aplikacij zapolnjujejo opravilno vrstico, zato je NetSpeedTray ob sistemski vrstici in lahko prekrije nekatere od njih. Povlečete ga lahko kamor koli vzdolž opravilne vrstice – zapomnil si bo mesto. Če želite to razveljaviti, ga kliknite z desno tipko miške in izberite »Ponastavi položaj«. (To sporočilo se ne bo več prikazalo.)",
     "APP_OVERLAP_YIELD_BODY": "Gumbi aplikacij v opravilni vrstici so dosegli NetSpeedTray, zato se umakne in se vrne, ko je spet dovolj prostora. Če ga želite takoj nazaj, znova zaženite NetSpeedTray. Če naj bo vedno viden, izklopite »{setting}« v {settings} > {page}. (To sporočilo se ne bo več prikazalo.)",
     "APP_OVERLAP_ACTIVATE_BODY": "Opravilna vrstica je tu polna, zato se je NetSpeedTray umaknil. Do naslednjega zagona ostane viden. Povlecite ga na prosto mesto ali izklopite »{setting}« v {settings} > {page}.",
+    "SECOND_LAUNCH_SHOWN_TITLE": "Za zdaj ostane viden",
     "HOVER_CARD_PIN_HINT": "Kliknite gradnik, da ostane odprto",
     "INTEGRATIONS_GROUP": "Integracije",
     "METRICS_ENDPOINT_LABEL": "Lokalna končna točka metrik",
