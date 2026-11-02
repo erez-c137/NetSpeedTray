@@ -733,3 +733,81 @@ def test_widgets_turned_off_drops_the_200_probes_cached_rect_at_once(monkeypatch
     assert tbu.get_widgets_rect(0x1) == (1606, 1032, 1758, 1080)
     monkeypatch.setattr(tbu, "_widgets_toggle_on", lambda: False, raising=False)
     assert tbu.get_widgets_rect(0x1) is None
+
+
+# --- VM re-check (#473): Widgets turned back ON -------------------------------------------------------
+
+def _note_toggle():
+    """What a docked tray-less bar's PositionManager does each tick: read the Widgets toggle."""
+    read = getattr(tbu, "widgets_toggle_generation", None)
+    if read is not None:
+        read()
+
+
+class _Toggle:
+    def __init__(self):
+        self.on = True
+
+    def __call__(self):
+        return self.on
+
+
+def test_widgets_back_on_answers_the_last_seen_box_until_a_probe_sees_it(layout, clock):
+    """Turned back on, the mirrors sat on the weather text for ~17 s: the probes made while Widgets was
+    off had found no button, and that answered until the next 30 s refresh."""
+    toggle = _Toggle()
+    seen = {"widgets": WIDGETS[A]}
+
+    def query(h):
+        return APPS[h], (seen["widgets"] if h == A else WIDGETS[h]), None, None, CLOCKS[h]
+
+    with patch.object(tbu, "_widgets_toggle_on", toggle), \
+            patch.object(tbu, "_query_taskbar_layout_blocking", side_effect=query):
+        _note_toggle()
+        _probe(A)
+        _probe(B)                                        # A is out of the slot, like a mirror's bar
+        toggle.on, seen["widgets"] = False, None         # turned off: the button is gone
+        _note_toggle()
+        REAL_BACKGROUND_PROBE(A)
+        tbu._layout_worker()
+        assert tbu.taskbar_layout_snapshot(A)[1] is None
+        toggle.on = True                                 # turned back on
+        _note_toggle()
+        assert tbu.taskbar_layout_snapshot(A)[1] == WIDGETS[A]      # the last seen box, at once
+        REAL_BACKGROUND_PROBE(A)                         # Explorer has not drawn it yet
+        tbu._layout_worker()
+        assert tbu.taskbar_layout_snapshot(A)[1] == WIDGETS[A]
+        clock.now += constants.timeouts.WIDGETS_REENABLE_GRACE_S + 1
+        moved = (1500, 1032, 1640, 1080)
+        seen["widgets"] = moved                          # drawn, a little to the left this time
+        REAL_BACKGROUND_PROBE(A)
+        tbu._layout_worker()
+        assert tbu.taskbar_layout_snapshot(A)[1] == moved
+        seen["widgets"] = None                           # on, past the grace, really no button
+        REAL_BACKGROUND_PROBE(A)
+        tbu._layout_worker()
+        assert tbu.taskbar_layout_snapshot(A)[1] is None
+
+
+def test_widgets_back_on_reprobes_every_trayless_bar_at_once_and_after_the_grace(monkeypatch, probed_tray):
+    toggle = _Toggle()
+    monkeypatch.setattr(tbu, "_widgets_toggle_on", toggle)
+    tb = _secondary_bar(widgets=(1690, 1838))
+    tb.is_primary = False
+    pm, calls = _manager(tb, monkeypatch)
+    pm.get_calculated_position()
+    assert calls == [tb.hwnd]
+    toggle.on = False
+    pm.get_calculated_position()                         # turned off: re-probed at once
+    assert len(calls) == 2
+    toggle.on = True
+    pm.get_calculated_position()                         # turned back on: at once ...
+    assert len(calls) == 3
+    pm.get_calculated_position()
+    assert len(calls) == 3                               # ... not every tick ...
+    tbu._widgets_flip["on_at"] -= constants.timeouts.WIDGETS_REENABLE_GRACE_S + 1
+    pm._trayless_probe_at -= constants.timeouts.WIDGETS_REENABLE_GRACE_S + 1
+    pm.get_calculated_position()                         # ... and once more after the grace
+    assert len(calls) == 4
+    pm.get_calculated_position()
+    assert len(calls) == 4

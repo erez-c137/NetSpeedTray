@@ -1403,9 +1403,14 @@ class PositionManager(QObject):
             # Every edge: a SIDE bar's placement reads the same per-HWND cache (side_bar_geometry's
             # Widgets box), and a mirror on one that nothing re-probed aged out of it - the #473 VM
             # run's DISPLAY2 mirror dropped onto the weather button 90 s after launch.
-            key = (int(taskbar_info.hwnd), taskbar_utils.dock_signature(taskbar_info))
+            # A Widgets toggle flip re-probes at once (its gen is in the key); turned back ON, once more
+            # after WIDGETS_REENABLE_GRACE_S in case Explorer had not drawn the button yet (#473 VM).
+            flips, on_at = taskbar_utils.widgets_toggle_generation()
+            key = (int(taskbar_info.hwnd), taskbar_utils.dock_signature(taskbar_info), flips)
             now = time.monotonic()
-            if (key == self._trayless_probe_key
+            grace_end = on_at + constants.timeouts.WIDGETS_REENABLE_GRACE_S if on_at is not None else None
+            follow_up = grace_end is not None and self._trayless_probe_at < grace_end <= now
+            if (key == self._trayless_probe_key and not follow_up
                     and now - self._trayless_probe_at < constants.timeouts.TRAYLESS_BAR_LAYOUT_REFRESH_S):
                 return
             self._trayless_probe_key, self._trayless_probe_at = key, now

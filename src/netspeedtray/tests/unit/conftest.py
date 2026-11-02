@@ -149,6 +149,8 @@ def _fresh_per_taskbar_layout_cache(monkeypatch):
     # The Widgets toggle (TaskbarDa) is pinned ON: layout reads drop the Widgets box while it is off
     # (#473), and no test may depend on the machine's setting. Tests of the toggle patch it themselves.
     monkeypatch.setattr(taskbar_utils, "_widgets_toggle_on", lambda: True, raising=False)
+    monkeypatch.setattr(taskbar_utils, "_widgets_flip", {"on": None, "gen": 0, "on_at": None},
+                        raising=False)
     taskbar_utils._layout_by_hwnd.clear()
     del taskbar_utils._layout_background[:]
     yield

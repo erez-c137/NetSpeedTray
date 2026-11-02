@@ -132,7 +132,9 @@ updater, WinGet and the Store never offer prereleases.*
   every other bar's Widgets box. A cached result answers for the app buttons for 90 s at most but
   keeps its Widgets box (dropping it moved a side-bar mirror onto the weather 90 s after launch in
   the VM); every layout read, the #200 probe's included, drops the Widgets box as soon as the button
-  is turned off in Settings; a re-check reseeded from the cache never counts as a fresh landing
+  is turned off in Settings, and turned back on it answers the bar's last seen box at once while
+  every docked tray-less bar is re-probed (right away and again 5 s later, in case Explorer had not
+  drawn the button yet); a re-check reseeded from the cache never counts as a fresh landing
   (`taskbar_layout_landed_count` is now per bar). The main taskbar's placement is otherwise
   unchanged; it only moves back by the clock within a second of Widgets being turned off, instead
   of up to ~15 s.*

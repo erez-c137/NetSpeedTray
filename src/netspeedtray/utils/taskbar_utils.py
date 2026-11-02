@@ -350,15 +350,29 @@ _landing_seq = 0
 
 
 def _store_landed_layout(taskbar_hwnd: int, entry: dict) -> None:
-    """Remember a FRESH probe result for ``taskbar_hwnd`` (caller holds _layout_lock)."""
+    """Remember a FRESH probe result for ``taskbar_hwnd`` (caller holds _layout_lock).
+
+    Also the bar's LAST SEEN Widgets box (``last_widgets`` / ``last_widgets_content``). A probe that
+    finds no button while its presence is unsure - Widgets turned off in Settings, or turned back on
+    less than WIDGETS_REENABLE_GRACE_S ago (Explorer may not have drawn it yet) - is marked
+    ``interim``: once Widgets is on, reads answer that last seen box until a probe sees the button
+    again (#473 VM re-check: turned back on, the mirrors sat on the weather text for ~17 s, until
+    the next 30 s refresh, because the probes made while it was off had found no button)."""
     global _landing_seq
     h = int(taskbar_hwnd)
-    _layout_by_hwnd.pop(h, None)                    # re-inserted last: least recently landed is first
+    prev = _layout_by_hwnd.pop(h, None)             # re-inserted last: least recently landed is first
     if len(_layout_by_hwnd) >= _LAYOUT_BY_HWND_MAX:
         _layout_by_hwnd.pop(next(iter(_layout_by_hwnd)))
     _landing_seq += 1
     stored = {k: entry.get(k) for k in _LAYOUT_ENTRY_KEYS}
-    stored.update(ts=time.monotonic(), seq=_landing_seq)
+    stored.update(ts=time.monotonic(), seq=_landing_seq, interim=False)
+    if stored["widgets"] is not None:
+        stored.update(last_widgets=stored["widgets"], last_widgets_content=stored["widgets_content"])
+    else:
+        last = prev.get("last_widgets") if prev else None
+        stored.update(last_widgets=last,
+                      last_widgets_content=prev.get("last_widgets_content") if prev else None,
+                      interim=last is not None and _widgets_presence_unsure())
     _layout_by_hwnd[h] = stored
 
 
@@ -366,6 +380,44 @@ def _widgets_toggle_on() -> bool:
     """Taskbar settings > Widgets is on (TaskbarDa, a microsecond registry read). Its own name so the
     test suite can pin it without replacing the registry reader its own tests exercise."""
     return _widgets_button_enabled()
+
+
+# The Widgets toggle as last seen by widgets_toggle_generation(): ``gen`` counts flips (a docked
+# widget re-probes its bar on each), ``on_at`` is when it was last turned ON.
+_widgets_flip: dict = {"on": None, "gen": 0, "on_at": None}
+
+
+def widgets_toggle_generation() -> Tuple[int, Optional[float]]:
+    """``(flips, last_turned_on_at)`` of Taskbar settings > Widgets, read now (a microsecond registry
+    read). PositionManager polls it each tick for a tray-less bar and re-probes on a flip (#473)."""
+    on = _widgets_toggle_on()
+    with _layout_lock:
+        prev = _widgets_flip["on"]
+        if prev is not None and on != prev:
+            _widgets_flip["gen"] += 1
+            if on:
+                _widgets_flip["on_at"] = time.monotonic()
+        _widgets_flip["on"] = on
+        return _widgets_flip["gen"], _widgets_flip["on_at"]
+
+
+def _widgets_presence_unsure() -> bool:
+    """A probe that finds no Widgets button may be wrong: the toggle is off, or was turned on less than
+    WIDGETS_REENABLE_GRACE_S ago."""
+    if not _widgets_toggle_on():
+        return True
+    on_at = _widgets_flip.get("on_at")
+    return on_at is not None and time.monotonic() - on_at < constants.timeouts.WIDGETS_REENABLE_GRACE_S
+
+
+def _widgets_of(entry: Optional[dict], key: str, value: Any) -> Any:
+    """The Widgets ``key`` ("widgets" / "widgets_content") to answer for a bar: None while Widgets is
+    off; the last seen box for an ``interim`` entry once it is on; else ``value`` as probed."""
+    if not _widgets_toggle_on():
+        return None
+    if value is None and entry is not None and entry.get("interim"):
+        return entry.get("last_" + key)
+    return value
 
 
 def _cached_layout_entry(taskbar_hwnd: Optional[int]) -> Optional[dict]:
@@ -379,17 +431,13 @@ def _cached_layout_entry(taskbar_hwnd: Optional[int]) -> Optional[dict]:
         return None
     if time.monotonic() - entry.get("ts", 0.0) > LAYOUT_CACHE_MAX_AGE_S:
         entry = dict(entry, **{k: None for k in _APP_ENTRY_KEYS})
-    if (entry.get("widgets") is not None or entry.get("widgets_content") is not None) \
-            and not _widgets_toggle_on():
-        entry = dict(entry, widgets=None, widgets_content=None)
-    return entry
+    return dict(entry, widgets=_widgets_of(entry, "widgets", entry.get("widgets")),
+                widgets_content=_widgets_of(entry, "widgets_content", entry.get("widgets_content")))
 
 
-def _widgets_if_on(rect: Any) -> Any:
-    """``rect`` (a Widgets box / content rect), or None while the Widgets button is turned off."""
-    if rect is None:
-        return None
-    return rect if _widgets_toggle_on() else None
+def _slot_widgets(key: str) -> Any:
+    """The slot bar's Widgets ``key``, by the same rules as a cached bar's (caller holds the lock)."""
+    return _widgets_of(_layout_by_hwnd.get(int(_layout_state["hwnd"] or 0)), key, _layout_state.get(key))
 
 
 def _query_taskbar_layout_blocking(taskbar_hwnd: int):
@@ -582,8 +630,7 @@ def taskbar_layout_snapshot(taskbar_hwnd: Optional[int]):
         if _layout_state["done"]:
             # A Widgets button turned off since the last probe is gone NOW, not at the next probe
             # (#473 VM: the main widget took ~15 s to move back by the clock, mirrors ~1 s).
-            return (_layout_state["apps"], _widgets_if_on(_layout_state["widgets"]),
-                    bool(_layout_state["pending"]))
+            return (_layout_state["apps"], _slot_widgets("widgets"), bool(_layout_state["pending"]))
         return None, None, bool(_layout_state["pending"])
 
 
@@ -597,7 +644,7 @@ def taskbar_layout_widgets_content(taskbar_hwnd: Optional[int]) -> Optional[Tupl
             return cached.get("widgets_content") if cached is not None else None
         if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
             return None
-        return _widgets_if_on(_layout_state.get("widgets_content"))
+        return _slot_widgets("widgets_content")
 
 
 def taskbar_layout_overflow(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:

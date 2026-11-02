@@ -128,6 +128,10 @@ class TimeoutConstants:
     # often while the widget (or a "Show on all taskbars" mirror) sits on it: the weather text resizes
     # the button and seconds widen the clock. The same cadence as the #200 Widgets probe's TTL.
     TRAYLESS_BAR_LAYOUT_REFRESH_S: Final[float] = 30.0
+    # Widgets turned back ON (TaskbarDa 0 -> 1): Explorer may take a moment to draw the button, so a
+    # probe that finds none this soon after keeps the bar's last seen box, and every docked tray-less
+    # bar is probed again right away and once more after this long (#473 VM re-check).
+    WIDGETS_REENABLE_GRACE_S: Final[float] = 5.0
     # #24 app-button yield on a horizontal Win11 bar (core/app_overlap_yield.py): hiding is immediate,
     # but the widget comes back only after two clear readings at least this far apart - the buttons
     # animate for ~300-550 ms after an app closes, and one mid-animation read must not blink it back.
