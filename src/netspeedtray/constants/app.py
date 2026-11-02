@@ -47,6 +47,17 @@ class AppConstants:
     # (un-hide, re-dock, re-seat above the taskbar, back to the docked spot if it is off-screen).
     # App-to-app only - setup.iss never sends it. Same _vN rule.
     ACTIVATE_MESSAGE_NAME: Final[str] = "NetSpeedTray_Activate_v1"
+    # The activate message's wParam (#373): 0 = the user started the app again (the default, and all
+    # that any 2.2 build before rc.4 sends); ACTIVATE_WPARAM_SIGN_IN_DUPLICATE = the SECOND process saw
+    # that this session signed in less than SIGN_IN_DUPLICATE_WINDOW_S ago, so it is a duplicate
+    # autostart (the Run key plus a Startup-folder shortcut, say), not a request: the running widget
+    # then leaves the #24 app-button yield alone. Receivers before rc.4 ignore wParam (a plain activate).
+    ACTIVATE_WPARAM_USER: Final[int] = 0
+    ACTIVATE_WPARAM_SIGN_IN_DUPLICATE: Final[int] = 1
+    # Sign-in startup items can run well after the desktop appears on a slow disk (Windows also delays
+    # Run-key apps by ~10 s); 2 minutes covers that. Measured from WTSINFO.LogonTime to its CurrentTime
+    # (one wall-clock reading pair from the same query - nothing in our process to drift across sleep).
+    SIGN_IN_DUPLICATE_WINDOW_S: Final[float] = 120.0
     # How long `--shutdown` waits for the app to exit (seconds) unless `--timeout N` overrides it.
     # A normal clean quit is ~1 s. The worst legitimate one lands mid v7 -> v8 migration: the latency
     # probe join (1.5 s) + the DB thread's bounded wait (timeouts.DB_SHUTDOWN_WAIT_MS, 15 s), after

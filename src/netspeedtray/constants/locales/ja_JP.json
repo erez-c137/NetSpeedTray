@@ -584,6 +584,7 @@
     "SIDE_BAR_NO_ROOM_BODY": "アプリのボタンでタスクバーが埋まっているため、NetSpeedTray は通知領域の隣に表示され、一部のボタンを隠すことがあります。タスクバー上の好きな場所へドラッグでき、その位置は記憶されます。元に戻すには、右クリックして [位置をリセット] を選択してください。(このメッセージは次回以降表示されません。)",
     "APP_OVERLAP_YIELD_BODY": "タスクバーのアプリのボタンが NetSpeedTray に届いたため、NetSpeedTray は一時的に非表示になり、空きができると再表示されます。すぐに戻すには、NetSpeedTray をもう一度起動してください。常に表示しておくには、[{settings}] > [{page}] の [{setting}] をオフにしてください。(このメッセージは次回以降表示されません。)",
     "APP_OVERLAP_ACTIVATE_BODY": "ここではタスクバーがいっぱいのため、NetSpeedTray は非表示になっていました。次に起動し直すまでは表示されたままです。空いている場所へドラッグするか、[{settings}] > [{page}] の [{setting}] をオフにしてください。",
+    "SECOND_LAUNCH_SHOWN_TITLE": "当面は表示したままにします",
     "HOVER_CARD_PIN_HINT": "ウィジェットをクリックすると開いたままになります",
     "INTEGRATIONS_GROUP": "連携",
     "METRICS_ENDPOINT_LABEL": "ローカル メトリック エンドポイント",

@@ -81,8 +81,8 @@ ALSO
 updater, WinGet and the Store never offer prereleases.*
 
 > **Upgrading:** the settings file moves to schema 1.5 and the 1.4 file is kept beside it as
-> `NetSpeedTray_Config.json.bak.v1.4`. Only the light-taskbar text color can change, and only for
-> the white-on-light case below.
+> `NetSpeedTray_Config.json.bak.v1.4`. Only the text color can change, and only for the stuck
+> white or black case below.
 
 ### Fixed
 
@@ -99,7 +99,37 @@ updater, WinGet and the Store never offer prereleases.*
   `color_is_automatic` is still `false` in the file. Such a pair without that flag is a 2.2 choice
   and stays; a missing half is left to validation. Arrows are untouched.*
 
+- **Starting NetSpeedTray again no longer turns off "Hide while app buttons cover the widget" when
+  the widget wasn't hidden.** A second launch switched the yield off for the whole session every
+  time, so the widget then sat over the app buttons until the next restart, with no explanation.
+  Now only a widget the yield had actually hidden is brought back and kept visible; otherwise the
+  yield keeps working. ([#373], reported by [@relu616])
+
+  *Under the hood: `AppOverlapYield.suspend_for_session()` suspended unconditionally and only
+  reported whether it had been yielded; it now returns False and changes nothing unless `yielded`
+  is true at that moment (still starting, mid-hysteresis and the full-bar fallback by the tray all
+  read False). A duplicate autostart at sign-in (the Run key plus a Startup shortcut) leaves the
+  yield alone: the SECOND process checks the session's sign-in time (`WTSQuerySessionInformationW`
+  / `WTSSessionInfo`, `CurrentTime - LogonTime` from one query) and, under
+  `SIGN_IN_DUPLICATE_WINDOW_S` (120 s), posts `NetSpeedTray_Activate_v1` with wParam 1; any failure
+  means wParam 0, a normal launch. Only the first flagged activation of an instance is ignored - a
+  later one, flagged too, is the user starting it again within the window. The running app's own
+  age is deliberately not used: Setup's Finish-page launch followed by the user's own launch seconds later is exactly this bug's path.
+  Builds before rc.4 ignore wParam.*
+- **The "staying visible" notice after a second launch shows once, under its own title.** It came
+  on every second launch that found the widget stepped aside, titled "No free spot on the taskbar"
+  like two other notices. It now has its own title and a once-ever flag
+  (`second_launch_notice_shown`, kept by Reset all), saved only once the flyout has actually
+  shown. ([#373])
+
+### Localization
+
+- One new string, the notice's title (`SECOND_LAUNCH_SHOWN_TITLE`), in all 16 languages - first
+  drafts, corrections welcome. ([#373])
+
 [#332]: https://github.com/erez-c137/NetSpeedTray/issues/332
+[#373]: https://github.com/erez-c137/NetSpeedTray/issues/373
+[@relu616]: https://github.com/relu616
 
 ## [2.2.0-rc.3] - October 29, 2026
 
