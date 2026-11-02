@@ -584,6 +584,7 @@
     "SIDE_BAR_NO_ROOM_BODY": "应用按钮已占满任务栏，因此 NetSpeedTray 位于通知区域旁，可能会遮住其中一些按钮。你可以把它拖动到任务栏上的任意位置，位置会自动保存。若要撤消，请右键单击它并选择“重置位置”。（此消息仅显示一次）",
     "APP_OVERLAP_YIELD_BODY": "任务栏上的应用按钮已延伸到 NetSpeedTray，因此它会暂时让开，有空余位置时会重新出现。若要立即恢复，请再次启动 NetSpeedTray。若要让它始终可见，请在“{settings} > {page}”中关闭“{setting}”。（此消息仅显示一次）",
     "APP_OVERLAP_ACTIVATE_BODY": "此处任务栏已满，因此 NetSpeedTray 之前让开了。在下次重新启动之前它会保持可见。请把它拖到空闲的位置，或在“{settings} > {page}”中关闭“{setting}”。",
+    "SECOND_LAUNCH_SHOWN_TITLE": "暂时保持可见",
     "HOVER_CARD_PIN_HINT": "单击小部件以保持打开",
     "//TRANSLATION_VERSION": "2.2.0-zh_CN-260921",
     "INTEGRATIONS_GROUP": "集成",

@@ -48,7 +48,11 @@ class ConfigConstants:
     # of exactly #00FF00, the font "Segoe UI" (-> "Segoe UI Variable"), the separate 10 pt DemiBold Segoe UI
     # arrow font - to the new
     # defaults; anything else is the user's choice and stays. The bump keeps a `.bak.v1.3` (or `.bak.v1.2`).
-    CONFIG_SCHEMA_VERSION: Final[str] = "1.4"
+    # 1.5 (2.2 rc.4, #332): a one-time step (utils/config._migrate_to_1_5) gives a light-taskbar text of
+    # #1B1B1B to a file whose text pair is white/white only because 2.1.7's stuck `color_is_automatic:
+    # false` was seeded onto both halves (the legacy flag, still False in the file, is the signature).
+    # The bump keeps a `.bak.v1.4`.
+    CONFIG_SCHEMA_VERSION: Final[str] = "1.5"
     # A same-version field migration (e.g. dropping a beta's key) rewrites the file without a schema
     # bump. The first `.bak.v<ver>.fields` copy is kept forever (the pristine one); each LATER such
     # migration also snapshots the file as it was just before it, as `.fields.<timestamp>`, and only
@@ -398,6 +402,7 @@ class ConfigConstants:
         "widgets_overlap_nudge_shown": False,  # one-time #200 nudge: widget overlaps the Widgets/weather panel
         "side_bar_no_room_notice_shown": False,  # one-time heads-up: a side taskbar's apps leave no free spot
         "app_overlap_notice_shown": False,  # one-time heads-up: the widget stepped aside for app buttons (#24)
+        "second_launch_notice_shown": False,  # one-time: a second launch brought a yielded widget back (#373)
         # The tray_offset_x the user dropped the widget at ON the app buttons (#24 drop baseline): the
         # yield stays off for that spot, across restarts, until a probe sees it clear once. None = none.
         "app_overlap_drop_offset": None,
@@ -567,6 +572,7 @@ class ConfigConstants:
         "widgets_overlap_nudge_shown": {"type": bool, "default": False},
         "side_bar_no_room_notice_shown": {"type": bool, "default": False},
         "app_overlap_notice_shown": {"type": bool, "default": False},
+        "second_launch_notice_shown": {"type": bool, "default": False},
         "app_overlap_drop_offset": {"type": (int, type(None)), "default": None},
         "cpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
         "cpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
