@@ -86,15 +86,18 @@ updater, WinGet and the Store never offer prereleases.*
 
 ### Fixed
 
-- **White text on a light taskbar is fixed for 2.1.7 upgraders.** Picking any text color in 2.1.7
-  switched automatic color off for good, so a factory white came across as white on both taskbars.
-  It now gets the near-black light-taskbar default; any other color you picked stays. ([#332])
+- **White text on a light taskbar, or black text on a dark one, is fixed for 2.1.7 upgraders.**
+  Confirming the color picker in 2.1.7 switched automatic color off for good, so the factory white -
+  or the black it had set for a light taskbar - came across on both taskbars. Those now get the
+  white / near-black defaults; any other color you picked stays. ([#332])
 
   *Under the hood: the 1.3 seeding (`_migrate_color_scheme`) copied a fixed color to both halves,
-  and `paint_colors` only rescues the factory light value. A fixed `#FFFFFF` now seeds the theme
-  defaults (`#FFFFFF` / `#1B1B1B`); a new one-time 1.5 step repairs files rc.2/rc.3 already seeded,
-  only when both halves are `#FFFFFF` AND the inert legacy `color_is_automatic` is still `false` in
-  the file. A white/white pair without that flag is a 2.2 choice and stays. Arrows are untouched.*
+  and `paint_colors` only rescues the factory light value. A fixed `#FFFFFF` or `#000000` (also
+  `#fff` / `#000`, any case, padded) now seeds the theme defaults (`#FFFFFF` / `#1B1B1B`); a new
+  one-time 1.5 step repairs files rc.2/rc.3 already seeded - both halves set to the factory pair -
+  only when both halves are present and the same white or black AND the inert legacy
+  `color_is_automatic` is still `false` in the file. Such a pair without that flag is a 2.2 choice
+  and stays; a missing half is left to validation. Arrows are untouched.*
 
 [#332]: https://github.com/erez-c137/NetSpeedTray/issues/332
 

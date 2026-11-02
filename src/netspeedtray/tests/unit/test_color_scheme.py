@@ -403,6 +403,50 @@ def test_the_1_5_step_leaves_other_fixed_pairs_alone():
         assert (out["default_color_dark"], out["default_color_light"]) == (dark, light)
 
 
+@pytest.mark.parametrize("stored", ["#000000", "#000", " #000000 ", "#FFF", "#fff ", " #FFFFFF"])
+def test_a_fixed_factory_black_or_white_takes_the_theme_pair(stored, shell):
+    """#332's mirror: 2.1.7 synced an automatic user's text to #000000 on a light taskbar, and confirming
+    the colour picker turned the flag off - so a 'fixed' black was the theme's, not a choice. Seeded as
+    black/black it would paint black on a dark taskbar forever. Normalised like white (#000, case,
+    whitespace); both take the factory pair."""
+    out = _migrate({"config_version": "1.1", "default_color": stored, "color_is_automatic": False})
+    assert (out["default_color_dark"], out["default_color_light"]) == ("#FFFFFF", "#1B1B1B")
+    assert out["default_color"] == stored                         # the legacy key itself is inert
+    shell("dark")
+    assert RenderConfig.from_dict(out).default_color == "#FFFFFF"
+    shell("light")
+    assert RenderConfig.from_dict(out).default_color == "#1B1B1B"
+
+
+@pytest.mark.parametrize("pair", [("#000000", "#000000"), ("#000", " #000000"), ("#FFF", "#ffffff ")])
+def test_the_1_5_step_repairs_a_black_or_white_pair_seeded_from_the_stuck_flag(pair, shell):
+    out = _migrate(_file_1_4(default_color=pair[0], color_is_automatic=False,
+                             default_color_dark=pair[0], default_color_light=pair[1]))
+    assert (out["default_color_dark"], out["default_color_light"]) == ("#FFFFFF", "#1B1B1B")
+    assert (out["arrow_down_color_dark"], out["arrow_down_color_light"]) == D.THEMED_COLOR_DEFAULTS["arrow_down_color"]
+    shell("dark")
+    assert RenderConfig.from_dict(out).default_color == "#FFFFFF"
+
+
+def test_the_1_5_step_leaves_a_chosen_black_pair_alone():
+    out = _migrate(_file_1_4(default_color_dark="#000000", default_color_light="#000000"))
+    assert (out["default_color_dark"], out["default_color_light"]) == ("#000000", "#000000")
+
+
+@pytest.mark.parametrize("present", [{"default_color_dark": "#FFFFFF"}, {"default_color_light": "#FFFFFF"},
+                                     {"default_color_dark": "#000000"}, {"default_color_light": "#000000"},
+                                     {"default_color_dark": None, "default_color_light": 7}, {}])
+def test_the_1_5_step_with_a_half_missing_or_garbage_does_not_crash_or_guess(present):
+    """A hand-edited 1.4 file: with a half missing the old seeding's signature is not there, so the step
+    leaves the file to validation (which fills a missing half with its default)."""
+    cfg = _file_1_4(color_is_automatic=False)
+    cfg.pop("default_color_dark"), cfg.pop("default_color_light")
+    cfg.update(present)
+    raw = _cm()._migrate_config(dict(cfg))
+    for key in ("default_color_dark", "default_color_light"):
+        assert raw.get(key, "missing") == present.get(key, "missing"), key
+
+
 def test_custom_band_and_arrow_colours_are_copied_to_both_taskbars():
     out = _migrate(_legacy(high_speed_color="#FF3366", low_speed_color="#33CCFF",
                            arrow_up_color="#FFAA00", arrow_down_color="#00AAFF"))
