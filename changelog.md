@@ -75,6 +75,18 @@ ALSO
 
 ---
 
+## [2.2.0-rc.4] - Unreleased
+
+### Localization
+
+- **Bengali** - 17 languages now, picked automatically on Bengali Windows (Bangladesh or India).
+  ([#457], thanks [@Askeleid])
+
+[#457]: https://github.com/erez-c137/NetSpeedTray/pull/457
+[@Askeleid]: https://github.com/Askeleid
+
+---
+
 ## [2.2.0-rc.3] - October 29, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app
