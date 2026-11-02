@@ -90,16 +90,16 @@ def test_a_failing_sign_in_check_is_a_normal_user_launch(monkeypatch):
 
 
 def test_the_real_session_logon_time_reads_sanely():
-    """The real WTSSessionInfo query (read-only): a WTSINFOW-sized answer, a non-negative age within the
-    machine's uptime (+ a minute for a clock adjusted after sign-in)."""
+    """The real WTSSessionInfo query (read-only): a WTSINFOW-sized answer and a sane, non-negative age
+    (a minute of slack for a clock adjusted after sign-in). No upper bound from uptime: a VM restored
+    from an image (the CI runner) reports a sign-in older than its boot - which reads as a user launch,
+    the safe side."""
     import ctypes as _c
     assert _c.sizeof(sc._WTSINFOW) == 216          # the x64 layout wtsapi32 returns
     since = sc._session_seconds_since_logon()
     if since is None:
         pytest.skip("this session reports no logon time")
-    k32 = _c.windll.kernel32
-    k32.GetTickCount64.restype = _c.c_ulonglong
-    assert -60.0 <= since <= k32.GetTickCount64() / 1000.0 + 60.0
+    assert -60.0 <= since < 10 * 365 * 86400.0
 
 
 def test_unknown_owner_is_still_asked(monkeypatch):
