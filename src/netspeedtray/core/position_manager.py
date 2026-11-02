@@ -1036,6 +1036,8 @@ class PositionManager(QObject):
         # the background, and when (_refresh_trayless_bar_layout).
         self._trayless_probe_key: Optional[tuple] = None
         self._trayless_probe_at: float = 0.0
+        # The Widgets re-enable (widgets_toggle_generation's on_at) the primary's follow-up probe ran for.
+        self._primary_interim_probe_for: Optional[float] = None
         from netspeedtray.core.app_overlap_yield import AppOverlapYield
         self._app_yield = AppOverlapYield(self._app_overlap_context, self._app_yield_changed,
                                           self._app_yield_first, parent=self,
@@ -1392,9 +1394,17 @@ class PositionManager(QObject):
         try:
             if taskbar_info is None or not getattr(taskbar_info, "hwnd", 0):
                 return
-            # The primary bar never: even one without a TrayNotifyWnd (ExplorerPatcher / StartAllBack
-            # builds) - its probes belong to the slot owners (the #24 yield, the side placement).
+            # The primary bar never gets the periodic refresh: even one without a TrayNotifyWnd
+            # (ExplorerPatcher / StartAllBack builds) - its probes belong to the slot owners (the #24
+            # yield, the side placement). Only Widgets turned back ON: when it answers the stand-in
+            # (last seen) box at the grace's end, one probe confirms or replaces it (#473 review).
             if getattr(taskbar_info, "is_primary", False) is True:
+                _flips, on_at = taskbar_utils.widgets_toggle_generation()
+                if (on_at is not None and on_at != self._primary_interim_probe_for
+                        and time.monotonic() >= on_at + constants.timeouts.WIDGETS_REENABLE_GRACE_S):
+                    self._primary_interim_probe_for = on_at
+                    if taskbar_utils.taskbar_layout_interim(int(taskbar_info.hwnd)):
+                        taskbar_utils.request_background_layout_probe(int(taskbar_info.hwnd))
                 return
             if taskbar_info.get_tray_rect() is not None:
                 return

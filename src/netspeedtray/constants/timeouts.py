@@ -132,6 +132,11 @@ class TimeoutConstants:
     # probe that finds none this soon after keeps the bar's last seen box, and every docked tray-less
     # bar is probed again right away and once more after this long (#473 VM re-check).
     WIDGETS_REENABLE_GRACE_S: Final[float] = 5.0
+    # ... and the stand-in (last seen) box answers at most this long after Widgets came back on, unless a
+    # probe confirmed it: the re-probe at the grace's end lands long before.
+    WIDGETS_INTERIM_MAX_S: Final[float] = 2 * WIDGETS_REENABLE_GRACE_S
+    # The Widgets toggle (TaskbarDa) is read at most once per this long; it changes only from Settings.
+    WIDGETS_TOGGLE_MEMO_S: Final[float] = 0.25
     # #24 app-button yield on a horizontal Win11 bar (core/app_overlap_yield.py): hiding is immediate,
     # but the widget comes back only after two clear readings at least this far apart - the buttons
     # animate for ~300-550 ms after an app closes, and one mid-animation read must not blink it back.

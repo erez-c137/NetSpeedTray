@@ -35,6 +35,8 @@ CFG = {"tray_offset_x": 0, "tray_offset_y": 3}
 # The real function, captured before conftest's autouse no-op replaces the module attribute
 # (getattr: the module must still import on a tree without it, to show these tests fail there).
 REAL_BACKGROUND_PROBE = getattr(tbu, "request_background_layout_probe", None)
+REAL_LAYOUT_FOR = tbu.taskbar_layout_for
+REAL_TOGGLE = getattr(tbu, "_widgets_toggle_on", None)
 
 D1, D2 = r"\\.\DISPLAY1", r"\\.\DISPLAY2"
 PRIMARY_HWND, SECONDARY_HWND, TRAY_HWND = 0x10010, 0x20020, 0x10011
@@ -811,3 +813,151 @@ def test_widgets_back_on_reprobes_every_trayless_bar_at_once_and_after_the_grace
     assert len(calls) == 4
     pm.get_calculated_position()
     assert len(calls) == 4
+
+
+
+# --- review of cd740cce ------------------------------------------------------------------------------
+
+def test_an_aged_primary_box_yields_to_the_fresher_200_probe(monkeypatch, clock):
+    """Review 1: the aged-box rule kept the primary's old Widgets box for good (the primary gets no
+    background refresh), and widgets_button_span_x preferred it over the #200 probe's 30 s rect - a
+    left-aligned primary with the yield off could sit on longer weather text. Tray-less bars keep it."""
+    _mixed_dpi_screens(monkeypatch)
+    _fake_win32(monkeypatch)
+    monkeypatch.setattr(tbu, "taskbar_layout_for", REAL_LAYOUT_FOR)
+    monkeypatch.setattr(tbu, "find_apps_rect", lambda h: None)
+    fresh = (1500, 1008, 1660, 1080)
+    monkeypatch.setattr(tbu, "get_widgets_rect", lambda h: fresh)
+    old_box = (1606, 1008, 1758, 1080)
+    sec_box = (3000, -72, 3150, 0)
+    tbu._layout_state.update(FRESH)
+    with tbu._layout_lock:
+        tbu._store_landed_layout(PRIMARY_HWND, {"widgets": old_box})
+        tbu._store_landed_layout(SECONDARY_HWND, {"widgets": sec_box})
+    tbu._layout_state["hwnd"] = 0xBEEF                    # a mirror's bar holds the slot
+    clock.now += tbu.LAYOUT_CACHE_MAX_AGE_S + 1
+    bars = _bars_by_hwnd()
+    assert bars[PRIMARY_HWND].widgets_extent is None and bars[PRIMARY_HWND].widgets_rect == fresh
+    assert bars[SECONDARY_HWND].widgets_extent == sec_box  # the tray-less bar keeps its aged box
+    tbu._layout_state.update(FRESH)
+
+
+def test_a_stand_in_box_expires_when_no_probe_confirms_it(layout, clock):
+    """Review 2: the last seen box stands in after Widgets is turned back on, but not for ever - a
+    button that moved while it was off (alignment changed) must not linger."""
+    toggle = _Toggle()
+    with patch.object(tbu, "_widgets_toggle_on", toggle):
+        _note_toggle()
+        _probe(A)
+        _probe(B)
+        toggle.on = False
+        _note_toggle()
+        with patch.object(tbu, "_query_taskbar_layout_blocking",
+                          side_effect=lambda h: (APPS[h], None, None, None, CLOCKS[h])):
+            REAL_BACKGROUND_PROBE(A)
+            tbu._layout_worker()
+        toggle.on = True
+        _note_toggle()
+        assert tbu.taskbar_layout_snapshot(A)[1] == WIDGETS[A]
+        clock.now += getattr(constants.timeouts, "WIDGETS_INTERIM_MAX_S", 10.0) + 1
+        assert tbu.taskbar_layout_snapshot(A)[1] is None
+
+
+def test_the_primary_gets_one_follow_up_probe_for_a_stand_in_box(monkeypatch, layout, clock):
+    """Review 2: the primary (no periodic refresh) holding a stand-in box at the grace's end gets one
+    probe to confirm or replace it."""
+    toggle = _Toggle()
+    monkeypatch.setattr(tbu, "_widgets_toggle_on", toggle)
+    tb = _secondary_bar(widgets=(1690, 1838))
+    tb.is_primary = True
+    pm, calls = _manager(tb, monkeypatch)
+    _note_toggle()
+    with patch.object(tbu, "_query_taskbar_layout_blocking",
+                      side_effect=lambda h: (APPS[A], WIDGETS[A], None, None, CLOCKS[A])):
+        _probe(tb.hwnd)
+    _probe(B)
+    toggle.on = False
+    _note_toggle()
+    with patch.object(tbu, "_query_taskbar_layout_blocking",
+                      side_effect=lambda h: (APPS[A], None, None, None, CLOCKS[A])):
+        _probe(tb.hwnd, keep_last=True)                  # probed while off: no button
+    _probe(B)
+    toggle.on = True
+    pm.get_calculated_position()
+    assert calls == []                                   # inside the grace: nothing yet
+    clock.now += constants.timeouts.WIDGETS_REENABLE_GRACE_S + 0.5
+    pm.get_calculated_position()
+    assert calls == [tb.hwnd]
+    pm.get_calculated_position()
+    assert calls == [tb.hwnd]                            # once
+
+
+def test_the_widgets_toggle_read_is_memoised(clock):
+    """Review 3: read 10-30 times per bar per tick, often under _layout_lock."""
+    reads = []
+
+    def reader():
+        reads.append(1)
+        return True
+
+    memo = getattr(tbu, "_widgets_toggle_memo", None)
+    if memo is not None:
+        memo.update(at=None, on=True)
+    with patch.object(tbu, "_widgets_button_enabled", side_effect=reader):
+        for _ in range(5):
+            assert REAL_TOGGLE() is True
+        assert len(reads) == 1
+        clock.now += 0.3
+        REAL_TOGGLE()
+        assert len(reads) == 2
+
+
+
+# --- VM confirm of cd740cce: Taskbar position bottom -> Right while running -------------------------------
+
+def test_slot_requests_from_several_bars_in_one_tick_all_get_probed(layout):
+    """Every widget and mirror re-docks in the same tick; each asked the slot for its new bar, and every
+    request but the last was superseded before its probe started - the DISPLAY2 mirror had no layout
+    (on the weather button) until the next 30 s refresh."""
+    tbu.request_taskbar_layout_probe(A)
+    tbu.request_taskbar_layout_probe(B)
+    tbu.request_taskbar_layout_probe(C)
+    tbu._layout_worker()
+    for h in (A, B, C):
+        assert tbu.taskbar_layout_snapshot(h)[:2] == (APPS[h], WIDGETS[h]), hex(h)
+
+
+def test_a_request_superseded_mid_probe_is_not_probed_twice(layout):
+    calls = []
+
+    def query(h):
+        calls.append(h)
+        if h == A and len(calls) == 1:
+            tbu.request_taskbar_layout_probe(B)         # arrives while A's probe runs
+        return APPS[h], WIDGETS[h], None, None, CLOCKS[h]
+
+    with patch.object(tbu, "_query_taskbar_layout_blocking", side_effect=query):
+        tbu.request_taskbar_layout_probe(A)
+        tbu._layout_worker()
+    assert calls == [A, B]
+    assert tbu.taskbar_layout_snapshot(A)[:2] == (APPS[A], WIDGETS[A])
+
+
+def test_a_layout_probed_on_another_edge_is_not_served(monkeypatch, clock):
+    """bottom -> Right: the box cached for the bottom bar must not place the mirror on the right bar."""
+    _mixed_dpi_screens(monkeypatch)
+    _fake_win32(monkeypatch, secondary_bar=(3768, -2160, 3840, 0))     # the bar is on the RIGHT now
+    monkeypatch.setattr(tbu, "taskbar_layout_for", REAL_LAYOUT_FOR)
+    monkeypatch.setattr(tbu, "find_apps_rect", lambda h: None)
+    tbu._layout_state.update(FRESH)
+    with tbu._layout_lock:
+        tbu._store_landed_layout(SECONDARY_HWND, {"widgets": (3000, -72, 3150, 0),
+                                                   "apps": (100, -72, 900, 0), "bar": SECONDARY_BAR})
+    tbu._layout_state["hwnd"] = 0xBEEF
+    bar = _bars_by_hwnd()[SECONDARY_HWND]
+    assert bar.widgets_extent is None and bar.apps_extent is None
+    with tbu._layout_lock:                                               # same edge: served
+        tbu._store_landed_layout(SECONDARY_HWND, {"widgets": (3768, -400, 3840, -250),
+                                                   "bar": (3768, -2160, 3840, 0)})
+    assert _bars_by_hwnd()[SECONDARY_HWND].widgets_extent == (3768, -400, 3840, -250)
+    tbu._layout_state.update(FRESH)

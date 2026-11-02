@@ -129,12 +129,18 @@ updater, WinGet and the Store never offer prereleases.*
   one-taskbar slot the side-bar placement and the yield work from (a slot request that waits for one
   gets its full timeout from when its own probe starts); and the layout cache keeps each bar's last
   landed result per HWND (least recently landed evicted first), so one bar's probe no longer blanks
-  every other bar's Widgets box. A cached result answers for the app buttons for 90 s at most but
-  keeps its Widgets box (dropping it moved a side-bar mirror onto the weather 90 s after launch in
-  the VM); every layout read, the #200 probe's included, drops the Widgets box as soon as the button
-  is turned off in Settings, and turned back on it answers the bar's last seen box at once while
-  every docked tray-less bar is re-probed (right away and again 5 s later, in case Explorer had not
-  drawn the button yet); a re-check reseeded from the cache never counts as a fresh landing
+  every other bar's Widgets box. A cached result answers for the app buttons for 90 s at most; a
+  tray-less bar keeps its Widgets box past that (dropping it moved a side-bar mirror onto the weather
+  90 s after launch in the VM), while the main taskbar, which no background refresh re-probes, drops
+  it so the #200 probe's fresher rect wins. Every layout read, the #200 probe's included, drops the
+  Widgets box as soon as the button is turned off in Settings (the toggle is read at most every
+  250 ms); turned back on, the bar's last seen box stands in at once - for 10 s at most unless a probe
+  confirms it - while every docked tray-less bar is re-probed right away and again 5 s later, and the
+  main taskbar once at 5 s if it still holds a stand-in. A layout probed on another edge or thickness
+  of the same bar is never served after a live Taskbar position change, and a slot request
+  superseded by another bar's before its probe started is probed in the background instead of lost
+  (every mirror re-docks in the same tick); a re-check reseeded from the cache never counts as a
+  fresh landing
   (`taskbar_layout_landed_count` is now per bar). The main taskbar's placement is otherwise
   unchanged; it only moves back by the clock within a second of Widgets being turned off, instead
   of up to ~15 s.*
