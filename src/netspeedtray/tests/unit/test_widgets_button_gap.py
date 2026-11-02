@@ -121,7 +121,9 @@ def test_user_placed_horizontal_offset():
 
 def test_secondary_bar_without_tray_is_unchanged():
     # A secondary taskbar has no TrayNotifyWnd (and no Widgets button): the clock reserve rule, as before.
-    tb = _bar(tray=False)
+    # widgets_extent=None says "no Widgets button" explicitly: the default _bar() carries the VM's button,
+    # and since #373 a tray-less bar steps left of one beside its clock too (test_secondary_taskbar_373).
+    tb = _bar(tray=False, widgets_extent=None)
     reserve = constants.config.defaults.DEFAULT_SECONDARY_CLOCK_RESERVE_PX
     assert _x(tb) == 1920 - reserve - W
 

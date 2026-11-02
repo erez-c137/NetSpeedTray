@@ -99,7 +99,41 @@ updater, WinGet and the Store never offer prereleases.*
   `color_is_automatic` is still `false` in the file. Such a pair without that flag is a 2.2 choice
   and stays; a missing half is left to validation. Arrows are untouched.*
 
+- **With "Preferred monitor" set to an extended monitor at a different scale, the widget docks to
+  that monitor's taskbar again.** It floated above the bar at the desktop's bottom-right instead,
+  because the app decided that monitor had no taskbar. ([#373], reported by [@relu616], analysis by
+  [@emgeka])
+
+  *Under the hood: Qt 6 on Windows reports each screen with its NATIVE origin and only its size
+  divided by the scale - a 150 % 4K monitor above a 150 % laptop panel is `QRect(0, -2160, 2560,
+  1440)`. `find_screen_for_taskbar` (and `TaskbarInfo.get_screen()`'s intersection fallback) turned
+  that into physical px by multiplying the origin too, so the bar at (0, -72, 3840, 0) overlapped no
+  screen, the first screen (the primary) won, `_select_taskbar_for_screen` never matched the
+  preferred monitor and `get_free_float_screen` floated the widget. The match now uses the bar
+  window's monitor device name first (`MonitorFromWindow` -> `GetMonitorInfo` "Device" ==
+  `QScreen.name()`), then the corrected physical rect (origin as is, size times the scale).*
+
+- **On a secondary taskbar the widget keeps clear of the weather button and of a wide clock.** The
+  step left of a Widgets/weather button beside the clock only ran on the main taskbar, and the clock
+  was always a fixed 75 px reserve - too little for a clock with seconds. Mirrors from "Show on all
+  taskbars" get the same. ([#373], thanks [@emgeka] for the analysis; reported by [@relu616])
+
+  *Under the hood: `Shell_SecondaryTrayWnd` has no `TrayNotifyWnd`, so `get_tray_rect()` is None
+  there, and the widgets step was gated on a tray rect. Now: the right edge is the clock UIA last saw
+  on that bar (`probed_tray_rect`, as the side-bar path already used) when it lies inside the bar's
+  right half, else the reserve; the step runs without a tray rect (a button in the bar's right half
+  that reaches past the reserve still counts); and a secondary screen's physical rects convert to
+  logical px around its Qt origin, not as physical / scale. Nothing probed a mirror's bar (mirrors
+  have no #24 yield), so a tray-less top/bottom bar now gets a background UIA layout probe on every
+  new dock and at most every 30 s (`request_background_layout_probe`), which never takes the
+  one-taskbar slot the side-bar placement and the yield work from; and the layout cache keeps each
+  bar's last landed result per HWND, so one bar's probe no longer blanks every other bar's Widgets
+  box. The main taskbar's placement is unchanged.*
+
 [#332]: https://github.com/erez-c137/NetSpeedTray/issues/332
+[#373]: https://github.com/erez-c137/NetSpeedTray/issues/373
+[@emgeka]: https://github.com/emgeka
+[@relu616]: https://github.com/relu616
 
 ## [2.2.0-rc.3] - October 29, 2026
 
