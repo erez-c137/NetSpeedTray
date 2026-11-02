@@ -892,7 +892,7 @@ def test_the_primary_gets_one_follow_up_probe_for_a_stand_in_box(monkeypatch, la
     assert calls == [tb.hwnd]                            # once
 
 
-def test_the_widgets_toggle_read_is_memoised(clock):
+def test_the_widgets_toggle_read_is_memoised(clock, monkeypatch):
     """Review 3: read 10-30 times per bar per tick, often under _layout_lock."""
     reads = []
 
@@ -901,8 +901,10 @@ def test_the_widgets_toggle_read_is_memoised(clock):
         return True
 
     memo = getattr(tbu, "_widgets_toggle_memo", None)
-    if memo is not None:
+    if isinstance(memo, dict):
         memo.update(at=None, on=True)
+    elif memo is not None:
+        monkeypatch.setattr(tbu, "_widgets_toggle_memo", (None, True))
     with patch.object(tbu, "_widgets_button_enabled", side_effect=reader):
         for _ in range(5):
             assert REAL_TOGGLE() is True
@@ -961,3 +963,61 @@ def test_a_layout_probed_on_another_edge_is_not_served(monkeypatch, clock):
                                                    "bar": (3768, -2160, 3840, 0)})
     assert _bars_by_hwnd()[SECONDARY_HWND].widgets_extent == (3768, -400, 3840, -250)
     tbu._layout_state.update(FRESH)
+
+
+
+# --- review of a8e03adb ------------------------------------------------------------------------------
+
+def _primary_and_secondary_cache(monkeypatch, secondary_bar, stored_primary, stored_secondary):
+    """The issue's two bars, each with a cached layout probed on ``stored_*`` (the primary's window is
+    PRIMARY_BAR, 72 px; the secondary's ``secondary_bar``), out of the slot."""
+    _mixed_dpi_screens(monkeypatch)
+    _fake_win32(monkeypatch, secondary_bar=secondary_bar)
+    monkeypatch.setattr(tbu, "taskbar_layout_for", REAL_LAYOUT_FOR)
+    monkeypatch.setattr(tbu, "find_apps_rect", lambda h: None)
+    tbu._layout_state.update(FRESH)
+    with tbu._layout_lock:
+        tbu._store_landed_layout(PRIMARY_HWND, {"widgets": (1606, 1008, 1758, 1080), "bar": stored_primary})
+        tbu._store_landed_layout(SECONDARY_HWND, {"widgets": (3000, -72, 3150, 0), "bar": stored_secondary})
+    tbu._layout_state["hwnd"] = 0xBEEF                   # another bar holds the slot
+
+
+def test_the_primary_keeps_its_box_when_its_bar_grew_or_slid(monkeypatch):
+    """Review 1: containment read a Small -> Default (or a mid-slide auto-hide) primary as another
+    layout and dropped its Widgets box - the primary's placement must not change."""
+    _primary_and_secondary_cache(monkeypatch, SECONDARY_BAR,
+                                 stored_primary=(0, 1032, 1920, 1080),        # probed at 48 px
+                                 stored_secondary=SECONDARY_BAR)
+    bars = _bars_by_hwnd()                                 # the primary is 72 px now
+    assert bars[PRIMARY_HWND].widgets_extent == (1606, 1008, 1758, 1080)
+    assert bars[SECONDARY_HWND].widgets_extent == (3000, -72, 3150, 0)
+    tbu._layout_state.update(FRESH)
+
+
+def test_a_trayless_bar_that_shrank_does_not_serve_the_old_layout(monkeypatch):
+    """Review 1: a bar that SHRANK (Default -> Small) still matched by containment."""
+    _primary_and_secondary_cache(monkeypatch, (0, -48, 3840, 0),
+                                 stored_primary=PRIMARY_BAR, stored_secondary=SECONDARY_BAR)
+    assert _bars_by_hwnd()[SECONDARY_HWND].widgets_extent is None
+    tbu._layout_state.update(FRESH)
+
+
+def test_a_superseded_request_keeps_its_caller_waiting_and_then_lands(layout):
+    """Review 2: a yield / side-bar watcher request moved to the background by another bar's request
+    read "not pending, nothing landed" at once - its caller gave up on a probe that was still coming."""
+    before = tbu.taskbar_layout_landed_count(A)
+    tbu.request_taskbar_layout_probe(A, keep_last=True)
+    tbu.request_taskbar_layout_probe(B)                  # supersedes A before its probe started
+    assert tbu.taskbar_layout_snapshot(A)[2] is True     # still pending for its caller
+    tbu._layout_worker()
+    assert tbu.taskbar_layout_snapshot(A)[2] is False
+    assert tbu.taskbar_layout_landed_count(A) > before   # ... and it counts as landed
+    assert tbu.taskbar_layout_snapshot(A)[:2] == (APPS[A], WIDGETS[A])
+
+
+def test_a_superseded_request_that_never_lands_times_out(layout, clock):
+    tbu.request_taskbar_layout_probe(A)
+    tbu.request_taskbar_layout_probe(B)
+    assert tbu.taskbar_layout_snapshot(A)[2] is True
+    clock.now += tbu.LAYOUT_PROBE_TIMEOUT_S + 1
+    assert tbu.taskbar_layout_snapshot(A)[2] is False

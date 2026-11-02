@@ -153,6 +153,7 @@ def _fresh_per_taskbar_layout_cache(monkeypatch):
                         raising=False)
     taskbar_utils._layout_by_hwnd.clear()
     del taskbar_utils._layout_background[:]
+    getattr(taskbar_utils, "_layout_superseded", {}).clear()
     yield
     taskbar_utils._layout_by_hwnd.clear()
     del taskbar_utils._layout_background[:]

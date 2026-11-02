@@ -136,11 +136,12 @@ updater, WinGet and the Store never offer prereleases.*
   Widgets box as soon as the button is turned off in Settings (the toggle is read at most every
   250 ms); turned back on, the bar's last seen box stands in at once - for 10 s at most unless a probe
   confirms it - while every docked tray-less bar is re-probed right away and again 5 s later, and the
-  main taskbar once at 5 s if it still holds a stand-in. A layout probed on another edge or thickness
-  of the same bar is never served after a live Taskbar position change, and a slot request
-  superseded by another bar's before its probe started is probed in the background instead of lost
-  (every mirror re-docks in the same tick); a re-check reseeded from the cache never counts as a
-  fresh landing
+  main taskbar once at 5 s if it still holds a stand-in. A layout probed on another orientation of the
+  same bar (and, on a secondary bar, another thickness) is never served after a live Taskbar position
+  change, and a slot request superseded by another bar's before its probe started is probed in the
+  background instead of lost (every mirror re-docks in the same tick) - its caller still reads it as
+  pending until that probe lands; a re-check reseeded from the cache never counts as a fresh
+  landing
   (`taskbar_layout_landed_count` is now per bar). The main taskbar's placement is otherwise
   unchanged; it only moves back by the clock within a second of Widgets being turned off, instead
   of up to ~15 s.*

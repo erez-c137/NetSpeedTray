@@ -342,7 +342,11 @@ _APP_ENTRY_KEYS = ("apps", "group", "overflow")   # "bar" stays: taskbar_layout_
 # Background probes (request_background_layout_probe): bars to probe into _layout_by_hwnd once the slot
 # has nothing pending, oldest first. They never take the slot or its gen.
 _layout_background: list = []
-_LAYOUT_ENTRY_KEYS = ("apps", "widgets", "group", "overflow", "widgets_content", "bar")
+# Slot requests superseded by another bar's before their probe started (moved to _layout_background):
+# HWND -> when the request was made. taskbar_layout_snapshot reports them pending until that background
+# probe lands, or LAYOUT_PROBE_TIMEOUT_S after the request - as if the slot had kept them.
+_layout_superseded: dict = {}
+_LAYOUT_ENTRY_KEYS = ("apps", "widgets", "group", "overflow", "widgets_content", "bar", "bar_shape")
 # A process-wide sequence number for landed probes: each entry carries the number of its landing, and
 # taskbar_layout_landed_count answers it PER BAR - a reseeded or timed-out request never moves it, so a
 # cached result can never pass for a fresh landing.
@@ -378,19 +382,20 @@ def _store_landed_layout(taskbar_hwnd: int, entry: dict) -> None:
 
 # _widgets_toggle_on's last answer and when it was read: it is asked 10-30 times per bar per tick (many
 # under _layout_lock), and the toggle only changes when the user flips it in Settings.
-_widgets_toggle_memo: dict = {"at": None, "on": True}
+_widgets_toggle_memo: Tuple[Optional[float], bool] = (None, True)   # (read at, on): one assignment
 
 
 def _widgets_toggle_on() -> bool:
     """Taskbar settings > Widgets is on (TaskbarDa, a microsecond registry read), memoised for
     WIDGETS_TOGGLE_MEMO_S. Its own name so the test suite can pin it without replacing the registry
     reader its own tests exercise."""
+    global _widgets_toggle_memo
     now = time.monotonic()
-    at = _widgets_toggle_memo["at"]
+    at, on = _widgets_toggle_memo                  # one read of one tuple: never a torn pair
     if at is not None and 0.0 <= now - at < constants.timeouts.WIDGETS_TOGGLE_MEMO_S:
-        return _widgets_toggle_memo["on"]
+        return on
     on = _widgets_button_enabled()
-    _widgets_toggle_memo.update(at=now, on=on)
+    _widgets_toggle_memo = (now, on)               # one assignment
     return on
 
 
@@ -542,9 +547,13 @@ def _layout_worker() -> None:
         else:
             apps = widgets = group = None
         entry = dict(apps=valid_rect(apps), widgets=valid_rect(widgets), group=valid_rect(group),
-                     overflow=valid_rect(overflow), widgets_content=valid_rect(content), bar=bar)
+                     overflow=valid_rect(overflow), widgets_content=valid_rect(content), bar=bar,
+                     # From ONE window rect, not the union: an auto-hide bar sliding during the probe
+                     # keeps its thickness, while the union grows (taskbar_layout_matches_bar).
+                     bar_shape=_bar_shape(bar_before or bar))
         with _layout_lock:
             if background:
+                _layout_superseded.pop(int(hwnd), None)
                 if _layout_state["hwnd"] != int(hwnd):
                     _store_landed_layout(hwnd, entry)
                 elif _layout_state["done"] and not _layout_state["pending"]:
@@ -591,6 +600,11 @@ def request_taskbar_layout_probe(taskbar_hwnd: Optional[int], keep_last: bool = 
             # mirror asks in the same tick, and the DISPLAY2 mirror's probe was lost - it sat on the
             # weather button until the next 30 s refresh).
             _layout_background.append(old)
+            # Its caller (the #24 yield, the side-bar watcher) is still polling: that bar reads
+            # "pending" until the background probe lands (its landed count then moves - a fresh
+            # result) or the request's own timeout runs out.
+            _layout_superseded[old] = _layout_state["started"]
+        _layout_superseded.pop(h, None)           # asked for again: the slot answers it now
         _layout_state["gen"] += 1
         if h in _layout_background:
             _layout_background.remove(h)          # the slot probes it now
@@ -665,10 +679,17 @@ def taskbar_layout_snapshot(taskbar_hwnd: Optional[int]):
         if not taskbar_hwnd:
             return None, None, False
         if _layout_state["hwnd"] != int(taskbar_hwnd):
+            pending = False
+            since = _layout_superseded.get(int(taskbar_hwnd))
+            if since is not None:
+                if time.monotonic() - since <= LAYOUT_PROBE_TIMEOUT_S:
+                    pending = True
+                else:
+                    _layout_superseded.pop(int(taskbar_hwnd), None)
             cached = _cached_layout_entry(taskbar_hwnd)   # its own last result, if any (#373)
             if cached is None:
-                return None, None, False
-            return cached["apps"], cached["widgets"], False
+                return None, None, pending
+            return cached["apps"], cached["widgets"], pending
         if _layout_state["pending"] and time.monotonic() - _layout_state["started"] > LAYOUT_PROBE_TIMEOUT_S:
             if _layout_state["done"]:   # a keep_last re-check: the last result stays
                 logger.info("Taskbar layout re-check timed out after %.0f s; keeping the last layout.",
@@ -792,26 +813,45 @@ def group_fits_bar(group_rect, bar_rect,
             and group[2] <= bar[2] + tolerance and group[3] <= bar[3] + tolerance)
 
 
-def taskbar_layout_matches_bar(taskbar_hwnd: Optional[int], bar_rect: Any) -> bool:
-    """The layout known for ``taskbar_hwnd`` was probed on a bar of the same orientation that contains
-    ``bar_rect`` (the taskbar window now, physical px). False after an edge or thickness change (#473
-    VM: bottom -> right): its Widgets box / apps are another layout's. True when either is unknown."""
-    rect = valid_rect(bar_rect)
-    if not taskbar_hwnd or rect is None:
+def _bar_shape(rect: Any) -> Optional[Tuple[bool, int]]:
+    """``(horizontal, thickness)`` of a taskbar window rect (physical px), or None."""
+    r = valid_rect(rect)
+    if r is None:
+        return None
+    w, h = r[2] - r[0], r[3] - r[1]
+    return (w > h, int(min(w, h)))
+
+
+def taskbar_layout_matches_bar(taskbar_hwnd: Optional[int], bar_rect: Any, is_primary: bool = False) -> bool:
+    """The layout known for ``taskbar_hwnd`` was probed on a bar of the same SHAPE as ``bar_rect`` (the
+    taskbar window now, physical px): the same orientation and, except on the primary, the same
+    thickness (within BAR_SHAPE_TOLERANCE_PX). False after a live Taskbar position change bottom ->
+    right (#473 VM): that layout's Widgets box / apps are another edge's. Never containment - an
+    auto-hide bar probed mid-slide, or a bar that grew (Small -> Default, a DPI change), still matches
+    on the primary, whose placement must not change; a tray-less bar re-probes on every dock change
+    anyway. True when either is unknown."""
+    cur = _bar_shape(bar_rect)
+    if not taskbar_hwnd or cur is None:
         return True
     with _layout_lock:
         if _layout_state["hwnd"] == int(taskbar_hwnd):
-            probed = _layout_state.get("bar") if _layout_state["done"] else None
+            entry = _layout_state if _layout_state["done"] else None
         else:
             entry = _layout_by_hwnd.get(int(taskbar_hwnd))
-            probed = entry.get("bar") if entry is not None else None
-    probed = valid_rect(probed)
+        probed = None
+        if entry is not None:
+            probed = entry.get("bar_shape") or _bar_shape(entry.get("bar"))
     if probed is None:
         return True
-    horizontal = rect[2] - rect[0] > rect[3] - rect[1]
-    if horizontal != (probed[2] - probed[0] > probed[3] - probed[1]):
-        return False
-    return group_fits_bar(rect, probed)
+    if probed[0] != cur[0]:
+        return False                       # another orientation: another edge's layout
+    if is_primary:
+        return True
+    return abs(probed[1] - cur[1]) <= BAR_SHAPE_TOLERANCE_PX
+
+
+# Thickness slack (physical px) for taskbar_layout_matches_bar: rounding of fractional-DPI bar sizes.
+BAR_SHAPE_TOLERANCE_PX = 2
 
 
 def taskbar_layout_landed_count(taskbar_hwnd: Optional[int]) -> int:
@@ -1433,7 +1473,7 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
             screen_geo = screen.geometry()
             # One snapshot: the apps span and the Widgets box always come from the same probe.
             apps_extent, apps_source, widgets_extent, _pending = taskbar_layout_for(hwnd)
-            if not taskbar_layout_matches_bar(hwnd, rect_phys):
+            if not taskbar_layout_matches_bar(hwnd, rect_phys, is_primary=is_primary_qt):
                 # Probed on another edge / thickness of this bar (a live Taskbar position change): that
                 # layout's boxes are not this one's. Unknown until the new dock's probe lands - the
                 # dock change requests it at once (PositionManager._refresh_trayless_bar_layout).
