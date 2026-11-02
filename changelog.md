@@ -99,6 +99,64 @@ updater, WinGet and the Store never offer prereleases.*
   `color_is_automatic` is still `false` in the file. Such a pair without that flag is a 2.2 choice
   and stays; a missing half is left to validation. Arrows are untouched.*
 
+- **With "Preferred monitor" set to an extended monitor at a different scale, the widget docks to
+  that monitor's taskbar again.** It floated above the bar at the desktop's bottom-right instead,
+  because the app decided that monitor had no taskbar. ([#373], reported by [@relu616], analysis by
+  [@emgeka])
+
+  *Under the hood: Qt 6 on Windows reports each screen with its NATIVE origin and only its size
+  divided by the scale - a 150 % 4K monitor above a 150 % laptop panel is `QRect(0, -2160, 2560,
+  1440)`. `find_screen_for_taskbar` (and `TaskbarInfo.get_screen()`'s intersection fallback) turned
+  that into physical px by multiplying the origin too, so the bar at (0, -72, 3840, 0) overlapped no
+  screen, the first screen (the primary) won, `_select_taskbar_for_screen` never matched the
+  preferred monitor and `get_free_float_screen` floated the widget. The match now uses the bar
+  window's monitor device name first (`MonitorFromWindow` -> `GetMonitorInfo` "Device" ==
+  `QScreen.name()`), then the corrected physical rect (origin as is, size times the scale).*
+
+- **On a secondary taskbar the widget keeps clear of the weather button and of a wide clock.** The
+  step left of a Widgets/weather button beside the clock only ran on the main taskbar, and the clock
+  was always a fixed 75 px reserve - too little for a clock with seconds. Mirrors from "Show on all
+  taskbars" get the same. ([#373], thanks [@emgeka] for the analysis; reported by [@relu616])
+
+  *Under the hood: `Shell_SecondaryTrayWnd` has no `TrayNotifyWnd`, so `get_tray_rect()` is None
+  there, and the widgets step was gated on a tray rect. Now: the right edge is the clock UIA last saw
+  on that bar (`probed_tray_rect`, as the side-bar path already used) when it lies inside the bar's
+  right half, else the reserve; the step runs without a tray rect (a button in the bar's right half
+  that reaches past the reserve still counts); and a secondary screen's physical rects convert to
+  logical px around its Qt origin, not as physical / scale. Nothing probed a mirror's bar (mirrors
+  have no #24 yield), so a tray-less bar (any edge) now gets a background UIA layout probe on every
+  new dock and at most every 30 s (`request_background_layout_probe`), which never takes the
+  one-taskbar slot the side-bar placement and the yield work from (a slot request that waits for one
+  gets its full timeout from when its own probe starts); and the layout cache keeps each bar's last
+  landed result per HWND (least recently landed evicted first), so one bar's probe no longer blanks
+  every other bar's Widgets box. A cached result answers for the app buttons for 90 s at most; a
+  tray-less bar keeps its Widgets box past that (dropping it moved a side-bar mirror onto the weather
+  90 s after launch in the VM), while the main taskbar, which no background refresh re-probes, drops
+  it so the #200 probe's fresher rect wins. Every layout read, the #200 probe's included, drops the
+  Widgets box as soon as the button is turned off in Settings (the toggle is read at most every
+  250 ms); turned back on, the bar's last seen box stands in at once - for 10 s at most unless a probe
+  confirms it - while every docked tray-less bar is re-probed right away and again 5 s later, and the
+  main taskbar once at 5 s if it still holds a stand-in. A layout probed on another orientation of the
+  same bar (and, on a secondary bar, another thickness) is never served after a live Taskbar position
+  change, and a slot request superseded by another bar's before its probe started is probed in the
+  background instead of lost (every mirror re-docks in the same tick) - its caller still reads it as
+  pending until that probe lands; a re-check reseeded from the cache never counts as a fresh
+  landing
+  (`taskbar_layout_landed_count` is now per bar). The main taskbar's placement is otherwise
+  unchanged; it only moves back by the clock within a second of Widgets being turned off, instead
+  of up to ~15 s.*
+
+- **Side taskbars, the task-list safe zone and the app-button step-aside use the right coordinates
+  on a scaled monitor that isn't the main one.** On a monitor at another scale above, below or left
+  of the main one, they worked from positions off by up to a whole screen. ([#373])
+
+  *Under the hood: the same Qt-origin rule as above. `side_bar_geometry` (bar, tray, apps, Widgets,
+  overflow), the secondary side clock, `vertical_taskbar_strip`'s window-based x, the task-list
+  bounds in placement and drag limits, the side-bar watcher's model and the #24 yield's
+  `group_span` / `tray_spot_clear` divided physical px by the scale - right only on the primary, at
+  the virtual-desktop origin. They now convert around the screen's Qt origin
+  (`physical_to_logical`); on the primary that is still exactly `px / scale`.*
+
 - **Starting NetSpeedTray again no longer turns off "Hide while app buttons cover the widget" when
   the widget wasn't hidden.** A second launch switched the yield off for the whole session every
   time, so the widget then sat over the app buttons until the next restart, with no explanation.
@@ -114,8 +172,8 @@ updater, WinGet and the Store never offer prereleases.*
   `SIGN_IN_DUPLICATE_WINDOW_S` (120 s), posts `NetSpeedTray_Activate_v1` with wParam 1; any failure
   means wParam 0, a normal launch. Only the first flagged activation of an instance is ignored - a
   later one, flagged too, is the user starting it again within the window. The running app's own
-  age is deliberately not used: Setup's Finish-page launch followed by the user's own launch seconds later is exactly this bug's path.
-  Builds before rc.4 ignore wParam.*
+  age is deliberately not used: Setup's Finish-page launch followed by the user's own launch
+  seconds later is exactly this bug's path. Builds before rc.4 ignore wParam.*
 - **The "staying visible" notice after a second launch shows once, under its own title.** It came
   on every second launch that found the widget stepped aside, titled "No free spot on the taskbar"
   like two other notices. It now has its own title and a once-ever flag
@@ -132,6 +190,7 @@ updater, WinGet and the Store never offer prereleases.*
 
 [#332]: https://github.com/erez-c137/NetSpeedTray/issues/332
 [#373]: https://github.com/erez-c137/NetSpeedTray/issues/373
+[@emgeka]: https://github.com/emgeka
 [#457]: https://github.com/erez-c137/NetSpeedTray/pull/457
 [@Askeleid]: https://github.com/Askeleid
 [@relu616]: https://github.com/relu616

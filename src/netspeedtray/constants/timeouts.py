@@ -123,6 +123,20 @@ class TimeoutConstants:
     # costs at most this, once, and the provisional decision is re-done as soon as the probe lands.
     SIDE_BAR_FIRST_LAYOUT_WAIT_MS: Final[int] = 250
     SIDE_BAR_NEAR_SLOTS: Final[int] = 3
+    # A bar with no TrayNotifyWnd (a Win11 secondary taskbar on any edge, #373) gets a background UIA
+    # layout probe - its clock and Widgets/weather button - on every new dock, and again at most this
+    # often while the widget (or a "Show on all taskbars" mirror) sits on it: the weather text resizes
+    # the button and seconds widen the clock. The same cadence as the #200 Widgets probe's TTL.
+    TRAYLESS_BAR_LAYOUT_REFRESH_S: Final[float] = 30.0
+    # Widgets turned back ON (TaskbarDa 0 -> 1): Explorer may take a moment to draw the button, so a
+    # probe that finds none this soon after keeps the bar's last seen box, and every docked tray-less
+    # bar is probed again right away and once more after this long (#473 VM re-check).
+    WIDGETS_REENABLE_GRACE_S: Final[float] = 5.0
+    # ... and the stand-in (last seen) box answers at most this long after Widgets came back on, unless a
+    # probe confirmed it: the re-probe at the grace's end lands long before.
+    WIDGETS_INTERIM_MAX_S: Final[float] = 2 * WIDGETS_REENABLE_GRACE_S
+    # The Widgets toggle (TaskbarDa) is read at most once per this long; it changes only from Settings.
+    WIDGETS_TOGGLE_MEMO_S: Final[float] = 0.25
     # #24 app-button yield on a horizontal Win11 bar (core/app_overlap_yield.py): hiding is immediate,
     # but the widget comes back only after two clear readings at least this far apart - the buttons
     # animate for ~300-550 ms after an app closes, and one mid-animation read must not blink it back.

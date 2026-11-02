@@ -134,3 +134,26 @@ def _pin_windows_theme(monkeypatch):
     from netspeedtray.utils.taskbar_appearance import PLAIN
     monkeypatch.setattr(color_scheme, "read_taskbar_appearance", lambda shell_light=False: PLAIN)
     monkeypatch.setattr(color_scheme, "_appearance", None)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_per_taskbar_layout_cache(monkeypatch):
+    """The per-HWND layout cache and background-probe queue (#373) are process-wide; tests reuse the
+    same fake HWNDs, so each test starts (and ends) with both empty - one test's landed layout must
+    never answer for another's taskbar. And no test starts a real background UIA probe thread by
+    placing a widget on a mocked tray-less bar (PositionManager._refresh_trayless_bar_layout): it
+    would flip the layout worker's ``running`` flag under tests that drive the worker by hand. Tests of
+    the background probe import the real function at module level (before this patch applies)."""
+    from netspeedtray.utils import taskbar_utils
+    monkeypatch.setattr(taskbar_utils, "request_background_layout_probe", lambda _hwnd: None)
+    # The Widgets toggle (TaskbarDa) is pinned ON: layout reads drop the Widgets box while it is off
+    # (#473), and no test may depend on the machine's setting. Tests of the toggle patch it themselves.
+    monkeypatch.setattr(taskbar_utils, "_widgets_toggle_on", lambda: True, raising=False)
+    monkeypatch.setattr(taskbar_utils, "_widgets_flip", {"on": None, "gen": 0, "on_at": None},
+                        raising=False)
+    taskbar_utils._layout_by_hwnd.clear()
+    del taskbar_utils._layout_background[:]
+    getattr(taskbar_utils, "_layout_superseded", {}).clear()
+    yield
+    taskbar_utils._layout_by_hwnd.clear()
+    del taskbar_utils._layout_background[:]
