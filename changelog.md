@@ -75,10 +75,14 @@ ALSO
 
 ---
 
-## [2.2.0-rc.4] - Unreleased
+## [2.2.0-rc.4] - November 2, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app
 updater, WinGet and the Store never offer prereleases.*
+
+What the rc.3 testers found, mostly with more than one monitor: the widget docks on a second monitor
+at another scale, keeps clear of the weather and the clock on every taskbar, and a second launch no
+longer switches off the step-aside. Plus a stuck text color from 2.1.7, and Bengali.
 
 > **Upgrading:** the settings file moves to schema 1.5 and the 1.4 file is kept beside it as
 > `NetSpeedTray_Config.json.bak.v1.4`. Only the text color can change, and only for the stuck
@@ -187,12 +191,14 @@ updater, WinGet and the Store never offer prereleases.*
 - **Bengali** - 17 languages now, picked automatically on Bengali Windows (Bangladesh or India).
   The Monitor graphs' axis labels, legends and captions stay in English for now: the graph engine
   can't join Bengali letters yet. ([#457], thanks [@Askeleid])
+- Hungarian: a clearer explanation under the step-aside setting. ([#468], thanks [@cscsanaki])
 
 [#332]: https://github.com/erez-c137/NetSpeedTray/issues/332
 [#373]: https://github.com/erez-c137/NetSpeedTray/issues/373
 [@emgeka]: https://github.com/emgeka
 [#457]: https://github.com/erez-c137/NetSpeedTray/pull/457
 [@Askeleid]: https://github.com/Askeleid
+[#468]: https://github.com/erez-c137/NetSpeedTray/pull/468
 [@relu616]: https://github.com/relu616
 
 ## [2.2.0-rc.3] - October 29, 2026
