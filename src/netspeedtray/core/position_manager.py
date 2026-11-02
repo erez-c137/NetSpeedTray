@@ -600,7 +600,8 @@ class PositionCalculator:
         else:
             # Fallback to rect-based if we're not sure
             visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
-            y_origin = taskbar_info.rect[1] / dpi_scale
+            # Around the screen's Qt origin (#373): rect / scale on the primary.
+            y_origin = taskbar_utils.physical_to_logical(taskbar_info.rect[1], full_geom.top(), dpi_scale)
 
         # Calculate Y: center widget vertically in the *visible* taskbar gap
         y_center = y_origin + (visible_tb_height - widget_height) / 2.0

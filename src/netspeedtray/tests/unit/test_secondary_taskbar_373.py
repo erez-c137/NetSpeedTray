@@ -281,7 +281,7 @@ def test_a_probed_rect_that_cannot_be_the_clock_is_ignored(rect, probed_tray):
 
 FRESH = {"hwnd": 0, "apps": None, "widgets": None, "group": None, "overflow": None,
          "widgets_content": None, "bar": None, "pending": False, "done": False, "gen": 0,
-         "running": False, "started": 0.0, "landed": 0}
+         "running": False, "started": 0.0}
 A, B, C = 0xA0, 0xB0, 0xC0
 APPS = {A: (0, 1032, 500, 1080), B: (1920, 1032, 2400, 1080), C: (3840, 1032, 4300, 1080)}
 WIDGETS = {A: (1600, 1032, 1750, 1080), B: (3500, 1032, 3650, 1080), C: (5400, 1032, 5550, 1080)}
@@ -338,13 +338,13 @@ def test_a_fresh_probe_still_drops_that_bars_cached_layout(layout):
 
 def test_a_background_probe_never_takes_the_slot(layout):
     _probe(A)
-    gen, landed = tbu._layout_state["gen"], tbu._layout_state["landed"]
+    gen, landed = tbu._layout_state["gen"], tbu.taskbar_layout_landed_count(A)
     REAL_BACKGROUND_PROBE(C)
     REAL_BACKGROUND_PROBE(C)                                     # queued once
     assert tbu._layout_background == [C]
     tbu._layout_worker()
     assert tbu._layout_state["hwnd"] == A
-    assert (tbu._layout_state["gen"], tbu._layout_state["landed"]) == (gen, landed)
+    assert (tbu._layout_state["gen"], tbu.taskbar_layout_landed_count(A)) == (gen, landed)
     assert tbu.taskbar_layout_snapshot(C) == (APPS[C], WIDGETS[C], False)
     assert tbu.probed_tray_rect(C) == CLOCKS[C]
     assert tbu.taskbar_layout_snapshot(A) == (APPS[A], WIDGETS[A], False)
@@ -353,12 +353,12 @@ def test_a_background_probe_never_takes_the_slot(layout):
 
 def test_a_background_probe_of_the_slots_own_bar_is_a_keep_last_recheck(layout):
     _probe(A)
-    landed = tbu._layout_state["landed"]
+    landed = tbu.taskbar_layout_landed_count(A)
     REAL_BACKGROUND_PROBE(A)
     assert tbu._layout_state["pending"] and tbu._layout_background == []
     assert tbu.taskbar_layout_snapshot(A)[:2] == (APPS[A], WIDGETS[A])   # kept meanwhile
     tbu._layout_worker()
-    assert tbu._layout_state["landed"] == landed + 1
+    assert tbu.taskbar_layout_landed_count(A) > landed
 
 
 def test_a_slot_request_takes_a_queued_bar_out_of_the_background_queue(layout):
@@ -495,16 +495,28 @@ def test_a_slot_request_waiting_on_a_background_probe_gets_its_full_timeout(layo
 
 
 def test_a_hung_background_probe_does_not_extend_the_slots_timeout(layout, clock, widgets_on):
+    """Review 3's exception: a background probe that outlasts LAYOUT_PROBE_TIMEOUT_S (a hung Explorer)
+    does not restart the waiting slot request's clock - the request times out as it always did, its
+    late result is dropped, and nothing counts as landed."""
+    seen = {}
+
     def query(h):
         if h == C:
-            tbu.request_taskbar_layout_probe(A)
-            clock.now += tbu.LAYOUT_PROBE_TIMEOUT_S + 1      # a hung Explorer
+            tbu.request_taskbar_layout_probe(A)              # requested at 1000 ...
+            seen["before"] = tbu.taskbar_layout_landed_count(A)
+            clock.now += tbu.LAYOUT_PROBE_TIMEOUT_S + 1      # ... the background probe hangs 6 s
+        else:
+            seen["started"] = tbu._layout_state["started"]
+            seen["snapshot"] = tbu.taskbar_layout_snapshot(A)
         return APPS[h], WIDGETS[h], None, None, CLOCKS[h]
 
     with patch.object(tbu, "_query_taskbar_layout_blocking", side_effect=query):
         REAL_BACKGROUND_PROBE(C)
         tbu._layout_worker()
-    assert tbu._layout_state["started"] == 1000.0
+    assert seen["started"] == 1000.0                          # not re-timed
+    assert seen["snapshot"] == (None, None, False)            # timed out before its probe ran
+    assert tbu.taskbar_layout_snapshot(A) == (None, None, False)   # the late result is dropped
+    assert tbu.taskbar_layout_landed_count(A) == seen["before"]
 
 
 def test_the_per_hwnd_cache_evicts_the_least_recently_landed(layout, clock):
@@ -622,3 +634,44 @@ def test_the_yields_tray_spot_check_converts_around_the_screen_origin(probed_tra
     assert ctx.stepped == (4127.0, 4127.0 + W) and ctx.tray_spot == (4320.0, 4320.0 + W)
     assert ctx.tray_spot_clear is False
     assert ctx.x_origin == x0
+
+
+# --- re-review round (PR #473) ---------------------------------------------------------------------
+
+def test_edge_fallback_without_a_monitor_rect_converts_around_the_screen_origin(monkeypatch):
+    """get_edge_position's last resort (no monitor_rect): a TOP bar on the 150 % monitor above the
+    primary, (0, -2160, 3840, -2088), read as top -1440 against the screen top -2160 and came out BOTTOM."""
+    _mixed_dpi_screens(monkeypatch)
+    monkeypatch.setattr(tbu, "monitor_device_name_for_hwnd", lambda h: None)
+    tb = tbu.TaskbarInfo(hwnd=999, tray_hwnd=None, tasklist_rect=None, rect=(0, -2160, 3840, -2088),
+                         screen_name=D2, screen_geometry=(0, -2160, 2560, 1440),
+                         work_area=(0, -2088, 3840, 0), dpi_scale=1.5, is_primary=False, height=48)
+    assert tb.get_edge_position() == E.TOP
+
+
+def test_horizontal_path_rect_fallback_converts_around_the_screen_origin(probed_tray):
+    """_calculate_horizontal_position's non-TOP/BOTTOM fallback took y from rect / scale."""
+    tb = _offset_side_bar()
+    tb.rect = (0, -2160, 3840, -2088)
+    _x_, y = PositionCalculator()._calculate_horizontal_position(tb, (W, H), CFG, 1.5)
+    assert y == -2160
+
+
+def test_horizontal_drag_limit_task_list_converts_around_the_screen_origin(probed_tray):
+    """constrain_drag_position: a classic task list ending at physical -840 on a 150 % screen at
+    native x -3840 ends at logical -1840 (tasklist / scale said -560)."""
+    from PyQt6.QtCore import QPoint, QSize
+    tb = _secondary_bar(x0=-3840, width=2560, dpi=1.5)
+    tb.tasklist_rect = (-3840, 1548, -840, 1620)
+    d = PositionCalculator().constrain_drag_position(QPoint(-3000, 0), tb, QSize(W, H))
+    assert d.x() == -1840 + constants.layout.DEFAULT_PADDING
+
+
+def test_vertical_drag_limit_task_list_converts_around_the_screen_origin(probed_tray):
+    """The side-bar twin: a classic (ExplorerPatcher-style) RIGHT bar on the 150 % monitor above the
+    primary, task list ending at physical -1500 = logical -2160 + 660 / 1.5 = -1720 (not -1000)."""
+    from PyQt6.QtCore import QPoint, QSize
+    tb = _offset_side_bar()
+    tb.tasklist_rect = (3768, -2160, 3840, -1500)
+    d = PositionCalculator().constrain_drag_position(QPoint(2520, -2100), tb, QSize(48, 40))
+    assert d.y() == -1720 + constants.layout.DEFAULT_PADDING

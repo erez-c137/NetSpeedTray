@@ -317,7 +317,7 @@ _layout_landed = threading.Condition(_layout_lock)
 _layout_state: dict = {"hwnd": 0, "apps": None, "widgets": None, "group": None, "overflow": None,
                        "widgets_content": None,
                        "bar": None, "pending": False,
-                       "done": False, "gen": 0, "running": False, "started": 0.0, "landed": 0}
+                       "done": False, "gen": 0, "running": False, "started": 0.0}
 # A UIA call into a hung Explorer can block for a long time. Past this, the request counts as
 # finished WITHOUT a result (placement goes final on the classic HWND rect); a late result is dropped.
 LAYOUT_PROBE_TIMEOUT_S = 5.0
@@ -450,8 +450,7 @@ def _layout_worker() -> None:
                         and now - probe_start <= LAYOUT_PROBE_TIMEOUT_S):
                     _layout_state["started"] = now
             elif _layout_state["gen"] == gen and _layout_state["pending"]:
-                _layout_state.update(entry, pending=False, done=True,
-                                     landed=_layout_state.get("landed", 0) + 1)
+                _layout_state.update(entry, pending=False, done=True)
                 _store_landed_layout(hwnd, entry)
                 _layout_landed.notify_all()
                 logger.debug("Taskbar layout probe: apps=%s widgets=%s", apps, widgets)
@@ -1082,10 +1081,12 @@ class TaskbarInfo:
             screen_rect_log: QRect = screen.geometry()
             dpi_scale = self.dpi_scale
 
-            tb_left_log = self.rect[0] / dpi_scale
-            tb_top_log = self.rect[1] / dpi_scale
-            tb_right_log = self.rect[2] / dpi_scale
-            tb_bottom_log = self.rect[3] / dpi_scale
+            # Around the screen's Qt origin (physical_to_logical, #373): rect / scale on the primary.
+            x0, y0 = screen_rect_log.left(), screen_rect_log.top()
+            tb_left_log = physical_to_logical(self.rect[0], x0, dpi_scale)
+            tb_top_log = physical_to_logical(self.rect[1], y0, dpi_scale)
+            tb_right_log = physical_to_logical(self.rect[2], x0, dpi_scale)
+            tb_bottom_log = physical_to_logical(self.rect[3], y0, dpi_scale)
 
             tb_width_log = tb_right_log - tb_left_log
             tb_height_log = tb_bottom_log - tb_top_log
