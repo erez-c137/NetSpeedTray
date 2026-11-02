@@ -32,6 +32,36 @@ _CJK_CANDIDATES: Dict[str, List[str]] = {
 # Right-to-left scripts need bidi reshaping before matplotlib renders them (matplotlib has no bidi).
 _RTL_SCRIPTS = {"he", "ar", "fa"}
 
+# Locales whose script matplotlib cannot draw legibly, so the graph's own text (axis labels, legend,
+# peak / boot captions, empty-state text, tick day/month names) falls back to en_US. matplotlib's Agg
+# text path does no complex shaping: a Bengali font has the glyphs, but conjuncts come out as
+# letter + hasant + letter and pre-base vowel signs (ি, ে, ো) land on the wrong side - worse than
+# boxes, because it looks like text and reads as nonsense (#457). Everything Qt draws around the
+# graph (tabs, buttons, the hover readout) stays in the UI language. Remove a locale from this set
+# only once matplotlib shapes its script.
+MPL_UNSHAPED_LOCALES = frozenset({"bn_BD"})
+
+
+def graph_text_is_english(language: Optional[str]) -> bool:
+    """True when the graph's matplotlib text must be English for ``language`` (see above)."""
+    return bool(language) and str(language) in MPL_UNSHAPED_LOCALES
+
+
+_EN_I18N = None
+
+
+def graph_i18n(i18n):
+    """The strings object the matplotlib graph should draw with: ``i18n`` itself, or a shared en_US
+    I18nStrings when the UI language is in MPL_UNSHAPED_LOCALES. The ONE place that decision is made -
+    the graph renderer takes its strings from here, so no draw site needs its own check."""
+    if not graph_text_is_english(getattr(i18n, "language", None)):
+        return i18n
+    global _EN_I18N
+    if _EN_I18N is None:
+        from netspeedtray.constants.i18n import I18nStrings
+        _EN_I18N = I18nStrings("en_US")
+    return _EN_I18N
+
 
 def _script_for_language(language: Optional[str]) -> Optional[str]:
     """Map a locale code (e.g. ``ja_JP`` / ``he_IL``) to a font-script key, or ``None``."""

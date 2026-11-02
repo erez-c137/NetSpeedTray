@@ -524,6 +524,9 @@ def main() -> int:
             from PyQt6.QtCore import Qt
             app.setLayoutDirection(
                 Qt.LayoutDirection.RightToLeft if i18n_strings.is_rtl else Qt.LayoutDirection.LeftToRight)
+            # Script font fallback (Bengali -> Nirmala UI), before any widget builds its fonts.
+            from netspeedtray.utils.styles import apply_script_font_fallbacks
+            apply_script_font_fallbacks(i18n_strings.language)
 
             # 4c. Import wmi HERE, on the GUI thread, before the widget starts any worker: the module
             # owns a COM object from its import on, and a worker that imported it first would leave
