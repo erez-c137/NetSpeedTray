@@ -369,7 +369,8 @@ def _store_landed_layout(taskbar_hwnd: int, entry: dict) -> None:
         _layout_by_hwnd.pop(next(iter(_layout_by_hwnd)))
     _landing_seq += 1
     stored = {k: entry.get(k) for k in _LAYOUT_ENTRY_KEYS}
-    stored.update(ts=time.monotonic(), seq=_landing_seq, interim=False)
+    # probe_start: when this result's UIA call began (taskbar_layout_landed_since).
+    stored.update(ts=time.monotonic(), seq=_landing_seq, interim=False, probe_start=entry.get("probe_start"))
     if stored["widgets"] is not None:
         stored.update(last_widgets=stored["widgets"], last_widgets_content=stored["widgets_content"])
     else:
@@ -550,7 +551,7 @@ def _layout_worker() -> None:
                      overflow=valid_rect(overflow), widgets_content=valid_rect(content), bar=bar,
                      # From ONE window rect, not the union: an auto-hide bar sliding during the probe
                      # keeps its thickness, while the union grows (taskbar_layout_matches_bar).
-                     bar_shape=_bar_shape(bar_before or bar))
+                     bar_shape=_bar_shape(bar_before or bar), probe_start=probe_start)
         with _layout_lock:
             if background:
                 _layout_superseded.pop(int(hwnd), None)
@@ -866,6 +867,18 @@ def taskbar_layout_landed_count(taskbar_hwnd: Optional[int]) -> int:
             return -1
         entry = _layout_by_hwnd.get(int(taskbar_hwnd))
         return int(entry.get("seq", 0)) if entry is not None else 0
+
+
+def taskbar_layout_landed_since(taskbar_hwnd: Optional[int], started_at: float) -> bool:
+    """A FRESH result for ``taskbar_hwnd`` landed whose probe began at or after ``started_at``
+    (time.monotonic()): a probe already running when the caller asked for one does not count. For the
+    #24 yield of a "Show on all taskbars" copy, whose background probes have no request generation."""
+    with _layout_lock:
+        if not taskbar_hwnd:
+            return False
+        entry = _layout_by_hwnd.get(int(taskbar_hwnd))
+        began = entry.get("probe_start") if entry is not None else None
+        return isinstance(began, (int, float)) and began >= started_at
 
 
 def find_classic_layout_hwnds(taskbar_hwnd: int) -> Tuple[int, int, int]:

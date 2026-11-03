@@ -65,7 +65,17 @@ a stale scale's coordinates for seconds (rc.2 final VM run: a 10 s false step-as
 
 Fail-safe: no UIA, a failed / timed-out probe, a bar without a StartButton, an ExplorerPatcher /
 Win10 bar (``tasklist_rect`` set), a side bar, Free Move or free-float -> never yield (today's
-behaviour). Mirrors (#434) build their PositionManager with the yield disabled: they don't yield in v1.
+behaviour).
+
+"Show on all taskbars" copies (#229/#434, rc.5 #373): each copy's PositionManager runs its own yield
+against ITS OWN taskbar (its HWND, scale and Qt screen origin), by the same rules and hysteresis, with
+three differences (``background_probes=True``): its probes go through
+``taskbar_utils.request_background_layout_probe`` - they land in the per-HWND layout cache and never take
+the one-taskbar slot from another bar (when the copy's own bar already holds it, a keep_last re-check of
+that bar), so N copies cannot evict the main widget's reading; a landing counts only when its probe
+started after the request (``taskbar_layout_landed_since``); it has no first-yield notice and no drop baseline (a copy is never dragged, and
+must never clear the main widget's saved drop); and a second launch never suspends it (that is the main
+widget's way back, #440/#472).
 """
 
 from __future__ import annotations
@@ -88,6 +98,14 @@ Span = Tuple[float, float]   # (left, right) along the bar, logical px, right ex
 # Context sentinels. BUSY: the widget is dragged / its menu is open - nothing is decided (a mid-drag
 # position is not where the user will leave it). NO_TASKBAR: no taskbar right now - only seen once
 # #440's missing-taskbar hold has run out (it returns before syncing while it holds): let go.
+class _TaggedLog(logging.LoggerAdapter):
+    """Prefixes each line with ``[<tag>]``, as PositionManager tags its own (a "Show on all taskbars"
+    copy's log_tag): a support log then tells which window stepped aside. Untagged: the main widget."""
+
+    def process(self, msg, kwargs):
+        return "[%s] %s" % (self.extra["tag"], msg), kwargs
+
+
 BUSY = "busy"
 NO_TASKBAR = "no_taskbar"
 
@@ -211,13 +229,17 @@ class AppOverlapYield(QObject):
     def __init__(self, get_context: Callable[[], ContextResult], on_change: Callable[[], None],
                  on_first_yield: Optional[Callable[[], None]] = None, parent: Optional[QObject] = None,
                  *, on_persist_drop: Optional[Callable[[Optional[int]], None]] = None,
-                 enabled: bool = True, clock: Callable[[], float] = time.monotonic) -> None:
+                 enabled: bool = True, background_probes: bool = False, log_tag: str = "",
+                 clock: Callable[[], float] = time.monotonic) -> None:
         super().__init__(parent)
+        self._log = _TaggedLog(logger, {"tag": log_tag}) if log_tag else logger
         self._get_context = get_context
         self._on_change = on_change              # the yield flipped: re-run the visibility gate
         self._on_first_yield = on_first_yield    # once per session; the widget keeps the ever-flag
         self._on_persist_drop = on_persist_drop  # save / clear the "dropped on the buttons" offset
-        self._enabled = bool(enabled)            # False: a mirror's PositionManager (#434) - inert
+        self._enabled = bool(enabled)            # False: inert (never attaches, probes or hides)
+        # True: a "Show on all taskbars" copy - probe through the background queue, never the slot.
+        self._background_probes = bool(background_probes)
         self._clock = clock
         t = constants.timeouts
         self._hwnd = 0
@@ -227,6 +249,7 @@ class AppOverlapYield(QObject):
         self._changes = 0                        # foreground changes since the last landed probe
         self._inflight = False
         self._fired_at = 0.0
+        self._fired_mono = 0.0                   # time.monotonic() at the fire (the layout cache's clock)
         self._landed_before = 0
         self._last_probe_at = -1e9
         self._again = False
@@ -286,7 +309,7 @@ class AppOverlapYield(QObject):
         for timer in (self._probe_timer, self._poll_timer, self._followup_timer):
             timer.stop()
         if self._hwnd and self._state.yielded:
-            logger.info("App-button yield off: %s.", reason)
+            self._log.info("App-button yield off: %s.", reason)
         self._hwnd = 0
         self._state.reset()
         self._retreated = False
@@ -336,7 +359,7 @@ class AppOverlapYield(QObject):
         if self._model_known and self._model_dpi is not None and abs(ctx.dpi - self._model_dpi) > 1e-6:
             # A live display-scale change: the measured group is logical px at the OLD scale (and the
             # widget is being re-sized / re-placed for the new one) - forget it and judge afresh now.
-            logger.debug("App-button yield: display scale %.3g -> %.3g; re-probing.", self._model_dpi, ctx.dpi)
+            self._log.debug("App-button yield: display scale %.3g -> %.3g; re-probing.", self._model_dpi, ctx.dpi)
             self._model = None
             self._model_known = False
             self._model_dpi = None
@@ -354,7 +377,7 @@ class AppOverlapYield(QObject):
             had_key = self._layout_key is not None
             self._layout_key = ctx.layout_key
             if had_key:
-                logger.debug("App-button yield: taskbar layout inputs changed (%s); re-probing.",
+                self._log.debug("App-button yield: taskbar layout inputs changed (%s); re-probing.",
                              ctx.layout_key)
                 self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
                 self._schedule(0)
@@ -413,12 +436,12 @@ class AppOverlapYield(QObject):
         if keep:
             self._state.yielded = True
             self._hold_until = self._clock() + constants.timeouts.APP_YIELD_NEW_TASKBAR_HOLD_MS / 1000.0
-            logger.debug("App-button yield: the taskbar was re-created (%s); staying aside until it is "
+            self._log.debug("App-button yield: the taskbar was re-created (%s); staying aside until it is "
                          "probed.", self._hwnd)
         if suppressed or (ctx.saved_drop is not None and ctx.saved_drop == ctx.drop_key):
             self._state.suppressed = True
             self._persisted_drop = ctx.saved_drop
-        logger.debug("App-button yield watching taskbar %s.", self._hwnd)
+        self._log.debug("App-button yield watching taskbar %s.", self._hwnd)
         self._schedule(0)
 
     # --- inputs ------------------------------------------------------------------------------
@@ -478,7 +501,7 @@ class AppOverlapYield(QObject):
         try:
             return self._get_context()
         except Exception as e:
-            logger.debug("app-overlap context failed: %s", e)
+            self._log.debug("app-overlap context failed: %s", e)
             return None
 
     def _context(self) -> Optional[OverlapContext]:
@@ -505,7 +528,7 @@ class AppOverlapYield(QObject):
             try:
                 self._on_persist_drop(value)
             except Exception as e:
-                logger.debug("saving the drop baseline failed: %s", e)
+                self._log.debug("saving the drop baseline failed: %s", e)
 
     # --- probing -----------------------------------------------------------------------------
 
@@ -527,20 +550,44 @@ class AppOverlapYield(QObject):
             return
         self._inflight = True
         self._fired_at = self._last_probe_at = self._clock()
+        self._fired_mono = time.monotonic()
         self._landed_before = taskbar_utils.taskbar_layout_landed_count(self._hwnd)
-        # keep_last: the last group answers until this one lands (never the lagging HWND rect).
-        taskbar_utils.request_taskbar_layout_probe(self._hwnd, keep_last=True)
+        if self._background_probes:
+            # A copy: into this bar's per-HWND cache, never the slot (see the module docstring).
+            taskbar_utils.request_background_layout_probe(self._hwnd)
+        else:
+            # keep_last: the last group answers until this one lands (never the lagging HWND rect).
+            taskbar_utils.request_taskbar_layout_probe(self._hwnd, keep_last=True)
         self._poll_timer.start()
+
+    def _probe_landed(self) -> bool:
+        """The probe fired last has landed a FRESH result for this bar."""
+        if not self._background_probes:
+            return taskbar_utils.taskbar_layout_landed_count(self._hwnd) > self._landed_before
+        # Background: a landing counts only when its UIA call STARTED after the fire - a probe of this
+        # bar already running then (a 30 s tray-less refresh, a slow earlier re-check) reads the bar as
+        # it was before, and taken as this reading it would put every judgement one probe behind.
+        return taskbar_utils.taskbar_layout_landed_since(self._hwnd, self._fired_mono)
+
+    def _probe_pending(self) -> bool:
+        """The probe fired at ``_fired_at`` has neither landed nor timed out."""
+        if not self._background_probes:
+            return bool(taskbar_utils.taskbar_layout_snapshot(self._hwnd)[2])
+        # A background probe has no "pending" flag of its own: it is in flight until a fresh result for
+        # this bar lands, bounded by the same timeout as a slot request (a hung Explorer, a long queue).
+        if self._probe_landed():
+            return False
+        return (self._clock() - self._fired_at) < taskbar_utils.LAYOUT_PROBE_TIMEOUT_S
 
     def _poll_probe(self) -> None:
         if not self._hwnd or not self._inflight:
             return
-        _apps, _widgets, pending = taskbar_utils.taskbar_layout_snapshot(self._hwnd)
+        pending = self._probe_pending()
         if pending:
             self._poll_timer.start()
             return
         self._inflight = False
-        landed = taskbar_utils.taskbar_layout_landed_count(self._hwnd) > self._landed_before
+        landed = self._probe_landed()
         group_rect = taskbar_utils.taskbar_layout_group(self._hwnd) if landed else None
         if group_rect is not None:
             bar_rect = taskbar_utils.taskbar_layout_bar(self._hwnd)
@@ -548,7 +595,7 @@ class AppOverlapYield(QObject):
                 # Not in the bar's coordinate space - Explorer mid display-scale change (see
                 # APP_GROUP_BAR_FIT_TOLERANCE_PX): an unknown reading, never a reason to yield.
                 if not self._misfit_logged:
-                    logger.info("App-button yield: the taskbar reported its buttons outside its own "
+                    self._log.info("App-button yield: the taskbar reported its buttons outside its own "
                                 "window (group %s, taskbar %s) - ignoring that reading.", group_rect, bar_rect)
                     self._misfit_logged = True
                 group_rect = None
@@ -595,7 +642,7 @@ class AppOverlapYield(QObject):
                 try:
                     self._on_change()
                 except Exception as e:
-                    logger.error("App-yield placement update failed: %s", e, exc_info=True)
+                    self._log.error("App-yield placement update failed: %s", e, exc_info=True)
         gap = constants.layout.TRAY_EDGE_MIN_GAP_PX
         if self._state.yielded and ctx.stepped is not None and not self._retreated:
             # Hidden for the stepped spot (no clear fallback): back with the same room to spare as a
@@ -647,7 +694,7 @@ class AppOverlapYield(QObject):
                 return False
             self._retreated = False
             self._spot_gone_since = None
-            logger.info("Widgets-button fallback over: the default spot has no alternative here.")
+            self._log.info("Widgets-button fallback over: the default spot has no alternative here.")
             return True
         self._spot_gone_since = None
         if span is None:
@@ -659,14 +706,14 @@ class AppOverlapYield(QObject):
             self._retreated = False
             self._step_clear_since = None
             if changed:
-                logger.info("The spot by the tray would cover the Widgets button's text: stepping aside "
+                self._log.info("The spot by the tray would cover the Widgets button's text: stepping aside "
                             "instead.")
             return changed
         if not self._retreated:
             if group_reaches_widget(span, ctx.stepped) and not group_reaches_widget(span, ctx.tray_spot):
                 self._retreated = True
                 self._step_clear_since = None
-                logger.info("App buttons reach the spot left of the Widgets button (group %.0f..%.0f, "
+                self._log.info("App buttons reach the spot left of the Widgets button (group %.0f..%.0f, "
                             "spot %.0f..%.0f): staying by the tray instead (%.0f..%.0f).", span[0], span[1],
                             ctx.stepped[0], ctx.stepped[1], ctx.tray_spot[0], ctx.tray_spot[1])
                 self._mark_active()
@@ -685,7 +732,7 @@ class AppOverlapYield(QObject):
         if (at - self._step_clear_since) * 1000.0 >= self._state.confirm_ms - 0.5:
             self._retreated = False
             self._step_clear_since = None
-            logger.info("Room left of the Widgets button again: back to the default spot.")
+            self._log.info("Room left of the Widgets button again: back to the default spot.")
             self._mark_active()
             return True
         self._schedule(max(0, int(self._state.confirm_ms - (at - self._step_clear_since) * 1000.0)))
@@ -698,24 +745,24 @@ class AppOverlapYield(QObject):
         if action not in ("yield", "show"):
             return
         if action == "yield":
-            logger.info("App buttons reach the widget (group %.0f..%.0f, widget %.0f..%.0f; UIA %s at "
+            self._log.info("App buttons reach the widget (group %.0f..%.0f, widget %.0f..%.0f; UIA %s at "
                         "scale %.3g): stepping aside until there is room.", span[0], span[1],
                         ctx.widget[0], ctx.widget[1], self._last_group_rect, ctx.dpi)
         else:
-            logger.info("App-button yield over (%s): showing the widget again.",
+            self._log.info("App-button yield over (%s): showing the widget again.",
                         "room again" if span is not None else "layout unknown")
         # Background closes must be noticed promptly while yielded, and a fresh return re-checked.
         self._mark_active()
         try:
             self._on_change()
         except Exception as e:
-            logger.error("App-yield visibility update failed: %s", e, exc_info=True)
+            self._log.error("App-yield visibility update failed: %s", e, exc_info=True)
         if action == "yield" and not self._first_yield_done and self._on_first_yield is not None:
             self._first_yield_done = True
             try:
                 self._on_first_yield()
             except Exception as e:
-                logger.debug("first-yield notice failed: %s", e)
+                self._log.debug("first-yield notice failed: %s", e)
 
     def _finish(self) -> None:
         if self._again:

@@ -24,8 +24,12 @@ Known v1 limits (accepted):
 - A mirror on a secondary SIDE taskbar does not get #406's side-bar watcher (W1-W4: re-placing as app
   buttons come and go, the live alignment flip): its PositionManager is built with
   side_watcher_enabled=False, so no hook thread exists per mirror. It keeps the static placement.
-- A mirror does not yield to app buttons (#438, #24 "Hide while app buttons cover the widget"): its
-  PositionManager is built with app_yield_enabled=False, so it never probes and never hides for them.
+- App buttons (#438/#24 "Hide while app buttons cover the widget", rc.5 #373): a mirror yields like
+  the main widget - hides (or takes the rc.3 spot by the tray) while ITS bar's app buttons reach it,
+  by the same rules and hysteresis, and only while that setting is on. Its PositionManager is built
+  with app_yield_copy=True: probes go to the background queue (never the main widget's probe slot),
+  no first-yield notice, no drop baseline, never suspended by a second launch. On a side bar it does
+  what the main widget does there: no yield (and, as above, no #406 watcher).
 - Fullscreen is judged from the FOREGROUND window, as for the main widget: a fullscreen app on a
   monitor that is not in the foreground (a video left playing on monitor 2 while you work on 1)
   leaves that monitor's mirror showing.
@@ -130,6 +134,8 @@ class MirrorWidget(QWidget):
         # Set when Windows destroyed the native window underneath us (its owner taskbar went away):
         # the manager then drops the mirror without another Win32 call on it.
         self.dead: bool = False
+        # Set by MirrorManager._destroy (retire): no queued refresh may show this window again.
+        self._retired: bool = False
 
         # --- what WidgetLayoutManager / PositionManager read from their host -------------------
         self.config = _MirrorConfig(lambda: main.config, self.screen_name)
@@ -158,7 +164,14 @@ class MirrorWidget(QWidget):
         # screen loses its taskbar; the manager's tick does that job from the enumeration instead.
         self.position_manager = PositionManager(
             WindowState(config=self.config, widget=self, taskbar_info=taskbar_info),
-            parent=self, log_tag=self._tag, side_watcher_enabled=False, app_yield_enabled=False)
+            parent=self, log_tag=self._tag, side_watcher_enabled=False, app_yield_copy=True)
+        # The yield flipped (its probe landed, off the refresh path): re-run the visibility gate soon,
+        # from the cached taskbar. A child timer, so it dies with this window (never a stale call).
+        self._yield_refresh_timer = QTimer(self)
+        self._yield_refresh_timer.setSingleShot(True)
+        self._yield_refresh_timer.setInterval(0)
+        self._yield_refresh_timer.timeout.connect(self._refresh_after_yield_change)
+        self.position_manager.on_app_yield_changed = self._yield_refresh_timer.start
         self.layout_manager.set_font(resize=True)   # sizes for ITS bar, ends in update_position()
         self._dock_sig_seen = dock_signature(taskbar_info)
         logger.info("Mirror created on %s (taskbar HWND %s).", self._tag, self.taskbar_hwnd)
@@ -181,6 +194,12 @@ class MirrorWidget(QWidget):
         tb = self._tb
         if tb is not None and getattr(tb, "hwnd", 0):
             self.position_manager.update_position(fresh_taskbar_info=tb, _float_refreshed=True)
+
+    @property
+    def _is_context_menu_visible(self) -> bool:
+        """The shared (modal) menu is open - PositionManager._widget_busy reads it: the yield decides
+        nothing meanwhile, as on the main widget."""
+        return getattr(self._main, "_is_context_menu_visible", False) is True
 
     # --- helpers -------------------------------------------------------------------------------------
     def _mode_for(self, tb: Any) -> str:
@@ -261,7 +280,12 @@ class MirrorWidget(QWidget):
             self._obstructed = bool(tb.hwnd) and is_taskbar_obstructed(tb, fg_hwnd)
             keep_visible = main.config.get("keep_visible_fullscreen",
                                            constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN)
-            visible = bool(tb.hwnd) and is_taskbar_visible(tb) and (keep_visible or not self._obstructed)
+            # #24 for THIS bar (rc.5 #373): attach / detach / re-check first, as main's _execute_refresh
+            # does; ANDed with the fullscreen hide like there. ``is True``: a stand-in is never yielded.
+            self.position_manager.sync_app_overlap(tb)
+            yielded = self.position_manager.is_yielding_to_apps() is True
+            visible = (bool(tb.hwnd) and is_taskbar_visible(tb) and (keep_visible or not self._obstructed)
+                       and not yielded)
             if self.isVisible() != visible:
                 self.setVisible(visible)
             if not visible:
@@ -273,6 +297,31 @@ class MirrorWidget(QWidget):
             self.recover_if_buried()
         except Exception as e:
             self.logger.error("[%s] refresh failed: %s", self._tag, e, exc_info=True)
+
+    def retire(self) -> None:
+        """Being destroyed: a refresh queued by a yield flip must not re-show it from a stale bar."""
+        self._retired = True
+        self._yield_refresh_timer.stop()
+
+    def _refresh_after_yield_change(self) -> None:
+        """The app-button yield flipped (or moved the default spot): apply it now from the cached
+        taskbar instead of waiting for the next 1 s tick."""
+        if self.dead or self._retired or self._tb is None:
+            return
+        try:
+            fg = int(win32gui.GetForegroundWindow() or 0)
+        except Exception:
+            fg = 0
+        self.refresh(self._tb, fg)
+
+    def note_foreground_change(self) -> None:
+        """A new foreground window may have added an app button to THIS bar: the yield measures it."""
+        if self.dead:
+            return
+        try:
+            self.position_manager.note_foreground_change()
+        except Exception as e:
+            self.logger.debug("[%s] foreground hint failed: %s", self._tag, e)
 
     def _resize_if_needed(self, tb: Any) -> bool:
         """Re-size on a dock-signature change (Default <-> Small bar, edge, DPI - #322/#390) or a new
@@ -615,7 +664,10 @@ class MirrorManager(QObject):
         try:
             # #406's side-bar watcher (a hook thread) must never outlive its mirror. Mirrors never
             # attach it (side_watcher_enabled=False); stop it anyway, in case that ever changes.
-            # Same for #438's app-button yield (built inert for mirrors: app_yield_enabled=False).
+            # And #438's app-button yield (rc.5 #373: mirrors run it) - its timers die with it.
+            retire = getattr(mirror, "retire", None)
+            if callable(retire):
+                retire()                 # first: a queued yield refresh can't re-show it meanwhile
             pm = getattr(mirror, "position_manager", None)
             if pm is not None and hasattr(pm, "stop_side_watcher"):
                 pm.stop_side_watcher()
@@ -649,6 +701,11 @@ class MirrorManager(QObject):
     # --- event slots ---------------------------------------------------------------------------------
     def _on_foreground(self, hwnd: int = 0) -> None:
         self.tick(int(hwnd or 0))
+        # After the tick (which attached each mirror's yield to its bar): measure each bar now.
+        for mirror in list(self.mirrors.values()):
+            note = getattr(mirror, "note_foreground_change", None)
+            if callable(note) and not getattr(mirror, "dead", False):
+                note()
 
     def _repaint_all(self, *_args) -> None:
         for mirror in list(self.mirrors.values()):
