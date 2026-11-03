@@ -686,8 +686,9 @@ def test_first_yield_notice_is_the_non_activating_flyout_once_ever(q_app):
     i18n = types.SimpleNamespace(SIDE_BAR_NO_ROOM_TITLE="t", APP_OVERLAP_YIELD_BODY="b {setting}",
                                  HIDE_WHEN_APPS_COVER_LABEL="S", SETTINGS_WINDOW_TITLE="W", WIDGET_SETTINGS_GROUP="P")
     stub = types.SimpleNamespace(config={}, logger=MagicMock(), update_config=MagicMock(), i18n=i18n,
-                                 _show_notice_flyout=MagicMock())
+                                 _show_notice_flyout=MagicMock(return_value=True))
     stub._app_overlap_text = lambda t: main_mod.NetworkSpeedWidget._app_overlap_text(stub, t)
+    stub._show_app_overlap_notice = lambda t, b: main_mod.NetworkSpeedWidget._show_app_overlap_notice(stub, t, b)
     with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
         main_mod.NetworkSpeedWidget._maybe_show_app_overlap_notice(stub)
         main_mod.NetworkSpeedWidget._maybe_show_app_overlap_notice(stub)

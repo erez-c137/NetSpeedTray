@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "Check for updates on startup",
     "PREFERRED_MONITOR_LABEL": "Preferred monitor",
     "PREFERRED_MONITOR_PRIMARY": "Primary (auto)",
-    "PREFERRED_MONITOR_ITEM": "Monitor {index}: {width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "Monitor {index}: {width} x {height}, {scale}%",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(primary)",
     "SHOW_ON_ALL_TASKBARS_LABEL": "Show on all taskbars",
     "SHOW_ON_ALL_TASKBARS_DESC": "A copy of the widget on every taskbar. Needs “Show my taskbar on all displays” in Windows.",

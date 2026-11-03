@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "Sprawdzaj aktualizacje przy uruchomieniu",
     "PREFERRED_MONITOR_LABEL": "Preferowany monitor",
     "PREFERRED_MONITOR_PRIMARY": "Główny (auto)",
-    "PREFERRED_MONITOR_ITEM": "Monitor {index}: {width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "Monitor {index}: {width} x {height}, {scale}%",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(główny)",
     "SHOW_ON_ALL_TASKBARS_LABEL": "Pokaż na wszystkich paskach zadań",
     "SHOW_ON_ALL_TASKBARS_DESC": "Kopia widżetu na każdym pasku zadań. Wymaga opcji „Pokaż mój pasek zadań na wszystkich ekranach” w systemie Windows.",

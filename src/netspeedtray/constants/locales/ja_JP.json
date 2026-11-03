@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "起動時に更新を確認する",
     "PREFERRED_MONITOR_LABEL": "優先モニター",
     "PREFERRED_MONITOR_PRIMARY": "プライマリ (自動)",
-    "PREFERRED_MONITOR_ITEM": "モニター {index}: {width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "モニター {index}: {width} x {height}、{scale}%",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(プライマリ)",
     "SHOW_ON_ALL_TASKBARS_LABEL": "すべてのタスクバーに表示",
     "SHOW_ON_ALL_TASKBARS_DESC": "すべてのタスクバーにウィジェットのコピーを表示します。Windows の「すべてのディスプレイにタスク バーを表示する」が必要です。",

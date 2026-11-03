@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "启动时检查更新",
     "PREFERRED_MONITOR_LABEL": "首选显示器",
     "PREFERRED_MONITOR_PRIMARY": "主显示器 (自动)",
-    "PREFERRED_MONITOR_ITEM": "显示器 {index}：{width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "显示器 {index}：{width} x {height}，{scale}%",
     "PREFERRED_MONITOR_PRIMARY_TAG": "（主显示器）",
     "SHOW_ON_ALL_TASKBARS_LABEL": "在所有任务栏上显示",
     "SHOW_ON_ALL_TASKBARS_DESC": "在每个任务栏上显示小部件的副本。需要在 Windows 中开启“在所有显示器上显示任务栏”。",

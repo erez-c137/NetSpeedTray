@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "চালু হওয়ার সময় আপডেট খুঁজুন",
     "PREFERRED_MONITOR_LABEL": "পছন্দের মনিটর",
     "PREFERRED_MONITOR_PRIMARY": "প্রাথমিক (স্বয়ংক্রিয়)",
-    "PREFERRED_MONITOR_ITEM": "মনিটর {index}: {width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "মনিটর {index}: {width} x {height}, {scale}%",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(প্রাথমিক)",
     "SHOW_ON_ALL_TASKBARS_LABEL": "সব টাস্কবারে দেখান",
     "SHOW_ON_ALL_TASKBARS_DESC": "প্রতিটি টাস্কবারে উইজেটের একটি কপি। উইন্ডোজে “Show my taskbar on all displays” চালু থাকা প্রয়োজন।",

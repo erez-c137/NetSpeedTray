@@ -1961,7 +1961,20 @@ class NetworkSpeedWidget(QWidget):
         # HWND is being torn down, and arming is then skipped).
         if event.type() == QEvent.Type.WinIdChange:
             self._arm_shutdown_channel(create=False)
+        elif event.type() == QEvent.Type.WindowDeactivate:
+            # A UAC prompt, Win+L or Alt+Tab mid-drag takes the activation and the release with it:
+            # end the drag here instead of leaving _dragging set (relu616, rc.4 on #373).
+            self._end_lost_drag("the widget lost activation")
         return super().event(event)
+
+    def _end_lost_drag(self, reason: str) -> None:
+        handler = getattr(self, "input_handler", None)
+        if handler is None:
+            return
+        try:
+            handler.end_lost_drag(reason)
+        except Exception as e:
+            self.logger.debug("Ending a lost drag failed: %s", e)
 
     def _arm_shutdown_channel(self, create: bool = True) -> None:
         """
@@ -1983,6 +1996,8 @@ class NetworkSpeedWidget(QWidget):
 
     def hideEvent(self, event: QHideEvent) -> None:
         self.logger.debug("Widget hideEvent triggered.")
+        # Hidden mid-drag (a fullscreen app, a yield): no release will come to a hidden window.
+        self._end_lost_drag("the widget was hidden")
         # Don't leave a usage card floating if the widget hides (e.g. a fullscreen app).
         try:
             self._hover_card_timer.stop()
@@ -2407,15 +2422,26 @@ class NetworkSpeedWidget(QWidget):
     def _maybe_show_app_overlap_notice(self) -> None:
         """One-time heads-up (ever), the first time the widget steps aside for app buttons on a
         horizontal taskbar (#24): why it is gone, and how to get it back (start the app again, or the
-        Settings switch). Reuses the side-bar no-room title and flyout; non-activating."""
+        Settings switch). Reuses the side-bar no-room title and flyout; non-activating. The flag is
+        saved only once the flyout really showed (as #472's second-launch notice): it was saved before
+        the deferred show, so a failed show used up the one notice for good."""
         try:
             if getattr(self, "_app_overlap_notice_shown", False) or self.config.get("app_overlap_notice_shown", False):
                 return
-            self._app_overlap_notice_shown = True
-            self.update_config({"app_overlap_notice_shown": True})
+            self._app_overlap_notice_shown = True   # this session: no second one queued meanwhile
             title = self.i18n.SIDE_BAR_NO_ROOM_TITLE
             body = self._app_overlap_text(self.i18n.APP_OVERLAP_YIELD_BODY)
-            QTimer.singleShot(0, lambda: self._show_notice_flyout(title, body))
+            QTimer.singleShot(0, lambda: self._show_app_overlap_notice(title, body))
+        except Exception as e:
+            self.logger.debug("app-overlap notice failed: %s", e)
+
+    def _show_app_overlap_notice(self, title: str, body: str) -> None:
+        """The deferred half of _maybe_show_app_overlap_notice: show, then persist the once-ever flag."""
+        try:
+            if self._show_notice_flyout(title, body) is True:
+                self.update_config({"app_overlap_notice_shown": True})
+            else:
+                self._app_overlap_notice_shown = False   # not shown: the next yield may try again
         except Exception as e:
             self.logger.debug("app-overlap notice failed: %s", e)
 
@@ -2778,11 +2804,22 @@ class NetworkSpeedWidget(QWidget):
                 from netspeedtray.utils.taskbar_utils import set_widgets_probe_enabled
                 set_widgets_probe_enabled(False)
                 return
+            from netspeedtray.utils import taskbar_utils as tbu
             widgets_rect = getattr(taskbar_info, "widgets_rect", None)
+            if not widgets_rect and getattr(taskbar_info, "is_primary", True) is False:
+                # A secondary bar: the #200 probe is primary-only, so read that bar's own Widgets box
+                # from the per-HWND layout cache (#373) - its visible content (what widgets_rect is on
+                # the primary), else the full box. widgets_extent is None when the cached layout is
+                # another dock's or Widgets is off, so the content is only trusted alongside it.
+                extent = getattr(taskbar_info, "widgets_extent", None)
+                if extent:
+                    hwnd = int(getattr(taskbar_info, "hwnd", 0) or 0)
+                    widgets_rect = (tbu.taskbar_layout_widgets_content(hwnd) if hwnd else None) or extent
             if not widgets_rect:
                 return
-            from netspeedtray.utils.taskbar_utils import rect_overlaps_x, rect_overlaps_y
             dpi = getattr(taskbar_info, "dpi_scale", 1.0) or 1.0
+            # Physical rects convert around the screen's Qt origin (#473): (0, 0) on the primary.
+            x_origin, y_origin = tbu.screen_origin(taskbar_info)
             try:
                 edge = taskbar_info.get_edge_position()
             except Exception:
@@ -2790,7 +2827,8 @@ class NetworkSpeedWidget(QWidget):
             if edge in (constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT):
                 # A side bar: the widget and the Widgets button both span the bar's width, so only
                 # their y-extents can tell an overlap apart (comparing x always "overlapped").
-                overlaps = rect_overlaps_y(self.y(), self.y() + self.height(), widgets_rect, dpi)
+                overlaps = tbu.rect_overlaps_y(self.y(), self.y() + self.height(), widgets_rect, dpi,
+                                               origin=y_origin)
             else:
                 from netspeedtray.core.position_manager import user_placed_horizontal_offset
                 pm = getattr(self, "position_manager", None)
@@ -2801,7 +2839,8 @@ class NetworkSpeedWidget(QWidget):
                     # the bar re-lays (rc.3 VM: a tray icon appearing slid the button under the
                     # widget for one probe) - never a reason for a one-time, never-again notice.
                     return
-                overlaps = rect_overlaps_x(self.x(), self.x() + self.width(), widgets_rect, dpi)
+                overlaps = tbu.rect_overlaps_x(self.x(), self.x() + self.width(), widgets_rect, dpi,
+                                               origin=x_origin)
             if not overlaps:
                 return
             # Latch immediately so a re-entrant refresh (or the deferred call below) can't double-fire.

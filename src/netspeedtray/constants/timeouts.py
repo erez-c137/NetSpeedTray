@@ -184,6 +184,14 @@ class TimeoutConstants:
     # just holds the position, so a single transient failed lookup can't flicker it (#440 review L5).
     TASKBAR_ABSENT_HIDE_AFTER_TICKS: Final[int] = 2
 
+    # A widget drag whose left-button release never arrives (a UAC prompt, Win+L, Alt+Tab or a modal
+    # mid-drag) left ``_dragging`` True for good, and the #24 yield read BUSY every tick until a restart
+    # (relu616, rc.4 on #373). While a drag is under way the real button state is polled this often;
+    # DRAG_RELEASE_WATCHDOG_MISSES polls in a row with the button up end the drag as a drop. A real
+    # drag holds the button down, so it is never cut short however long it lasts.
+    DRAG_RELEASE_WATCHDOG_MS: Final[int] = 250
+    DRAG_RELEASE_WATCHDOG_MISSES: Final[int] = 2
+
     # Widget / UI Delays (milliseconds)
     WIDGET_INIT_DELAY_MS: Final[int] = 500
     GRAPH_CLOSE_REFRESH_DELAY_MS: Final[int] = 300

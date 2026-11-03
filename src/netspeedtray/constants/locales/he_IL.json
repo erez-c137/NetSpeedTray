@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "בדוק עדכונים בעת ההפעלה",
     "PREFERRED_MONITOR_LABEL": "מסך מועדף",
     "PREFERRED_MONITOR_PRIMARY": "ראשי (אוטומטי)",
-    "PREFERRED_MONITOR_ITEM": "מסך {index}: {width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "מסך {index}: {width} x {height}, {scale}%",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(ראשי)",
     "SHOW_ON_ALL_TASKBARS_LABEL": "הצג בכל שורות המשימות",
     "SHOW_ON_ALL_TASKBARS_DESC": "עותק של היישומון בכל שורת משימות. דורש את \"הצג את שורת המשימות שלי בכל התצוגות\" ב-Windows.",

@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "Frissítések keresése indításkor",
     "PREFERRED_MONITOR_LABEL": "Előnyben részesített monitor",
     "PREFERRED_MONITOR_PRIMARY": "Elsődleges (automatikus)",
-    "PREFERRED_MONITOR_ITEM": "{index}. monitor: {width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "{index}. monitor: {width} x {height}, {scale}%",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(elsődleges)",
     "SHOW_ON_ALL_TASKBARS_LABEL": "Megjelenítés az összes tálcán",
     "SHOW_ON_ALL_TASKBARS_DESC": "A widget egy-egy példánya minden tálcán. Ehhez a Windows „Tálca megjelenítése az összes kijelzőn” beállítása szükséges.",

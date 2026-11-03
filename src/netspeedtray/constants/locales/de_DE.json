@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "Beim Start nach Updates suchen",
     "PREFERRED_MONITOR_LABEL": "Bevorzugter Monitor",
     "PREFERRED_MONITOR_PRIMARY": "Primär (auto)",
-    "PREFERRED_MONITOR_ITEM": "Monitor {index}: {width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "Monitor {index}: {width} x {height}, {scale} %",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(Hauptbildschirm)",
     "SHOW_ON_ALL_TASKBARS_LABEL": "Auf allen Taskleisten anzeigen",
     "SHOW_ON_ALL_TASKBARS_DESC": "Eine Kopie des Widgets auf jeder Taskleiste. Erfordert „Taskleiste auf allen Anzeigen anzeigen“ in Windows.",

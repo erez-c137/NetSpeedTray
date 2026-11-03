@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "Ob zagonu preveri posodobitve",
     "PREFERRED_MONITOR_LABEL": "Prednostni monitor",
     "PREFERRED_MONITOR_PRIMARY": "Primarni (samodejno)",
-    "PREFERRED_MONITOR_ITEM": "Zaslon {index}: {width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "Zaslon {index}: {width} x {height}, {scale}%",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(primarni)",
     "SHOW_ON_ALL_TASKBARS_LABEL": "Prikaži v vseh opravilnih vrsticah",
     "SHOW_ON_ALL_TASKBARS_DESC": "Kopija gradnika v vsaki opravilni vrstici. Potrebna je nastavitev »Pokaži opravilno vrstico na vseh zaslonih« v sistemu Windows.",
