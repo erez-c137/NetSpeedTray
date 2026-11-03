@@ -21,6 +21,13 @@ class DialogConstants:
     COLOR_BUTTON_WIDTH: Final[int] = 40
     COLOR_BUTTON_HEIGHT: Final[int] = 18
     GRAPH_COMBO_MIN_WIDTH: Final[int] = 90 # ADDED for graph settings panel
+    # Settings > Widget > Preferred monitor (relu616, rc.4 on #373): the closed box is as wide as its
+    # longest entry ("Monitor 1: 1920 x 1080, 150% (Hauptbildschirm)") within these bounds - past the
+    # cap the card stacks the box under its title and the box elides; the open list is never capped.
+    MONITOR_COMBO_MIN_WIDTH: Final[int] = 220
+    MONITOR_COMBO_MAX_WIDTH: Final[int] = 420
+    # The arrow, the QSS padding and the frame on top of the text width.
+    MONITOR_COMBO_CHROME_PX: Final[int] = 48
 
 class SliderConstants:
     """Constants for configuring QSlider widgets."""

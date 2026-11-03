@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "Bij het opstarten op updates controleren",
     "PREFERRED_MONITOR_LABEL": "Voorkeursmonitor",
     "PREFERRED_MONITOR_PRIMARY": "Primair (automatisch)",
-    "PREFERRED_MONITOR_ITEM": "Beeldscherm {index}: {width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "Beeldscherm {index}: {width} x {height}, {scale}%",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(primair)",
     "SHOW_ON_ALL_TASKBARS_LABEL": "Op alle taakbalken weergeven",
     "SHOW_ON_ALL_TASKBARS_DESC": "Een kopie van de widget op elke taakbalk. Vereist ‘Mijn taakbalk weergeven op alle beeldschermen’ in Windows.",

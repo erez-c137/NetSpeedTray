@@ -980,18 +980,20 @@ def _query_widgets_rect_blocking(taskbar_hwnd: int) -> Optional[Tuple[int, int, 
 
 
 def rect_overlaps_x(left: float, right: float, widgets_rect: Optional[Tuple[int, int, int, int]],
-                    dpi_scale: float) -> bool:
+                    dpi_scale: float, origin: float = 0.0) -> bool:
     """
     True if the horizontal span ``[left, right]`` (logical px, e.g. the widget's own geometry) overlaps
     the Widgets/weather element's x-extent (``widgets_rect`` is physical px; converted via ``dpi_scale``).
 
     Used to decide the one-time #200 nudge. ``widgets_rect`` is the visible content extent (dead space
     excluded), so a widget that merely grazes the element's padding is correctly NOT counted as overlap.
+    ``origin`` is the screen's Qt x origin (screen_origin): 0 on the primary, where this is rect / dpi;
+    a secondary's physical rect converts around its own origin (physical_to_logical, #373).
     """
     if not widgets_rect or dpi_scale <= 0:
         return False
-    r_left = widgets_rect[0] / dpi_scale
-    r_right = widgets_rect[2] / dpi_scale
+    r_left = physical_to_logical(widgets_rect[0], origin, dpi_scale)
+    r_right = physical_to_logical(widgets_rect[2], origin, dpi_scale)
     return left < r_right and right > r_left
 
 
@@ -1963,13 +1965,14 @@ def vertical_taskbar_strip(taskbar_info: TaskbarInfo, edge: constants.TaskbarEdg
 
 
 def rect_overlaps_y(top: float, bottom: float, widgets_rect: Optional[Tuple[int, int, int, int]],
-                    dpi_scale: float) -> bool:
+                    dpi_scale: float, origin: float = 0.0) -> bool:
     """The side-bar twin of ``rect_overlaps_x``: True if ``[top, bottom]`` (logical px) overlaps the
     Widgets/weather element's y-extent. On a LEFT/RIGHT taskbar the widget and the Widgets button
     share the bar's whole width, so comparing x always "overlapped" (#200 nudge false positive)."""
     if not widgets_rect or dpi_scale <= 0:
         return False
-    return top < widgets_rect[3] / dpi_scale and bottom > widgets_rect[1] / dpi_scale
+    return (top < physical_to_logical(widgets_rect[3], origin, dpi_scale)
+            and bottom > physical_to_logical(widgets_rect[1], origin, dpi_scale))
 
 
 def dock_signature(taskbar_info: Optional[TaskbarInfo]) -> Optional[tuple]:

@@ -84,9 +84,10 @@ class WidgetPage(QWidget):
         # it, so it lives here with the other placement controls (moved from General, 2.2 IA pass).
         self.preferred_monitor_combo = Win11ComboBox()
         self.preferred_monitor_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.preferred_monitor_combo.setMinimumWidth(220)
+        self.preferred_monitor_combo.setMinimumWidth(constants.ui.dialogs.MONITOR_COMBO_MIN_WIDTH)
         self._populate_monitor_combo()   # (re)connects on_change itself - connecting here too doubled it
-        layout.addWidget(SettingCard(self.i18n.PREFERRED_MONITOR_LABEL, control=self.preferred_monitor_combo))
+        self._monitor_card = SettingCard(self.i18n.PREFERRED_MONITOR_LABEL, control=self.preferred_monitor_combo)
+        layout.addWidget(self._monitor_card)
         # rc.2 W13: a chosen monitor with no taskbar of its own, with floating off, silently docked the
         # widget to the PRIMARY taskbar. Say so right under the picker (see _sync_monitor_note).
         self.monitor_note = QLabel("")
@@ -173,9 +174,9 @@ class WidgetPage(QWidget):
         if app is not None:
             primary = app.primaryScreen()
             for i, screen in enumerate(app.screens(), start=1):
-                geom = screen.geometry()
-                label = self.i18n.PREFERRED_MONITOR_ITEM.format(index=i, width=geom.width(),
-                                                                height=geom.height())
+                width, height, scale = self._native_mode(screen)
+                label = self.i18n.PREFERRED_MONITOR_ITEM.format(index=i, width=width, height=height,
+                                                                scale=scale)
                 if screen is primary:
                     label = f"{label} {self.i18n.PREFERRED_MONITOR_PRIMARY_TAG}"
                 self.preferred_monitor_combo.addItem(label, userData=screen.name())
@@ -204,7 +205,41 @@ class WidgetPage(QWidget):
 
         # Reconnect the change signal.
         self.preferred_monitor_combo.currentIndexChanged.connect(self._on_monitor_changed)
+        self._fit_monitor_combo_width()
         self._sync_free_float_card()
+
+    @staticmethod
+    def _native_mode(screen) -> "tuple[int, int, int]":
+        """``(width, height, scale %)`` as Windows Settings > Display shows them. Qt's geometry is in
+        logical px - a 1920 x 1080 screen at 150 % reads 1280 x 720, which confused a tester (rc.4) -
+        so scale it back by the screen's device pixel ratio."""
+        from netspeedtray.utils.taskbar_utils import qt_screen_native_rect
+        geom = screen.geometry()
+        try:
+            dpr = float(screen.devicePixelRatio()) or 1.0
+        except Exception:
+            dpr = 1.0
+        native = qt_screen_native_rect(screen)
+        if native is None:
+            return geom.width(), geom.height(), int(round(dpr * 100))
+        return native[2] - native[0], native[3] - native[1], int(round(dpr * 100))
+
+    def _fit_monitor_combo_width(self) -> None:
+        """Wide enough for the longest entry (it was cut off at 220 px: "Monitor 1: 1280 x 720
+        (Hauptbildschirm)"), within MONITOR_COMBO_MIN/MAX_WIDTH; the open list always fits it."""
+        combo = self.preferred_monitor_combo
+        d = constants.ui.dialogs
+        combo.ensurePolished()           # measure with the font the QSS paints, not the default one
+        fm = combo.fontMetrics()
+        text_w = max((fm.horizontalAdvance(combo.itemText(i)) for i in range(combo.count())), default=0)
+        needed = text_w + d.MONITOR_COMBO_CHROME_PX
+        combo.setMinimumWidth(max(d.MONITOR_COMBO_MIN_WIDTH, min(needed, d.MONITOR_COMBO_MAX_WIDTH)))
+        combo.view().setMinimumWidth(needed)
+        # A refill (a monitor plugged in) can change the width: let the card re-decide side by side vs
+        # stacked now, not at the next window resize.
+        card = getattr(self, "_monitor_card", None)
+        if card is not None and card.width() > 0:
+            card._reflow(card.width())
 
     def _on_monitor_changed(self, _index: int = 0) -> None:
         self._sync_free_float_card()

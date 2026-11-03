@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "Vérifier les mises à jour au démarrage",
     "PREFERRED_MONITOR_LABEL": "Écran préféré",
     "PREFERRED_MONITOR_PRIMARY": "Principal (auto)",
-    "PREFERRED_MONITOR_ITEM": "Écran {index} : {width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "Écran {index} : {width} x {height}, {scale} %",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(principal)",
     "SHOW_ON_ALL_TASKBARS_LABEL": "Afficher sur toutes les barres des tâches",
     "SHOW_ON_ALL_TASKBARS_DESC": "Une copie du widget sur chaque barre des tâches. Nécessite « Afficher ma barre des tâches sur tous les écrans » dans Windows.",

@@ -273,7 +273,7 @@
     "CHECK_FOR_UPDATES_LABEL": "Проверять обновления при запуске",
     "PREFERRED_MONITOR_LABEL": "Предпочитаемый монитор",
     "PREFERRED_MONITOR_PRIMARY": "Основной (авто)",
-    "PREFERRED_MONITOR_ITEM": "Монитор {index}: {width}x{height}",
+    "PREFERRED_MONITOR_ITEM": "Монитор {index}: {width} x {height}, {scale}%",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(основной)",
     "SHOW_ON_ALL_TASKBARS_LABEL": "Показывать на всех панелях задач",
     "SHOW_ON_ALL_TASKBARS_DESC": "Копия виджета на каждой панели задач. Требуется параметр Windows «Показывать панель задач на всех дисплеях».",
