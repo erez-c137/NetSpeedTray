@@ -1191,6 +1191,36 @@ def test_a_copy_probe_that_never_lands_times_out_as_unknown(rig, bg):
     assert not r.y._inflight and not r.y.yielded
 
 
+def test_a_copy_ignores_a_landing_whose_probe_began_before_it_asked(rig, bg):
+    """Review M1: a probe of this bar already running when the copy fired (the 30 s tray-less refresh, a
+    slow earlier re-check) lands the bar as it WAS - taken as this reading, every judgement would lag
+    one probe and two 'clear' readings could show the copy over buttons that came back."""
+    _main_holds_the_slot(bg)
+    r = rig(1380, background_probes=True)
+    r.y.sync()
+    r.y._probe_timer.stop()
+    r.y._fire_probe()
+    with taskbar_utils._layout_lock:                    # the older probe lands: a clear bar
+        taskbar_utils._store_landed_layout(HWND, {"group": (12, Y0, 300, Y1),
+                                                  "probe_start": r.y._fired_mono - 0.5})
+    r.y._poll_probe()
+    assert r.y._inflight and not r.y.yielded            # not this probe's reading: still waiting
+    bg.land(left_aligned(28, overflow=True))            # this probe: the buttons reach the copy
+    r.y._poll_probe()
+    assert not r.y._inflight and r.y.yielded
+
+
+def test_a_copy_whose_bar_holds_the_slot_re_checks_it_there(rig, bg):
+    """The copy's own bar can be the slot's (its fresh dock probe): the background request is then a
+    keep_last re-check of that bar, and it still lands as this reading."""
+    taskbar_utils.request_taskbar_layout_probe(HWND)
+    bg.land(left_aligned(3))
+    r = rig(1380, background_probes=True)
+    r.start(left_aligned(28, overflow=True))
+    assert r.y.yielded
+    assert bg.requests[-1] is True                      # a keep_last re-check, not a fresh slot probe
+
+
 def _copy_pm(*, config=None, x=1380, dpi=1.0, origin=0, width_px=1920):
     """A PositionManager built the way a mirror builds it, on a bottom bar of its own screen."""
     pm, tb, widget = _pm(config=config, x=x)

@@ -885,6 +885,35 @@ class TestSideWatcherNeverPerMirror:
         m._refresh_after_yield_change()
         assert calls == [real_mirror.tb]
 
+    def test_a_retired_mirror_ignores_a_queued_yield_refresh(self, real_mirror, monkeypatch):
+        """Review L2: a yield flip queues a 0 ms refresh; the same pass destroys the mirror - the refresh
+        must not re-show it at its old spot from the stale bar."""
+        m = real_mirror.mirror
+        calls = []
+        monkeypatch.setattr(m, "refresh", lambda tb, fg: calls.append(tb))
+        m.position_manager._app_yield_changed()
+        m.retire()
+        assert not m._yield_refresh_timer.isActive()
+        m._refresh_after_yield_change()
+        assert calls == []
+
+    def test_destroy_retires_the_mirror_first(self):
+        order = []
+
+        class _R(_FakeMirror):
+            def retire(self):
+                order.append("retire")
+
+            def detach_owner(self):
+                order.append("detach")
+
+        main = SimpleNamespace(docked_taskbar=lambda: (100, "PRIMARY"))
+        mgr = MirrorManager(main, taskbars_provider=lambda: [_tb(100, "PRIMARY", True), _tb(200, "B")],
+                            mirror_factory=_R, foreground_provider=lambda: 0, window_class=_classes)
+        mgr.tick()
+        mgr.shutdown()
+        assert order == ["retire", "detach"]
+
     def test_the_shared_menu_makes_the_mirror_busy_for_the_yield(self, real_mirror):
         from netspeedtray.core.app_overlap_yield import BUSY
         real_mirror.main._is_context_menu_visible = True

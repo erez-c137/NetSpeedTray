@@ -134,6 +134,8 @@ class MirrorWidget(QWidget):
         # Set when Windows destroyed the native window underneath us (its owner taskbar went away):
         # the manager then drops the mirror without another Win32 call on it.
         self.dead: bool = False
+        # Set by MirrorManager._destroy (retire): no queued refresh may show this window again.
+        self._retired: bool = False
 
         # --- what WidgetLayoutManager / PositionManager read from their host -------------------
         self.config = _MirrorConfig(lambda: main.config, self.screen_name)
@@ -296,10 +298,15 @@ class MirrorWidget(QWidget):
         except Exception as e:
             self.logger.error("[%s] refresh failed: %s", self._tag, e, exc_info=True)
 
+    def retire(self) -> None:
+        """Being destroyed: a refresh queued by a yield flip must not re-show it from a stale bar."""
+        self._retired = True
+        self._yield_refresh_timer.stop()
+
     def _refresh_after_yield_change(self) -> None:
         """The app-button yield flipped (or moved the default spot): apply it now from the cached
         taskbar instead of waiting for the next 1 s tick."""
-        if self.dead or self._tb is None:
+        if self.dead or self._retired or self._tb is None:
             return
         try:
             fg = int(win32gui.GetForegroundWindow() or 0)
@@ -658,6 +665,9 @@ class MirrorManager(QObject):
             # #406's side-bar watcher (a hook thread) must never outlive its mirror. Mirrors never
             # attach it (side_watcher_enabled=False); stop it anyway, in case that ever changes.
             # And #438's app-button yield (rc.5 #373: mirrors run it) - its timers die with it.
+            retire = getattr(mirror, "retire", None)
+            if callable(retire):
+                retire()                 # first: a queued yield refresh can't re-show it meanwhile
             pm = getattr(mirror, "position_manager", None)
             if pm is not None and hasattr(pm, "stop_side_watcher"):
                 pm.stop_side_watcher()

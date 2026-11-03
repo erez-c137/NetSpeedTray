@@ -71,8 +71,9 @@ behaviour).
 against ITS OWN taskbar (its HWND, scale and Qt screen origin), by the same rules and hysteresis, with
 three differences (``background_probes=True``): its probes go through
 ``taskbar_utils.request_background_layout_probe`` - they land in the per-HWND layout cache and never take
-the one-taskbar slot the main widget's yield and side placement work from, so N copies cannot evict the
-main widget's reading; it has no first-yield notice and no drop baseline (a copy is never dragged, and
+the one-taskbar slot from another bar (when the copy's own bar already holds it, a keep_last re-check of
+that bar), so N copies cannot evict the main widget's reading; a landing counts only when its probe
+started after the request (``taskbar_layout_landed_since``); it has no first-yield notice and no drop baseline (a copy is never dragged, and
 must never clear the main widget's saved drop); and a second launch never suspends it (that is the main
 widget's way back, #440/#472).
 """
@@ -239,6 +240,7 @@ class AppOverlapYield(QObject):
         self._changes = 0                        # foreground changes since the last landed probe
         self._inflight = False
         self._fired_at = 0.0
+        self._fired_mono = 0.0                   # time.monotonic() at the fire (the layout cache's clock)
         self._landed_before = 0
         self._last_probe_at = -1e9
         self._again = False
@@ -539,6 +541,7 @@ class AppOverlapYield(QObject):
             return
         self._inflight = True
         self._fired_at = self._last_probe_at = self._clock()
+        self._fired_mono = time.monotonic()
         self._landed_before = taskbar_utils.taskbar_layout_landed_count(self._hwnd)
         if self._background_probes:
             # A copy: into this bar's per-HWND cache, never the slot (see the module docstring).
@@ -548,13 +551,22 @@ class AppOverlapYield(QObject):
             taskbar_utils.request_taskbar_layout_probe(self._hwnd, keep_last=True)
         self._poll_timer.start()
 
+    def _probe_landed(self) -> bool:
+        """The probe fired last has landed a FRESH result for this bar."""
+        if not self._background_probes:
+            return taskbar_utils.taskbar_layout_landed_count(self._hwnd) > self._landed_before
+        # Background: a landing counts only when its UIA call STARTED after the fire - a probe of this
+        # bar already running then (a 30 s tray-less refresh, a slow earlier re-check) reads the bar as
+        # it was before, and taken as this reading it would put every judgement one probe behind.
+        return taskbar_utils.taskbar_layout_landed_since(self._hwnd, self._fired_mono)
+
     def _probe_pending(self) -> bool:
         """The probe fired at ``_fired_at`` has neither landed nor timed out."""
         if not self._background_probes:
             return bool(taskbar_utils.taskbar_layout_snapshot(self._hwnd)[2])
-        # A background probe has no "pending" flag of its own: it is in flight until this bar's landed
-        # count moves, bounded by the same timeout as a slot request (a hung Explorer, a long queue).
-        if taskbar_utils.taskbar_layout_landed_count(self._hwnd) > self._landed_before:
+        # A background probe has no "pending" flag of its own: it is in flight until a fresh result for
+        # this bar lands, bounded by the same timeout as a slot request (a hung Explorer, a long queue).
+        if self._probe_landed():
             return False
         return (self._clock() - self._fired_at) < taskbar_utils.LAYOUT_PROBE_TIMEOUT_S
 
@@ -566,7 +578,7 @@ class AppOverlapYield(QObject):
             self._poll_timer.start()
             return
         self._inflight = False
-        landed = taskbar_utils.taskbar_layout_landed_count(self._hwnd) > self._landed_before
+        landed = self._probe_landed()
         group_rect = taskbar_utils.taskbar_layout_group(self._hwnd) if landed else None
         if group_rect is not None:
             bar_rect = taskbar_utils.taskbar_layout_bar(self._hwnd)
