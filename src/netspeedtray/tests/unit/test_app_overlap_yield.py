@@ -26,6 +26,8 @@ from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.utils import taskbar_utils, uia_widgets
 from netspeedtray.utils.taskbar_utils import TaskbarInfo
 
+# Captured before conftest's autouse no-op replaces it (the copy tests below run the real one).
+REAL_BACKGROUND_PROBE = taskbar_utils.request_background_layout_probe
 T = constants.timeouts
 GAP = constants.layout.TRAY_EDGE_MIN_GAP_PX
 BOTTOM = constants.taskbar.edge.BOTTOM
@@ -125,7 +127,7 @@ class Rig:
     """An AppOverlapYield on a fake bottom bar; the clock and the widget's x are the test's."""
 
     def __init__(self, layout, widget_x, *, dpi=1.0, width=WIDGET_W, centered=None, drop_key=None,
-                 saved_drop=None, enabled=True):
+                 saved_drop=None, enabled=True, background_probes=False):
         self.layout = layout
         self.widget_x = widget_x
         self.width = width
@@ -146,7 +148,8 @@ class Rig:
         self.changes = 0
         self.firsts = 0
         self.y = AppOverlapYield(self._ctx, self._changed, self._first, clock=lambda: self.now,
-                                 on_persist_drop=self._persist, enabled=enabled)
+                                 on_persist_drop=self._persist, enabled=enabled,
+                                 background_probes=background_probes)
 
     def _ctx(self):
         if not self.eligible:
@@ -1117,6 +1120,155 @@ def test_position_manager_can_be_built_without_the_yield(q_app):
     pm = PositionManager(WindowState(config={}, widget=widget, taskbar_info=tb), app_yield_enabled=False)
     pm.sync_app_overlap(tb)
     assert pm.is_yielding_to_apps() is False and pm._app_yield.attached_hwnd == 0
+
+
+# --- rc.5 #373: "Show on all taskbars" copies yield on THEIR bar, without the probe slot ------------------
+
+MAIN_BAR = 7070      # the main widget's bar: it holds the one-taskbar probe slot
+
+
+@pytest.fixture
+def bg(layout, monkeypatch):
+    """The layout fixture plus the REAL background probe (conftest no-ops it for every other test)."""
+    monkeypatch.setattr(taskbar_utils, "request_background_layout_probe", REAL_BACKGROUND_PROBE)
+    return layout
+
+
+def _main_holds_the_slot(bg):
+    taskbar_utils.request_taskbar_layout_probe(MAIN_BAR)
+    bg.land(CENTERED)
+    assert taskbar_utils._layout_state["hwnd"] == MAIN_BAR
+
+
+def _assert_main_slot_untouched():
+    assert taskbar_utils._layout_state["hwnd"] == MAIN_BAR
+    assert not taskbar_utils.taskbar_layout_probe_pending(MAIN_BAR)
+    assert taskbar_utils.taskbar_layout_group(MAIN_BAR) == (674, 1032, 1247, 1080)
+
+
+def test_a_copy_yields_on_its_own_bar_without_taking_the_main_widgets_probe_slot(rig, bg):
+    """Each copy probing through the slot would evict the main widget's reading (its yield then reads
+    'unknown' and the slot thrashes between bars): a copy's probes go to the background queue."""
+    _main_holds_the_slot(bg)
+    r = rig(1380, background_probes=True)
+    r.start(left_aligned(28, overflow=True))
+    assert r.y.yielded and r.changes == 1
+    _assert_main_slot_untouched()
+    assert True not in bg.requests[1:]              # no keep_last slot re-check was asked for
+    # ...and it comes back by the same hysteresis: two clear readings >= 300 ms apart.
+    r.y._schedule(0)
+    r.probe(left_aligned(3))
+    assert r.y.yielded
+    r.probe(left_aligned(3), advance=T.APP_YIELD_SHOW_CONFIRM_MS / 1000.0)
+    assert not r.y.yielded
+    _assert_main_slot_untouched()
+
+
+def test_a_copy_probe_stays_in_flight_until_its_bar_lands(rig, bg):
+    _main_holds_the_slot(bg)
+    r = rig(1380, background_probes=True)
+    r.y.sync()
+    r.y._probe_timer.stop()
+    r.y._fire_probe()
+    r.y._poll_probe()                                   # nothing landed yet: still polling
+    assert r.y._inflight and r.y._poll_timer.isActive()
+    bg.land(left_aligned(28, overflow=True))
+    r.y._poll_probe()
+    assert not r.y._inflight and r.y.yielded
+
+
+def test_a_copy_probe_that_never_lands_times_out_as_unknown(rig, bg):
+    _main_holds_the_slot(bg)
+    r = rig(1380, background_probes=True)
+    r.y.sync()
+    r.y._probe_timer.stop()
+    r.y._fire_probe()
+    bg.workers.clear()                              # a hung Explorer: the probe never lands
+    r.y._poll_probe()
+    assert r.y._inflight                                # still waiting inside the timeout
+    r.now += taskbar_utils.LAYOUT_PROBE_TIMEOUT_S + 0.1
+    r.y._poll_probe()
+    assert not r.y._inflight and not r.y.yielded
+
+
+def _copy_pm(*, config=None, x=1380, dpi=1.0, origin=0, width_px=1920):
+    """A PositionManager built the way a mirror builds it, on a bottom bar of its own screen."""
+    pm, tb, widget = _pm(config=config, x=x)
+    pm._app_yield.detach()
+    tb.dpi_scale = dpi
+    tb.rect = (origin, Y0, origin + width_px, Y1)
+    tb.get_tray_rect.return_value = None
+    screen = MagicMock()
+    screen.geometry.return_value = QRect(origin, 0, int(width_px / dpi), int(1080 / dpi))
+    tb.get_screen.return_value = screen
+    copy = PositionManager(WindowState(config=pm._state.config, widget=widget, taskbar_info=tb),
+                           app_yield_copy=True)
+    return copy, tb, widget
+
+
+def _probe_pm(pm, bg, elements):
+    pm._app_yield._probe_timer.stop()
+    pm._app_yield._fire_probe()
+    bg.land(elements)
+    pm._app_yield._poll_probe()
+
+
+def test_a_copy_never_shows_the_first_yield_notice_nor_touches_the_main_drop(bg, q_app):
+    """The first-yield notice and the saved drop are the main widget's (#472 stays main-only): a copy
+    yielding must not show a notice per copy, and a copy seeing its bar clear must not clear the main
+    widget's 'dropped on the buttons' offset."""
+    _main_holds_the_slot(bg)
+    config = {"app_overlap_drop_offset": -420}
+    pm, tb, _w = _copy_pm(config=config)
+    pm.on_app_yield_first = first = MagicMock()
+    pm.on_app_yield_persist = persist = MagicMock()
+    with patch.object(taskbar_utils, "widgets_button_enabled", return_value=False):
+        ctx = pm._app_overlap_context()
+        assert ctx.drop_key is None and ctx.saved_drop is None
+        pm.sync_app_overlap(tb)
+        _probe_pm(pm, bg, left_aligned(28, overflow=True))
+        assert pm.is_yielding_to_apps() is True
+        pm._app_yield._schedule(0)
+        _probe_pm(pm, bg, left_aligned(3))          # clear: would spend a drop baseline
+    first.assert_not_called()
+    persist.assert_not_called()
+    assert config["app_overlap_drop_offset"] == -420
+    _assert_main_slot_untouched()
+
+
+def test_a_copy_obeys_the_setting_off(bg, q_app):
+    pm, tb, _w = _copy_pm(config={"hide_when_apps_cover": False})
+    pm.sync_app_overlap(tb)
+    assert pm._app_yield.attached_hwnd == 0 and pm.is_yielding_to_apps() is False
+    assert not pm._app_yield._probe_timer.isActive()
+
+
+def test_a_copy_on_a_mixed_dpi_secondary_judges_in_its_screens_logical_px(bg, q_app):
+    """A copy on a 150 % secondary right of the primary (#473's VM layout): the UIA group (physical px)
+    converts around THAT screen's Qt origin, as the copy's own window position is in it."""
+    def shifted(elements, dx):
+        return [(c, a, (r[0] + dx, r[1], r[2] + dx, r[3])) for c, a, r in elements]
+    _main_holds_the_slot(bg)
+    origin = 1920
+    # 28 apps + overflow end at physical 1920 + 1377 = 3297 -> logical 1920 + 1377 / 1.5 = 2838.
+    pm, tb, widget = _copy_pm(x=2900, dpi=1.5, origin=origin)
+    with patch.object(taskbar_utils, "widgets_button_enabled", return_value=False), \
+            patch.object(taskbar_utils, "current_dpi_for_hwnd", return_value=1.5):
+        pm.sync_app_overlap(tb)
+        _probe_pm(pm, bg, shifted(left_aligned(28, overflow=True, widgets=False), origin))
+        assert pm.is_yielding_to_apps() is False        # 62 logical px clear (raw physical px would collide)
+        widget.pos.return_value = QPoint(2840, Y0)      # now within the gap of the group's end
+        pm._app_yield._schedule(0)
+        _probe_pm(pm, bg, shifted(left_aligned(28, overflow=True, widgets=False), origin))
+        assert pm.is_yielding_to_apps() is True
+    _assert_main_slot_untouched()
+
+
+def test_a_copy_on_a_side_bar_never_yields_like_the_main_widget(bg, q_app):
+    pm, tb, _w = _copy_pm()
+    tb.get_edge_position.return_value = RIGHT
+    pm.sync_app_overlap(tb)
+    assert pm._app_yield.attached_hwnd == 0 and pm.is_yielding_to_apps() is False
 
 
 # --- lows --------------------------------------------------------------------------------------------

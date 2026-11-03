@@ -930,9 +930,11 @@ class PositionManager(QObject):
 
     def __init__(self, window_state: WindowState, parent: Optional[QObject] = None,
                  log_tag: str = "", side_watcher_enabled: bool = True, *,
-                 app_yield_enabled: bool = True) -> None:
-        """``app_yield_enabled=False``: no #24 app-button yield (a paint-only mirror's manager, #434 -
-        mirrors don't yield in v1; the yield then never probes and never hides anything)."""
+                 app_yield_enabled: bool = True, app_yield_copy: bool = False) -> None:
+        """``app_yield_enabled=False``: no #24 app-button yield (it then never probes and never hides
+        anything). ``app_yield_copy=True``: a "Show on all taskbars" copy's manager (#229, rc.5 #373) -
+        the yield judges the copy's own taskbar with background probes (never the one-taskbar slot),
+        shows no first-yield notice and keeps no drop baseline (a copy is never dragged)."""
         super().__init__(parent)
         self._state = window_state
         if log_tag:
@@ -1039,10 +1041,13 @@ class PositionManager(QObject):
         # The Widgets re-enable (widgets_toggle_generation's on_at) the primary's follow-up probe ran for.
         self._primary_interim_probe_for: Optional[float] = None
         from netspeedtray.core.app_overlap_yield import AppOverlapYield
+        self._app_yield_copy: bool = bool(app_yield_copy)
         self._app_yield = AppOverlapYield(self._app_overlap_context, self._app_yield_changed,
-                                          self._app_yield_first, parent=self,
-                                          on_persist_drop=self._persist_app_drop,
-                                          enabled=app_yield_enabled)
+                                          None if self._app_yield_copy else self._app_yield_first,
+                                          parent=self,
+                                          on_persist_drop=None if self._app_yield_copy else self._persist_app_drop,
+                                          enabled=app_yield_enabled,
+                                          background_probes=self._app_yield_copy)
 
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -1386,8 +1391,9 @@ class PositionManager(QObject):
     def _refresh_trayless_bar_layout(self, taskbar_info: Optional[TaskbarInfo]) -> None:
         """Keep THIS bar's probed layout fresh when it has no tray rect - a Win11 secondary taskbar on
         any edge (#373): its clock and Widgets/weather button are XAML with no HWND, so the default
-        spot can only clear them from a UIA probe of this very HWND. Nothing else probed one
-        for a mirror (built without the #24 yield) or for the main widget with the yield off. A
+        spot can only clear them from a UIA probe of this very HWND. The #24 yield probes
+        only while it is on and the app buttons are near (and never on a side bar), so this refresh
+        is what keeps a far / side / yield-off bar's Widgets box current - for a mirror too. A
         background probe on a new dock, then at most every TRAYLESS_BAR_LAYOUT_REFRESH_S; it never
         takes the one-taskbar slot the side-bar placement and the yield work from. The primary bar
         (with or without a tray rect) and classic task-list bars are left alone."""
@@ -1706,6 +1712,10 @@ class PositionManager(QObject):
         # drop key either.
         drop_key = int(offset) if user_placed_horizontal_offset(self._state.config) else None
         saved = self._state.config.get("app_overlap_drop_offset")
+        if self._app_yield_copy:
+            # A copy is never dragged (default offsets pinned), and the saved drop it would read is
+            # the MAIN widget's: a copy seeing its own bar clear must never spend that baseline.
+            drop_key = saved = None
         try:
             from netspeedtray.core.system_events import read_taskbar_alignment
             align = read_taskbar_alignment()

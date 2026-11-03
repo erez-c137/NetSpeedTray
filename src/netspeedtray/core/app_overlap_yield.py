@@ -65,7 +65,16 @@ a stale scale's coordinates for seconds (rc.2 final VM run: a 10 s false step-as
 
 Fail-safe: no UIA, a failed / timed-out probe, a bar without a StartButton, an ExplorerPatcher /
 Win10 bar (``tasklist_rect`` set), a side bar, Free Move or free-float -> never yield (today's
-behaviour). Mirrors (#434) build their PositionManager with the yield disabled: they don't yield in v1.
+behaviour).
+
+"Show on all taskbars" copies (#229/#434, rc.5 #373): each copy's PositionManager runs its own yield
+against ITS OWN taskbar (its HWND, scale and Qt screen origin), by the same rules and hysteresis, with
+three differences (``background_probes=True``): its probes go through
+``taskbar_utils.request_background_layout_probe`` - they land in the per-HWND layout cache and never take
+the one-taskbar slot the main widget's yield and side placement work from, so N copies cannot evict the
+main widget's reading; it has no first-yield notice and no drop baseline (a copy is never dragged, and
+must never clear the main widget's saved drop); and a second launch never suspends it (that is the main
+widget's way back, #440/#472).
 """
 
 from __future__ import annotations
@@ -211,13 +220,16 @@ class AppOverlapYield(QObject):
     def __init__(self, get_context: Callable[[], ContextResult], on_change: Callable[[], None],
                  on_first_yield: Optional[Callable[[], None]] = None, parent: Optional[QObject] = None,
                  *, on_persist_drop: Optional[Callable[[Optional[int]], None]] = None,
-                 enabled: bool = True, clock: Callable[[], float] = time.monotonic) -> None:
+                 enabled: bool = True, background_probes: bool = False,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         super().__init__(parent)
         self._get_context = get_context
         self._on_change = on_change              # the yield flipped: re-run the visibility gate
         self._on_first_yield = on_first_yield    # once per session; the widget keeps the ever-flag
         self._on_persist_drop = on_persist_drop  # save / clear the "dropped on the buttons" offset
-        self._enabled = bool(enabled)            # False: a mirror's PositionManager (#434) - inert
+        self._enabled = bool(enabled)            # False: inert (never attaches, probes or hides)
+        # True: a "Show on all taskbars" copy - probe through the background queue, never the slot.
+        self._background_probes = bool(background_probes)
         self._clock = clock
         t = constants.timeouts
         self._hwnd = 0
@@ -528,14 +540,28 @@ class AppOverlapYield(QObject):
         self._inflight = True
         self._fired_at = self._last_probe_at = self._clock()
         self._landed_before = taskbar_utils.taskbar_layout_landed_count(self._hwnd)
-        # keep_last: the last group answers until this one lands (never the lagging HWND rect).
-        taskbar_utils.request_taskbar_layout_probe(self._hwnd, keep_last=True)
+        if self._background_probes:
+            # A copy: into this bar's per-HWND cache, never the slot (see the module docstring).
+            taskbar_utils.request_background_layout_probe(self._hwnd)
+        else:
+            # keep_last: the last group answers until this one lands (never the lagging HWND rect).
+            taskbar_utils.request_taskbar_layout_probe(self._hwnd, keep_last=True)
         self._poll_timer.start()
+
+    def _probe_pending(self) -> bool:
+        """The probe fired at ``_fired_at`` has neither landed nor timed out."""
+        if not self._background_probes:
+            return bool(taskbar_utils.taskbar_layout_snapshot(self._hwnd)[2])
+        # A background probe has no "pending" flag of its own: it is in flight until this bar's landed
+        # count moves, bounded by the same timeout as a slot request (a hung Explorer, a long queue).
+        if taskbar_utils.taskbar_layout_landed_count(self._hwnd) > self._landed_before:
+            return False
+        return (self._clock() - self._fired_at) < taskbar_utils.LAYOUT_PROBE_TIMEOUT_S
 
     def _poll_probe(self) -> None:
         if not self._hwnd or not self._inflight:
             return
-        _apps, _widgets, pending = taskbar_utils.taskbar_layout_snapshot(self._hwnd)
+        pending = self._probe_pending()
         if pending:
             self._poll_timer.start()
             return
