@@ -192,6 +192,9 @@ def test_a_foreign_service_on_the_port_does_not_break_the_temp_poll(thread, garb
          patch("netspeedtray.core.monitor_thread.win32pdh", _acpi_zone(_AMBIENT_ZONE)), \
          patch("netspeedtray.core.monitor_thread.win32com.client", None):
         assert thread._poll_cpu_temperature() == pytest.approx(27.05)
-        started = time.monotonic()
-        thread._poll_cpu_power()
-        assert time.monotonic() - started < 0.05   # backed off: no second attempt this window
+        # Backed off: no second request this window. Counted, not timed - a wall-clock bound
+        # flaked under a loaded full-suite run (2026-11-03).
+        with patch.object(thread._lhm_http, "_fetch_json",
+                          wraps=thread._lhm_http._fetch_json) as fetch:
+            thread._poll_cpu_power()
+        fetch.assert_not_called()
