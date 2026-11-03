@@ -1047,7 +1047,8 @@ class PositionManager(QObject):
                                           parent=self,
                                           on_persist_drop=None if self._app_yield_copy else self._persist_app_drop,
                                           enabled=app_yield_enabled,
-                                          background_probes=self._app_yield_copy)
+                                          background_probes=self._app_yield_copy,
+                                          log_tag=log_tag)
 
         # Timers
         self._tray_watcher_timer = QTimer(self)

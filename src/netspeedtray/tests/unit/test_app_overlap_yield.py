@@ -1450,6 +1450,26 @@ def test_shutdown_and_restart_log_their_own_reason(rig, caplog):
     assert not any("no longer" in x for x in caplog.messages)
 
 
+def test_a_copys_yield_lines_carry_its_tag_and_the_main_widgets_do_not(caplog, q_app):
+    """VM follow-up (#478): the main widget and every copy logged identical yield lines - a tester's
+    log could not tell which window stepped aside. A copy's lines carry its PositionManager tag."""
+    import logging
+    copy = AppOverlapYield(lambda: None, lambda: None, log_tag="mirror D-1a2b")
+    main = AppOverlapYield(lambda: None, lambda: None)
+    for y in (copy, main):
+        y._hwnd = HWND
+        y._state.yielded = True
+    with caplog.at_level(logging.INFO, logger="NetSpeedTray.AppOverlapYield"):
+        copy.detach("test")
+        main.detach("test")
+    lines = [m for m in caplog.messages if "App-button yield off" in m]
+    assert lines == ["[mirror D-1a2b] App-button yield off: test.", "App-button yield off: test."]
+    tb = _pm()[1]
+    pm = PositionManager(WindowState(config={}, widget=MagicMock(), taskbar_info=tb),
+                         log_tag="mirror D-1a2b", app_yield_copy=True)
+    assert pm._app_yield._log.extra == {"tag": "mirror D-1a2b"}
+
+
 def test_wide_labelled_button_is_measured_even_when_old_model_is_far(rig):
     r = rig(500, centered=False)
     r.start(left_aligned(1, widgets=False))       # last app ends at 145, well outside the near band
