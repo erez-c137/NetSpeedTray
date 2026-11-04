@@ -75,6 +75,77 @@ ALSO
 
 ---
 
+## [2.2.0-rc.5] - November 4, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+What the rc.4 testers found with more than one monitor: the copies on other taskbars now step aside
+for app buttons like the main widget, a drag that never got its mouse release no longer switches the
+step-aside off until a restart, and the Widgets-panel notice and the monitor list work for every
+monitor.
+
+### Fixed
+
+- **The copies from "Show on all taskbars" now hide when their taskbar's app buttons reach them.**
+  Only the main widget did, so with the main widget on another monitor, the copy on the main taskbar
+  sat over the app buttons. Copies follow "Hide while app buttons cover the widget" and the same
+  rules: step to the spot by the tray when a Widgets button is there, hide at once, come back after
+  two clear checks. Notices stay with the main widget. ([#373], [#478], reported by [@relu616])
+
+  *Under the hood: mirrors were built with `app_yield_enabled=False`. Each now runs its own
+  `AppOverlapYield` against its own bar (task-list bounds per HWND, converted with
+  `physical_to_logical` around the screen's Qt origin). Mirror probes go to the per-bar layout cache
+  on the background worker, never the main widget's one-taskbar slot, at most one per mirror per
+  500 ms; a mirror only accepts a probe that started after it asked. No first-yield notice, no drop
+  offset, and the #472 second-launch suspend stays main-widget only. Side bars: unchanged, as for the
+  main widget. Yield log lines now carry the copy's tag (`[mirror DISPLAY…]`).*
+
+- **A drag that never gets its mouse release no longer stops the widget stepping aside for app
+  buttons until a restart.** A lock screen, a UAC prompt or Alt+Tab in the middle of a drag left the
+  widget "being dragged" for good, so it sat over the app buttons from then on. The drag now ends as
+  a drop at that spot. ([#373], [#479], reported by [@relu616])
+
+  *Under the hood: `widget._dragging` was cleared only in the left-button release handler, and the
+  yield reports BUSY while it is set. A drag now also ends on a move with the left button up, on
+  deactivation and on hide, and a 250 ms check during mouse drags reads the real button state
+  (`GetAsyncKeyState`, swapped buttons honored) and ends it after two "up" reads. It counts as a
+  drop (position saved, the yield told), and a late real release does nothing. The button check
+  skips touch and pen drags, which may never set the physical button.*
+
+- **The "covering the Widgets panel" notice works on secondary taskbars.** It only knew the main
+  taskbar's Widgets button, so dropping the widget on the weather of another monitor's taskbar never
+  showed it. ([#373], [#479])
+
+  *Under the hood: `widgets_rect` is filled for the primary only; on a secondary bar the notice now
+  reads that bar's Widgets extent from the per-HWND layout cache and converts it with
+  `physical_to_logical`.*
+
+- **The "Preferred monitor" list shows each monitor's real resolution and scale, and fits.** It
+  showed scaled sizes ("1280x720" for a 1920 x 1080 screen at 150 %) and cut off long entries such as
+  "(Hauptbildschirm)". Saved choices still match. ([#373], [#479])
+- **The first "stepped aside" notice is only marked as seen once it has actually shown.** ([#479])
+
+### Localization
+
+- The monitor list entry (`PREFERRED_MONITOR_ITEM`) now includes the scale, in all 17 languages.
+  ([#479])
+- **Bengali:** clearer words for jitter and Location, and "privacy" where it said "security".
+  ([#477], thanks [@Askeleid])
+- **Hungarian:** font weight names now read as a clear thin-to-light ladder. ([#476], thanks
+  [@cscsanaki])
+
+[#373]: https://github.com/erez-c137/NetSpeedTray/issues/373
+[#476]: https://github.com/erez-c137/NetSpeedTray/pull/476
+[#477]: https://github.com/erez-c137/NetSpeedTray/pull/477
+[#478]: https://github.com/erez-c137/NetSpeedTray/pull/478
+[#479]: https://github.com/erez-c137/NetSpeedTray/pull/479
+[@relu616]: https://github.com/relu616
+[@Askeleid]: https://github.com/Askeleid
+[@cscsanaki]: https://github.com/cscsanaki
+
+---
+
 ## [2.2.0-rc.4] - November 2, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app
