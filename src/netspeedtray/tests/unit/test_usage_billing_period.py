@@ -101,3 +101,12 @@ def test_overview_tile_uses_the_period_for_label_and_average(q_app):
     assert tile._avgday[1].text().startswith("↓ 1.0 GB")
     tile.set((0.0, 0.0), (0.0, 5.0e9), None)
     assert tile._month_name.text() == EN.USAGE_THIS_MONTH_LABEL
+
+
+def test_overview_tile_period_starting_on_a_31st_does_not_crash(q_app):
+    """A start on a day the next month lacks (Jan 31 -> Feb 31) must not raise: the 1-28 clamp is
+    upstream, and this test's sibling built "4 days ago" = Oct 31 and crashed on 2026-11-04."""
+    from netspeedtray.views.monitor.overview.tiles import UsageTile
+    tile = UsageTile(EN)
+    tile.set((0.0, 0.0), (0.0, 5.0e9), None, period_start=datetime(datetime.now().year, 1, 31))
+    assert tile._month_name.text() == "This Period"

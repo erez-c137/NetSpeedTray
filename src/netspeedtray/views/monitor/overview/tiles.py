@@ -561,9 +561,10 @@ class UsageTile(QFrame):
         day = max(1, now.day)
         days_in_month = calendar.monthrange(now.year, now.month)[1]
         if period_start is not None:
-            # The reset day is clamped to 1-28, so the same day next month always exists.
-            nxt = (date(period_start.year + 1, 1, period_start.day) if period_start.month == 12
-                   else date(period_start.year, period_start.month + 1, period_start.day))
+            # The reset day is clamped to 1-28 upstream; clamp here too so any start (a test's
+            # "4 days ago" landed on Oct 31 -> Nov 31 on 2026-11-04) still has a next-month day.
+            ny, nm = (period_start.year + 1, 1) if period_start.month == 12 else (period_start.year, period_start.month + 1)
+            nxt = date(ny, nm, min(period_start.day, calendar.monthrange(ny, nm)[1]))
             day = max(1, (now.date() - period_start.date()).days + 1)
             days_in_month = (nxt - period_start.date()).days
         m_up, m_down = month
