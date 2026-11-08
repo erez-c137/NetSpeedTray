@@ -145,6 +145,8 @@ def _local_linear_at(y: List[float], half: int, damping: float, i: int) -> float
     lo, hi = max(0, half - i), k - max(0, i + half + 1 - n)
     s0, s1, s2 = _trend_moments(half, damping, lo, hi)
     ys = y[i - half + lo:i - half + hi]
+    if s1 == 0.0:   # the whole kernel inside the data: _gaussian_local_linear's interior formula
+        return s2 * math.sumprod(ys, g) / (s0 * s2)
     t0, t1 = math.sumprod(ys, g[lo:hi]), math.sumprod(ys, gd[lo:hi])
     return (s2 * t0 - s1 * t1) / (s0 * s2 - s1 * s1)
 
@@ -238,10 +240,9 @@ def trend_smooth(values: List[float], window: int, edge_window: Optional[int] = 
 # Bins smaller than this (strides of a few samples) are not worth their moments: the lattice sums the
 # raw kernel instead (see _gaussian_local_linear_lattice).
 _TREND_MIN_BIN = 8
-# trend_smooth_sampled checks a jump of the long smoothing (a big sample crossing the kernel's cut)
-# for the auto-fit once it is worth this fraction of the max (1% of a 36 px graph is 0.36 px; the
-# jumps below it are what a lattice point a fraction of a pixel away already sees, ~0.1 px).
-_TREND_JUMP_TOL = 0.01
+# trend_smooth_sampled searches around this many of the highest lattice points, and of the zone's local
+# maxima (3 exact samples each).
+_TREND_EXACT_PEAKS = 4
 
 
 @functools.lru_cache(maxsize=32)
@@ -291,8 +292,8 @@ def _trend_lattice_plan(half: int, damping: float, b: int) -> _LatticePlan:
 
 def _gaussian_local_linear_lattice(y: List[float], window: int, b: int) -> List[float]:
     """_gaussian_local_linear at the lattice positions 0, b, 2b, ... only, from the series' moments
-    over bins of b samples ([l*b, (l+1)*b)), see _trend_lattice_plan; the cut bins, the data's ends
-    and the last partial bin are summed sample by sample. Cost O(n + (n / b) * (window / b)), so a
+    over bins of b samples ([l*b, (l+1)*b)), see _trend_lattice_plan, with the two cut bins summed
+    sample by sample; the points near the data's ends (and the last partial bin) are exact. Cost O(n + (n / b) * (window / b)), so a
     5,000-sample series costs about what 2 * graph-width samples did."""
     n = len(y)
     half = _trend_half(window, n)
@@ -333,25 +334,6 @@ def _gaussian_local_linear_lattice(y: List[float], window: int, b: int) -> List[
     m_hi = min((n - half - 1) // b, (nfull * b - last) // b)
     out = [0.0] * total
 
-    def general(m):
-        i = m * b
-        jlo, jhi = max(0, i - half), min(n, i + half + 1)
-        l_lo, l_hi = max(0, m + kmin + 1), min(nfull, m + kmin + 1 + nb)
-        if l_lo < l_hi:
-            cut_lo, cut_hi = l_lo * b, l_hi * b
-            a = (l_lo - (m + kmin + 1)) * q
-            mo = moments[l_lo * q:l_hi * q]
-            t0, t1 = sp(mo, wg[a:a + len(mo)]), sp(mo, wgd[a:a + len(mo)])
-        else:
-            cut_lo = cut_hi = min(max(l_lo * b, jlo), jhi)
-            t0 = t1 = 0.0
-        raw_l, raw_r = y[jlo:cut_lo], y[cut_hi:jhi]
-        gl, gh = slice(jlo - i + half, cut_lo - i + half), slice(cut_hi - i + half, jhi - i + half)
-        t0 += sp(raw_l, g[gl]) + sp(raw_r, g[gh])
-        t1 += sp(raw_l, gd[gl]) + sp(raw_r, gd[gh])
-        e0, e1, e2 = _trend_moments(half, damping, jlo - i + half, jhi - i + half)
-        return (e2 * t0 - e1 * t1) / (e0 * e2 - e1 * e1)
-
     if m_lo <= m_hi:
         # One sumprod per point: [its bins' moments, the raw samples of its two cut bins].
         span, n_left, right = nb * q, first + half, last + half
@@ -363,8 +345,8 @@ def _gaussian_local_linear_lattice(y: List[float], window: int, b: int) -> List[
         rest = itertools.chain(range(0, m_lo), range(m_hi + 1, total))
     else:
         rest = range(total)
-    for m in rest:
-        out[m] = general(m)
+    for m in rest:   # the ends and the last partial bin: exact (as cheap as the binned sum there)
+        out[m] = _local_linear_at(y, half, damping, m * b)
     return out
 
 
@@ -379,17 +361,22 @@ def trend_smooth_sampled(values: List[float], window: int, stride: int,
     pure Python ~20 ms at 5,000 samples, so only what the graph needs is computed: the long window at
     the drawn points (_gaussian_local_linear_lattice: exact below _TREND_MIN_BIN, from bin moments
     above), the newest TREND_EDGE_WINDOW // 2 samples exactly, and the short "now" window exactly over
-    its whole blend zone, where the long window is interpolated (quadratic) between lattice points.
+    its whole blend zone, where the long window is interpolated between lattice points.
 
     The auto-fit read the max over EVERY smoothed sample, not only the drawn ones, so the third list
-    adds what the lattice cannot see: a parabola peak at each lattice maximum, the blend zone sample
-    by sample, the exact value at each big sample's kernel-cut edge (see the jumps below), then
-    trend_scale_values's mean of the newest samples. Within ~0.15 px of the full computation on the
-    widget's graph (pinned by test_mini_graph_no_numpy)."""
+    adds what the lattice cannot see: around the highest lattice points, the samples a search finds
+    highest (computed exactly - see below), the blend zone sample by sample with its peaks recomputed
+    exactly, then trend_scale_values's mean of the newest samples. On the widget's graph rects the
+    drawn points and the axis stay within 0.08 px of the full computation for a single spike anywhere
+    and 0.15 px on any traffic; 0.25 px for any stride up to half / 2 (pinned by
+    test_mini_graph_no_numpy)."""
     y = values
     n = len(y)
     b = int(stride)
-    if b <= 1 or n < 4 * b:   # every sample drawn (or too few to bin): the full computation
+    # The full computation when every sample is drawn, when there are too few to bin, or when the
+    # drawn points are too far apart for the kernel (2 * stride > half): then a lattice point can miss
+    # a sample's whole bump, and nothing below can find it.
+    if b <= 1 or n < 4 * b or 2 * b > _trend_half(window, n):
         full = trend_smooth(y, window, edge_window)
         idx = list(range(0, n, max(1, b)))
         if idx and idx[-1] != n - 1:
@@ -408,64 +395,33 @@ def trend_smooth_sampled(values: List[float], window: int, stride: int,
     tail_long = ([_local_linear_at(y, half, damping, i) for i in range(tail, n)] if half >= 1
                  else y[tail:])
 
-    # The kernel's cut is a step (g = e^-2 at +-half, 0 past it), so one big sample makes the long
-    # smoothing JUMP by e^-2 * y / s0 where it enters the window (i = j - half) and where it leaves
-    # (i = j + half). A max can sit on such an edge, between lattice points, where neither a parabola
-    # nor the zone's interpolation sees it. So the edges of every sample whose jump is worth
-    # _TREND_JUMP_TOL of the max, and that could reach the max there (its lattice neighbours plus the
-    # jump), are computed exactly. Bins are screened by their max first, so ordinary traffic - where no
-    # sample is worth such a jump, or none lands near the top - costs a few C-level passes.
-    jumps = {}
-    best = max(max(lattice), max(tail_long))
-    if half >= 1 and best > 0.0:
-        s0 = _trend_moments(half, damping, 0, 2 * half + 1)[0]
-        # Jump per unit of sample value; doubled because s0 is smaller where the window is cut by the
-        # data's ends (and the local-linear fit there can weigh a sample more).
-        unit = 2.0 * _trend_kernel(half, damping)[0][0] / s0
-        thr = _TREND_JUMP_TOL * best / unit
-        jump_floor = best * (1.0 - _TREND_JUMP_TOL)
-        if max(y) >= thr:
-            starts = range(0, n, b)
-            last_m = len(lattice) - 1
-            for start, top in zip(starts, map(max, [y[s:s + b] for s in starts])):
-                if top < thr:
-                    continue
-                for r, v in enumerate(y[start:start + b]):
-                    if v < thr:
-                        continue
-                    for c in (start + r - half, start + r + half):
-                        if 0 <= c < tail and c not in jumps:
-                            m0 = c // b
-                            near = max(lattice[m0], lattice[min(m0 + 1, last_m)])
-                            if near + unit * v >= jump_floor:
-                                jumps[c] = _local_linear_at(y, half, damping, c)
-
-    # The long window over the zone: a quadratic through the lattice points (then the exact tail)
-    # around each sample - linear would cut the top off a smoothed peak by up to ~1%.
-    m_first = max(0, zone // b - 1)
-    ax = list(range(m_first * b, tail, b)) + list(range(tail, n))
-    av = lattice[m_first:m_first + len(ax) - (n - tail)] + tail_long
+    # The long window over the zone: linear between lattice points, then the exact tail (its peaks
+    # are recomputed exactly below).
     zone_vals = []
-    i, a = zone, 0
+    i = zone
     while i < tail:
-        while ax[a + 1] <= i:
-            a += 1
-        lo = min(a, len(ax) - 3)           # nodes ax[lo], ax[lo+1], ax[lo+2]; i in [ax[a], ax[a+1])
-        xa, xb, xc = ax[lo:lo + 3]
-        va, vb, vc = av[lo:lo + 3]
-        d1 = (vb - va) / (xb - xa)
-        d2 = ((vc - vb) / (xc - xb) - d1) / (xc - xa)
-        end = ax[a + 1]
-        zone_vals += [va + (j - xa) * (d1 + (j - xb) * d2) for j in range(i, end)]
-        i = end
+        m0 = i // b
+        x0, x1 = m0 * b, (m0 + 1) * b
+        v0, v1 = lattice[m0], (lattice[m0 + 1] if x1 < tail else tail_long[0])
+        x1 = min(x1, tail)
+        slope = (v1 - v0) / (x1 - x0)
+        zone_vals += [v0 + slope * (j - x0) for j in range(i, x1)]
+        i = x1
     zone_vals += tail_long
-    for c, v in jumps.items():
-        if c >= zone:
-            zone_vals[c - zone] = v
+    long_zone = zone_vals
     if blending:
         short = _gaussian_local_linear(y, edge, zone)
         ws = [max(0.0, 1.0 - (n - 1 - i) / blend) for i in range(zone, n)]
-        zone_vals = [(1.0 - w) * v + w * s for w, v, s in zip(ws, zone_vals, short)]
+        zone_vals = [(1.0 - w) * v + w * s for w, v, s in zip(ws, long_zone, short)]
+    # Where the zone peaks, the interpolated long window can be ~1% off a sharp smoothed peak: redo
+    # the zone's highest local maxima exactly (the long window at +-1 sample, re-blended).
+    if half >= 1 and len(zone_vals) >= 3:
+        tops = sorted((v, j) for j, v in enumerate(zone_vals[:tail - zone])
+                      if (j == 0 or v >= zone_vals[j - 1]) and v >= zone_vals[j + 1])[-_TREND_EXACT_PEAKS:]
+        for _v, j in tops:
+            for k in range(max(0, j - 1), min(tail - zone, j + 2)):
+                exact = _local_linear_at(y, half, damping, zone + k)
+                zone_vals[k] = ((1.0 - ws[k]) * exact + ws[k] * short[k]) if blending else exact
 
     idx = list(range(0, n, b))
     if idx[-1] != n - 1:
@@ -475,20 +431,42 @@ def trend_smooth_sampled(values: List[float], window: int, stride: int,
     # The auto-fit: the max over every sample but the newest h, which count as their mean.
     n_before = -(-zone // b)
     scale = lattice[:n_before]                    # the lattice points before the zone
-    # A peak between two lattice points: a parabola through a lattice maximum and its neighbours. The
-    # first lattice point inside the zone counts as a neighbour (its long-window value; the blend
-    # weight is ~0 there), so a peak just before the zone is fitted too. A parabola rises at most
-    # (v1 - min(v0, v2)) / 4 above v1, so only points that could beat the lattice max are fitted.
+    # A peak between two lattice points, around each of the highest lattice points (the oldest one, a
+    # spike half a window from the oldest edge, and the first point inside the zone - blend weight ~0
+    # there - included). In the interior the smoothing is t0 / s0 = C(i) + g_cut * B(i) / s0, with
+    # B(i) the plain sum of the window's samples (exact at any i from prefix sums) and C(i) continuous:
+    # the cut's step (g_cut = e^-2) lives entirely in B. So C gets a parabola through three lattice
+    # points, B is added sample by sample over the two strides around the point, and the best few
+    # samples are then computed EXACTLY. (A parabola through the smoothing itself was off by up to 1%
+    # where a spike crossed the cut beside a peak.) Near the ends - the local-linear fit - the
+    # parabola goes through the smoothing itself.
     peaks = lattice[:n_before + 1]
-    if len(peaks) >= 3:
-        top, low = max(peaks), min(peaks)
-        floor = (4.0 * top + low) / 5.0
-        for m in [m for m in range(1, min(n_before, len(peaks) - 1)) if peaks[m] >= floor]:
-            v0, v1, v2 = peaks[m - 1], peaks[m], peaks[m + 1]
-            curv = v0 - 2.0 * v1 + v2
-            if v1 >= v0 and v1 >= v2 and curv < 0.0:
-                scale.append(v1 - (v2 - v0) ** 2 / (8.0 * curv))
-    scale += [v for c, v in jumps.items() if c < zone]
+    if len(peaks) >= 3 and half >= 1:
+        k_cut = _trend_kernel(half, damping)[0][0] / _trend_moments(half, damping, 0, 2 * half + 1)[0]
+        for m in sorted(range(min(n_before, len(peaks))), key=peaks.__getitem__,
+                        reverse=True)[:_TREND_EXACT_PEAKS]:
+            c = min(max(m, 1), len(peaks) - 2)         # middle of the three nodes
+            xa, xb, xc = (c - 1) * b, c * b, (c + 1) * b
+            va, vb, vc = peaks[c - 1], peaks[c], peaks[c + 1]
+            interior = xa >= half and xc <= n - 1 - half
+            if interior:   # prefix sums over just this stretch's windows: [xa - half, xc + half]
+                base = xa - half
+                prefix = list(itertools.accumulate(y[base:xc + half + 1], initial=0.0))
+
+                def box(i, prefix=prefix, base=base):
+                    return prefix[i + half + 1 - base] - prefix[i - half - base]
+                va, vb, vc = va - k_cut * box(xa), vb - k_cut * box(xb), vc - k_cut * box(xc)
+            d1 = (vb - va) / (xb - xa)
+            d2 = ((vc - vb) / (xc - xb) - d1) / (xc - xa)
+            lo_i, hi_i = max(0, (m - 1) * b), min(zone - 1, (m + 1) * b)
+            if lo_i > hi_i:
+                continue
+            if interior:
+                est = [va + (i - xa) * (d1 + (i - xb) * d2) + k_cut * box(i) for i in range(lo_i, hi_i + 1)]
+            else:
+                est = [va + (i - xa) * (d1 + (i - xb) * d2) for i in range(lo_i, hi_i + 1)]
+            j = lo_i + max(range(len(est)), key=est.__getitem__)
+            scale += [_local_linear_at(y, half, damping, i) for i in range(max(0, j - 1), min(zone, j + 2))]
     if h < 1:
         return idx, drawn, scale + zone_vals
     newest = zone_vals[n - h - zone:]

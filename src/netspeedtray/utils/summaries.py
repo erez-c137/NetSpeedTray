@@ -9,13 +9,19 @@ the raw window we return weighted-avg + max and mark percentiles UNAVAILABLE - n
 from minute-buckets, and always carry sample_count + coverage so a figure is admissible as evidence.
 
 Pure functions, no DB/Qt - the stats engine reads the right tier and hands the data here.
+
+No numpy: the widget's hover card reads summarize_hardware (today's battery average), and the widget
+must never load numpy (~9 MB USS, ~40 MB commit). The arithmetic is numpy's, step for step - its
+pairwise summation for sum/mean/std and its "linear" percentile interpolation - so every figure is
+bit-identical to what numpy returned (pinned by test_summaries_match_numpy).
 """
 from __future__ import annotations
 
+import math
+import operator
 from dataclasses import dataclass, asdict
+from functools import reduce
 from typing import Dict, List, Optional, Sequence
-
-import numpy as np
 
 
 @dataclass(frozen=True)
@@ -41,6 +47,51 @@ _UNAVAILABLE = "avg+max only (per-minute/hour rollup; exact percentiles need the
 _NO_DATA = "no samples in window"
 
 
+# --- numpy's arithmetic, in pure Python -------------------------------------------------------------
+
+def _pairwise_sum(a: List[float], lo: int, n: int) -> float:
+    """numpy's pairwise_sum (float64 add.reduce): sequential below 8 values, 8 interleaved running sums
+    up to a block of 128, halves (rounded down to a multiple of 8) above. Sequential adds use
+    reduce(operator.add): the builtin sum() of floats is compensated since Python 3.12."""
+    if n < 8:
+        return reduce(operator.add, a[lo:lo + n], 0.0)
+    if n <= 128:
+        end = lo + n - n % 8
+        r = [reduce(operator.add, a[lo + j + 8:end:8], a[lo + j]) for j in range(8)]
+        res = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]))
+        return reduce(operator.add, a[end:lo + n], res)
+    n2 = n // 2
+    n2 -= n2 % 8
+    return _pairwise_sum(a, lo, n2) + _pairwise_sum(a, lo + n2, n - n2)
+
+
+def _sum(a: List[float]) -> float:
+    return _pairwise_sum(a, 0, len(a))
+
+
+def _std(a: List[float], mean: float) -> float:
+    """numpy's std (ddof=0): sqrt(sum((x - mean)^2) / n), the sum pairwise."""
+    return math.sqrt(_sum([(v - mean) * (v - mean) for v in a]) / len(a))
+
+
+def _percentile(ordered: List[float], q: float) -> float:
+    """numpy.percentile(..., method="linear") of a sorted, NaN-free, non-empty list: virtual index
+    (n - 1) * q / 100, numpy's _lerp between its neighbours (from the far end when gamma >= 0.5)."""
+    n = len(ordered)
+    virtual = (n - 1) * (q / 100)
+    if virtual >= n - 1:
+        return ordered[-1]
+    prev = math.floor(virtual)
+    a, b = ordered[prev], ordered[prev + 1]
+    gamma = virtual - prev
+    diff = b - a
+    return b - diff * (1 - gamma) if gamma >= 0.5 else a + diff * gamma
+
+
+def _finite(values: Sequence[float]) -> List[float]:
+    return [v for v in (float(x) for x in values) if math.isfinite(v)]
+
+
 def _empty(tier: str) -> WindowSummary:
     return WindowSummary(0, 0.0, tier, False, None, None, None, None, None, None, None, _NO_DATA)
 
@@ -55,15 +106,17 @@ def coverage_pct(sample_count: int, window_seconds: float, sample_interval_secon
 
 def summarize_raw(values: Sequence[float], coverage: float = 100.0) -> WindowSummary:
     """Exact summary from raw per-sample values (the raw tier, ≤24h)."""
-    arr = np.asarray([float(v) for v in values], dtype=float)
-    arr = arr[np.isfinite(arr)]
-    if arr.size == 0:
+    arr = _finite(values)
+    if not arr:
         return _empty("raw")
+    n = len(arr)
+    mean = _sum(arr) / n
+    ordered = sorted(arr)
     return WindowSummary(
-        count=int(arr.size), coverage_pct=round(float(coverage), 1), tier="raw", exact=True,
-        avg=float(arr.mean()), min=float(arr.min()), max=float(arr.max()),
-        p50=float(np.percentile(arr, 50)), p95=float(np.percentile(arr, 95)),
-        p99=float(np.percentile(arr, 99)), stddev=float(arr.std()),
+        count=n, coverage_pct=round(float(coverage), 1), tier="raw", exact=True,
+        avg=mean, min=ordered[0], max=ordered[-1],
+        p50=_percentile(ordered, 50), p95=_percentile(ordered, 95),
+        p99=_percentile(ordered, 99), stddev=_std(arr, mean),
         note="exact from raw samples")
 
 
@@ -72,16 +125,19 @@ def summarize_rollup(avgs: Sequence[float], maxes: Sequence[float],
                      coverage: float = 100.0) -> WindowSummary:
     """Summary from a per-minute/hour rollup tier, which stores only avg + max (+ sample count). avg is
     sample-weighted (the honest mean); max is the true peak; min/percentiles/stddev are UNAVAILABLE."""
-    a = np.asarray([float(x) for x in avgs], dtype=float)
-    m = np.asarray([float(x) for x in maxes], dtype=float)
-    if a.size == 0:
+    a = [float(x) for x in avgs]
+    m = [float(x) for x in maxes]
+    if not a:
         return _empty(tier)
-    c = np.asarray([float(x) for x in counts], dtype=float) if counts is not None and len(counts) else np.ones_like(a)
-    total = float(c.sum())
-    weighted_avg = float((a * c).sum() / total) if total > 0 else float(a.mean())
+    c = [float(x) for x in counts] if counts is not None and len(counts) else [1.0] * len(a)
+    if len(c) != len(a):
+        raise ValueError("counts and avgs differ in length")   # numpy's broadcast error, in words
+    total = _sum(c)
+    weighted_avg = _sum([x * w for x, w in zip(a, c)]) / total if total > 0 else _sum(a) / len(a)
+    peak = math.nan if any(math.isnan(x) for x in m) else max(m)   # numpy's max propagates NaN
     return WindowSummary(
-        count=int(total) if counts is not None else int(a.size), coverage_pct=round(float(coverage), 1),
-        tier=tier, exact=False, avg=weighted_avg, min=None, max=float(m.max()),
+        count=int(total) if counts is not None else len(a), coverage_pct=round(float(coverage), 1),
+        tier=tier, exact=False, avg=weighted_avg, min=None, max=peak,
         p50=None, p95=None, p99=None, stddev=None, note=_UNAVAILABLE)
 
 
@@ -96,18 +152,16 @@ def loss_pct(timeouts: float, total_probes: int) -> Optional[float]:
 
 def pct_below(values: Sequence[float], threshold: float) -> Optional[float]:
     """Fraction of raw samples below a threshold (e.g. % of time under the advertised plan speed)."""
-    arr = np.asarray([float(v) for v in values], dtype=float)
-    arr = arr[np.isfinite(arr)]
-    if arr.size == 0:
+    arr = _finite(values)
+    if not arr:
         return None
-    return round(float((arr < threshold).mean() * 100.0), 1)
+    return round(sum(1 for v in arr if v < threshold) / len(arr) * 100.0, 1)
 
 
 def time_above(values: Sequence[float], threshold: float, sample_interval_seconds: float) -> float:
     """Seconds spent at/above a threshold (e.g. time above the throttle temperature)."""
-    arr = np.asarray([float(v) for v in values], dtype=float)
-    arr = arr[np.isfinite(arr)]
-    return float((arr >= threshold).sum() * max(0.0, sample_interval_seconds))
+    arr = _finite(values)
+    return float(sum(1 for v in arr if v >= threshold) * max(0.0, sample_interval_seconds))
 
 
 def hourly_profile(pairs: Sequence) -> Dict[int, float]:
@@ -118,7 +172,7 @@ def hourly_profile(pairs: Sequence) -> Dict[int, float]:
     for ts, v in pairs:
         try:
             fv = float(v)
-            if not np.isfinite(fv):
+            if not math.isfinite(fv):
                 continue
             hour = ts.hour if hasattr(ts, "hour") else int((float(ts) // 3600) % 24)
         except (TypeError, ValueError):

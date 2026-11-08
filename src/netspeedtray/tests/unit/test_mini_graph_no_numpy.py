@@ -9,8 +9,9 @@ Pins, against numpy reference implementations kept HERE (main's code, verbatim m
 - trend_smooth_sampled (the long-history fast path) draws the same indices as before and stays within
   a small fraction of a pixel of the full smoothing once mapped onto the widget's graph rect, auto-fit
   included;
-- rendering every graph style (and the hardware / split / sparse variants) leaves 'numpy' out of
-  sys.modules, in a clean interpreter.
+- rendering every graph style (and the hardware / split / sparse variants) and the hover card's battery
+  average (summarize_hardware -> utils.summaries) leave 'numpy' out of sys.modules, in a clean
+  interpreter.
 """
 import math
 import os
@@ -239,8 +240,9 @@ def _px(values, scale_lists, graph_h):
 
 # Graph rects of the widget's sizes (60x22 .. 120x40 minus the margins) and a wide one.
 GRAPH_RECTS = [(56, 18), (80, 26), (116, 36), (200, 36)]
-# 1 device pixel at 200% scaling is 0.5 logical px; stay well inside it.
-MAX_PX_ERROR = 0.25
+# What the fast path guarantees on the widget's graph rects (worst measured 0.135 px; 1 device pixel at
+# 200% scaling is 0.5 logical px).
+MAX_PX_ERROR = 0.15
 
 
 @pytest.mark.parametrize("graph_w,graph_h", GRAPH_RECTS)
@@ -268,8 +270,8 @@ def test_trend_sampled_matches_full_within_a_pixel(graph_w, graph_h):
 @pytest.mark.parametrize("kind", ["spikes", "recent_spike", "steps", "burst"])
 def test_trend_sampled_auto_fit_finds_the_max_between_drawn_points(kind):
     """The axis is sized to the max over EVERY smoothed sample. Between two drawn points that max can
-    sit on a smoothed peak (parabola), in the "now" blend zone (quadratic long window there), or on the
-    edge where a big sample crosses the kernel's cut (a jump of e^-2 * y / s0) - all within 0.5%."""
+    sit on a smoothed peak, in the "now" blend zone, or on the edge where a big sample crosses the
+    kernel's cut (a jump of e^-2 * y / s0) - all within 0.5%."""
     rng = random.Random(hash(kind) % 1000)
     for _ in range(25):
         n = rng.choice([1800, 3600, 5000])
@@ -290,7 +292,8 @@ def _auto_fit_error(y, stride):
 @pytest.mark.parametrize("seed", [4, 31, 171])
 def test_auto_fit_sees_a_spike_crossing_the_kernel_cut(seed):
     """Found by search: series whose smoothed max sits where a big sample enters / leaves the kernel
-    (a jump of e^-2 * y / s0), between two drawn points. Without the jump check they are 1.0-1.3% low."""
+    (a jump of e^-2 * y / s0), between two drawn points. A parabola through the smoothing itself read
+    them 1.0-1.3% low; the search splits off the cut's step (the box sum) and computes the top exactly."""
     n = (1800, 3600, 5000)[seed % 3]
     rng = random.Random(seed)
     y = [abs(rng.gauss(2e5, 5e4)) for _ in range(n)]
@@ -302,13 +305,63 @@ def test_auto_fit_sees_a_spike_crossing_the_kernel_cut(seed):
 @pytest.mark.parametrize("n,stride", [(1800, 7), (1800, 16), (5000, 21), (5000, 44)])
 def test_auto_fit_sees_a_peak_at_the_start_of_the_now_zone(n, stride):
     """A lone spike whose smoothed peak lands just before or inside the blend zone (the newest
-    window // 2 samples): the parabola reaches across the zone's start and the zone's long window is
-    quadratic, not linear (linear was up to 0.6% low, the unfitted boundary 1.4%)."""
+    window // 2 samples): the search reaches across the zone's start, and the zone's peaks are
+    recomputed exactly (its interpolated long window was up to 0.6% low, the unsearched boundary 1.4%)."""
     w = trend_window(n)
     for back in range(w // 2 - 20, w // 2 + 20):
         y = [2e5] * n
         y[n - 1 - back] = 1e7
         assert abs(_auto_fit_error(y, stride)) <= 0.004, back
+
+
+# Every position of one big spike, both edges included: the oldest edge's local-linear fit (a spike
+# half a window in leaves its peak between lattice points 0 and 1), the interior, the "now" zone.
+SWEEPS = [(600, 56), (1800, 56), (1800, 116), (3600, 56), (5000, 56), (5000, 116)]
+
+
+@pytest.mark.parametrize("n,graph_w", SWEEPS)
+def test_a_single_spike_anywhere_draws_within_0_08_px(n, graph_w):
+    stride = n // (2 * graph_w)
+    window = trend_window(n)
+    worst = 0.0
+    for pos in range(0, n, 1 if n <= 1800 else 2):
+        y = [0.0] * n
+        y[pos] = 1e8
+        ref = np_trend_smooth(y, window)
+        top = max(trend_scale_values(ref))
+        idx, drawn, scale = trend_smooth_sampled(y, window, stride)
+        worst = max(worst, abs(max(scale) - top) / top,
+                    max(abs(v - ref[i]) for i, v in zip(idx, drawn)) / top)
+    assert worst * 35 <= 0.08, (worst * 35, "px of a 36 px graph")   # measured worst 0.068 (56 px wide)
+
+
+def test_the_oldest_edge_spike_from_the_review_is_fitted():
+    """Reviewer's cases (#488): a spike ~half a window from the oldest sample put the max between
+    lattice points 0 and 1; the parabola never fitted m = 0, so the axis was 2.6% low (0.91 px)."""
+    for n, stride, pos in [(3600, 32, 39), (5000, 44, 54), (1800, 16, 19)]:
+        y = [0.0] * n
+        y[pos] = 1e8
+        assert abs(_auto_fit_error(y, stride)) <= 0.001, (n, stride, pos)
+
+
+@pytest.mark.parametrize("n", list(range(20, 41)) + [706, 800, 1000])
+def test_any_stride_stays_within_a_quarter_pixel(n):
+    """The public contract, beyond the widget's sizes: strides up to a quarter of the series, short
+    windows (3) and the default. Past 2 * stride > half the lattice could skip a sample's whole bump
+    (n = 20-40, stride 5, window 3 read an axis of 0.0 for a 7.9e7 spike), so that falls back to the
+    full computation; below it the binned fit stays within 0.25 px even at a ~30 px graph."""
+    rng = random.Random(n)
+    for stride in range(2, n // 4 + 1):
+        for window in (3, trend_window(n)):
+            for _ in range(6):
+                y = [0.0] * n
+                y[rng.randrange(n)] = 7.9e7
+                ref = np_trend_smooth(y, window)
+                top = max(trend_scale_values(ref))
+                idx, drawn, scale = trend_smooth_sampled(y, window, stride)
+                assert idx == list(range(0, n, stride)) + ([n - 1] if (n - 1) % stride else [])
+                assert abs(max(scale) - top) / top * 35 <= 0.25
+                assert max(abs(v - ref[i]) for i, v in zip(idx, drawn)) / top * 35 <= 0.25
 
 
 @pytest.mark.parametrize("stride", [2, 5, 7])
@@ -410,11 +463,36 @@ for style in ("trend", "detailed"):
                 r.draw_mini_graph(p, w, h, r.config, hw, is_hardware=True, hardware_color="#76B900")
                 p.end()
             assert r._graph_cache, (style, n)
+# The hover card's battery average: NetworkSpeedWidget._hover_battery_today_avg -> WidgetState.summarize_hardware
+# -> V8HistoryReader -> utils.summaries, on a real v8 file with today's battery_drain samples.
+import logging, sqlite3, tempfile, time
+from pathlib import Path
+from types import SimpleNamespace
+from netspeedtray.core.db.schema_v8 import create_v8_schema
+from netspeedtray.core.db.history_reader import V8HistoryReader
+from netspeedtray.core.widget_state import WidgetState
+from netspeedtray.views.widget.main import NetworkSpeedWidget
+path = Path(tempfile.mkdtemp()) / "history.db"
+conn = sqlite3.connect(str(path), isolation_level=None)
+create_v8_schema(conn)
+conn.execute("INSERT INTO metrics (metric_id, name, entity, unit) VALUES (1, 'battery_drain', '', 'watt')")
+now = int(time.time())
+for k in range(120):
+    conn.execute("INSERT INTO hw_raw (ts, metric_id, value) VALUES (?, 1, ?)", (now - 120 + k, 5.0 + (k % 7) * 0.5))
+state = SimpleNamespace(db_worker=object(), history_reader=V8HistoryReader(lambda: conn, lambda: path))
+widget = SimpleNamespace(
+    widget_state=SimpleNamespace(summarize_hardware=lambda *a, **k: WidgetState.summarize_hardware(state, *a, **k)),
+    config={"update_rate": 1.0}, logger=logging.getLogger("t"), _hover_battery_avg_cache=None,
+    _hover_battery_avg_cache_ts=0.0, _HOVER_USAGE_TTL_SEC=30.0)
+avg = NetworkSpeedWidget._hover_battery_today_avg(widget)
+assert avg is not None and 5.0 <= avg <= 8.0, avg
 print("NUMPY_LOADED" if "numpy" in sys.modules else "NUMPY_ABSENT")
+sys.stdout.flush()
+os._exit(0)   # skip interpreter teardown (Qt + an open sqlite connection)
 """
 
 
-def test_drawing_every_mini_graph_style_never_imports_numpy(tmp_path):
+def test_the_widget_never_imports_numpy_drawing_graphs_or_the_hover_card(tmp_path):
     env = dict(os.environ, PYTHONPATH=str(SRC), QT_QPA_PLATFORM="offscreen",
                APPDATA=str(tmp_path / "Roaming"), LOCALAPPDATA=str(tmp_path / "Local"))
     proc = subprocess.run([sys.executable, "-c", _CHILD], env=env, timeout=300, capture_output=True, text=True)
