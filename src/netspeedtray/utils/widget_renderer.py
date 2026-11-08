@@ -24,7 +24,8 @@ from netspeedtray import constants
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import hardware_vendors
 from netspeedtray.utils import color_scheme
-from netspeedtray.utils.font_runs import WidgetFontMetrics, draw_text, draw_text_centered, set_text_language
+from netspeedtray.utils.font_runs import (WidgetFontMetrics, draw_text, draw_text_centered, set_text_language,
+                                         user_text_advance)
 
 # v2.1 network-identity band tag, drawn as a rounded pill/badge. The layout RESERVES the fixed
 # worst-case slot and the renderer DRAWS the actual (usually narrower) tag in it - both MUST use these
@@ -51,7 +52,7 @@ def identity_layout(fm, ssid, band):
     """
     pad = IDENTITY_PILL_PAD_X
     h = fm.height() + 2
-    ssid_w = fm.horizontalAdvance(ssid) if ssid else 0
+    ssid_w = user_text_advance(fm, ssid) if ssid else 0   # a Wi-Fi name is user text (font_runs)
     band_pill_w = (fm.horizontalAdvance(band) + 2 * pad) if band else 0
     if ssid and band:
         w = pad + ssid_w + pad + band_pill_w
@@ -1243,7 +1244,8 @@ class WidgetRenderer:
         self._last_text_rect = QRect(arrow_x, y - self.metrics.ascent(), row_width, self.metrics.height())
         self._extend_content_bounds(self._last_text_rect)
 
-    def _draw_pill(self, painter: QPainter, rect: QRectF, accent: QColor, text: str, solid: bool, radius: float) -> None:
+    def _draw_pill(self, painter: QPainter, rect: QRectF, accent: QColor, text: str, solid: bool, radius: float,
+                   user: bool = False) -> None:
         """Draw one rounded pill: SOLID fills `accent` with white text; OUTLINE strokes `accent`, text in `accent`."""
         if solid:
             painter.setPen(Qt.PenStyle.NoPen)
@@ -1256,7 +1258,7 @@ class WidgetRenderer:
             painter.drawRoundedRect(rect, radius, radius)
             painter.setPen(accent)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        draw_text_centered(painter, rect, text)
+        draw_text_centered(painter, rect, text, user)
 
     def _draw_identity_badge(self, painter: QPainter, x: float, y: float, parts: dict,
                              ssid: Optional[str], band: Optional[str],
@@ -1273,7 +1275,7 @@ class WidgetRenderer:
             self._draw_pill(painter, QRectF(x, y, parts["band_w"], h), accent, band, band_solid, radius)
         elif mode == "ssid":
             # Neutral outline pill with the name.
-            self._draw_pill(painter, QRectF(x, y, parts["w"], h), self.default_color, ssid, False, radius)
+            self._draw_pill(painter, QRectF(x, y, parts["w"], h), self.default_color, ssid, False, radius, user=True)
         elif mode == "both":
             # Outer outline capsule holding the name; band as a same-height pill nested flush to the
             # right edge ("two left edges"). The nested band honors band_solid just like the band-only
@@ -1286,7 +1288,7 @@ class WidgetRenderer:
             painter.drawRoundedRect(outer, radius, radius)
             painter.setPen(self.default_color)
             ssid_baseline = int(y + (h + self.metrics.ascent() - self.metrics.descent()) / 2)
-            draw_text(painter, int(x + parts["ssid_x"]), ssid_baseline, ssid)
+            draw_text(painter, int(x + parts["ssid_x"]), ssid_baseline, ssid, user=True)
             band_rect = QRectF(x + parts["band_x"], y, parts["band_w"], h)
             self._draw_pill(painter, band_rect, accent, band, band_solid, radius)
         painter.restore()

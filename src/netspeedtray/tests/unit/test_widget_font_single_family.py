@@ -125,21 +125,34 @@ def test_arrow_presets_fall_to_segoe_ui_symbol_without_ms_ui_gothic(fake_fonts):
 
 
 @pytest.mark.parametrize("base", ["Segoe UI Variable", "Consolas", "Yu Gothic UI"])
-def test_hebrew_is_drawn_in_segoe_ui_whatever_the_widget_face(fake_fonts, base):
-    """Every Hebrew letter in Segoe UI (#194) - also the one the variable face happens to have (ת) and
-    also next to an emoji or a Latin word; one QTextLayout keeps the bidi order."""
-    assert _runs(base, "קפה נת") == (("Segoe UI", "קפה נת"),)
-    assert _runs(base, "Café קפה") == ((None, "Café "), ("Segoe UI", "קפה"))
-    assert _runs(base, "בית 🏠") == (("Segoe UI", "בית "), ("Segoe UI Emoji", "🏠"))
+def test_right_to_left_text_goes_to_qt_as_in_rc6(fake_fonts, base):
+    """Bidi is Qt's: text with right-to-left letters is drawn whole through rc6_font, as 2.2.0 drew it."""
+    for text in ("קפה נת", "Café קפה", "בית 🏠", "רשת [5G] בית"):
+        assert _runs(base, text) == ((fr.QT_PATH, text),)
 
 
-def test_a_cluster_no_installed_face_has_gets_a_box_not_a_search(fake_fonts):
-    """Drawn in the widget's face with font merging OFF: a missing-glyph box, never Qt's fallback
-    search (the 38 MB)."""
-    font = QFont("Segoe UI Variable", 9)
-    assert _runs("Segoe UI Variable", "a☃") == ((None, "a"), (fr.NO_FACE, "☃"))
-    box = fr.run_font(font, fr.NO_FACE)
-    assert box.family() == font.family() and box.styleStrategy() & QFont.StyleStrategy.NoFontMerging
+def test_a_cluster_no_known_face_has_goes_to_qt(fake_fonts):
+    """No box and no guess: the whole string is drawn as 2.2.0 drew it (and pays the font load)."""
+    assert _runs("Segoe UI Variable", "a\u2603") == ((fr.QT_PATH, "a\u2603"),)
+
+
+@pytest.mark.parametrize("text,user,runs", [
+    ("HomeWiFi", True, ((None, "HomeWiFi"),)),                 # the widget's face has it all: as before
+    ("Home 😀", True, ((fr.QT_PATH, "Home 😀"),)),              # a Wi-Fi name with anything else: Qt's
+    ("บ้าน", True, ((fr.QT_PATH, "บ้าน"),)),
+    ("Home 😀", False, ((None, "Home "), ("Segoe UI Emoji", "😀"))),   # an own string: known faces
+])
+def test_user_text_is_the_widget_face_or_qt(fake_fonts, text, user, runs):
+    fr.set_text_language("")
+    assert fr.text_runs(QFont("Segoe UI Variable", 9), text, user) == runs
+
+
+def test_rc6_font_is_the_220_widget_font(q_app):
+    f = make_widget_font("Segoe UI Variable", 9, 400)
+    rc6 = fr.rc6_font(f)
+    if f.family() == "Segoe UI Variable":
+        assert rc6.families() == ["Segoe UI Variable", "Segoe UI"]
+    assert fr.rc6_font(QFont("Consolas", 9)).families() == ["Consolas"]
 
 
 @pytest.mark.parametrize("text,runs", [
@@ -197,7 +210,7 @@ def test_the_metrics_measure_runs_as_they_are_drawn(fake_fonts):
     assert fm.horizontalAdvance("456.7 Mbps") == fr.QFontMetrics(font).horizontalAdvance("456.7 Mbps")
     fr.set_text_language("ja_JP")
     runs = fr.text_runs(font, "MB/秒")
-    assert fm.horizontalAdvance("MB/秒") == round(fr._advance(font, "MB/秒", runs))
+    assert fm.horizontalAdvance("MB/秒") == round(fr._placed(font, runs)[1])
     assert fr.run_font(font, "Yu Gothic UI").styleStrategy() & QFont.StyleStrategy.NoFontMerging
 
 
@@ -272,7 +285,8 @@ _WIDGET_PATH = ["utils/widget_renderer.py", "utils/widget_paint.py", "utils/styl
 def test_no_font_family_list_on_the_widget_path(module):
     text = (PKG / module).read_text(encoding="utf-8")
     code = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
-    assert ".setFamilies(" not in code, f"{module}: a family list loads every installed font family"
+    allowed = 1 if module == "utils/font_runs.py" else 0      # rc6_font: 2.2.0's font, on purpose
+    assert code.count(".setFamilies(") == allowed, f"{module}: a family list loads every installed font family"
     assert "insertSubstitution" not in code, f"{module}: a substitute loads every installed font family"
     if module != "utils/styles.py":    # its QSS builders style Settings and the Monitor (next PR)
         assert not re.search(r"font-family:\s*'[^']*'\s*,", code), f"{module}: a QSS family list"
@@ -346,13 +360,17 @@ extra = ["\u09b0\u200d\u09cd\u09af", "\u0e1a\u0e49\u0e32\u0e19", "1\ufe0f\u20e3"
          "a\u200cb", "\u2615", "\U0001f1ee\U0001f1f1",
          "\u09ac\u09be\u09a1\u09bc\u09bf \U0001f3e0 \u0993\u09af\u09bc\u09be\u0987\u09ab\u09be\u0987",
          "\u09a8\u09c7\u099f\U0001f642wifi", "\u0918\u0930 \U0001f3e0 \u0928\u0947\u091f",
-         "\u05e9 \u0995\u2605", "\u2605\u0915\u05e9", "\u2b06", "\u2b07", "(\u05d1\u05d9\u05ea) 2"]
+         "\u2b06", "\u2b07"]
 bad = []
 for lang in I18nStrings.LANGUAGE_MAP:
     fr.set_text_language(lang)
     data = json.loads((get_locales_path() / f"{lang}.json").read_text(encoding="utf-8"))
     for text in [v for v in data.values() if isinstance(v, str) and v] + extra:
-        for layout in fr.shaped_layouts(font, text):     # exactly what draw_text draws
+        if fr.text_runs(font, text)[0][0] == fr.QT_PATH:
+            if not fr._is_rtl(text):
+                bad.append([lang, ascii(text[:40]), "qt path", ""])
+            continue
+        for layout in fr.run_layouts(font, text):     # exactly what draw_text draws
           for gr in layout.glyphRuns():
             raw, idx = gr.rawFont(), list(gr.glyphIndexes())
             circle = raw.glyphIndexesForString("\u25cc")
@@ -366,9 +384,9 @@ print(json.dumps(bad))
 @pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows fonts")
 def test_every_locale_string_shapes_without_a_box_or_a_dotted_circle():
     """On the real Windows platform, every string of every locale file (and conjuncts, ZWJ/ZWNJ, emoji
-    sequences, a keycap, a flag, Thai): laid out as draw_text lays it out, no glyph is a missing-glyph
-    box or a dotted circle (a mark cut from its base), and every glyph comes from the face its cluster
-    was given - so Qt never fell back to another face (the 38 MB search)."""
+    sequences, a keycap, a flag, Thai, the ⬆ arrows): every left-to-right one splits into known-face
+    runs, and laid out as draw_text lays them out no glyph is a missing-glyph box or a dotted circle
+    (a mark cut from its base) and every glyph comes from its run's face - Qt never fell back."""
     env = dict(os.environ, QT_QPA_PLATFORM="windows", PYTHONPATH=str(SRC), PYTHONIOENCODING="utf-8")
     res = subprocess.run([sys.executable, "-c", _SHAPE_PROBE], env=env, capture_output=True, text=True,
                          timeout=300)
@@ -377,11 +395,13 @@ def test_every_locale_string_shapes_without_a_box_or_a_dotted_circle():
 
 
 _MEMORY_PROBE = r"""
-import random, sys, psutil
+import json, sys, psutil
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QImage, QPainter, QColor
+from PyQt6.QtGui import QImage, QPainter
 from PyQt6.QtCore import Qt
 app = QApplication(sys.argv[:1])
+from netspeedtray.constants.arrows import ARROW_PRESETS
+from netspeedtray.constants.i18n import I18nStrings, get_locales_path
 from netspeedtray.utils import font_runs as fr
 from netspeedtray.utils.widget_renderer import make_widget_font
 uss = lambda: psutil.Process().memory_full_info().uss / 2**20
@@ -391,17 +411,12 @@ img = QImage(600, 40, QImage.Format.Format_ARGB32)
 def draw(t, d=Qt.LayoutDirection.LeftToRight):
     p = QPainter(img); p.setLayoutDirection(d); p.setFont(font); fr.draw_text(p, 100, 25, t); p.end()
 draw("12.3 Mbps"); fm.horizontalAdvance("888.8")
-fixed = ["\u09ac\u09be\u09a1\u09bc\u09bf \U0001f3e0 \u0993\u09af\u09bc\u09be\u0987", "\u05e9 \u0995\u2605", "\u2605\u0915\u05e9",
-         "\U000e007f", "\ufe0f\U000e007f\u200c", "\u05d1\u05d9\u05ea \U0001f3e0", "\u0e1a\u0e49\u0e32\u0e19", "1\ufe0f\u20e3"]
-pool = (list("aZ09 ().-_/'") + list("\u05e9\u05dc\u05d5\u05dd") + list("\u0645\u0631\u062d") + ["\u0995", "\u09cd", "\u09b7", "\u09b0",
-        "\u200d", "\u200c"] + list("\u0918\u0930\u094d\u4e2d\u6587\ud55c\u0e44\u0e22") + ["\U0001f468", "\U0001f469", "\ufe0f",
-        "\ufe0e", "\u20e3", "\U0001f3fd", "\U0001f1ee", "\U0001f3e0", "\u2615", "\u2764", "\u2605", "\u25b4", "\u21d1", "\u0301",
-        "\U000e0067", "\U000e007f", "\u200f", "\u202e", "\u2066", "\U00020000", "\U0001d400", " "])
-rng = random.Random(4873)
-texts = fixed + ["".join(rng.choice(pool) for _ in range(rng.randint(1, 16))) for _ in range(400)]
 u0 = uss()
-for fr_lang in ("en_US", "bn_BD", "he_IL"):
-    fr.set_text_language(fr_lang)
+for lang in I18nStrings.LANGUAGE_MAP:
+    fr.set_text_language(lang)
+    data = json.loads((get_locales_path() / f"{lang}.json").read_text(encoding="utf-8"))
+    texts = [v for v in data.values() if isinstance(v, str) and v and not fr._is_rtl(v)]
+    texts += [g for _n, up, dw in ARROW_PRESETS for g in (up, dw)] + ["\u2b06", "\u2b07", "\u2764\ufe0f", "1\ufe0f\u20e3"]
     for t in texts:
         fm.horizontalAdvance(t)
         draw(t)
@@ -411,12 +426,60 @@ print(round(uss() - u0, 1))
 
 
 @pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows fonts")
-def test_no_string_makes_qt_load_every_font_family():
-    """Measure and draw ~1200 hostile strings (Indic + emoji + RTL + symbols + controls + tags) on the
-    real Windows platform: the process grows by a few MB at most. Loading every installed family's
-    styles - the bug this module exists for - costs ~38 MB in one step on a typical PC."""
+def test_no_own_string_makes_qt_load_every_font_family():
+    """Measure and draw every left-to-right string of every locale file, the arrow presets and emoji
+    arrows, on the real Windows platform: the process grows by a few MB at most. Loading every installed
+    family's styles - the bug this module exists for - costs ~38 MB in one step on a typical PC."""
     env = dict(os.environ, QT_QPA_PLATFORM="windows", PYTHONPATH=str(SRC), PYTHONIOENCODING="utf-8")
     res = subprocess.run([sys.executable, "-c", _MEMORY_PROBE], env=env, capture_output=True, text=True,
-                         timeout=300)
+                         timeout=600)
     grew = float(res.stdout.strip().splitlines()[-1])
     assert grew < 20, f"USS grew {grew} MB: something made Qt load every font family"
+
+
+_RC6_PROBE = r"""
+import json, sys
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QFont, QImage, QPainter, QColor
+from PyQt6.QtCore import Qt, QRectF
+app = QApplication(sys.argv[:1])
+from netspeedtray.utils import font_runs as fr
+from netspeedtray.utils.widget_renderer import make_widget_font
+font = make_widget_font("Segoe UI Variable", 9, 400)
+old = QFont(font)
+if font.family() == "Segoe UI Variable":
+    old.setFamilies(["Segoe UI Variable", "Segoe UI"])        # the widget font until 2.2.0
+texts = ["\u05e8\u05e9\u05ea [5G] \u05d1\u05d9\u05ea", "\u05d1\u05d9\u05ea (2)",
+         "Home \u05d1\u05d9\u05ea 2.4 \U0001f468\u200d\U0001f469\u200d\U0001f467", "\u1b05\u1b13", "\u1b83\u1b8a",
+         "\u1a20\u1a21", "\u1c00\u1c01", "\u1901\u1902", "\u0e1a\u0e49\u0e32\u0e19 WiFi", "Home \U0001f3e0 \u2764\ufe0f",
+         "\u05e7\u05e4\u05d4 \u05e0\u05ea", "Caf\u00e9 \u05e7\u05e4\u05d4", "\u09ac\u09be\u09a1\u09bc\u09bf \U0001f3e0",
+         "\u05e9 \u0995\u2605", "\u2605\u0915\u05e9", "(\u05d1\u05d9\u05ea)", "\u0645\u0631\u062d\u0628\u0627 5G"]
+bad = []
+for d in (Qt.LayoutDirection.LeftToRight, Qt.LayoutDirection.RightToLeft):
+    for t in texts:
+        imgs = []
+        for which in ("old", "new"):
+            img = QImage(420, 30, QImage.Format.Format_ARGB32); img.fill(QColor("white"))
+            p = QPainter(img); p.setLayoutDirection(d); p.setPen(QColor("black"))
+            if which == "old":
+                p.setFont(old); p.drawText(20, 20, t); p.drawText(QRectF(200, 0, 200, 30), Qt.AlignmentFlag.AlignCenter, t)
+            else:
+                p.setFont(font); fr.draw_text(p, 20, 20, t, user=True); fr.draw_text_centered(p, QRectF(200, 0, 200, 30), t, user=True)
+            p.end(); imgs.append(img)
+        w_old = __import__("PyQt6.QtGui", fromlist=["QFontMetrics"]).QFontMetrics(old).horizontalAdvance(t)
+        if imgs[0] != imgs[1] or fr.user_text_advance(fr.WidgetFontMetrics(font), t) != w_old:
+            bad.append([d.name, ascii(t)])
+print(json.dumps(bad))
+"""
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows fonts")
+def test_user_text_draws_and_measures_exactly_as_rc6():
+    """Wi-Fi names the widget's face doesn't cover - Hebrew with brackets and digits, ZWJ emoji,
+    Balinese, Sundanese, Tai Tham, Lepcha, Limbu, Thai, Arabic - in a left-to-right and a right-to-left
+    UI: pixel-identical to 2.2.0, and the same width."""
+    env = dict(os.environ, QT_QPA_PLATFORM="windows", PYTHONPATH=str(SRC), PYTHONIOENCODING="utf-8")
+    res = subprocess.run([sys.executable, "-c", _RC6_PROBE], env=env, capture_output=True, text=True,
+                         timeout=300)
+    bad = json.loads(res.stdout.strip().splitlines()[-1])
+    assert not bad, bad

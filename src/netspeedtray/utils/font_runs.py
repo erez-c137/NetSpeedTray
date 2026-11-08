@@ -1,27 +1,25 @@
 """
-Glyph runs for the taskbar widget's text: every string is drawn in the widget's ONE font, and only the
-grapheme clusters that face lacks are drawn in a named face that has them.
+Text runs for the taskbar widget: the widget draws in ONE font, and its own strings' glyphs that face
+lacks are drawn in known faces that have them.
 
 Why: a QFont that lists more than one family (``setFamilies``, a QSS family list, a substitute) makes
 Qt resolve its whole fallback chain on its first measurement, and so does a glyph the face lacks.
 Resolving that chain loads the styles of EVERY installed font family: ~38 MB on a typical PC (323
-families), process-wide and never freed. So the widget never lets Qt look for a glyph:
+families), process-wide and never freed.
 
-- The text is split into grapheme clusters (``clusters``): a Bengali conjunct "র‍্য", an emoji
-  ZWJ family "👨‍👩‍👧", a keycap "1️⃣" each stay whole, and each cluster gets ONE face that has every
-  code point of it (ZWJ/ZWNJ and variation selectors are default-ignorable: no face needs them).
-- A cluster the widget's face has stays in it - digits, separators, arrows, Latin - so the look and the
-  width of the readout are unchanged. Others take the first installed face of a list (CANDIDATE order
-  below): Segoe UI first (Hebrew, #194), the UI language's own faces, the other script faces, Windows'
-  per-script UI faces. Emoji (VS16, keycaps, emoji-presentation) try Segoe UI Emoji first, symbols (the
-  ▴ △ ▵ ⇑ arrow presets) MS UI Gothic - the faces Qt's fallback drew them in until 2.2.0.
-- A cluster NO installed face has is drawn in the widget's face with font merging OFF: a missing-glyph
-  box, never the 38 MB search.
-- Every run is laid out on its own, so Qt never itemizes a character with a neighbouring face's script
-  (a "(" or a "★" beside Bengali would otherwise be asked of a face that lacks Bengali, and Qt would
-  search every family). Left-to-right text: runs in order on one baseline. Text with right-to-left
-  letters: UAX #9 levels (python-bidi, already a dependency) split it into face x level segments placed
-  in visual order (rule L2), each laid out in its own direction.
+The widget's OWN strings - values, units, locale strings, "N/A", arrows and arrow presets - are known:
+- split into grapheme clusters (``clusters``: a Bengali conjunct, a keycap, an emoji ZWJ sequence stay
+  whole), each cluster in the widget's face where it has it - digits, separators, arrows, Latin - so the
+  readout looks and measures as before;
+- a cluster the face lacks in the first installed KNOWN face that has it: the UI language's script face
+  (Yu Gothic UI, Malgun Gothic, YaHei/JhengHei UI, Nirmala UI), Segoe UI, symbols and emoji in the faces
+  Qt's fallback drew them in until 2.2.0 (measured per code point);
+- each run laid out on its own with font merging off, so Qt never searches.
+
+USER text - a Wi-Fi name - is arbitrary: any script, bidi, brackets, emoji. Unless the widget's face
+draws all of it, it goes to Qt exactly as 2.2.0 drew it (rc6_font: Segoe UI as the variable face's
+second family, merging on) - and so does an own string with right-to-left letters or a cluster no
+known face has. Those cost the font load they always did; they never look different from 2.2.0.
 
 Each face's coverage is asked of that face alone (a no-merging QRawFont): QFontMetrics.inFont() on a
 merging font, or resolving a family name Qt doesn't know, would run the very search this avoids.
@@ -44,7 +42,7 @@ _raw_fonts: Dict[str, object] = {}
 _run_cache: Dict[Tuple[str, str, str], tuple] = {}
 _font_cache: Dict[Tuple[str, str], QFont] = {}
 _language = ""
-NO_FACE = ""     # a run no installed face has: the widget's face, font merging off (a box, not a search)
+QT_PATH = "\x00qt"   # draw the whole text through Qt's own fallback, as 2.2.0 did (rc6_font)
 
 
 def set_text_language(language: Optional[str]) -> None:
@@ -290,35 +288,43 @@ def _candidates(cluster: str) -> List[str]:
 
 
 def _cluster_face(base: str, cluster: str) -> Optional[str]:
-    """None = the widget's own face; NO_FACE = none installed has it; else the face to draw it in."""
+    """None = the widget's own face; QT_PATH = no known face has it (Qt's own fallback); else the face."""
     if cluster.isspace() or all(_ignorable(ch) for ch in cluster):
         return None
     emoji = _is_emoji(cluster)
-    # Right-to-left letters always take a face with the whole script (Segoe UI, #194): the variable face
-    # has a stray Hebrew letter or two (ת), which drew one letter of a word at another size.
-    rtl = any(unicodedata.bidirectional(ch) in ("R", "AL") for ch in cluster)
-    if not emoji and not rtl and family_covers(base, cluster):
+    if not emoji and family_covers(base, cluster):
         return None
     for cand in _candidates(cluster):
         if family_covers(cand, cluster):
             return resolve_family(cand)
-    if (emoji or rtl) and family_covers(base, cluster):
+    if emoji and family_covers(base, cluster):
         return None
-    return NO_FACE
+    return QT_PATH
 
 
-def text_runs(font: QFont, text: str) -> tuple:
-    """``text`` as ((face or None, run), ...) in LOGICAL order: None = the font's own face, NO_FACE = the
-    font's own face without merging. One run, the font's own, for text the face covers - the common
-    case, measured and drawn exactly as before."""
+def _is_rtl(text: str) -> bool:
+    return any(unicodedata.bidirectional(ch) in ("R", "AL") for ch in text)
+
+
+def text_runs(font: QFont, text: str, user: bool = False) -> tuple:
+    """``text`` as ((face, run), ...): face None = the font's own face, a family name = that face,
+    QT_PATH = the whole text goes to Qt as 2.2.0 drew it (rc6_font, merging on).
+
+    The widget's own strings (``user=False``: values, units, locale strings, "N/A", arrows) the face
+    lacks a glyph of split into runs of known faces; right-to-left text, or a cluster no known face has,
+    takes the Qt path. User text (``user=True``: a Wi-Fi name) is either all the widget's face or the Qt
+    path - bidi, shaping and font choice for arbitrary text stay Qt's, exactly as in 2.2.0 (and such a
+    name costs the font load it always did)."""
     base = font.family()
-    key = (base, _language, text)
+    key = (base, _language, text, user)
     hit = _run_cache.get(key)
     if hit is not None:
         return hit
     if (not text or (text.isascii() and family_covers(base, text))   # the readout: digits, units, Latin
             or resolve_family(base) is None):     # a face we can't see (offscreen tests): as before
         runs = ((None, text),)
+    elif _is_rtl(text):
+        runs = ((QT_PATH, text),)
     else:
         out: List[list] = []
         for cl in clusters(text):
@@ -328,23 +334,41 @@ def text_runs(font: QFont, text: str) -> tuple:
             else:
                 out.append([face, cl])
         runs = tuple((face, run) for face, run in out)
+        if any(face == QT_PATH for face, _run in runs) or (user and runs != ((None, text),)):
+            runs = ((QT_PATH, text),)
     if len(_run_cache) > 512:
         _run_cache.clear()
     _run_cache[key] = runs
     return runs
 
 
+def rc6_font(font: QFont) -> QFont:
+    """``font`` as 2.2.0 built it for Qt's own fallback: Segoe UI Variable lists Segoe UI as its second
+    family (#194: Hebrew in Segoe UI); any other face is itself. Font merging on: Qt finds every glyph -
+    and loads the styles of every installed family the first time it has to (~38 MB)."""
+    key = (font.key(), "rc6")
+    hit = _font_cache.get(key)
+    if hit is None:
+        hit = QFont(font)
+        f = constants.fonts
+        if font.family() == f.VARIABLE_FAMILY:
+            hit.setFamilies([f.VARIABLE_FAMILY, f.FALLBACK_FONT])
+        _font_cache[key] = hit
+    return hit
+
+
 def run_font(font: QFont, family: Optional[str]) -> QFont:
-    """``font`` in another face (or, for NO_FACE, its own) at the same size and weight, with no font
-    merging (its coverage was checked, so Qt never needs a fallback chain for it)."""
+    """``font`` in another known face at the same size and weight, with no font merging (its coverage was
+    checked, so Qt never needs a fallback chain for it)."""
     if family is None:
         return font
+    if family == QT_PATH:
+        return rc6_font(font)
     key = (font.key(), family)
     hit = _font_cache.get(key)
     if hit is None:
         hit = QFont(font)
-        if family != NO_FACE:
-            hit.setFamily(family)
+        hit.setFamily(family)
         hit.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
         if len(_font_cache) > 64:
             _font_cache.clear()
@@ -352,200 +376,122 @@ def run_font(font: QFont, family: Optional[str]) -> QFont:
     return hit
 
 
-def _mixed(runs: tuple) -> bool:
-    """Needs run drawing: another face, or a default-ignorable the widget's face would be asked for."""
-    return not (len(runs) == 1 and runs[0][0] is None and not any(map(_ignorable, runs[0][1])))
+def _plain(runs: tuple) -> bool:
+    """One run in the widget's own face with nothing to drop: drawn and measured exactly as before."""
+    return len(runs) == 1 and runs[0][0] is None and not any(map(_ignorable, runs[0][1]))
 
 
-def _is_rtl(text: str) -> bool:
-    return any(unicodedata.bidirectional(ch) in ("R", "AL") for ch in text)
-
-
-_BOX = "□"     # □: what a cluster no installed face has is drawn as
-
-
-def _shown(font: QFont, runs: tuple) -> tuple:
-    """The runs as drawn: a cluster no installed face has becomes a box (□) in a face that has one.
-    Not the cluster itself in a no-merging font: Qt still itemizes it by its script, and asking a face
-    for a script it lacks makes Qt search every family for one (the 38 MB)."""
-    if all(face != NO_FACE and (face is not None or not any(map(_ignorable, run))) for face, run in runs):
-        return runs
-    box_face = next((resolve_family(c) for c in (constants.fonts.FALLBACK_FONT, *constants.fonts.SYMBOL_FAMILIES)
-                     if family_covers(c, _BOX)), None)
-    shown = []
-    for face, run in runs:
-        if face == NO_FACE:
-            boxes = "".join(_BOX if not c.isspace() else c for c in clusters(run))
-            shown.append((box_face, boxes) if box_face else (NO_FACE, "?" * len(boxes)))
-        elif face is None:
-            # Default-ignorables (ZWJ/ZWNJ, variation selectors, tags) shape to nothing in the widget's
-            # face - and the face lacks a glyph for some, so drawing them would make Qt search for one.
-            kept = "".join(ch for ch in run if not _ignorable(ch))
-            if kept:
-                shown.append((face, kept))
-        else:
-            shown.append((face, run))
-    return tuple(shown)
-
-
-def _levels(text: str, rtl_base: bool) -> List[int]:
-    """The resolved bidi embedding level of each character (python-bidi's UAX #9, rules up to I2)."""
-    from bidi import algorithm as uax9
-    # python-bidi's UAX #9 predates the isolates (LRI RLI FSI PDI): they count as boundary neutrals here.
-    text = "".join("​" if 0x2066 <= ord(ch) <= 0x2069 else ch for ch in text)
-    try:
-        return _uax9_levels(uax9, text, rtl_base)
-    except Exception:
-        return [1 if rtl_base else 0] * len(text)
-
-
-def _uax9_levels(uax9, text: str, rtl_base: bool) -> List[int]:
-    storage = uax9.get_empty_storage()
-    storage["base_level"] = 1 if rtl_base else 0
-    storage["base_dir"] = "R" if rtl_base else "L"
-    uax9.get_embedding_levels(text, storage)
-    uax9.explicit_embed_and_overrides(storage)
-    uax9.resolve_weak_types(storage)
-    uax9.resolve_neutral_types(storage, False)
-    uax9.resolve_implicit_levels(storage, False)
-    levels = [c["level"] for c in storage["chars"]]
-    return levels if len(levels) == len(text) else [storage["base_level"]] * len(text)
-
-
-def _segments(font: QFont, text: str, runs: tuple, rtl_base: bool) -> List[Tuple[QFont, str, bool]]:
-    """Text with right-to-left letters, as (font, text, rtl) segments in VISUAL order: each run of one
-    face at one bidi level is laid out on its own, so Qt never itemizes a character with a neighbouring
-    face's script ("★" beside Bengali in MS UI Gothic would make Qt search every family)."""
-    shown = _shown(font, runs)
-    plain = "".join(run for _face, run in shown)
-    levels = _levels(plain, rtl_base)
-    segs: List[list] = []        # [face, text, level]
-    pos = 0
-    for face, run in shown:
-        for ch in run:
-            level = levels[pos]
-            pos += 1
-            if segs and segs[-1][0] == face and segs[-1][2] == level:
-                segs[-1][1] += ch
-            else:
-                segs.append([face, ch, level])
-    # UAX #9 L2: from the highest level down to the lowest odd one, reverse every sequence at or above it.
-    if segs:
-        top = max(s[2] for s in segs)
-        low = min(s[2] for s in segs)
-        low_odd = low if low % 2 else low + 1
-        for level in range(top, low_odd - 1, -1):
-            i = 0
-            while i < len(segs):
-                if segs[i][2] >= level:
-                    j = i
-                    while j < len(segs) and segs[j][2] >= level:
-                        j += 1
-                    segs[i:j] = segs[i:j][::-1]
-                    i = j
-                else:
-                    i += 1
-    return [(run_font(font, face), seg, bool(level % 2)) for face, seg, level in segs]
-
-
-def _segment_layout(face: QFont, text: str, rtl: bool) -> Tuple[QTextLayout, object]:
-    layout = QTextLayout(text, run_font(face, NO_FACE) if face.styleStrategy() != QFont.StyleStrategy.NoFontMerging
-                         else face)
-    option = QTextOption()
-    option.setWrapMode(QTextOption.WrapMode.NoWrap)
-    option.setTextDirection(Qt.LayoutDirection.RightToLeft if rtl else Qt.LayoutDirection.LeftToRight)
-    layout.setTextOption(option)
-    layout.beginLayout()
-    line = layout.createLine()
-    layout.endLayout()
-    return layout, line
+def _qt_path(runs: tuple) -> bool:
+    return len(runs) == 1 and runs[0][0] == QT_PATH
 
 
 def _placed(font: QFont, runs: tuple) -> Tuple[list, float]:
-    """Left-to-right text: ((font, run, x), ...) and the total advance - each run drawn on its own, so Qt
-    itemizes it alone (a "(" before Bengali is Latin there, not Bengali)."""
+    """Known-face runs, left to right: ((font, run, x), ...) and the total advance - each run drawn on
+    its own, so Qt itemizes it alone (a "(" before Bengali stays Latin). Default-ignorables are dropped
+    from the widget face's runs: they shape to nothing, and asking the face for one it lacks would make
+    Qt search."""
     out, x = [], 0.0
-    for face, run in _shown(font, runs):
+    for face, run in runs:
+        if face is None:
+            run = "".join(ch for ch in run if not _ignorable(ch))
+            if not run:
+                continue
         f = run_font(font, face)
         out.append((f, run, x))
         x += QFontMetricsF(f).horizontalAdvance(run)
     return out, x
 
 
-def _advance(font: QFont, text: str, runs: tuple, rtl_base: bool = False) -> float:
-    if _is_rtl(text):
-        return sum(_segment_layout(f, seg, rtl)[1].horizontalAdvance()
-                   for f, seg, rtl in _segments(font, text, runs, rtl_base))
-    return _placed(font, runs)[1]
-
-
-def shaped_layouts(font: QFont, text: str, rtl_base: bool = False) -> List[QTextLayout]:
-    """The layouts draw_text draws ``text`` with, in drawing order (for tests that inspect the glyphs)."""
-    runs = text_runs(font, text)
-    if _is_rtl(text):
-        return [_segment_layout(f, seg, rtl)[0] for f, seg, rtl in _segments(font, text, runs, rtl_base)]
-    return [_segment_layout(f, run, False)[0] for f, run, _x in _placed(font, runs)[0]]
-
-
-def _draw_runs(painter, font: QFont, text: str, runs: tuple, x: float, baseline: float) -> None:
-    try:
-        if _is_rtl(text):
-            rtl_base = painter.layoutDirection() == Qt.LayoutDirection.RightToLeft
-            for f, seg, rtl in _segments(font, text, runs, rtl_base):
-                layout, line = _segment_layout(f, seg, rtl)
-                layout.draw(painter, QPointF(x, baseline - line.ascent()))
-                x += line.horizontalAdvance()
-            return
-        for f, run, dx in _placed(font, runs)[0]:
-            painter.setFont(f)
-            painter.drawText(QPointF(x + dx, baseline), run)
-    finally:
-        painter.setFont(font)
+def run_layouts(font: QFont, text: str) -> List[QTextLayout]:
+    """The known-face runs of an own string as laid out for drawing (tests inspect their glyphs)."""
+    layouts = []
+    for f, run, _x in _placed(font, text_runs(font, text))[0]:
+        layout = QTextLayout(run, f if f.styleStrategy() & QFont.StyleStrategy.NoFontMerging else run_font(f, None))
+        option = QTextOption()
+        option.setWrapMode(QTextOption.WrapMode.NoWrap)
+        layout.setTextOption(option)
+        layout.beginLayout()
+        layout.createLine()
+        layout.endLayout()
+        layouts.append(layout)
+    return layouts
 
 
 class WidgetFontMetrics(QFontMetrics):
-    """QFontMetrics whose horizontalAdvance() measures a string the way draw_text draws it: a string
-    the face covers exactly as QFontMetrics does; one with other faces as their runs. Every other metric
-    (height, ascent...) is the face's own, as a merging font's always was."""
+    """QFontMetrics whose horizontalAdvance() measures a string the way draw_text draws it: a string the
+    face covers exactly as QFontMetrics does; one with known-face runs as their sum; one on the Qt path
+    as 2.2.0 measured it. user_advance() is the same for user text (draw_text(..., user=True)). Every
+    other metric (height, ascent...) is the face's own, as a merging font's always was."""
 
     def __init__(self, font: QFont):
         super().__init__(font)
         self._run_base = QFont(font)
 
+    def _advance(self, text: str, user: bool) -> int:
+        runs = text_runs(self._run_base, text, user)
+        if _plain(runs):
+            return super().horizontalAdvance(text)
+        if _qt_path(runs):
+            return QFontMetrics(rc6_font(self._run_base)).horizontalAdvance(text)
+        return round(_placed(self._run_base, runs)[1])
+
     def horizontalAdvance(self, text, *args):   # noqa: N802 (Qt name)
         if args or not isinstance(text, str):
             return super().horizontalAdvance(text, *args)
-        runs = text_runs(self._run_base, text)
-        if not _mixed(runs):
-            return super().horizontalAdvance(text)
-        return round(_advance(self._run_base, text, runs))
+        return self._advance(text, False)
+
+    def user_advance(self, text: str) -> int:
+        return self._advance(text, True)
 
 
-def draw_text(painter, x, y, text: str) -> None:
-    """painter.drawText(x, y, text) in the painter's font, with the clusters that face lacks drawn in
-    their own faces on the same baseline."""
+def user_text_advance(fm, text: str) -> int:
+    """The width of user text (a Wi-Fi name) under ``fm`` - a WidgetFontMetrics or a plain one."""
+    return fm.user_advance(text) if isinstance(fm, WidgetFontMetrics) else fm.horizontalAdvance(text)
+
+
+def draw_text(painter, x, y, text: str, user: bool = False) -> None:
+    """painter.drawText(x, y, text) in the painter's font: a string the face covers as before, known-face
+    runs on one baseline, the Qt path exactly as 2.2.0 drew it."""
     font = painter.font()
-    runs = text_runs(font, text) if isinstance(font, QFont) else ((None, text),)
-    if not _mixed(runs):
+    runs = text_runs(font, text, user) if isinstance(font, QFont) else ((None, text),)
+    if _plain(runs):
         painter.drawText(x, y, text)
         return
-    _draw_runs(painter, font, text, runs, float(x), float(y))
+    try:
+        if _qt_path(runs):
+            painter.setFont(rc6_font(font))
+            painter.drawText(x, y, text)
+            return
+        for f, run, dx in _placed(font, runs)[0]:
+            painter.setFont(f)
+            painter.drawText(QPointF(float(x) + dx, float(y)), run)
+    finally:
+        painter.setFont(font)
 
 
-def draw_text_centered(painter, rect, text: str) -> None:
+def draw_text_centered(painter, rect, text: str, user: bool = False) -> None:
     """painter.drawText(rect, AlignCenter, text), runs and all: centred on the painter's font's line box
     (a merging font's line box was its first face's), so a run in another face sits where it always did."""
     font = painter.font()
-    runs = text_runs(font, text) if isinstance(font, QFont) else ((None, text),)
-    if not _mixed(runs):
+    runs = text_runs(font, text, user) if isinstance(font, QFont) else ((None, text),)
+    if _plain(runs):
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
         return
-    rect = QRectF(rect)
-    fm = QFontMetrics(font)
-    baseline = rect.y() + (rect.height() - fm.height()) / 2.0 + fm.ascent()
-    rtl_base = painter.layoutDirection() == Qt.LayoutDirection.RightToLeft
-    x = rect.x() + (rect.width() - _advance(font, text, runs, rtl_base)) / 2.0
-    _draw_runs(painter, font, text, runs, x, baseline)
+    try:
+        if _qt_path(runs):
+            painter.setFont(rc6_font(font))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+            return
+        rect = QRectF(rect)
+        fm = QFontMetrics(font)
+        placed, width = _placed(font, runs)
+        baseline = rect.y() + (rect.height() - fm.height()) / 2.0 + fm.ascent()
+        x = rect.x() + (rect.width() - width) / 2.0
+        for f, run, dx in placed:
+            painter.setFont(f)
+            painter.drawText(QPointF(x + dx, baseline), run)
+    finally:
+        painter.setFont(font)
 
 
 def reset_caches() -> None:

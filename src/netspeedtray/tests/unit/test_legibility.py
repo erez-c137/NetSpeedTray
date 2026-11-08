@@ -464,8 +464,8 @@ def test_the_default_font_is_segoe_ui_variable_at_its_text_size(q_app, name):
 def test_hebrew_is_drawn_in_segoe_ui_not_an_arbitrary_face(q_app):
     """Segoe UI Variable has no Hebrew. A Hebrew Wi-Fi name in the identity badge is drawn in Segoe UI -
     the Hebrew UI's face (#194) - so it measures like Segoe UI (an arbitrary fallback drew some letters
-    at a mismatched size). Since 2.2.1 it is a run in Segoe UI (utils/font_runs), not a second family of
-    the widget font (a family list makes Qt load every installed family, ~38 MB)."""
+    at a mismatched size). Since 2.2.1 the widget font is one family; right-to-left text is drawn through
+    font_runs.rc6_font - the 2.2.0 font with Segoe UI as its second family."""
     from PyQt6.QtGui import QFontDatabase, QFontMetrics, QRawFont
     from netspeedtray.utils.font_runs import WidgetFontMetrics, text_runs
     if "Segoe UI Variable" not in QFontDatabase.families():
@@ -473,7 +473,8 @@ def test_hebrew_is_drawn_in_segoe_ui_not_an_arbitrary_face(q_app):
     heb = "קפהנתבית"
     f = make_widget_font("Segoe UI Variable", 9, 400)
     assert not QRawFont.fromFont(f).supportsCharacter(heb[0])        # the variable face itself has none
-    assert text_runs(f, heb) == (("Segoe UI", heb),)
+    from netspeedtray.utils.font_runs import QT_PATH
+    assert text_runs(f, heb) == ((QT_PATH, heb),)      # right-to-left: Qt's own fallback, as in 2.2.0
     seg = QFont("Segoe UI", 9, 400)
     assert WidgetFontMetrics(f).horizontalAdvance(heb) == QFontMetrics(seg).horizontalAdvance(heb)
 
