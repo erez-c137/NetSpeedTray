@@ -373,6 +373,7 @@ class NetworkHero(ClickableCard):
         block.setContentsMargins(0, 0, 0, 0)
         block.setSpacing(0)
         cap = QLabel(f"<span style='color:{color};'>{su.ui_html(arrow)}</span> {su.ui_html(word)}")
+        cap.setAccessibleName(f"{arrow} {word}")   # the words, not the run markup's anchor letter
         cap.setFont(su.font(tokens.TYPE_CAPTION))
         cap.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         val = QLabel("-")
@@ -467,6 +468,7 @@ class UsageTile(QFrame):
         # When no cap is set, a discoverable one-click hint to configure one (Settings → Network).
         hint = self._tr("USAGE_SET_LIMIT_HINT", "Set a monthly limit")
         self._cap_hint = QLabel(f"<a href='#' style='color:{c['accent']}; text-decoration:none;'>{su.ui_html(hint + ' →')}</a>")
+        self._cap_hint.setAccessibleName(f"{hint} →")
         self._cap_hint.setFont(su.font(tokens.TYPE_CAPTION))
         self._cap_hint.setCursor(Qt.CursorShape.PointingHandCursor)
         self._cap_hint.setStyleSheet("background: transparent;")
@@ -478,6 +480,7 @@ class UsageTile(QFrame):
         # #334: the per-day / month / year table, always offered (with or without a cap).
         hist = self._tr("USAGE_HISTORY_LINK", "Usage by day")
         self._history_link = QLabel(f"<a href='#' style='color:{c['accent']}; text-decoration:none;'>{su.ui_html(hist + ' →')}</a>")
+        self._history_link.setAccessibleName(f"{hist} →")
         self._history_link.setFont(su.font(tokens.TYPE_CAPTION))
         self._history_link.setCursor(Qt.CursorShape.PointingHandCursor)
         self._history_link.setStyleSheet("background: transparent;")

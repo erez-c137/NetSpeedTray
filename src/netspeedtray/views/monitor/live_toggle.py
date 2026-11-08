@@ -59,13 +59,13 @@ class LiveToggle(QPushButton):
         else:
             # Play = press to resume: the Fluent Play glyph as the icon, not a "▶" in the label - most
             # UI faces lack that glyph, and Qt searched every installed family for it.
-            self.setText(self._tr("MONITOR_PAUSED", "Paused"))
+            self.setText(" " + self._tr("MONITOR_PAUSED", "Paused"))   # the gap after the icon, as "● Live"
             self.setToolTip(self._tr("MONITOR_RESUME_TIP", "Resume live updates"))
             fg, border, weight = c["accent"], c["accent"], "600"
             self.setIcon(su.fluent_icon(0xE768, 12, fg))
             self.setIconSize(QSize(12, 12))
         # accessibleName carries the STATE for screen readers; the tooltip carries the action.
-        self.setAccessibleName(self.text().replace("● ", ""))
+        self.setAccessibleName(self.text().replace("● ", "").strip())
         self.setStyleSheet(
             f"QPushButton {{ background: {c['subtle_fill']}; color: {fg}; font-weight: {weight};"
             f" border: 1px solid {border}; border-radius: {tokens.RADIUS_CONTROL}px;"

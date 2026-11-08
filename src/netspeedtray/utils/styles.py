@@ -289,6 +289,12 @@ def ui_html(text: str) -> str:
     return "<span style=\"white-space:pre-wrap;\">%s</span>" % _face_runs(text, escape=True)
 
 
+def rich_plain_text(markup: str) -> str:
+    """The words of rich text (a label's accessible name when ui_rich added anchor letters)."""
+    from PyQt6.QtGui import QTextDocumentFragment
+    return QTextDocumentFragment.fromHtml(markup).toPlainText()
+
+
 def ui_rich(markup: str) -> str:
     """``ui_html`` for text that already is rich text: only the text between tags gets the spans."""
     import re

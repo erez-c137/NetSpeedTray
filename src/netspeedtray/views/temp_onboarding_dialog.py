@@ -61,6 +61,7 @@ class TempOnboardingDialog(QDialog):
         from netspeedtray.utils import styles as su
         body = QLabel(su.ui_rich(i18n.TEMP_ONBOARDING_BODY), self)   # arrows not in every UI face
         body.setTextFormat(Qt.TextFormat.RichText)
+        body.setAccessibleName(su.rich_plain_text(i18n.TEMP_ONBOARDING_BODY))   # not the anchor letters
         body.setWordWrap(True)
         body.setMinimumWidth(440)
         layout.addWidget(body)

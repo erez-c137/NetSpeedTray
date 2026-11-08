@@ -90,7 +90,8 @@ files = sorted({os.path.basename(m.path) for m in psutil.Process().memory_maps()
                 if m.path.lower().endswith((".ttf", ".ttc", ".otf"))})
 print(json.dumps({"files": files, "ui": su.ui_family() if hasattr(su, "ui_family") else app.font().family(), "widget": r.font.family(), "icons": su.icon_font_family(),
                   "installed": {f: fr.resolve_family(f) is not None for f in
-                                ["Segoe UI Variable", "Segoe Fluent Icons"] + list(set(%r.values()))}}))
+                                ["Segoe UI Variable", "Segoe Fluent Icons", "Leelawadee UI", "Segoe UI Emoji",
+                                 "MS UI Gothic"] + list(set(%r.values()))}}))
 """ % LANGUAGE_FACE
 
 _STYLE_WORDS = {"regular", "bold", "italic", "oblique", "light", "semilight", "semibold", "medium", "black",
@@ -191,6 +192,7 @@ app.setQuitOnLastWindowClosed(False)
 cfg = ConfigManager().load()
 cfg["language"] = lang
 cfg["check_for_updates"] = False
+cfg["preferred_monitor"] = chr(92) * 2 + "." + chr(92) + "DISPLAY97"   # a saved monitor, not connected
 w = NetworkSpeedWidget(taskbar_height=40, config=cfg, i18n=i18n)
 
 
@@ -210,11 +212,22 @@ for tab in range(3):
         w.monitor_window._tab_bar.setCurrentIndex(tab); pump(0.6)
     except Exception:
         pass
+# The Check connection sheet mid-run ("12 / 20" per hop) - no pings: the state is set by hand.
+from netspeedtray.views.monitor import connection_check as ccv
+sheet = ccv.ConnectionCheckSheet(cfg, i18n, gateway_ip="192.168.1.1", autostart=False)
+sheet._echoes = {ccv.CC.HOP_GATEWAY: [1.0, 2.5, None, 3.0]}
+sheet._state = "running"
+sheet._refresh()
+sheet.adjustSize()
+sheet.grab()
 out["monitor"] = files()
 w.monitor_window.close(); pump(0.5)
 w.show_settings(); pump(1)
 for r in range(w.settings_dialog.sidebar.count()):
     w.settings_dialog.sidebar.setCurrentRow(r); pump(0.3)
+combo = w.settings_dialog.widget_page.preferred_monitor_combo
+out["not_connected_item"] = any("DISPLAY97" in combo.itemText(i) for i in range(combo.count()))
+combo.view().grab()                                           # its items, drawn
 out["settings"] = files()
 print(json.dumps(out), flush=True)
 os._exit(0)
@@ -233,8 +246,10 @@ def test_the_monitor_and_settings_load_only_the_faces_they_show(lang, tmp_path):
     if not installed["Segoe UI Variable"] or not installed["Segoe Fluent Icons"]:
         pytest.skip("the Windows 11 fonts are not installed here")
     extra = LANGUAGE_FACE.get(lang)
-    if extra and not installed.get(extra, True):
-        pytest.skip(f"{extra} is not installed here")
+    missing = sorted(f for f in ({extra} if extra else set()) | SETTINGS_FACES if not installed.get(f, False))
+    if missing:
+        pytest.skip(f"not installed here: {missing}")
+    assert out["not_connected_item"], "the disconnected saved monitor was not listed"
     base = {"Segoe UI Variable", "Segoe Fluent Icons"} | ({extra} if extra else set())
     for stage, expected in (("monitor", base), ("settings", base | SETTINGS_FACES)):
         found = out[stage]
@@ -255,11 +270,12 @@ _SSIDS = {"บ้าน WiFi": "Leelawadee UI", "我的网络 5G": "Microsoft Ya
 @pytest.mark.parametrize("ssid", sorted(_SSIDS))
 def test_a_covered_wifi_name_loads_only_its_faces(ssid):
     out = _probe("en_US", ssid)
-    if not out["installed"]["Segoe UI Variable"]:
-        pytest.skip("Segoe UI Variable is not installed here")
     expected = {"Segoe UI Variable", "Segoe Fluent Icons", _SSIDS[ssid]}
     if "\U0001f3e0" in ssid:
         expected.add("Segoe UI Emoji")
+    missing = sorted(f for f in expected if not out["installed"].get(f, False))
+    if missing:
+        pytest.skip(f"not installed here: {missing}")
     assert len(out["files"]) < 40, f"{ascii(ssid)}: {len(out['files'])} font files mapped - Qt loaded every family"
     owners = _families_of(out["files"], sorted(expected, key=len, reverse=True))
     stray = sorted(f for f, fam in owners.items() if fam is None)

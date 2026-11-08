@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton, QPlainTextEdit,
 )
@@ -63,7 +63,7 @@ class ConnectionDetailPanel(QWidget):
         self._body = QPlainTextEdit()
         self._body.setReadOnly(True)
         self._body.setFrameShape(QPlainTextEdit.Shape.NoFrame)
-        self._body_face = None   # set with the first text (_set_body): no face loads until the panel shows one
+        self._body_face: Optional[str] = None   # chosen with the first text (_body_base_face), then fixed
         self._body.setStyleSheet(
             f"QPlainTextEdit {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
             f" border-radius: {tokens.RADIUS_CONTROL}px; padding: 8px; }}")
@@ -107,22 +107,68 @@ class ConnectionDetailPanel(QWidget):
         self._set_body(self._tr("APP_ACTIVITY_NO_CONNECTION_DETAILS", "No connection details available."),
                        reset_scroll=True)
 
-    def _set_body(self, text: str, reset_scroll: bool = False) -> None:
-        # ONE installed mono face (a family list loads every family) - for text it has all of; the section
-        # headings are localized, and a Japanese "Talking to:" in Cascadia Mono would make Qt search every
-        # installed family for its glyphs, so such text is drawn in the UI face instead.
+    def _body_base_face(self) -> str:
+        """The body's ONE face, chosen once for the UI language: the installed mono face (a family list
+        loads every family) when it has the language's section headings - the Latin-script UIs - else the
+        UI face (Cascadia Mono has no Hebrew, CJK or Bengali). Fixed for the panel's life, so the box
+        never switches faces between refreshes."""
         from netspeedtray.utils.font_runs import family_covers
-        face = su.mono_family() if family_covers(su.mono_family(), text) else su.ui_family()
-        if face != self._body_face:
-            self._body_face = face
-            body_font = QFont(face, 9)
-            if face == su.mono_family():
+        headings = "".join(self._tr(k, d) for k, d in (
+            ("APP_ACTIVITY_TALKING_TO_SECTION", "Talking to:"),
+            ("APP_ACTIVITY_CONNECTIONS_SECTION", "Connections:"),
+            ("APP_ACTIVITY_NO_CONNECTION_DETAILS", "No connection details available.")))
+        mono = su.mono_family()
+        return mono if family_covers(mono, headings) else su.ui_family()
+
+    def _set_body(self, text: str, reset_scroll: bool = False) -> None:
+        if self._body_face is None:          # the first text: no face loads before the panel shows one
+            self._body_face = self._body_base_face()
+            body_font = QFont(self._body_face, 9)
+            if self._body_face == su.mono_family():
                 body_font.setStyleHint(QFont.StyleHint.Monospace)
             self._body.setFont(body_font)
         bar = self._body.verticalScrollBar()
         pos = 0 if reset_scroll else bar.value()
-        self._body.setPlainText(text)
+        runs = _face_runs(self._body_face, text)
+        if len(runs) == 1 and runs[0][0] is None:
+            self._body.setPlainText(text)
+        else:
+            # A host name with letters the body's face lacks (an IDN, CJK): those runs in a known face
+            # that has them, the rest as always - never Qt's search through every installed family.
+            self._body.clear()
+            cursor = QTextCursor(self._body.document())
+            for face, run in runs:
+                fmt = QTextCharFormat()
+                if face is not None:
+                    fmt.setFontFamilies([face])
+                cursor.insertText(run, fmt)
         bar.setValue(min(pos, bar.maximum()))
 
     def _tr(self, key: str, default: str) -> str:
         return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
+
+
+def _face_runs(base: str, text: str):
+    """``text`` as ((face, run), ...): face None = ``base``; else the UI face or a known face with the
+    run's letters (styles.face_for_text). Characters that are not letters (digits, dots, colons) stay
+    with the run before them, so a run in another face carries its own punctuation. A run no known face
+    has stays in ``base`` (Qt's fallback, as before)."""
+    import unicodedata
+    from netspeedtray.utils.font_runs import family_covers
+    if family_covers(base, text):
+        return ((None, text),)
+    out = []
+    for ch in text:
+        if ch.isspace() or not unicodedata.category(ch).startswith(("L", "M")):
+            face = out[-1][0] if out else None
+            if face is not None and not family_covers(face, ch):
+                face = None
+        elif family_covers(base, ch):
+            face = None
+        else:
+            face = su.ui_family() if family_covers(su.ui_family(), ch) else su.face_for_text(ch)
+        if out and out[-1][0] == face:
+            out[-1][1] += ch
+        else:
+            out.append([face, ch])
+    return tuple((f, r) for f, r in out)
