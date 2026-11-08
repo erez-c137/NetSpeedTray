@@ -159,6 +159,92 @@ def test_only_the_languages_font_files_are_loaded(lang):
     assert out["widget"] == base[0] and out["icons"] == base[1]
 
 
+# The Monitor window (every tab) adds no face. Settings adds two, and only these, while it is open:
+#  - Nirmala UI: the Language list names each language in its own script; laying the list out measures
+#    its last row, "বাংলা" (the other native names' faces load only when the list is opened);
+#  - MS UI Gothic: the arrow-style buttons show ▴▾ △▽ ▵▿ ⇑⇓, which neither Segoe UI Variable nor
+#    Segoe Fluent Icons has, in the face the widget draws those presets in.
+SETTINGS_FACES = {"Nirmala UI", "MS UI Gothic"}
+
+_APP_PROBE = r"""
+import json, os, sys, psutil
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt, QTimer, QEventLoop
+app = QApplication(sys.argv[:1])
+lang = sys.argv[1]
+from netspeedtray import constants
+from netspeedtray.utils import styles as su
+from netspeedtray.utils.config import ConfigManager
+i18n = constants.i18n.get_i18n(lang)
+app.setLayoutDirection(Qt.LayoutDirection.RightToLeft if i18n.is_rtl else Qt.LayoutDirection.LeftToRight)
+if hasattr(su, "apply_ui_language"):
+    su.apply_ui_language(app, i18n.language)
+else:
+    su.apply_script_font_fallbacks(i18n.language)
+from netspeedtray.core import startup_manager as _sm          # never touch the Run key
+_sm.StartupManager._set_startup_registry = lambda self, enable: None
+_sm._clear_startup_approved = lambda name: None
+from netspeedtray.core import shutdown_channel as _sc
+_sc.arm_window = lambda hwnd: True
+from netspeedtray.views.widget import NetworkSpeedWidget
+app.setQuitOnLastWindowClosed(False)
+cfg = ConfigManager().load()
+cfg["language"] = lang
+cfg["check_for_updates"] = False
+w = NetworkSpeedWidget(taskbar_height=40, config=cfg, i18n=i18n)
+
+
+def pump(s):
+    loop = QEventLoop(); QTimer.singleShot(int(s * 1000), loop.quit); loop.exec()
+
+
+def files():
+    return sorted({os.path.basename(m.path) for m in psutil.Process().memory_maps()
+                   if m.path.lower().endswith((".ttf", ".ttc", ".otf"))})
+
+
+out = {}
+w.open_monitor_window(); pump(1.5)
+for tab in range(3):
+    try:
+        w.monitor_window._tab_bar.setCurrentIndex(tab); pump(0.6)
+    except Exception:
+        pass
+out["monitor"] = files()
+w.monitor_window.close(); pump(0.5)
+w.show_settings(); pump(1)
+for r in range(w.settings_dialog.sidebar.count()):
+    w.settings_dialog.sidebar.setCurrentRow(r); pump(0.3)
+out["settings"] = files()
+print(json.dumps(out), flush=True)
+os._exit(0)
+"""
+
+
+@pytest.mark.parametrize("lang", sorted(I18nStrings.LANGUAGE_MAP))
+def test_the_monitor_and_settings_load_only_the_faces_they_show(lang, tmp_path):
+    env = dict(os.environ, QT_QPA_PLATFORM="windows", PYTHONPATH=str(SRC), PYTHONIOENCODING="utf-8",
+               APPDATA=str(tmp_path))     # an isolated config / database, never the user's
+    res = subprocess.run([sys.executable, "-c", _APP_PROBE, lang], env=env, capture_output=True, text=True,
+                         encoding="utf-8", timeout=240)
+    assert res.returncode == 0, res.stderr[-2000:]
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    installed = _probe("en_US")["installed"]
+    if not installed["Segoe UI Variable"] or not installed["Segoe Fluent Icons"]:
+        pytest.skip("the Windows 11 fonts are not installed here")
+    extra = LANGUAGE_FACE.get(lang)
+    if extra and not installed.get(extra, True):
+        pytest.skip(f"{extra} is not installed here")
+    base = {"Segoe UI Variable", "Segoe Fluent Icons"} | ({extra} if extra else set())
+    for stage, expected in (("monitor", base), ("settings", base | SETTINGS_FACES)):
+        found = out[stage]
+        assert len(found) < 40, f"{lang} {stage}: {len(found)} font files mapped - Qt loaded every family"
+        owners = _families_of(found, sorted(expected, key=len, reverse=True))
+        stray = sorted(f for f, fam in owners.items() if fam is None)
+        assert not stray, f"{lang} {stage}: font files of faces it doesn't need: {stray}"
+        assert set(owners.values()) == expected, f"{lang} {stage}: {sorted(set(owners.values()))}"
+
+
 # Left-to-right Wi-Fi names a known face covers cluster by cluster take the widget's known-face runs:
 # only their faces load, not every family (until rc.7 any name the widget face lacked took Qt's path).
 _SSIDS = {"บ้าน WiFi": "Leelawadee UI", "我的网络 5G": "Microsoft YaHei UI",

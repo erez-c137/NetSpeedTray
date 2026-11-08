@@ -20,7 +20,7 @@ from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont, QPaintEvent, QPainter, QColor
 from netspeedtray.utils.styles import (
     toggle_style, slider_style, font as token_font, semantic_colors, get_accent_color,
-    timeline_pills_style, prefers_reduced_motion, is_dark_mode, ui_font, ui_family_css, icon_font_family, symbol_face,
+    timeline_pills_style, prefers_reduced_motion, is_dark_mode, ui_font, ui_family_css, icon_font_family, symbol_face, set_ui_text, face_for_text,
 )
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray import constants
@@ -663,7 +663,8 @@ class SettingCard(QFrame):
         self._title_label.setWordWrap(True)
         text_col.addWidget(self._title_label)
         if description:
-            self._desc_label = QLabel(description)
+            self._desc_label = QLabel()
+            set_ui_text(self._desc_label, description)
             self._desc_label.setFont(token_font(tokens.TYPE_CAPTION))
             self._desc_label.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
             self._desc_label.setWordWrap(True)
@@ -763,7 +764,7 @@ class SettingCard(QFrame):
         """Swap the muted description (only for a card built with one)."""
         label = getattr(self, "_desc_label", None)
         if label is not None:
-            label.setText(text)
+            set_ui_text(label, text)   # e.g. LHM status "Options → ...": arrows not in every UI face
         for w in self._named:
             w.setAccessibleDescription(str(text or "").strip())
         if self._control is not None:
@@ -995,7 +996,7 @@ class SettingExpander(QWidget):
     def set_description(self, text: str) -> None:
         """Swap the muted header description (only for an expander built with one)."""
         if self._desc_label is not None:
-            self._desc_label.setText(text)
+            set_ui_text(self._desc_label, text)
         for w in self._named + ([] if self._has_toggle else [self._header]):
             w.setAccessibleDescription(str(text or "").strip())
 
@@ -1286,6 +1287,14 @@ class ArrowStylePicker(QWidget):
             crow.addWidget(lbl)
             crow.addWidget(edit)
         crow.addStretch(0)
+        # The placeholders ↑ ↓ (and the custom arrows typed here) are not in every UI face (Bengali's
+        # Nirmala UI): these two fields draw in a known face that has them.
+        arrow_face = face_for_text("↑↓")
+        if arrow_face:
+            for edit in (self._up_edit, self._down_edit):
+                f = QFont(edit.font())
+                f.setFamily(arrow_face)
+                edit.setFont(f)
         self._custom_row.setVisible(False)
         root.addWidget(self._custom_row)   # was orphaned after `return` in _tr (dead code) - the custom
         #                                    arrow row never entered the layout, so "Custom" did nothing.

@@ -291,7 +291,7 @@ class StatTile(ClickableCard):
     def set(self, value_text: str, series: List[float],
             vmax: Optional[float] = None, sub_text: str = "", vmin: float = 0.0) -> None:
         self._value.setText(value_text)
-        self._sub.setText(sub_text or " ")   # keep a blank line so the tile height never changes
+        su.set_ui_text(self._sub, sub_text or " ")   # keep a blank line so the tile height never changes
         self._spark.set_series(series, vmax, vmin)
 
     def set_label(self, text: str) -> None:
@@ -372,7 +372,7 @@ class NetworkHero(ClickableCard):
         block = QVBoxLayout()
         block.setContentsMargins(0, 0, 0, 0)
         block.setSpacing(0)
-        cap = QLabel(f"<span style='color:{color};'>{arrow}</span> {word}")
+        cap = QLabel(f"<span style='color:{color};'>{su.ui_html(arrow)}</span> {su.ui_html(word)}")
         cap.setFont(su.font(tokens.TYPE_CAPTION))
         cap.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         val = QLabel("-")
@@ -393,7 +393,7 @@ class NetworkHero(ClickableCard):
         # the baseline keeps its detail while the peak still reaches the top of the scale.
         self._spark.set_dual(down_series, up_series, self._up_color, vmax=None,
                              scale_label=scale_label, curve=0.5)
-        self._sub.setText(sub_text)
+        su.set_ui_text(self._sub, sub_text)   # "avg ↓ ... ↑ ...": arrows not in every UI face
         self._sub.setVisible(bool(sub_text))
 
     def set_latency(self, html: str) -> None:
@@ -466,7 +466,7 @@ class UsageTile(QFrame):
 
         # When no cap is set, a discoverable one-click hint to configure one (Settings → Network).
         hint = self._tr("USAGE_SET_LIMIT_HINT", "Set a monthly limit")
-        self._cap_hint = QLabel(f"<a href='#' style='color:{c['accent']}; text-decoration:none;'>{hint} →</a>")
+        self._cap_hint = QLabel(f"<a href='#' style='color:{c['accent']}; text-decoration:none;'>{su.ui_html(hint + ' →')}</a>")
         self._cap_hint.setFont(su.font(tokens.TYPE_CAPTION))
         self._cap_hint.setCursor(Qt.CursorShape.PointingHandCursor)
         self._cap_hint.setStyleSheet("background: transparent;")
@@ -477,7 +477,7 @@ class UsageTile(QFrame):
         self._cap_hint.linkActivated.connect(lambda _: self.set_cap_requested.emit())
         # #334: the per-day / month / year table, always offered (with or without a cap).
         hist = self._tr("USAGE_HISTORY_LINK", "Usage by day")
-        self._history_link = QLabel(f"<a href='#' style='color:{c['accent']}; text-decoration:none;'>{hist} →</a>")
+        self._history_link = QLabel(f"<a href='#' style='color:{c['accent']}; text-decoration:none;'>{su.ui_html(hist + ' →')}</a>")
         self._history_link.setFont(su.font(tokens.TYPE_CAPTION))
         self._history_link.setCursor(Qt.CursorShape.PointingHandCursor)
         self._history_link.setStyleSheet("background: transparent;")
@@ -547,8 +547,8 @@ class UsageTile(QFrame):
         2.2, a failed read): the line then only says "This PC only", never a guessed percentage."""
         if not isinstance(period_start, datetime):
             period_start = None
-        self._today[1].setText(self._fmt_pair(today))
-        self._month[1].setText(self._fmt_pair(month))
+        su.set_ui_text(self._today[1], self._fmt_pair(today))
+        su.set_ui_text(self._month[1], self._fmt_pair(month))
         self._month_name.setText(self._tr("USAGE_THIS_PERIOD_LABEL", "This period") if period_start
                                  else self._tr("USAGE_THIS_MONTH_LABEL", "This Month"))
         # D5: the rows are recorded history; when part of it was estimated from speeds saved before
@@ -569,8 +569,8 @@ class UsageTile(QFrame):
             days_in_month = (nxt - period_start.date()).days
         m_up, m_down = month
         avg = (m_up / day, m_down / day)
-        self._avgday[1].setText(self._fmt_pair(avg))
-        self._proj[1].setText(self._fmt_pair((avg[0] * days_in_month, avg[1] * days_in_month)))
+        su.set_ui_text(self._avgday[1], self._fmt_pair(avg))
+        su.set_ui_text(self._proj[1], self._fmt_pair((avg[0] * days_in_month, avg[1] * days_in_month)))
 
         if cap is None:
             self._cap_bar.setVisible(False)

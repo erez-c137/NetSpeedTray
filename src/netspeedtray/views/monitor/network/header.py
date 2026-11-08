@@ -394,7 +394,7 @@ class NetworkHeader(QWidget):
         name = QLabel(label)
         name.setFont(su.font(tokens.TYPE_CAPTION))
         name.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        value = QLabel(f"{glyph} -")     # seed the populated shape so the first emit only swaps the number
+        value = su.ui_label(f"{glyph} -")   # seed the populated shape; ↑ ↓ are not in every UI face
         value.setFont(su.font(tokens.TYPE_SUBTITLE))
         value.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         col.addWidget(name)
@@ -411,8 +411,8 @@ class NetworkHeader(QWidget):
                    reconstructed: bool = False) -> None:
         dv, du = format_data_size(down_bytes, self._i18n, precision=1)
         uv, uu = format_data_size(up_bytes, self._i18n, precision=1)
-        self._down[1].setText(f"↓ {self._fmt(dv)} {du}")
-        self._up[1].setText(f"↑ {self._fmt(uv)} {uu}")
+        su.set_ui_text(self._down[1], f"↓ {self._fmt(dv)} {du}")
+        su.set_ui_text(self._up[1], f"↑ {self._fmt(uv)} {uu}")
         self._note_wanted = bool(reconstructed) and bool(self._history_note.full_text())
         if not self._note_wanted or not self.isVisible():
             # Shown again on demand; _fit (via _refit / showEvent) trims it to the room the band has.

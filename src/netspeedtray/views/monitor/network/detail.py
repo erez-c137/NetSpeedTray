@@ -63,9 +63,7 @@ class ConnectionDetailPanel(QWidget):
         self._body = QPlainTextEdit()
         self._body.setReadOnly(True)
         self._body.setFrameShape(QPlainTextEdit.Shape.NoFrame)
-        mono = QFont(su.mono_family(), 9)   # ONE installed mono face: a family list loads every family
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        self._body.setFont(mono)
+        self._body_face = None   # set with the first text (_set_body): no face loads until the panel shows one
         self._body.setStyleSheet(
             f"QPlainTextEdit {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
             f" border-radius: {tokens.RADIUS_CONTROL}px; padding: 8px; }}")
@@ -110,6 +108,17 @@ class ConnectionDetailPanel(QWidget):
                        reset_scroll=True)
 
     def _set_body(self, text: str, reset_scroll: bool = False) -> None:
+        # ONE installed mono face (a family list loads every family) - for text it has all of; the section
+        # headings are localized, and a Japanese "Talking to:" in Cascadia Mono would make Qt search every
+        # installed family for its glyphs, so such text is drawn in the UI face instead.
+        from netspeedtray.utils.font_runs import family_covers
+        face = su.mono_family() if family_covers(su.mono_family(), text) else su.ui_family()
+        if face != self._body_face:
+            self._body_face = face
+            body_font = QFont(face, 9)
+            if face == su.mono_family():
+                body_font.setStyleHint(QFont.StyleHint.Monospace)
+            self._body.setFont(body_font)
         bar = self._body.verticalScrollBar()
         pos = 0 if reset_scroll else bar.value()
         self._body.setPlainText(text)

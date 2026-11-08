@@ -56,7 +56,7 @@ class BusiestAppsCard(QFrame):
         self._title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         head.addWidget(self._title)
         head.addStretch(1)
-        more = QLabel(self._tr("MONITOR_VIEW_ALL_APPS", "All apps →"))
+        more = su.ui_label(self._tr("MONITOR_VIEW_ALL_APPS", "All apps →"))   # → not in every UI face
         more.setFont(su.font(tokens.TYPE_CAPTION))
         more.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         head.addWidget(more)

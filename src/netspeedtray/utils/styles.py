@@ -246,11 +246,16 @@ def ui_font(point_size: Optional[float] = None, pixel_size: Optional[int] = None
     return f
 
 
-def ui_html(text: str) -> str:
-    """``text`` as escaped rich text in which every run of characters the UI face lacks - the ↑ ↓ →
-    arrows in Nirmala UI (Bengali) - is a span in the first of Segoe UI Variable / Segoe UI that has
-    them: one known face, so Qt never searches its fallback chain for them (which loads every installed
-    family). A character neither has stays in the UI face (Qt's own fallback, as before)."""
+# A run in another face starts with this invisible Latin letter. Qt gives a script-neutral character
+# (an arrow, a space) the script of its neighbours, and a face that doesn't support that script's
+# writing system is passed over for the whole run - Qt then searches every installed family: "→"
+# between Bengali words, drawn in Segoe UI Variable, is a BENGALI arrow to Qt and loaded ~850 font
+# files. After a Latin letter the run is Latin, which Segoe UI Variable supports. Screen readers get
+# the plain text (set_ui_text sets the accessible name).
+_LATIN_ANCHOR = "<span style=\"font-size:1px; color:transparent;\">l</span>"
+
+
+def _face_runs(text: str, escape: bool) -> str:
     import html
     from netspeedtray.utils.font_runs import family_covers
     base = ui_family()
@@ -258,9 +263,9 @@ def ui_html(text: str) -> str:
 
     def flush():
         if run:
-            esc = html.escape(run, quote=False)
+            esc = html.escape(run, quote=False) if escape else run
             out.append(esc if run_face is None else
-                       "<span style=\"font-family:'%s';\">%s</span>" % (run_face, esc))
+                       "<span style=\"font-family:'%s';\">%s%s</span>" % (run_face, _LATIN_ANCHOR, esc))
 
     for ch in text:
         face = None
@@ -272,7 +277,25 @@ def ui_html(text: str) -> str:
             run, run_face = "", face
         run += ch
     flush()
-    return "".join(out).replace("\n", "<br>")
+    return "".join(out)
+
+
+def ui_html(text: str) -> str:
+    """Plain ``text`` as rich text in which every run of characters the UI face lacks - the ↑ ↓ →
+    arrows in Nirmala UI (Bengali) - is a span in the first of Segoe UI Variable / Segoe UI that has
+    them: one known face, so Qt never searches its fallback chain for them (which loads every installed
+    family). A character neither has stays in the UI face (Qt's own fallback, as before). Spaces and
+    line breaks are kept as in plain text (white-space: pre-wrap)."""
+    return "<span style=\"white-space:pre-wrap;\">%s</span>" % _face_runs(text, escape=True)
+
+
+def ui_rich(markup: str) -> str:
+    """``ui_html`` for text that already is rich text: only the text between tags gets the spans."""
+    import re
+    if not needs_ui_html(re.sub(r"<[^>]*>", "", markup)):
+        return markup
+    return "".join(part if part.startswith("<") else _face_runs(part, escape=False)
+                   for part in re.split(r"(<[^>]*>)", markup))
 
 
 def needs_ui_html(text: str) -> bool:
@@ -308,10 +331,22 @@ def symbol_face(text: str) -> Optional[str]:
     lacks it (utils/font_runs' choice, so a preview looks like the taskbar) - None when the UI face has it
     all, or no single known face does."""
     from netspeedtray.utils import font_runs
+    if not needs_ui_html(text):
+        return None
+    if font_runs.family_covers(style_constants.FONT_FAMILY_VARIABLE, text):
+        return font_runs.resolve_family(style_constants.FONT_FAMILY_VARIABLE)   # the widget's face, loaded
     runs = font_runs.text_runs(QFont(ui_family()), text)
     if len(runs) == 1 and runs[0][0] not in (None, font_runs.QT_PATH):
         return runs[0][0]
     return None
+
+
+def ui_label(text: str, parent=None):
+    """A QLabel showing ``text`` through set_ui_text."""
+    from PyQt6.QtWidgets import QLabel
+    label = QLabel(parent)
+    set_ui_text(label, text)
+    return label
 
 
 def set_ui_text(label, text: str) -> None:
@@ -321,7 +356,12 @@ def set_ui_text(label, text: str) -> None:
     if needs_ui_html(text):
         label.setTextFormat(Qt.TextFormat.RichText)
         label.setText(ui_html(text))
+        label.setAccessibleName(text)   # the words, without the run markup's anchor letter
+        label.setProperty("nst_ui_html", True)
     else:
+        if label.property("nst_ui_html"):
+            label.setAccessibleName("")   # back to the label's own text
+            label.setProperty("nst_ui_html", False)
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setText(text)
 
