@@ -142,13 +142,53 @@ def test_a_cluster_no_installed_face_has_gets_a_box_not_a_search(fake_fonts):
     assert box.family() == font.family() and box.styleStrategy() & QFont.StyleStrategy.NoFontMerging
 
 
-def test_layout_ranges_count_utf16_units(fake_fonts):
-    """Qt counts UTF-16 units: an emoji is two. Python-length ranges cut one in half (a box)."""
-    font = QFont("Segoe UI Variable", 9)
-    text = "Fam 👨‍👩‍👧!"
-    layout, _line = fr._layout(font, text, _runs("Segoe UI Variable", text))
-    (rng,) = layout.formats()
-    assert (rng.start, rng.length) == (4, 8)
+@pytest.mark.parametrize("text,runs", [
+    # Qt 6.10's QTextBoundaryFinder reports a boundary at every UTF-16 unit once Indic text appears,
+    # inside an emoji's surrogate pair too: rc.7 drafts drew these as boxes / "wifi" in the emoji face.
+    ("বাড়ি 🏠 ওয়াইফাই", (("Nirmala UI", "বাড়ি "), ("Segoe UI Emoji", "🏠 "), ("Nirmala UI", "ওয়াইফাই"))),
+    ("নেট🙂wifi", (("Nirmala UI", "নেট"), ("Segoe UI Emoji", "🙂"), (None, "wifi"))),
+    ("घर 🏠 नेट", (("Nirmala UI", "घर "), ("Segoe UI Emoji", "🏠 "), ("Nirmala UI", "नेट"))),
+])
+def test_indic_next_to_emoji_keeps_every_cluster_whole(fake_fonts, monkeypatch, text, runs):
+    monkeypatch.setitem(GLYPHS, "Nirmala UI", GLYPHS["Nirmala UI"] | {chr(c) for c in range(0x900, 0x980)})
+    monkeypatch.setitem(GLYPHS, "Segoe UI Emoji", GLYPHS["Segoe UI Emoji"] | {"🙂"})
+    assert _runs("Segoe UI Variable", text, "bn_BD") == runs
+
+
+def test_custom_emoji_arrows_stay_colour_emoji_as_in_rc6(fake_fonts, monkeypatch):
+    """⬆ ⬇ (U+2B06/2B07) were drawn by Qt's emoji segmentation in Segoe UI Emoji until 2.2.0."""
+    monkeypatch.setitem(GLYPHS, "Segoe UI Emoji", GLYPHS["Segoe UI Emoji"] | {"⬆", "⬇"})
+    monkeypatch.setitem(GLYPHS, "Segoe UI Symbol", GLYPHS["Segoe UI Symbol"] | {"⬆", "⬇"})
+    assert _runs("Segoe UI Variable", "⬆") == (("Segoe UI Emoji", "⬆"),)
+    assert _runs("Segoe UI Variable", "▴") == (("MS UI Gothic", "▴"),)     # not an emoji: as before
+
+
+def _cluster_boundaries(text):
+    pos, out = 0, {0}
+    for cl in fr.clusters(text):
+        pos += len(cl)
+        out.add(pos)
+    return out
+
+
+def test_fuzz_runs_rejoin_and_never_split_a_cluster(fake_fonts):
+    """Random mixed Indic + emoji + RTL + CJK + marks + controls: the runs rejoin to the text, every run
+    boundary is a cluster boundary, no cluster is split, and no cluster splits a surrogate pair."""
+    import random
+    pool = (list("aZ09 ().-_/…'") + list("שלוםבית") + list("مرحبا") + ["ক", "্", "ষ", "র", "\u200d", "\u200c",
+            "া"] + list("घर्") + list("中文家秒") + list("한글") + list("ไทย") + ["👨", "👩", "👧", "\ufe0f", "\ufe0e",
+            "\u20e3", "🏽", "🇮", "🇱", "🏠", "☕", "❤", "✓", "★", "▴", "⇑", "\u0301", "\u0308", "\U000e0067",
+            "\U000e007f", "🏴", "\u200f", "\u200e", "\u202e", "\u2066", "\U00020000", "\U0001d400", " ", "\t"])
+    rng = random.Random(487)
+    for _ in range(1500):
+        text = "".join(rng.choice(pool) for _ in range(rng.randint(1, 20)))
+        runs = _runs("Segoe UI Variable", text, rng.choice(["en_US", "bn_BD", "he_IL", "ja_JP"]))
+        assert "".join(run for _f, run in runs) == text, (ascii(text), runs)
+        bounds, pos = _cluster_boundaries(text), 0
+        for _face, run in runs:
+            pos += len(run)
+            assert pos in bounds, (ascii(text), runs)
+        assert "".join(fr.clusters(text)) == text
 
 
 def test_the_metrics_measure_runs_as_they_are_drawn(fake_fonts):
@@ -303,24 +343,22 @@ from netspeedtray.utils.widget_renderer import make_widget_font
 font = make_widget_font("Segoe UI Variable", 9, 400)
 extra = ["\u09b0\u200d\u09cd\u09af", "\u0e1a\u0e49\u0e32\u0e19", "1\ufe0f\u20e3", "\u05d1\u05d9\u05ea \U0001f3e0",
          "\u2764\ufe0f Home", "Fam \U0001f468\u200d\U0001f469\u200d\U0001f467", "\u0995\u09cd\u09b7",
-         "a\u200cb", "\u2615", "\U0001f1ee\U0001f1f1"]
+         "a\u200cb", "\u2615", "\U0001f1ee\U0001f1f1",
+         "\u09ac\u09be\u09a1\u09bc\u09bf \U0001f3e0 \u0993\u09af\u09bc\u09be\u0987\u09ab\u09be\u0987",
+         "\u09a8\u09c7\u099f\U0001f642wifi", "\u0918\u0930 \U0001f3e0 \u0928\u0947\u091f",
+         "\u05e9 \u0995\u2605", "\u2605\u0915\u05e9", "\u2b06", "\u2b07", "(\u05d1\u05d9\u05ea) 2"]
 bad = []
 for lang in I18nStrings.LANGUAGE_MAP:
     fr.set_text_language(lang)
     data = json.loads((get_locales_path() / f"{lang}.json").read_text(encoding="utf-8"))
     for text in [v for v in data.values() if isinstance(v, str) and v] + extra:
-        runs = fr.text_runs(font, text)
-        faces = {fr.run_font(font, f).family() for f, _ in runs}
-        if fr._is_rtl(text):     # as draw_text draws it: one layout, or each run on its own
-            layouts = [fr._layout(font, text, fr._bidi_runs(runs))[0]]
-        else:
-            layouts = [fr._layout(fr.run_font(font, f), run, ((None, run),))[0] for f, run in runs]
-        for gr in [g for layout in layouts for g in layout.glyphRuns()]:
+        for layout in fr.shaped_layouts(font, text):     # exactly what draw_text draws
+          for gr in layout.glyphRuns():
             raw, idx = gr.rawFont(), list(gr.glyphIndexes())
             circle = raw.glyphIndexesForString("\u25cc")
-            if 0 in idx or raw.familyName() not in faces or (
+            if 0 in idx or raw.familyName().lower() != layout.font().family().lower() or (
                     circle and circle[0] and circle[0] in idx and "\u25cc" not in text):
-                bad.append([lang, ascii(text[:40]), raw.familyName(), sorted(faces)])
+                bad.append([lang, ascii(text[:40]), raw.familyName(), layout.font().family()])
 print(json.dumps(bad))
 """
 
@@ -336,3 +374,49 @@ def test_every_locale_string_shapes_without_a_box_or_a_dotted_circle():
                          timeout=300)
     bad = json.loads(res.stdout.strip().splitlines()[-1])
     assert not bad, bad[:10]
+
+
+_MEMORY_PROBE = r"""
+import random, sys, psutil
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QImage, QPainter, QColor
+from PyQt6.QtCore import Qt
+app = QApplication(sys.argv[:1])
+from netspeedtray.utils import font_runs as fr
+from netspeedtray.utils.widget_renderer import make_widget_font
+uss = lambda: psutil.Process().memory_full_info().uss / 2**20
+font = make_widget_font("Segoe UI Variable", 9, 400)
+fm = fr.WidgetFontMetrics(font)
+img = QImage(600, 40, QImage.Format.Format_ARGB32)
+def draw(t, d=Qt.LayoutDirection.LeftToRight):
+    p = QPainter(img); p.setLayoutDirection(d); p.setFont(font); fr.draw_text(p, 100, 25, t); p.end()
+draw("12.3 Mbps"); fm.horizontalAdvance("888.8")
+fixed = ["\u09ac\u09be\u09a1\u09bc\u09bf \U0001f3e0 \u0993\u09af\u09bc\u09be\u0987", "\u05e9 \u0995\u2605", "\u2605\u0915\u05e9",
+         "\U000e007f", "\ufe0f\U000e007f\u200c", "\u05d1\u05d9\u05ea \U0001f3e0", "\u0e1a\u0e49\u0e32\u0e19", "1\ufe0f\u20e3"]
+pool = (list("aZ09 ().-_/'") + list("\u05e9\u05dc\u05d5\u05dd") + list("\u0645\u0631\u062d") + ["\u0995", "\u09cd", "\u09b7", "\u09b0",
+        "\u200d", "\u200c"] + list("\u0918\u0930\u094d\u4e2d\u6587\ud55c\u0e44\u0e22") + ["\U0001f468", "\U0001f469", "\ufe0f",
+        "\ufe0e", "\u20e3", "\U0001f3fd", "\U0001f1ee", "\U0001f3e0", "\u2615", "\u2764", "\u2605", "\u25b4", "\u21d1", "\u0301",
+        "\U000e0067", "\U000e007f", "\u200f", "\u202e", "\u2066", "\U00020000", "\U0001d400", " "])
+rng = random.Random(4873)
+texts = fixed + ["".join(rng.choice(pool) for _ in range(rng.randint(1, 16))) for _ in range(400)]
+u0 = uss()
+for fr_lang in ("en_US", "bn_BD", "he_IL"):
+    fr.set_text_language(fr_lang)
+    for t in texts:
+        fm.horizontalAdvance(t)
+        draw(t)
+        draw(t, Qt.LayoutDirection.RightToLeft)
+print(round(uss() - u0, 1))
+"""
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows fonts")
+def test_no_string_makes_qt_load_every_font_family():
+    """Measure and draw ~1200 hostile strings (Indic + emoji + RTL + symbols + controls + tags) on the
+    real Windows platform: the process grows by a few MB at most. Loading every installed family's
+    styles - the bug this module exists for - costs ~38 MB in one step on a typical PC."""
+    env = dict(os.environ, QT_QPA_PLATFORM="windows", PYTHONPATH=str(SRC), PYTHONIOENCODING="utf-8")
+    res = subprocess.run([sys.executable, "-c", _MEMORY_PROBE], env=env, capture_output=True, text=True,
+                         timeout=300)
+    grew = float(res.stdout.strip().splitlines()[-1])
+    assert grew < 20, f"USS grew {grew} MB: something made Qt load every font family"

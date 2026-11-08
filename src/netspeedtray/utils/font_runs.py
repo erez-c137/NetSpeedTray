@@ -7,7 +7,7 @@ Qt resolve its whole fallback chain on its first measurement, and so does a glyp
 Resolving that chain loads the styles of EVERY installed font family: ~38 MB on a typical PC (323
 families), process-wide and never freed. So the widget never lets Qt look for a glyph:
 
-- The text is split into grapheme clusters (QTextBoundaryFinder): a Bengali conjunct "র‍্য", an emoji
+- The text is split into grapheme clusters (``clusters``): a Bengali conjunct "র‍্য", an emoji
   ZWJ family "👨‍👩‍👧", a keycap "1️⃣" each stay whole, and each cluster gets ONE face that has every
   code point of it (ZWJ/ZWNJ and variation selectors are default-ignorable: no face needs them).
 - A cluster the widget's face has stays in it - digits, separators, arrows, Latin - so the look and the
@@ -17,10 +17,11 @@ families), process-wide and never freed. So the widget never lets Qt look for a 
   ▴ △ ▵ ⇑ arrow presets) MS UI Gothic - the faces Qt's fallback drew them in until 2.2.0.
 - A cluster NO installed face has is drawn in the widget's face with font merging OFF: a missing-glyph
   box, never the 38 MB search.
-- Left-to-right text is drawn run by run on one baseline (each run itemized on its own, as Latin a "("
-  before Bengali stays Latin). Text with right-to-left letters is laid out by ONE QTextLayout with a
-  font per run, so bidi order (a Hebrew Wi-Fi name with an emoji or a Latin word) stays Qt's; its
-  neutral runs ("(", digits) join the neighbouring script's face, which Qt itemizes them with.
+- Every run is laid out on its own, so Qt never itemizes a character with a neighbouring face's script
+  (a "(" or a "★" beside Bengali would otherwise be asked of a face that lacks Bengali, and Qt would
+  search every family). Left-to-right text: runs in order on one baseline. Text with right-to-left
+  letters: UAX #9 levels (python-bidi, already a dependency) split it into face x level segments placed
+  in visual order (rule L2), each laid out in its own direction.
 
 Each face's coverage is asked of that face alone (a no-merging QRawFont): QFontMetrics.inFont() on a
 merging font, or resolving a family name Qt doesn't know, would run the very search this avoids.
@@ -30,9 +31,8 @@ import unicodedata
 from ctypes import wintypes
 from typing import Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import QPointF, QRectF, QTextBoundaryFinder
-from PyQt6.QtGui import (QFont, QFontDatabase, QFontMetrics, QFontMetricsF, QTextCharFormat, QTextLayout,
-                         QTextOption)
+from PyQt6.QtCore import QPointF, QRectF
+from PyQt6.QtGui import QFont, QFontDatabase, QFontMetrics, QFontMetricsF, QTextLayout, QTextOption
 from PyQt6.QtCore import Qt
 
 from netspeedtray import constants
@@ -209,34 +209,56 @@ def family_covers(family: str, text: str) -> bool:
 
 # --------------------------------------------------------------------------- clusters and their faces
 
+_EXTEND_RANGES = ((0x200C, 0x200D), (0xFE00, 0xFE0F), (0x20E3, 0x20E3), (0x1F3FB, 0x1F3FF),
+                  (0xE0020, 0xE007F), (0xE0100, 0xE01EF))
+
+
+def _extends(ch: str) -> bool:
+    """Joins the cluster before it: a combining mark, ZWJ/ZWNJ, a variation selector, a keycap, a skin
+    tone, an emoji tag."""
+    if unicodedata.category(ch) in ("Mn", "Mc", "Me"):
+        return True
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in _EXTEND_RANGES)
+
+
+def _is_ri(ch: str) -> bool:
+    return 0x1F1E6 <= ord(ch) <= 0x1F1FF
+
+
 def clusters(text: str) -> List[str]:
-    """``text`` split into grapheme clusters (Unicode extended clusters, Indic conjuncts and emoji ZWJ
-    sequences included)."""
-    finder = QTextBoundaryFinder(QTextBoundaryFinder.BoundaryType.Grapheme, text)
-    # The finder counts UTF-16 units (an emoji is two); map them to Python indices.
-    index, unit = {}, 0
-    for i, ch in enumerate(text):
-        index[unit] = i
-        unit += 2 if ord(ch) > 0xFFFF else 1
-    index[unit] = len(text)
-    out, start = [], 0
-    while True:
-        pos = finder.toNextBoundary()
-        if pos < 0:
-            break
-        end = index.get(pos)
-        if end is None or end > len(text):
-            break
-        if end > start:
-            out.append(text[start:end])
-            start = end
-    if start < len(text):
-        out.append(text[start:])
+    """``text`` split into grapheme clusters, by code point: marks, ZWJ/ZWNJ, variation selectors,
+    keycaps, skin tones and tags join the cluster before them; a ZWJ joins the next character too (an
+    emoji ZWJ sequence, a Bengali "র‍্য"); a virama joins the next letter (an Indic conjunct); regional
+    indicators pair into a flag. Not Qt's QTextBoundaryFinder: on Qt 6.10 it reports a boundary at
+    every UTF-16 unit once Indic text appears - inside an emoji's surrogate pair too."""
+    out: List[str] = []
+    for ch in text:
+        if out:
+            prev = out[-1][-1]
+            if (_extends(ch)
+                    or (prev == "‍" and not ch.isspace())
+                    or (unicodedata.combining(prev) == 9 and unicodedata.category(ch).startswith("L"))
+                    or (_is_ri(ch) and len(out[-1]) == 1 and _is_ri(out[-1]))):
+                out[-1] += ch
+                continue
+        out.append(ch)
     return out
 
 
-# Emoji_Presentation=Yes below U+1F000 (the rest of the emoji are above it).
-_EMOJI_PRESENTATION = set(map(ord, "⌚⌛⏩⏪⏫⏬⏰⏳◽◾☔☕♈♉♊♋♌♍♎♏♐♑♒♓♿⚓⚡⚪⚫⚽⚾⛄⛅⛎⛔⛪⛲⛳⛵⛺⛽✅✊✋✨❌❎❓❔❕❗➕➖➗➰➿⬛⬜⭐⭕"))
+# Code points below U+1F000 that Qt's emoji segmentation drew in Segoe UI Emoji in 2.2.0 (measured on
+# Qt 6.10: every code point of U+00A0-00FF, 2000-2BFF, 3000-303F, 3290-329F laid out in the old
+# two-family widget font) - the arrows ⬆ ⬇, ☕, ⭐...
+_RC6_EMOJI_RANGES = (
+    (0x21EB, 0x21FF), (0x231A, 0x231B), (0x2328, 0x2328), (0x23CF, 0x23CF), (0x23E9, 0x23F3),
+    (0x23F8, 0x23FA), (0x25F0, 0x25FF), (0x2614, 0x2615), (0x2618, 0x2618), (0x261D, 0x261D),
+    (0x2648, 0x2653), (0x2672, 0x267F), (0x2692, 0x2697), (0x2699, 0x2699), (0x269B, 0x269C),
+    (0x26A0, 0x26AB), (0x26B0, 0x26B1), (0x26BD, 0x26BE), (0x26C4, 0x26C5), (0x26C7, 0x26C8),
+    (0x26CE, 0x26CF), (0x26D1, 0x26D1), (0x26D3, 0x26D4), (0x26DD, 0x26DD), (0x26E3, 0x26E3),
+    (0x26E9, 0x26EA), (0x26F0, 0x26F5), (0x26F7, 0x26FA), (0x26FD, 0x26FD), (0x2705, 0x2705),
+    (0x270A, 0x270D), (0x2728, 0x2728), (0x274C, 0x274C), (0x274E, 0x274E), (0x2753, 0x2755),
+    (0x2757, 0x2757), (0x2795, 0x2797), (0x27B0, 0x27B0), (0x27BF, 0x27BF), (0x2936, 0x2937),
+    (0x2B05, 0x2B07), (0x2B12, 0x2B1C), (0x2B50, 0x2B52), (0x2B55, 0x2B55))
 
 
 def _is_emoji(cluster: str) -> bool:
@@ -247,7 +269,9 @@ def _is_emoji(cluster: str) -> bool:
     if "️" in cluster or "⃣" in cluster:
         return True
     cp = ord(cluster[0])
-    return cp in _EMOJI_PRESENTATION or (0x1F000 <= cp <= 0x1FAFF and not 0x1F100 <= cp <= 0x1F1E5)
+    if cp < 0x1F000:
+        return any(lo <= cp <= hi for lo, hi in _RC6_EMOJI_RANGES)
+    return 0x1F000 <= cp <= 0x1FAFF and not 0x1F100 <= cp <= 0x1F1E5
 
 
 def _candidates(cluster: str) -> List[str]:
@@ -258,10 +282,10 @@ def _candidates(cluster: str) -> List[str]:
     general = [f.FALLBACK_FONT] + own + others + list(f.EXTRA_SCRIPT_FAMILIES)
     if _is_emoji(cluster):
         return list(f.EMOJI_FAMILIES) + list(f.SYMBOL_FAMILIES) + general
-    if unicodedata.category(cluster[0]).startswith("S"):
-        # Symbols (the arrow presets ▴ △ ▵ ⇑): the face Qt's fallback drew them in until 2.2.0, so they
-        # look exactly as before; Segoe UI Symbol where it is missing.
-        return list(f.SYMBOL_FAMILIES) + general + list(f.EMOJI_FAMILIES)
+    if not unicodedata.category(cluster[0]).startswith(("L", "M")):
+        # Symbols, punctuation, numbers (the arrow presets ▴ △ ▵ ⇑, ①, ℹ): the order Qt's fallback drew
+        # them in until 2.2.0 - Segoe UI, Tahoma, MS UI Gothic, Segoe UI Symbol - so they look as before.
+        return [f.FALLBACK_FONT] + list(f.SYMBOL_FAMILIES) + general + list(f.EMOJI_FAMILIES)
     return general + list(f.SYMBOL_FAMILIES) + list(f.EMOJI_FAMILIES)
 
 
@@ -328,93 +352,151 @@ def run_font(font: QFont, family: Optional[str]) -> QFont:
     return hit
 
 
-def _layout(font: QFont, text: str, runs: tuple, direction=None) -> Tuple[QTextLayout, object]:
-    """One QTextLayout for ``text`` with a font per run: Qt does bidi and shaping across the runs."""
-    # Every run's font, the widget's own included, has no font merging: each one's coverage is known,
-    # and a merging font in the layout makes Qt resolve a fallback chain for emoji items regardless.
-    layout = QTextLayout(text, run_font(font, NO_FACE))
-    option = QTextOption()
-    option.setWrapMode(QTextOption.WrapMode.NoWrap)
-    if direction is not None:
-        option.setTextDirection(direction)
-    layout.setTextOption(option)
-    formats, pos = [], 0
-    for face, run in runs:
-        units = len(run.encode("utf-16-le")) // 2      # Qt counts UTF-16 units: an emoji is two
-        if face not in (None, NO_FACE):
-            rng = QTextLayout.FormatRange()
-            rng.start, rng.length = pos, units
-            fmt = QTextCharFormat()
-            fmt.setFont(run_font(font, face), QTextCharFormat.FontPropertiesInheritanceBehavior.FontPropertiesAll)
-            rng.format = fmt
-            formats.append(rng)
-        pos += units
-    layout.setFormats(formats)
-    layout.beginLayout()
-    line = layout.createLine()
-    layout.endLayout()
-    return layout, line
-
-
 def _mixed(runs: tuple) -> bool:
-    return not (len(runs) == 1 and runs[0][0] is None)
+    """Needs run drawing: another face, or a default-ignorable the widget's face would be asked for."""
+    return not (len(runs) == 1 and runs[0][0] is None and not any(map(_ignorable, runs[0][1])))
 
 
 def _is_rtl(text: str) -> bool:
     return any(unicodedata.bidirectional(ch) in ("R", "AL") for ch in text)
 
 
-def _neutral(run: str) -> bool:
-    """No letters: punctuation, digits, spaces - characters Qt itemizes with the script next to them."""
-    return not any(unicodedata.category(ch).startswith("L") for ch in run)
+_BOX = "□"     # □: what a cluster no installed face has is drawn as
 
 
-def _bidi_runs(runs: tuple) -> tuple:
-    """For one QTextLayout: a neutral run of the widget's face next to another face's run joins that
-    run where the face has it. Qt itemizes "(" or "2" beside Hebrew as Hebrew, and asking the widget's
-    face for a script it lacks makes Qt search every family for one that has it (the 38 MB)."""
-    out = [list(r) for r in runs]
-    for i, (face, run) in enumerate(out):
-        if face is not None or not _neutral(run):
-            continue
-        for j in (i - 1, i + 1):
-            if 0 <= j < len(out) and out[j][0] not in (None, NO_FACE) and family_covers(out[j][0], run):
-                out[i][0] = out[j][0]
-                break
-    merged: List[list] = []
-    for face, run in out:
-        if merged and merged[-1][0] == face:
-            merged[-1][1] += run
+def _shown(font: QFont, runs: tuple) -> tuple:
+    """The runs as drawn: a cluster no installed face has becomes a box (□) in a face that has one.
+    Not the cluster itself in a no-merging font: Qt still itemizes it by its script, and asking a face
+    for a script it lacks makes Qt search every family for one (the 38 MB)."""
+    if all(face != NO_FACE and (face is not None or not any(map(_ignorable, run))) for face, run in runs):
+        return runs
+    box_face = next((resolve_family(c) for c in (constants.fonts.FALLBACK_FONT, *constants.fonts.SYMBOL_FAMILIES)
+                     if family_covers(c, _BOX)), None)
+    shown = []
+    for face, run in runs:
+        if face == NO_FACE:
+            boxes = "".join(_BOX if not c.isspace() else c for c in clusters(run))
+            shown.append((box_face, boxes) if box_face else (NO_FACE, "?" * len(boxes)))
+        elif face is None:
+            # Default-ignorables (ZWJ/ZWNJ, variation selectors, tags) shape to nothing in the widget's
+            # face - and the face lacks a glyph for some, so drawing them would make Qt search for one.
+            kept = "".join(ch for ch in run if not _ignorable(ch))
+            if kept:
+                shown.append((face, kept))
         else:
-            merged.append([face, run])
-    return tuple((face, run) for face, run in merged)
+            shown.append((face, run))
+    return tuple(shown)
+
+
+def _levels(text: str, rtl_base: bool) -> List[int]:
+    """The resolved bidi embedding level of each character (python-bidi's UAX #9, rules up to I2)."""
+    from bidi import algorithm as uax9
+    # python-bidi's UAX #9 predates the isolates (LRI RLI FSI PDI): they count as boundary neutrals here.
+    text = "".join("​" if 0x2066 <= ord(ch) <= 0x2069 else ch for ch in text)
+    try:
+        return _uax9_levels(uax9, text, rtl_base)
+    except Exception:
+        return [1 if rtl_base else 0] * len(text)
+
+
+def _uax9_levels(uax9, text: str, rtl_base: bool) -> List[int]:
+    storage = uax9.get_empty_storage()
+    storage["base_level"] = 1 if rtl_base else 0
+    storage["base_dir"] = "R" if rtl_base else "L"
+    uax9.get_embedding_levels(text, storage)
+    uax9.explicit_embed_and_overrides(storage)
+    uax9.resolve_weak_types(storage)
+    uax9.resolve_neutral_types(storage, False)
+    uax9.resolve_implicit_levels(storage, False)
+    levels = [c["level"] for c in storage["chars"]]
+    return levels if len(levels) == len(text) else [storage["base_level"]] * len(text)
+
+
+def _segments(font: QFont, text: str, runs: tuple, rtl_base: bool) -> List[Tuple[QFont, str, bool]]:
+    """Text with right-to-left letters, as (font, text, rtl) segments in VISUAL order: each run of one
+    face at one bidi level is laid out on its own, so Qt never itemizes a character with a neighbouring
+    face's script ("★" beside Bengali in MS UI Gothic would make Qt search every family)."""
+    shown = _shown(font, runs)
+    plain = "".join(run for _face, run in shown)
+    levels = _levels(plain, rtl_base)
+    segs: List[list] = []        # [face, text, level]
+    pos = 0
+    for face, run in shown:
+        for ch in run:
+            level = levels[pos]
+            pos += 1
+            if segs and segs[-1][0] == face and segs[-1][2] == level:
+                segs[-1][1] += ch
+            else:
+                segs.append([face, ch, level])
+    # UAX #9 L2: from the highest level down to the lowest odd one, reverse every sequence at or above it.
+    if segs:
+        top = max(s[2] for s in segs)
+        low = min(s[2] for s in segs)
+        low_odd = low if low % 2 else low + 1
+        for level in range(top, low_odd - 1, -1):
+            i = 0
+            while i < len(segs):
+                if segs[i][2] >= level:
+                    j = i
+                    while j < len(segs) and segs[j][2] >= level:
+                        j += 1
+                    segs[i:j] = segs[i:j][::-1]
+                    i = j
+                else:
+                    i += 1
+    return [(run_font(font, face), seg, bool(level % 2)) for face, seg, level in segs]
+
+
+def _segment_layout(face: QFont, text: str, rtl: bool) -> Tuple[QTextLayout, object]:
+    layout = QTextLayout(text, run_font(face, NO_FACE) if face.styleStrategy() != QFont.StyleStrategy.NoFontMerging
+                         else face)
+    option = QTextOption()
+    option.setWrapMode(QTextOption.WrapMode.NoWrap)
+    option.setTextDirection(Qt.LayoutDirection.RightToLeft if rtl else Qt.LayoutDirection.LeftToRight)
+    layout.setTextOption(option)
+    layout.beginLayout()
+    line = layout.createLine()
+    layout.endLayout()
+    return layout, line
 
 
 def _placed(font: QFont, runs: tuple) -> Tuple[list, float]:
     """Left-to-right text: ((font, run, x), ...) and the total advance - each run drawn on its own, so Qt
     itemizes it alone (a "(" before Bengali is Latin there, not Bengali)."""
     out, x = [], 0.0
-    for face, run in runs:
+    for face, run in _shown(font, runs):
         f = run_font(font, face)
         out.append((f, run, x))
         x += QFontMetricsF(f).horizontalAdvance(run)
     return out, x
 
 
-def _advance(font: QFont, text: str, runs: tuple) -> float:
+def _advance(font: QFont, text: str, runs: tuple, rtl_base: bool = False) -> float:
     if _is_rtl(text):
-        return _layout(font, text, _bidi_runs(runs))[1].horizontalAdvance()
+        return sum(_segment_layout(f, seg, rtl)[1].horizontalAdvance()
+                   for f, seg, rtl in _segments(font, text, runs, rtl_base))
     return _placed(font, runs)[1]
 
 
-def _draw_runs(painter, font: QFont, text: str, runs: tuple, x: float, baseline: float) -> None:
+def shaped_layouts(font: QFont, text: str, rtl_base: bool = False) -> List[QTextLayout]:
+    """The layouts draw_text draws ``text`` with, in drawing order (for tests that inspect the glyphs)."""
+    runs = text_runs(font, text)
     if _is_rtl(text):
-        layout, line = _layout(font, text, _bidi_runs(runs), painter.layoutDirection())
-        layout.draw(painter, QPointF(x, baseline - line.ascent()))
-        return
-    placed, _width = _placed(font, runs)
+        return [_segment_layout(f, seg, rtl)[0] for f, seg, rtl in _segments(font, text, runs, rtl_base)]
+    return [_segment_layout(f, run, False)[0] for f, run, _x in _placed(font, runs)[0]]
+
+
+def _draw_runs(painter, font: QFont, text: str, runs: tuple, x: float, baseline: float) -> None:
     try:
-        for f, run, dx in placed:
+        if _is_rtl(text):
+            rtl_base = painter.layoutDirection() == Qt.LayoutDirection.RightToLeft
+            for f, seg, rtl in _segments(font, text, runs, rtl_base):
+                layout, line = _segment_layout(f, seg, rtl)
+                layout.draw(painter, QPointF(x, baseline - line.ascent()))
+                x += line.horizontalAdvance()
+            return
+        for f, run, dx in _placed(font, runs)[0]:
             painter.setFont(f)
             painter.drawText(QPointF(x + dx, baseline), run)
     finally:
@@ -461,7 +543,8 @@ def draw_text_centered(painter, rect, text: str) -> None:
     rect = QRectF(rect)
     fm = QFontMetrics(font)
     baseline = rect.y() + (rect.height() - fm.height()) / 2.0 + fm.ascent()
-    x = rect.x() + (rect.width() - _advance(font, text, runs)) / 2.0
+    rtl_base = painter.layoutDirection() == Qt.LayoutDirection.RightToLeft
+    x = rect.x() + (rect.width() - _advance(font, text, runs, rtl_base)) / 2.0
     _draw_runs(painter, font, text, runs, x, baseline)
 
 

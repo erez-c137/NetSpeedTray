@@ -43,8 +43,9 @@ class FontConstants:
     # first installed face of the list that has it, never through a Qt fallback search - that loads the
     # styles of every installed family (~38 MB, never freed). Segoe UI comes first (the widget font's
     # second family until 2.2.0 - Hebrew, #194), then the UI language's own faces (Japanese and Chinese
-    # share Han code points), the other languages' faces, the symbol and emoji faces. Symbols (the ▴ △ ▵ ⇑ arrow presets) try SYMBOL_FAMILIES first: MS UI Gothic
-    # is the face Qt's fallback drew them in until 2.2.0.
+    # share Han code points), the other languages' faces, the symbol and emoji faces. Symbols,
+    # punctuation and numbers (the ▴ △ ▵ ⇑ arrow presets, ①) try Segoe UI, then SYMBOL_FAMILIES: the order
+    # Qt's fallback drew them in until 2.2.0 (measured per code point, font_runs).
     SCRIPT_FAMILIES: Final[Dict[str, tuple]] = {
         'ja_JP': ('Yu Gothic UI', 'Meiryo UI'),
         'ko_KR': ('Malgun Gothic',),
@@ -57,7 +58,7 @@ class FontConstants:
         'Leelawadee UI', 'Ebrima', 'Gadugi', 'Myanmar Text', 'Mongolian Baiti', 'Microsoft Himalaya',
         'Microsoft Yi Baiti', 'Microsoft New Tai Lue', 'Microsoft Tai Le', 'Microsoft PhagsPa',
         'Javanese Text', 'MV Boli', 'Sylfaen', 'Segoe UI Historic', 'SimSun-ExtB', 'SimSun-ExtG')
-    SYMBOL_FAMILIES: Final[tuple] = ('MS UI Gothic', 'Segoe UI Symbol')
+    SYMBOL_FAMILIES: Final[tuple] = ('Tahoma', 'MS UI Gothic', 'Segoe UI Symbol')
     EMOJI_FAMILIES: Final[tuple] = ('Segoe UI Emoji',)
     NOTE_FONT_SIZE: Final[int] = 8
 
