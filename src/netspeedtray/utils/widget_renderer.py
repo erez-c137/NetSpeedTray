@@ -7,6 +7,8 @@ supports multiple layouts (e.g., vertical, horizontal) to adapt to different UI 
 """
 
 import contextlib
+import functools
+import itertools
 import logging
 import math
 from typing import Any, Dict, Iterator, List, NamedTuple, Optional, Tuple, TYPE_CHECKING
@@ -109,31 +111,91 @@ def trend_window(num_points: int) -> int:
     return max(r.TREND_MIN_WINDOW, int(round(num_points * r.TREND_WINDOW_FRACTION)))
 
 
-def _gaussian_local_linear(y, window: int):
-    """The smoother behind trend_smooth for ONE window: centred Gaussian in the interior, slope-damped
-    local-linear fit where the window runs off the ends. Returns a numpy array."""
-    import numpy as np
-
-    n = len(y)
-    # The kernel must not be longer than the data ('same' convolution keeps len(y) only then).
-    half = min(int(window) // 2, (n - 1) // 2)
-    if half < 1:
-        return y.copy()
-    d = np.arange(-half, half + 1, dtype=float)
+@functools.lru_cache(maxsize=64)
+def _trend_kernel(half: int, damping: float) -> Tuple[Tuple[float, ...], Tuple[float, ...], Tuple[float, ...], float]:
+    """The Gaussian of one smoothing window: weights g(d), g(d)*d, g(d)*d*d for d in [-half, half]
+    (sigma = half / 2, so the cut is at +-2 sigma), and the slope ridge scaled to the full kernel's
+    own second moment."""
     sigma = max(half / 2.0, 0.5)
-    g = np.exp(-0.5 * (d / sigma) ** 2)
-    ones = np.ones(n)
+    d = [float(k) for k in range(-half, half + 1)]
+    g = tuple(math.exp(-0.5 * (x / sigma) ** 2) for x in d)
+    gd = tuple(a * x for a, x in zip(g, d))
+    gdd = tuple(a * x for a, x in zip(gd, d))
+    return g, gd, gdd, damping * math.fsum(gdd)
 
-    def corr(a, k):   # out[i] = sum_j a[j] * k(j - i), over the samples that exist
-        return np.convolve(a, k[::-1], mode="same")
 
-    s0, s1 = corr(ones, g), corr(ones, g * d)
-    # Weighted second moment plus the ridge, scaled to the full kernel's own second moment.
-    s2 = corr(ones, g * d * d) + constants.renderer.TREND_EDGE_SLOPE_DAMPING * float((g * d * d).sum())
-    t0, t1 = corr(y, g), corr(y, g * d)
+@functools.lru_cache(maxsize=1024)
+def _trend_moments(half: int, damping: float, lo: int, hi: int) -> Tuple[float, float, float]:
+    """s0, s1, s2 (+ ridge) of the kernel slice [lo, hi) - the samples that exist around one position.
+    Exact sums (fsum), so the centred kernel's s1 is exactly 0."""
+    g, gd, gdd, ridge = _trend_kernel(half, damping)
+    return math.fsum(g[lo:hi]), math.fsum(gd[lo:hi]), math.fsum(gdd[lo:hi]) + ridge
+
+
+def _trend_half(window: int, n: int) -> int:
+    # The kernel must not be longer than the data.
+    return min(int(window) // 2, (n - 1) // 2)
+
+
+def _local_linear_at(y: List[float], half: int, damping: float, i: int) -> float:
+    """The smoother at ONE position, from the raw samples (any position; used at the ends)."""
+    n = len(y)
+    g, gd, _gdd, _ridge = _trend_kernel(half, damping)
+    k = 2 * half + 1
+    lo, hi = max(0, half - i), k - max(0, i + half + 1 - n)
+    s0, s1, s2 = _trend_moments(half, damping, lo, hi)
+    ys = y[i - half + lo:i - half + hi]
+    t0, t1 = math.sumprod(ys, g[lo:hi]), math.sumprod(ys, gd[lo:hi])
     return (s2 * t0 - s1 * t1) / (s0 * s2 - s1 * s1)
 
 
+def _gaussian_local_linear(y: List[float], window: int, start: int = 0) -> List[float]:
+    """The smoother behind trend_smooth for ONE window, at positions start..n-1: a centred Gaussian
+    in the interior, a slope-damped local-linear fit where the window runs off the ends.
+
+    Per position: out = (s2*t0 - s1*t1) / (s0*s2 - s1^2), with t0 = sum(y*g), t1 = sum(y*g*d) and
+    s0/s1/s2 the same sums over a series of ones (+ the ridge on s2), each taken over the samples that
+    exist. In the interior s1 is exactly 0, so out = s2*t0 / (s0*s2) and t1 is not needed."""
+    n = len(y)
+    half = _trend_half(window, n)
+    if half < 1:
+        return y[start:]
+    damping = float(constants.renderer.TREND_EDGE_SLOPE_DAMPING)
+    g = _trend_kernel(half, damping)[0]
+    k = 2 * half + 1
+    s0, s1, s2 = _trend_moments(half, damping, 0, k)
+    out = [_local_linear_at(y, half, damping, i) for i in range(start, min(half, n))]
+    lo, hi = max(start, half), n - half
+    if lo < hi:
+        sp = math.sumprod
+        if s1 == 0.0:
+            den = s0 * s2
+            out += [s2 * sp(y[i - half:i + half + 1], g) / den for i in range(lo, hi)]
+        else:   # not reached (s1 is an exact sum of +-pairs); kept so the formula stays honest
+            out += [_local_linear_at(y, half, damping, i) for i in range(lo, hi)]
+    out += [_local_linear_at(y, half, damping, i) for i in range(max(start, hi, half), n)]
+    return out
+
+
+def _none_as_nan(fn):
+    """Feed ``fn`` the series as a list, with None read as NaN the way numpy's asarray(float) did.
+    Samples are floats in practice, so the None scan runs only when the math trips over one (a
+    TypeError) - or on a short series, where a None could pass through untouched (half < 1)."""
+    @functools.wraps(fn)
+    def wrapper(values, *args, **kwargs):
+        y = values if isinstance(values, list) else list(values)
+        if len(y) <= 64 and None in y:
+            y = [math.nan if v is None else v for v in y]
+        try:
+            return fn(y, *args, **kwargs)
+        except TypeError:
+            if None not in y:
+                raise
+            return fn([math.nan if v is None else v for v in y], *args, **kwargs)
+    return wrapper
+
+
+@_none_as_nan
 def trend_smooth(values: List[float], window: int, edge_window: Optional[int] = None) -> List[float]:
     """Smooth an evenly spaced series for the Trend mini graph: a centred Gaussian moving average,
     with a slope-damped local-linear fit where the window runs off the ends, and a short window at
@@ -156,21 +218,281 @@ def trend_smooth(values: List[float], window: int, edge_window: Optional[int] = 
     within ~5 samples at every timespan. Long timespans stay calm where it matters - many samples
     share one pixel there.
 
-    A few numpy convolutions, O(n * window): under a millisecond for 1,800 samples, and only when
-    the history changes (the caller caches the result with its polyline)."""
-    import numpy as np   # lazy, like calculate_monotone_cubic_interpolation: only with the graph on
-
-    y = np.asarray(values, dtype=float)
+    Pure Python (math.sumprod), no numpy: the widget must not load numpy (+9 MB, +40 MB commit) just
+    to draw this line. O(n * window); the renderer uses it while every sample gets a point (a few
+    hundred samples, well under a millisecond) and trend_smooth_sampled beyond that."""
+    y = values
     n = len(y)
     out = _gaussian_local_linear(y, window)
     edge = constants.renderer.TREND_EDGE_WINDOW if edge_window is None else int(edge_window)
     blend = min(int(window) // 2, n - 1)
     if edge < window and blend > 0:
-        short = _gaussian_local_linear(y, edge)
-        k = np.arange(n - 1, -1, -1, dtype=float)          # samples back from "now"
-        w = np.clip(1.0 - k / blend, 0.0, 1.0)              # 1 at "now", 0 a half-window back
-        out = (1.0 - w) * out + w * short
-    return out.tolist()
+        start = n - blend                   # samples less than `blend` back from "now" (weight > 0)
+        short = _gaussian_local_linear(y, edge, start)
+        for j, i in enumerate(range(start, n)):
+            w = 1.0 - (n - 1 - i) / blend   # 1 at "now", 0 a half-window back
+            out[i] = (1.0 - w) * out[i] + w * short[j]
+    return out
+
+
+# Bins smaller than this (strides of a few samples) are not worth their moments: the lattice sums the
+# raw kernel instead (see _gaussian_local_linear_lattice).
+_TREND_MIN_BIN = 8
+# trend_smooth_sampled checks a jump of the long smoothing (a big sample crossing the kernel's cut)
+# for the auto-fit once it is worth this fraction of the max (1% of a 36 px graph is 0.36 px; the
+# jumps below it are what a lattice point a fraction of a pixel away already sees, ~0.1 px).
+_TREND_JUMP_TOL = 0.01
+
+
+@functools.lru_cache(maxsize=32)
+def _bin_basis(b: int) -> Tuple[Tuple[float, ...], ...]:
+    """Orthogonal polynomials over a bin's b sample offsets: 1, r - c, (r - c)^2 - mean (the last one
+    only from 3 samples up - on 2 samples every weight profile is already linear)."""
+    c = (b - 1) / 2.0
+    p1 = tuple(r - c for r in range(b))
+    if b < 3:
+        return (tuple(1.0 for _ in range(b)), p1)
+    v = math.fsum(x * x for x in p1) / b
+    return (tuple(1.0 for _ in range(b)), p1, tuple(x * x - v for x in p1))
+
+
+class _LatticePlan(NamedTuple):
+    q: int                     # bin moments per bin (len(_bin_basis(b)))
+    kmin: int                  # bin offset of the bin the -half cut falls in (bins [k*b, (k+1)*b))
+    first: int                 # first kernel offset of the binned stretch: (kmin + 1) * b
+    last: int                  # first offset past it: kmax * b
+    wg: Tuple[float, ...]      # binned g (bin-basis coefficients, flattened like the moments)
+    wgd: Tuple[float, ...]     # binned g*d
+    comb_g: Tuple[float, ...]  # wg + raw g over [-half, first) + raw g over [last, half]
+
+
+@functools.lru_cache(maxsize=64)
+def _trend_lattice_plan(half: int, damping: float, b: int) -> _LatticePlan:
+    """The kernel split for _gaussian_local_linear_lattice. Bins of kernel offsets [k*b, (k+1)*b) that
+    lie strictly inside the +-half cut are projected on the bin basis (least squares: sum(y * g) over
+    such a bin = sum(bin moments * coefficients), exact when g is a quadratic over the bin - a
+    Gaussian over a bin a fraction of sigma wide is that to ~0.1%). The two bins the cut falls in
+    (g drops from e^-2 to 0 there) stay per-sample."""
+    g, gd, _gdd, _ridge = _trend_kernel(half, damping)
+    basis = _bin_basis(b)
+    norms = [math.fsum(x * x for x in p) for p in basis]
+    kmin, kmax = -((half + b - 1) // b), half // b
+    wg, wgd = [], []
+    for kk in range(kmin + 1, kmax):
+        seg_g = g[kk * b + half:kk * b + half + b]
+        seg_gd = gd[kk * b + half:kk * b + half + b]
+        for p, nrm in zip(basis, norms):
+            wg.append(math.fsum(a * x for a, x in zip(seg_g, p)) / nrm)
+            wgd.append(math.fsum(a * x for a, x in zip(seg_gd, p)) / nrm)
+    first, last = (kmin + 1) * b, kmax * b
+    comb_g = tuple(wg) + g[:first + half] + g[last + half:]
+    return _LatticePlan(len(basis), kmin, first, last, tuple(wg), tuple(wgd), comb_g)
+
+
+def _gaussian_local_linear_lattice(y: List[float], window: int, b: int) -> List[float]:
+    """_gaussian_local_linear at the lattice positions 0, b, 2b, ... only, from the series' moments
+    over bins of b samples ([l*b, (l+1)*b)), see _trend_lattice_plan; the cut bins, the data's ends
+    and the last partial bin are summed sample by sample. Cost O(n + (n / b) * (window / b)), so a
+    5,000-sample series costs about what 2 * graph-width samples did."""
+    n = len(y)
+    half = _trend_half(window, n)
+    if half < 1:
+        return y[::b]
+    damping = float(constants.renderer.TREND_EDGE_SLOPE_DAMPING)
+    g, gd, _gdd, _ridge = _trend_kernel(half, damping)
+    k = 2 * half + 1
+    if b < _TREND_MIN_BIN:
+        # Small bins save almost nothing over the raw kernel (q moments per bin of b samples), so
+        # sum the raw samples at each lattice point: exact, and as fast.
+        s0, s1, s2 = _trend_moments(half, damping, 0, k)
+        total = (n + b - 1) // b
+        m_lo, m_hi = -(-half // b), (n - half - 1) // b
+        out = [_local_linear_at(y, half, damping, m * b) for m in range(0, min(m_lo, total))]
+        if m_lo <= m_hi:
+            sp = math.sumprod
+            den = s0 * s2
+            out += [s2 * sp(y[s:s + k], g) / den for s in range(m_lo * b - half, m_hi * b - half + 1, b)]
+        out += [_local_linear_at(y, half, damping, m * b) for m in range(max(m_lo, m_hi + 1), total)]
+        return out
+    plan = _trend_lattice_plan(half, damping, b)
+    q, kmin, first, last, wg, wgd, comb_g = plan
+    sp = math.sumprod
+    nfull = n // b
+    chunks = [y[s:s + b] for s in range(0, nfull * b, b)]
+    moments = [0.0] * (q * nfull)
+    basis = _bin_basis(b)
+    moments[0::q] = list(map(sum, chunks))
+    for j in range(1, q):
+        moments[j::q] = list(map(sp, chunks, itertools.repeat(basis[j])))
+    s0, s1, s2 = _trend_moments(half, damping, 0, k)
+    den = s0 * s2
+    nb = len(wg) // q                                  # binned bins per position
+    total = (n + b - 1) // b
+    # Interior lattice points: the whole kernel inside the data and every binned bin a whole one.
+    m_lo = -(-half // b)
+    m_hi = min((n - half - 1) // b, (nfull * b - last) // b)
+    out = [0.0] * total
+
+    def general(m):
+        i = m * b
+        jlo, jhi = max(0, i - half), min(n, i + half + 1)
+        l_lo, l_hi = max(0, m + kmin + 1), min(nfull, m + kmin + 1 + nb)
+        if l_lo < l_hi:
+            cut_lo, cut_hi = l_lo * b, l_hi * b
+            a = (l_lo - (m + kmin + 1)) * q
+            mo = moments[l_lo * q:l_hi * q]
+            t0, t1 = sp(mo, wg[a:a + len(mo)]), sp(mo, wgd[a:a + len(mo)])
+        else:
+            cut_lo = cut_hi = min(max(l_lo * b, jlo), jhi)
+            t0 = t1 = 0.0
+        raw_l, raw_r = y[jlo:cut_lo], y[cut_hi:jhi]
+        gl, gh = slice(jlo - i + half, cut_lo - i + half), slice(cut_hi - i + half, jhi - i + half)
+        t0 += sp(raw_l, g[gl]) + sp(raw_r, g[gh])
+        t1 += sp(raw_l, gd[gl]) + sp(raw_r, gd[gh])
+        e0, e1, e2 = _trend_moments(half, damping, jlo - i + half, jhi - i + half)
+        return (e2 * t0 - e1 * t1) / (e0 * e2 - e1 * e1)
+
+    if m_lo <= m_hi:
+        # One sumprod per point: [its bins' moments, the raw samples of its two cut bins].
+        span, n_left, right = nb * q, first + half, last + half
+        c = s2 / den
+        mo_starts = range((m_lo + kmin + 1) * q, (m_hi + kmin + 2) * q, q)
+        y_starts = range(m_lo * b - half, m_hi * b - half + 1, b)   # i - half
+        out[m_lo:m_hi + 1] = [sp(moments[a:a + span] + y[s:s + n_left] + y[s + right:s + k], comb_g) * c
+                              for a, s in zip(mo_starts, y_starts)]
+        rest = itertools.chain(range(0, m_lo), range(m_hi + 1, total))
+    else:
+        rest = range(total)
+    for m in rest:
+        out[m] = general(m)
+    return out
+
+
+@_none_as_nan
+def trend_smooth_sampled(values: List[float], window: int, stride: int,
+                         edge_window: Optional[int] = None) -> Tuple[List[int], List[float], List[float]]:
+    """trend_smooth for a long series that the graph only samples every ``stride`` samples (~2 per
+    pixel): returns (indices, smoothed values at them, the values the auto-fit should size to).
+
+    The drawn indices are 0, stride, 2*stride, ... and the newest sample - the points the Trend paint
+    path always took from the full smoothed series. All n smoothed samples cost O(n * window), in
+    pure Python ~20 ms at 5,000 samples, so only what the graph needs is computed: the long window at
+    the drawn points (_gaussian_local_linear_lattice: exact below _TREND_MIN_BIN, from bin moments
+    above), the newest TREND_EDGE_WINDOW // 2 samples exactly, and the short "now" window exactly over
+    its whole blend zone, where the long window is interpolated (quadratic) between lattice points.
+
+    The auto-fit read the max over EVERY smoothed sample, not only the drawn ones, so the third list
+    adds what the lattice cannot see: a parabola peak at each lattice maximum, the blend zone sample
+    by sample, the exact value at each big sample's kernel-cut edge (see the jumps below), then
+    trend_scale_values's mean of the newest samples. Within ~0.15 px of the full computation on the
+    widget's graph (pinned by test_mini_graph_no_numpy)."""
+    y = values
+    n = len(y)
+    b = int(stride)
+    if b <= 1 or n < 4 * b:   # every sample drawn (or too few to bin): the full computation
+        full = trend_smooth(y, window, edge_window)
+        idx = list(range(0, n, max(1, b)))
+        if idx and idx[-1] != n - 1:
+            idx.append(n - 1)
+        return idx, (full if len(idx) == n else [full[i] for i in idx]), trend_scale_values(full)
+    window = int(window)
+    damping = float(constants.renderer.TREND_EDGE_SLOPE_DAMPING)
+    half = _trend_half(window, n)
+    lattice = _gaussian_local_linear_lattice(y, window, b)
+    edge = constants.renderer.TREND_EDGE_WINDOW if edge_window is None else int(edge_window)
+    blend = min(window // 2, n - 1)
+    blending = edge < window and blend > 0
+    h = constants.renderer.TREND_EDGE_WINDOW // 2
+    tail = n - max(1, h)                          # the newest samples: computed exactly
+    zone = min(n - blend if blending else n, tail)
+    tail_long = ([_local_linear_at(y, half, damping, i) for i in range(tail, n)] if half >= 1
+                 else y[tail:])
+
+    # The kernel's cut is a step (g = e^-2 at +-half, 0 past it), so one big sample makes the long
+    # smoothing JUMP by e^-2 * y / s0 where it enters the window (i = j - half) and where it leaves
+    # (i = j + half). A max can sit on such an edge, between lattice points, where neither a parabola
+    # nor the zone's interpolation sees it. So the edges of every sample whose jump is worth
+    # _TREND_JUMP_TOL of the max, and that could reach the max there (its lattice neighbours plus the
+    # jump), are computed exactly. Bins are screened by their max first, so ordinary traffic - where no
+    # sample is worth such a jump, or none lands near the top - costs a few C-level passes.
+    jumps = {}
+    best = max(max(lattice), max(tail_long))
+    if half >= 1 and best > 0.0:
+        s0 = _trend_moments(half, damping, 0, 2 * half + 1)[0]
+        # Jump per unit of sample value; doubled because s0 is smaller where the window is cut by the
+        # data's ends (and the local-linear fit there can weigh a sample more).
+        unit = 2.0 * _trend_kernel(half, damping)[0][0] / s0
+        thr = _TREND_JUMP_TOL * best / unit
+        jump_floor = best * (1.0 - _TREND_JUMP_TOL)
+        if max(y) >= thr:
+            starts = range(0, n, b)
+            last_m = len(lattice) - 1
+            for start, top in zip(starts, map(max, [y[s:s + b] for s in starts])):
+                if top < thr:
+                    continue
+                for r, v in enumerate(y[start:start + b]):
+                    if v < thr:
+                        continue
+                    for c in (start + r - half, start + r + half):
+                        if 0 <= c < tail and c not in jumps:
+                            m0 = c // b
+                            near = max(lattice[m0], lattice[min(m0 + 1, last_m)])
+                            if near + unit * v >= jump_floor:
+                                jumps[c] = _local_linear_at(y, half, damping, c)
+
+    # The long window over the zone: a quadratic through the lattice points (then the exact tail)
+    # around each sample - linear would cut the top off a smoothed peak by up to ~1%.
+    m_first = max(0, zone // b - 1)
+    ax = list(range(m_first * b, tail, b)) + list(range(tail, n))
+    av = lattice[m_first:m_first + len(ax) - (n - tail)] + tail_long
+    zone_vals = []
+    i, a = zone, 0
+    while i < tail:
+        while ax[a + 1] <= i:
+            a += 1
+        lo = min(a, len(ax) - 3)           # nodes ax[lo], ax[lo+1], ax[lo+2]; i in [ax[a], ax[a+1])
+        xa, xb, xc = ax[lo:lo + 3]
+        va, vb, vc = av[lo:lo + 3]
+        d1 = (vb - va) / (xb - xa)
+        d2 = ((vc - vb) / (xc - xb) - d1) / (xc - xa)
+        end = ax[a + 1]
+        zone_vals += [va + (j - xa) * (d1 + (j - xb) * d2) for j in range(i, end)]
+        i = end
+    zone_vals += tail_long
+    for c, v in jumps.items():
+        if c >= zone:
+            zone_vals[c - zone] = v
+    if blending:
+        short = _gaussian_local_linear(y, edge, zone)
+        ws = [max(0.0, 1.0 - (n - 1 - i) / blend) for i in range(zone, n)]
+        zone_vals = [(1.0 - w) * v + w * s for w, v, s in zip(ws, zone_vals, short)]
+
+    idx = list(range(0, n, b))
+    if idx[-1] != n - 1:
+        idx.append(n - 1)
+    drawn = [lattice[m] if i < zone else zone_vals[i - zone] for m, i in enumerate(idx)]
+
+    # The auto-fit: the max over every sample but the newest h, which count as their mean.
+    n_before = -(-zone // b)
+    scale = lattice[:n_before]                    # the lattice points before the zone
+    # A peak between two lattice points: a parabola through a lattice maximum and its neighbours. The
+    # first lattice point inside the zone counts as a neighbour (its long-window value; the blend
+    # weight is ~0 there), so a peak just before the zone is fitted too. A parabola rises at most
+    # (v1 - min(v0, v2)) / 4 above v1, so only points that could beat the lattice max are fitted.
+    peaks = lattice[:n_before + 1]
+    if len(peaks) >= 3:
+        top, low = max(peaks), min(peaks)
+        floor = (4.0 * top + low) / 5.0
+        for m in [m for m in range(1, min(n_before, len(peaks) - 1)) if peaks[m] >= floor]:
+            v0, v1, v2 = peaks[m - 1], peaks[m], peaks[m + 1]
+            curv = v0 - 2.0 * v1 + v2
+            if v1 >= v0 and v1 >= v2 and curv < 0.0:
+                scale.append(v1 - (v2 - v0) ** 2 / (8.0 * curv))
+    scale += [v for c, v in jumps.items() if c < zone]
+    if h < 1:
+        return idx, drawn, scale + zone_vals
+    newest = zone_vals[n - h - zone:]
+    return idx, drawn, scale + zone_vals[:n - h - zone] + [sum(newest) / len(newest)]
 
 
 def trend_scale_values(smoothed: List[float]) -> List[float]:
@@ -1580,18 +1902,27 @@ class WidgetRenderer:
         if cached is None or cached[0] != (width, height) or cached[1] != current_hash:
             num_points = len(history)
             window = trend_window(num_points)
+            # Fewer samples than pixels (a short history stretched across the graph): interpolate so
+            # the line stays a curve, not a chain of segments. Denser than that (the usual case): the
+            # smoothed series has no detail finer than a pixel, so ~2 points per pixel are plenty -
+            # and trend_smooth_sampled computes only those (plus what the auto-fit needs).
+            sparse = num_points < graph_rect.width()
+            stride = 1 if sparse else max(1, num_points // (2 * max(1, graph_rect.width())))
+
+            def smooth(values):   # (indices drawn, smoothed values there, the auto-fit's values)
+                return trend_smooth_sampled(values, window, stride)
+
             if is_hardware:
-                ups, downs = trend_smooth([d.value for d in history], window), []
+                ups, downs = smooth([d.value for d in history]), None
                 max_y, ceiling = 100.0, None
             else:
-                ups = (trend_smooth([d.upload for d in history], window)
-                       if series in ("both", "upload") else [])
-                downs = (trend_smooth([d.download for d in history], window)
-                         if series in ("both", "download") else [])
+                ups = smooth([d.upload for d in history]) if series in ("both", "upload") else None
+                downs = smooth([d.download for d in history]) if series in ("both", "download") else None
                 # No outlier clip: smoothing already took out the 1 s spikes it exists for, and on
                 # smoothed data it fired on real (smoothed) peaks and set the axis below them.
-                max_y, ceiling = self._network_graph_scale(history, config, series, trend_scale_values(ups),
-                                                           trend_scale_values(downs), outlier_clip=False)
+                max_y, ceiling = self._network_graph_scale(history, config, series,
+                                                           ups[2] if ups else [], downs[2] if downs else [],
+                                                           outlier_clip=False)
             # Always inside the graph: the auto-fit reads the edge damped (trend_scale_values) and a
             # fixed axis can be outrun, so cap at the top edge either way - never draw off the rect.
             y_cap = max_y
@@ -1601,27 +1932,19 @@ class WidgetRenderer:
             base_y = float(graph_rect.bottom())
             # QRect.bottom() is top + height - 1, so span height - 1: max_y lands ON the top row, not above it.
             h = float(max(1, graph_rect.height() - 1))
-            xs = [right_edge - (num_points - 1 - i) * step_x for i in range(num_points)]
-            # Fewer samples than pixels (a short history stretched across the graph): interpolate so
-            # the line stays a curve, not a chain of segments. Denser than that (the usual case): the
-            # smoothed series has no detail finer than a pixel, so ~2 points per pixel are plenty.
-            sparse = num_points < graph_rect.width()
-            stride = max(1, num_points // (2 * max(1, graph_rect.width())))
 
-            def polyline(values):
-                if not values:
+            def polyline(smoothed):
+                if not smoothed or not smoothed[1]:
                     return []
+                idx, values, _scale = smoothed
+                px = [right_edge - (num_points - 1 - i) * step_x for i in idx]
+                py = values
                 if sparse:
-                    px, py = calculate_monotone_cubic_interpolation(xs, values, density=5)
-                    px, py = list(px), list(py)
-                    if not px or px[-1] != xs[-1]:   # end exactly on "now"
-                        px.append(xs[-1])
+                    now_x = px[-1]
+                    px, py = calculate_monotone_cubic_interpolation(px, values, density=5)
+                    if not px or px[-1] != now_x:   # end exactly on "now"
+                        px.append(now_x)
                         py.append(values[-1])
-                else:
-                    idx = list(range(0, num_points, stride))
-                    if idx[-1] != num_points - 1:
-                        idx.append(num_points - 1)
-                    px, py = [xs[i] for i in idx], [values[i] for i in idx]
                 return [QPointF(x, base_y - (min(max(0.0, y), y_cap) / max_y) * h) for x, y in zip(px, py)]
 
             if ceiling is not None and config.graph_show_ceiling and config.graph_scale_headroom > 0:
