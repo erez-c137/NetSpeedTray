@@ -22,6 +22,21 @@ from netspeedtray.views.monitor.usage_history_sheet import (
 TODAY = date.today()
 
 
+class _FrozenDate(date):
+    """The sheet's ``date``, pinned to the module's TODAY: a suite run that crosses midnight otherwise
+    compares the import-time day with the sheet's own date.today() (failed 2026-11-09 00:0x)."""
+
+    @classmethod
+    def today(cls):
+        return TODAY
+
+
+@pytest.fixture(autouse=True)
+def _pin_today(monkeypatch):
+    import netspeedtray.views.monitor.usage_history_sheet as sheet_mod
+    monkeypatch.setattr(sheet_mod, "date", _FrozenDate)
+
+
 def _days():
     """60 days ending today; days 50-59 back are pre-2.2 (estimated)."""
     out = []
