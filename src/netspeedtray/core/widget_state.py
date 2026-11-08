@@ -103,16 +103,15 @@ class WidgetState(QObject):
         # _get_read_conn(); the worker is constructed but never started, so flush_and_wait short-circuits.
         self._read_only = read_only
 
-        # In-Memory Cache for real-time mini-graph.
-        #   * in_memory_history holds per-tick raw snapshots (a dict per entry - heavy), so it stays
-        #     sized to the *current* window.
-        #   * the mini-graph series (aggregated speed + per-stat hardware %) are light (a few floats per
-        #     entry), so they buffer the *maximum* selectable window. That way GROWING the graph timespan
-        #     reveals already-recorded samples immediately instead of waiting minutes for them to
-        #     accumulate; the renderer slices each series down to the configured window.
-        self.max_history_points: int = self._get_max_history_points()
+        # In-Memory Cache for real-time mini-graph and the Monitor's session view.
+        #   * the series (aggregated speed + per-stat hardware %) are light (a few floats per entry), so
+        #     they buffer the *maximum* selectable window. That way GROWING the graph timespan reveals
+        #     already-recorded samples immediately instead of waiting minutes for them to accumulate;
+        #     the renderer slices each series down to the configured window.
+        #   * there is deliberately NO per-interface raw series: one (a dict per tick, up to 5000
+        #     entries) lived here until 2.2.1 and nothing read it - the totals above are all any view
+        #     draws, and per-interface history comes from the database.
         self._graph_buffer_points: int = self._get_graph_buffer_points()
-        self.in_memory_history: Deque[SpeedDataSnapshot] = deque(maxlen=self.max_history_points)
         self.aggregated_history: Deque[AggregatedSpeedData] = deque(maxlen=self._graph_buffer_points)
 
         # New: Hardware history for mini-graph tabs
@@ -379,7 +378,6 @@ class WidgetState(QObject):
         poll, handed over by :meth:`add_net_sample`, never a rate. ``persist_data`` (the measured rates)
         is accepted for call-site compatibility and ignored."""
         _now = now or datetime.now()
-        self.in_memory_history.append(SpeedDataSnapshot(speeds=speed_data.copy(), timestamp=_now))
 
         if aggregated_up is not None and aggregated_down is not None:
             total_up, total_down = aggregated_up, aggregated_down
@@ -973,7 +971,7 @@ class WidgetState(QObject):
             self._net_batch = []
             self._hw_batch = []
             self.db_worker.enqueue_task("delete_history", {"include_usage": bool(include_usage)})
-        for series in (self.in_memory_history, self.aggregated_history,
+        for series in (self.aggregated_history,
                        self.cpu_history, self.gpu_history, self.ram_history):
             series.clear()
         if include_usage:
@@ -1211,17 +1209,6 @@ class WidgetState(QObject):
         scope = WidgetState.metered_scope(self.config, names)
         return self.history_reader.daily_volume(start_time, end_time or datetime.now(), scope)
 
-    def get_in_memory_speed_history(self) -> List[SpeedDataSnapshot]:
-        """
-        Retrieves the current in-memory speed history.
-        
-        Returns:
-            A list of SpeedDataSnapshot objects, each containing a dictionary of
-            per-interface speeds for a specific timestamp.
-        """
-        return list(self.in_memory_history)
-
-
     def get_aggregated_speed_history(self) -> List[AggregatedSpeedData]:
         """
         Retrieves the pre-calculated aggregated speed history.
@@ -1350,18 +1337,6 @@ class WidgetState(QObject):
                 detach_running_worker(self.db_worker)
 
 
-    def _get_max_history_points(self) -> int:
-        """Calculates max points for the in-memory deque based on config."""
-        try:
-            history_minutes = self.config.get("history_minutes", 30)
-            update_rate_sec = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
-            points = int(round((history_minutes * 60) / update_rate_sec))
-            return max(10, min(points, 5000))
-
-        except Exception as e:
-            self.logger.error("Error calculating max history points: %s. Using default.", e)
-            return 1800
-
     def _get_graph_buffer_points(self) -> int:
         """Capacity for the lightweight mini-graph series (aggregated speed + per-stat hardware %).
         Sized to the MAXIMUM selectable graph window - not the current one - so that growing the graph
@@ -1386,12 +1361,6 @@ class WidgetState(QObject):
         if not self._read_only and self._poll_ms() != old_poll:
             # Only the writer's gap threshold depends on it; stored bytes never do.
             self.db_worker.enqueue_task("set_poll_ms", self._poll_ms())
-        new_max_points = self._get_max_history_points()
-        if new_max_points != self.max_history_points:
-            self.max_history_points = new_max_points
-            self.in_memory_history = deque(self.in_memory_history, maxlen=self.max_history_points)
-            self.logger.debug("In-memory raw history capacity updated to %d points.", self.max_history_points)
-
         # The graph series buffer the *max* window, so they only resize when update_rate changes (not on
         # a timespan change - the renderer just slices a different amount from the same buffer).
         new_graph_points = self._get_graph_buffer_points()
