@@ -643,12 +643,13 @@ class AppOverlapYield(QObject):
                     self._on_change()
                 except Exception as e:
                     self._log.error("App-yield placement update failed: %s", e, exc_info=True)
-        gap = constants.layout.TRAY_EDGE_MIN_GAP_PX
-        if self._state.yielded and ctx.stepped is not None and not self._retreated:
-            # Hidden for the stepped spot (no clear fallback): back with the same room to spare as a
-            # return from the fallback, so a group end at the threshold can't flash the widget.
-            gap += constants.layout.WIDGETS_FALLBACK_RETURN_MARGIN_PX
-        reaches = group_reaches_widget(span, widget, gap)
+        # One gap to hide and to show. No return margin for a widget hidden at the stepped spot (rc.5,
+        # #373): the fallback's margin stops the widget swinging between two spots, each move changing
+        # the next judgement - hiding moves nothing (the hidden widget is judged at the same spot), so
+        # a margin only made a dead zone. A bar whose group ended 8..30 px short kept a widget hidden
+        # once one button had gone (and kept a shown one up). The two-reading confirmation still
+        # guards against an animating group.
+        reaches = group_reaches_widget(span, widget)
         if reaches is None and self._state.yielded:
             if not self._hold_until:
                 # A transient unknown on this taskbar (window storm, UIA timed out): one bounded hold,
