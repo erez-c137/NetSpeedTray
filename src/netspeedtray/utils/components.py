@@ -20,7 +20,7 @@ from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont, QPaintEvent, QPainter, QColor
 from netspeedtray.utils.styles import (
     toggle_style, slider_style, font as token_font, semantic_colors, get_accent_color,
-    timeline_pills_style, prefers_reduced_motion, is_dark_mode,
+    timeline_pills_style, prefers_reduced_motion, is_dark_mode, ui_font, ui_family_css, icon_font_family, symbol_face,
 )
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray import constants
@@ -157,12 +157,9 @@ class Win11Toggle(QWidget):
 
     def _create_label_widget(self, text: str) -> QLabel:
         label = QLabel(text, self)
-        # Segoe UI Variable is Windows 11 only; fall back to Segoe UI on Win10
-        # to avoid Qt picking an unintended serif fallback (#149).
-        font = QFont()
-        font.setFamilies(["Segoe UI Variable", "Segoe UI"])
-        font.setPointSize(10)
-        label.setFont(font)
+        # The UI face (#149: never an unintended serif fallback), ONE family - a family list loads every
+        # installed font family (utils/styles.ui_family). Small cut: what this label drew in until 2.2.0.
+        label.setFont(ui_font(point_size=10, optical="Small"))
         label.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # Ensure internal labels also have no border/outline
         label_qss = "background:transparent; border:none; outline: none;"
@@ -394,10 +391,8 @@ class Win11Slider(QWidget):
 
         layout.addWidget(self.slider)
 
-        # Win11 family with Win10 fallback (#149).
-        label_font = QFont()
-        label_font.setFamilies(["Segoe UI Variable", "Segoe UI"])
-        label_font.setPointSize(10)
+        # The UI face, one family (#149; utils/styles.ui_family). Small cut: as until 2.2.0.
+        label_font = ui_font(point_size=10, optical="Small")
         
         if self._editable:
             self._value_input = QLineEdit(self) 
@@ -927,7 +922,7 @@ class SettingExpander(QWidget):
         # Native Win11 disclosure chevron (Segoe Fluent Icons), not a Unicode triangle.
         self._chevron.setStyleSheet(
             f"color: {c['text_secondary']}; background: transparent;"
-            f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 12px;")
+            f" font-family: '{icon_font_family()}'; font-size: 12px;")   # one family (no fallback walk)
         hl.addWidget(self._chevron, 0, Qt.AlignmentFlag.AlignVCenter)
 
         if description and not header_toggle:
@@ -1070,7 +1065,7 @@ class Win11Segmented(QWidget):
                 border: 1px solid {c['card_stroke']};
                 border-radius: 0px;
                 padding: 7px 12px;
-                font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+                {ui_family_css()}
             }}
             QToolButton:hover {{ background-color: {c['subtle_fill']}; }}
             QToolButton:checked {{ background-color: {accent}; color: white; border-color: {accent}; }}
@@ -1260,6 +1255,11 @@ class ArrowStylePicker(QWidget):
                 key = "ARROW_PRESET_" + str(name).upper().replace(" ", "_")
                 btn.setToolTip(self._tr(key, name))
                 btn.setAccessibleName(self._tr(key, name))   # the visible text is just two glyphs
+                # ▴ ▾ / △ ▽ / ⇑ ⇓ are not in the UI face: draw the pair in the known face the widget
+                # draws it in (utils/font_runs), so Qt never searches every installed family for them.
+                face = symbol_face(btn.text())
+                if face:
+                    btn.setStyleSheet("font-family: '%s';" % face)
         root.addWidget(self._seg)
 
         self._custom_row = QWidget()

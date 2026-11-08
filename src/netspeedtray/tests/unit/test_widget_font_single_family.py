@@ -138,13 +138,41 @@ def test_a_cluster_no_known_face_has_goes_to_qt(fake_fonts):
 
 @pytest.mark.parametrize("text,user,runs", [
     ("HomeWiFi", True, ((None, "HomeWiFi"),)),                 # the widget's face has it all: as before
-    ("Home 😀", True, ((fr.QT_PATH, "Home 😀"),)),              # a Wi-Fi name with anything else: Qt's
-    ("บ้าน", True, ((fr.QT_PATH, "บ้าน"),)),
-    ("Home 😀", False, ((None, "Home "), ("Segoe UI Emoji", "😀"))),   # an own string: known faces
+    ("Home 😀", True, ((None, "Home "), ("Segoe UI Emoji", "😀"))),   # a covered Wi-Fi name: known faces
+    ("บ้าน", True, (("Leelawadee UI", "บ้าน"),)),
+    ("Home 😀", False, ((None, "Home "), ("Segoe UI Emoji", "😀"))),   # an own string: the same
+    ("Home‮😀", True, ((fr.QT_PATH, "Home‮😀"),)),     # a bidi override: Qt lays it out
+    ("Home⁧😀", True, ((fr.QT_PATH, "Home⁧😀"),)),     # an isolate
+    ("Home‏😀", True, ((fr.QT_PATH, "Home‏😀"),)),     # an RLM
+    ("a\x07😀", True, ((fr.QT_PATH, "a\x07😀"),)),            # a control character
 ])
-def test_user_text_is_the_widget_face_or_qt(fake_fonts, text, user, runs):
+def test_user_text_takes_known_faces_unless_only_qt_lays_it_out(fake_fonts, text, user, runs):
     fr.set_text_language("")
     assert fr.text_runs(QFont("Segoe UI Variable", 9), text, user) == runs
+
+
+def test_user_text_in_a_right_to_left_ui_is_qt_laid_out(fake_fonts, q_app):
+    """In a right-to-left UI the paragraph is right to left: Qt's bidi moves a Wi-Fi name's trailing emoji
+    to its left end, which only Qt's own layout reproduces - so such a name is drawn as 2.2.0 drew it."""
+    from PyQt6.QtCore import Qt
+    fr.set_text_language("he_IL")
+    q_app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    try:
+        assert fr.text_runs(QFont("Segoe UI Variable", 9), "Home 😀", True) == (
+            (fr.QT_PATH, "Home 😀"),)
+        assert fr.text_runs(QFont("Segoe UI Variable", 9), "HomeWiFi", True) == ((None, "HomeWiFi"),)
+        assert fr.text_runs(QFont("Segoe UI Variable", 9), "Home 😀", False) == (
+            (None, "Home "), ("Segoe UI Emoji", "😀"))                   # own strings: unchanged
+    finally:
+        q_app.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+
+
+def test_a_word_is_drawn_in_one_face(fake_fonts, monkeypatch):
+    """A word the first Han face lacks one letter of goes whole to a face that has it all - never two
+    faces inside one word."""
+    monkeypatch.setitem(GLYPHS, "Microsoft YaHei UI", GLYPHS["Microsoft YaHei UI"] | set("咖啡网"))
+    assert _runs("Segoe UI Variable", "咖啡网 5G") == (
+        ("Microsoft YaHei UI", "咖啡网 "), (None, "5G"))
 
 
 def test_rc6_font_is_the_220_widget_font(q_app):
@@ -274,22 +302,22 @@ def test_the_renderer_and_layout_measure_with_widget_metrics(q_app):
     fr.set_text_language("")
 
 
-# Modules on the widget's startup / runtime path (not Settings or the Monitor): no QFont in them may
-# carry a family list, and the renderer draws no text past draw_text.
-_WIDGET_PATH = ["utils/widget_renderer.py", "utils/widget_paint.py", "utils/styles.py", "utils/font_runs.py",
-                "core/tray_manager.py", "views/flyout.py", "views/usage_flyout.py", *sorted(
-                    str(p.relative_to(PKG)).replace("\\", "/") for p in (PKG / "views" / "widget").glob("*.py"))]
+# Every module of the app (the widget, the tray menu, flyouts, Settings, the Monitor): no QFont in them
+# may carry a family list, no stylesheet a font-family list, and the renderer draws no text past draw_text.
+_APP_MODULES = sorted(str(p.relative_to(PKG)).replace("\\", "/") for p in PKG.rglob("*.py")
+                      if "tests" not in p.relative_to(PKG).parts)
 
 
-@pytest.mark.parametrize("module", _WIDGET_PATH)
-def test_no_font_family_list_on_the_widget_path(module):
+@pytest.mark.parametrize("module", _APP_MODULES)
+def test_no_font_family_list_anywhere_in_the_app(module):
     text = (PKG / module).read_text(encoding="utf-8")
     code = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
     allowed = 1 if module == "utils/font_runs.py" else 0      # rc6_font: 2.2.0's font, on purpose
     assert code.count(".setFamilies(") == allowed, f"{module}: a family list loads every installed font family"
     assert "insertSubstitution" not in code, f"{module}: a substitute loads every installed font family"
-    if module != "utils/styles.py":    # its QSS builders style Settings and the Monitor (next PR)
-        assert not re.search(r"font-family:\s*'[^']*'\s*,", code), f"{module}: a QSS family list"
+    assert not re.search(r"font-family:\s*['\"][^'\"]*['\"]\s*,", code), f"{module}: a QSS family list"
+    assert not re.search(r"font-family:\s*['\"]Segoe UI Variable (Text|Display|Small)", code), \
+        f"{module}: an optical size is not a family Qt can match (asking for it loads every family)"
 
 
 def test_the_renderer_draws_text_only_through_draw_text():
@@ -354,7 +382,25 @@ app = QApplication(sys.argv[:1])
 from netspeedtray.constants.i18n import I18nStrings, get_locales_path
 from netspeedtray.utils import font_runs as fr
 from netspeedtray.utils.widget_renderer import make_widget_font
+from PyQt6.QtGui import QTextLayout, QTextOption
 font = make_widget_font("Segoe UI Variable", 9, 400)
+
+
+def run_layouts(font, text):
+    # the known-face runs of a string laid out exactly as draw_text draws them (one layout per run)
+    layouts = []
+    for f, run, _x in fr._placed(font, fr.text_runs(font, text))[0]:
+        layout = QTextLayout(run, f)
+        option = QTextOption()
+        option.setWrapMode(QTextOption.WrapMode.NoWrap)
+        layout.setTextOption(option)
+        layout.beginLayout()
+        layout.createLine()
+        layout.endLayout()
+        layouts.append(layout)
+    return layouts
+
+
 extra = ["\u09b0\u200d\u09cd\u09af", "\u0e1a\u0e49\u0e32\u0e19", "1\ufe0f\u20e3", "\u05d1\u05d9\u05ea \U0001f3e0",
          "\u2764\ufe0f Home", "Fam \U0001f468\u200d\U0001f469\u200d\U0001f467", "\u0995\u09cd\u09b7",
          "a\u200cb", "\u2615", "\U0001f1ee\U0001f1f1",
@@ -370,7 +416,7 @@ for lang in I18nStrings.LANGUAGE_MAP:
             if not fr._is_rtl(text):
                 bad.append([lang, ascii(text[:40]), "qt path", ""])
             continue
-        for layout in fr.run_layouts(font, text):     # exactly what draw_text draws
+        for layout in run_layouts(font, text):     # exactly what draw_text draws
           for gr in layout.glyphRuns():
             raw, idx = gr.rawFont(), list(gr.glyphIndexes())
             circle = raw.glyphIndexesForString("\u25cc")
@@ -449,14 +495,20 @@ font = make_widget_font("Segoe UI Variable", 9, 400)
 old = QFont(font)
 if font.family() == "Segoe UI Variable":
     old.setFamilies(["Segoe UI Variable", "Segoe UI"])        # the widget font until 2.2.0
-texts = ["\u05e8\u05e9\u05ea [5G] \u05d1\u05d9\u05ea", "\u05d1\u05d9\u05ea (2)",
+# Qt-path names (right-to-left letters, scripts no known face has): identical in both directions. The
+# covered left-to-right names (Thai, emoji, Bengali + emoji) take known-face runs in a left-to-right UI
+# (test_covered_user_text_*), but in a right-to-left UI they too are Qt's - identical to 2.2.0.
+qt_texts = ["\u05e8\u05e9\u05ea [5G] \u05d1\u05d9\u05ea", "\u05d1\u05d9\u05ea (2)",
          "Home \u05d1\u05d9\u05ea 2.4 \U0001f468\u200d\U0001f469\u200d\U0001f467", "\u1b05\u1b13", "\u1b83\u1b8a",
-         "\u1a20\u1a21", "\u1c00\u1c01", "\u1901\u1902", "\u0e1a\u0e49\u0e32\u0e19 WiFi", "Home \U0001f3e0 \u2764\ufe0f",
-         "\u05e7\u05e4\u05d4 \u05e0\u05ea", "Caf\u00e9 \u05e7\u05e4\u05d4", "\u09ac\u09be\u09a1\u09bc\u09bf \U0001f3e0",
+         "\u1a20\u1a21", "\u1c00\u1c01", "\u1901\u1902",
+         "\u05e7\u05e4\u05d4 \u05e0\u05ea", "Caf\u00e9 \u05e7\u05e4\u05d4",
          "\u05e9 \u0995\u2605", "\u2605\u0915\u05e9", "(\u05d1\u05d9\u05ea)", "\u0645\u0631\u062d\u0628\u0627 5G"]
+covered = ["\u0e1a\u0e49\u0e32\u0e19 WiFi", "Home \U0001f3e0 \u2764\ufe0f", "\u09ac\u09be\u09a1\u09bc\u09bf \U0001f3e0"]
 bad = []
 for d in (Qt.LayoutDirection.LeftToRight, Qt.LayoutDirection.RightToLeft):
-    for t in texts:
+    app.setLayoutDirection(d)              # the app's direction, as the widget's painter and metrics see it
+    fr.reset_caches()
+    for t in qt_texts + (covered if d == Qt.LayoutDirection.RightToLeft else []):
         imgs = []
         for which in ("old", "new"):
             img = QImage(420, 30, QImage.Format.Format_ARGB32); img.fill(QColor("white"))
@@ -475,9 +527,9 @@ print(json.dumps(bad))
 
 @pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows fonts")
 def test_user_text_draws_and_measures_exactly_as_rc6():
-    """Wi-Fi names the widget's face doesn't cover - Hebrew with brackets and digits, ZWJ emoji,
-    Balinese, Sundanese, Tai Tham, Lepcha, Limbu, Thai, Arabic - in a left-to-right and a right-to-left
-    UI: pixel-identical to 2.2.0, and the same width."""
+    """Wi-Fi names that go to Qt - Hebrew with brackets and digits, ZWJ emoji next to Hebrew, Balinese,
+    Sundanese, Tai Tham, Lepcha, Limbu, Arabic - in a left-to-right and a right-to-left UI, and every
+    name in a right-to-left UI: pixel-identical to 2.2.0, and the same width."""
     env = dict(os.environ, QT_QPA_PLATFORM="windows", PYTHONPATH=str(SRC), PYTHONIOENCODING="utf-8")
     res = subprocess.run([sys.executable, "-c", _RC6_PROBE], env=env, capture_output=True, text=True,
                          timeout=300)

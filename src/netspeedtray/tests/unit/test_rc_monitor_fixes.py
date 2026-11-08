@@ -204,7 +204,7 @@ def test_network_header_controls_never_overlap_at_minimum_width(q_app, lang):
                     assert not rects[i].intersects(rects[j]), (lang, width, i, j)
             for c in (hdr._check_btn, hdr._timeline, hdr._live):
                 assert c.width() + 1 >= c.minimumSizeHint().width(), (lang, width, type(c).__name__)
-        assert hdr._iface_btn.text().endswith("▾")   # elided label, chevron kept
+        assert "menu-indicator" in hdr._iface_btn.styleSheet()   # elided label, chevron kept (indicator)
     finally:
         box.hide()
         box.deleteLater()

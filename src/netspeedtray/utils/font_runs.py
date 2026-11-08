@@ -16,10 +16,13 @@ The widget's OWN strings - values, units, locale strings, "N/A", arrows and arro
   Qt's fallback drew them in until 2.2.0 (measured per code point);
 - each run laid out on its own with font merging off, so Qt never searches.
 
-USER text - a Wi-Fi name - is arbitrary: any script, bidi, brackets, emoji. Unless the widget's face
-draws all of it, it goes to Qt exactly as 2.2.0 drew it (rc6_font: Segoe UI as the variable face's
-second family, merging on) - and so does an own string with right-to-left letters or a cluster no
-known face has. Those cost the font load they always did; they never look different from 2.2.0.
+USER text - a Wi-Fi name - is arbitrary: any script, bidi, brackets, emoji. A left-to-right one whose
+every cluster the widget's face or a known face has (Thai, CJK, Bengali, emoji...) takes the same runs
+as an own string. One with right-to-left letters, a bidi control or a control character, and any one
+the face lacks in a right-to-left UI (where Qt's bidi reorders its neutrals), goes to Qt
+exactly as 2.2.0 drew it (rc6_font: Segoe UI as the variable face's second family, merging on) - and so
+does any text with a cluster no known face has. Those cost the font load they always did; they never
+look different from 2.2.0.
 
 Each face's coverage is asked of that face alone (a no-merging QRawFont): QFontMetrics.inFont() on a
 merging font, or resolving a family name Qt doesn't know, would run the very search this avoids.
@@ -30,7 +33,7 @@ from ctypes import wintypes
 from typing import Dict, List, Optional, Set, Tuple
 
 from PyQt6.QtCore import QPointF, QRectF
-from PyQt6.QtGui import QFont, QFontDatabase, QFontMetrics, QFontMetricsF, QTextLayout, QTextOption
+from PyQt6.QtGui import QFont, QFontDatabase, QFontMetrics, QFontMetricsF
 from PyQt6.QtCore import Qt
 
 from netspeedtray import constants
@@ -167,10 +170,6 @@ def resolve_family(name: str) -> Optional[str]:
     return hit
 
 
-def family_installed(name: str) -> bool:
-    return resolve_family(name) is not None
-
-
 _IGNORABLE = {0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xFEFF,
               0x034F, 0x180E}
 
@@ -181,16 +180,82 @@ def _ignorable(ch: str) -> bool:
     return cp in _IGNORABLE or 0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF or 0xE0000 <= cp <= 0xE007F
 
 
+_gdi_cache: Dict[Tuple[str, str], bool] = {}     # (face, character) -> GDI has a glyph for it
+_gdi_faces: Dict[str, bool] = {}                  # face -> GDI selects that very face for its name
+
+
+def _gdi_covers(name: str, chars: Set[str]) -> Optional[bool]:
+    """Whether face ``name`` has a glyph for every one of ``chars``, asked of GDI - which parses fonts in
+    the font driver host, outside this process: unlike a QRawFont, asking maps none of the face's font
+    files here (a Thai Wi-Fi name used to map the files of seven faces on its way to Leelawadee UI).
+    None when GDI can't answer for that face: it substituted another face for the name (it has no
+    "Segoe UI Variable", only its optical sizes), a character is outside the BMP (GetGlyphIndicesW
+    takes UTF-16 units), or a call failed."""
+    if any(ord(ch) > 0xFFFF for ch in chars) or _gdi_faces.get(name) is False:
+        return None
+    todo = [ch for ch in chars if (name, ch) not in _gdi_cache]
+    if todo or name not in _gdi_faces:
+        try:
+            gdi32 = ctypes.windll.gdi32
+            gdi32.CreateCompatibleDC.restype = wintypes.HDC
+            gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+            gdi32.CreateFontW.restype = wintypes.HFONT
+            gdi32.SelectObject.restype = wintypes.HGDIOBJ
+            gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+            gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+            gdi32.DeleteDC.argtypes = [wintypes.HDC]
+            gdi32.GetTextFaceW.argtypes = [wintypes.HDC, ctypes.c_int, wintypes.LPWSTR]
+            gdi32.GetGlyphIndicesW.argtypes = [wintypes.HDC, wintypes.LPCWSTR, ctypes.c_int,
+                                               ctypes.POINTER(wintypes.WORD), wintypes.DWORD]
+            dc = gdi32.CreateCompatibleDC(None)
+            if not dc:
+                return None
+            hfont = gdi32.CreateFontW(-16, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0, name[:31])   # DEFAULT_CHARSET
+            old = gdi32.SelectObject(dc, hfont) if hfont else None
+            try:
+                if name not in _gdi_faces:
+                    buf = ctypes.create_unicode_buffer(64)
+                    gdi32.GetTextFaceW(dc, 64, buf)
+                    face = buf.value.lower()
+                    _gdi_faces[name] = bool(hfont) and (face == name.lower() or face in
+                                                         (a.lower() for a in _gdi_face_names(name)))
+                if _gdi_faces[name] and todo:
+                    text = "".join(todo)
+                    idx = (wintypes.WORD * len(text))()
+                    if gdi32.GetGlyphIndicesW(dc, text, len(text), idx, 1) == 0xFFFFFFFF:  # GDI_ERROR
+                        return None
+                    for ch, glyph in zip(text, idx):
+                        _gdi_cache[(name, ch)] = glyph != 0xFFFF      # GGI_MARK_NONEXISTING_GLYPHS
+            finally:
+                if old:
+                    gdi32.SelectObject(dc, old)
+                if hfont:
+                    gdi32.DeleteObject(hfont)
+                gdi32.DeleteDC(dc)
+        except Exception:
+            return None
+    if not _gdi_faces.get(name):
+        return None
+    return all(_gdi_cache.get((name, ch), False) for ch in chars)
+
+
 def family_covers(family: str, text: str) -> bool:
     """``family`` itself has a glyph for every character of ``text`` (bar whitespace and default-ignorable
-    code points) - asked of that ONE face (a QRawFont of a no-merging QFont). A family that is not
-    installed covers nothing (and Qt's stand-in box font must never be asked: QRawFont.familyName() on
-    it crashes)."""
+    code points) - asked of that ONE face: of GDI where it can answer (``_gdi_covers``: no font file
+    mapped into this process), else of a QRawFont of a no-merging QFont. A family that is not installed
+    covers nothing (and Qt's stand-in box font must never be asked: QRawFont.familyName() on it
+    crashes)."""
     name = resolve_family(family)
     if name is None:
         return False
     raw = _raw_fonts.get(name)
     if raw is None:
+        chars = {ch for ch in text if not ch.isspace() and not _ignorable(ch)}
+        if not chars:
+            return True
+        gdi = _gdi_covers(name, chars)
+        if gdi is not None:
+            return gdi
         from PyQt6.QtGui import QRawFont
         probe = QFont(name)
         probe.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
@@ -306,35 +371,81 @@ def _is_rtl(text: str) -> bool:
     return any(unicodedata.bidirectional(ch) in ("R", "AL") for ch in text)
 
 
+# Explicit bidi controls (embeddings, overrides, isolates, marks) - they reorder text around them, which
+# only Qt's bidi does; a run-by-run layout would ignore them.
+_BIDI_CONTROLS = {0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)}
+
+
+def _rtl_ui() -> bool:
+    """The app is laid out right to left (Hebrew): a paragraph's direction is then right to left, and Qt's
+    bidi moves a left-to-right Wi-Fi name's trailing emoji or punctuation to its left end - which only
+    Qt's own layout of the whole string reproduces."""
+    try:
+        from PyQt6.QtGui import QGuiApplication
+        return QGuiApplication.layoutDirection() == Qt.LayoutDirection.RightToLeft
+    except Exception:
+        return False
+
+
+def _needs_qt_layout(text: str) -> bool:
+    """User text only Qt lays out right: right-to-left letters, a bidi control, a control character, or
+    any text the widget's face lacks in a right-to-left UI."""
+    return (_is_rtl(text) or _rtl_ui()
+            or any(ord(ch) in _BIDI_CONTROLS or unicodedata.category(ch) == "Cc" for ch in text))
+
+
+def _is_letter(cluster: str) -> bool:
+    return unicodedata.category(cluster[0]).startswith(("L", "M")) and not _is_emoji(cluster)
+
+
+def _one_face_per_word(cls: List[str], faces: List[Optional[str]]) -> List[Tuple[str, Optional[str]]]:
+    """Consecutive letters drawn in other faces than the widget's - a word - in ONE face when a known face
+    has the whole word: 我的网络 all in Microsoft YaHei UI, not 我的网 in Yu Gothic UI (the first Han face)
+    and 络 in YaHei because Yu Gothic UI lacks it."""
+    i = 0
+    while i < len(cls):
+        if faces[i] in (None, QT_PATH) or not _is_letter(cls[i]):
+            i += 1
+            continue
+        j = i
+        while j < len(cls) and faces[j] not in (None, QT_PATH) and _is_letter(cls[j]):
+            j += 1
+        if len(set(faces[i:j])) > 1:
+            word = "".join(cls[i:j])
+            face = next((resolve_family(c) for c in _candidates(cls[i]) if family_covers(c, word)), None)
+            if face is not None:
+                faces[i:j] = [face] * (j - i)
+        i = j
+    return list(zip(cls, faces))
+
+
 def text_runs(font: QFont, text: str, user: bool = False) -> tuple:
     """``text`` as ((face, run), ...): face None = the font's own face, a family name = that face,
     QT_PATH = the whole text goes to Qt as 2.2.0 drew it (rc6_font, merging on).
 
-    The widget's own strings (``user=False``: values, units, locale strings, "N/A", arrows) the face
-    lacks a glyph of split into runs of known faces; right-to-left text, or a cluster no known face has,
-    takes the Qt path. User text (``user=True``: a Wi-Fi name) is either all the widget's face or the Qt
-    path - bidi, shaping and font choice for arbitrary text stay Qt's, exactly as in 2.2.0 (and such a
-    name costs the font load it always did)."""
+    Text the face lacks a glyph of splits into runs of known faces; right-to-left text, or a cluster no
+    known face has, takes the Qt path. User text (``user=True``: a Wi-Fi name) also takes the Qt path
+    for a bidi control, a control character, or in a right-to-left UI: its layout stays Qt's, exactly
+    as in 2.2.0 (and such a name costs the font load it always did)."""
     base = font.family()
-    key = (base, _language, text, user)
+    key = (base, _language, text, user, user and _rtl_ui())
     hit = _run_cache.get(key)
     if hit is not None:
         return hit
     if (not text or (text.isascii() and family_covers(base, text))   # the readout: digits, units, Latin
             or resolve_family(base) is None):     # a face we can't see (offscreen tests): as before
         runs = ((None, text),)
-    elif _is_rtl(text):
+    elif _is_rtl(text) or (user and _needs_qt_layout(text)):
         runs = ((QT_PATH, text),)
     else:
         out: List[list] = []
-        for cl in clusters(text):
-            face = _cluster_face(base, cl)
+        for cl, face in _one_face_per_word(clusters(text), [_cluster_face(base, cl) for cl in clusters(text)]):
             if out and (face == out[-1][0] or (face is None and (cl.isspace() or all(map(_ignorable, cl))))):
                 out[-1][1] += cl                       # spaces and ignorables stay with their run
             else:
                 out.append([face, cl])
         runs = tuple((face, run) for face, run in out)
-        if any(face == QT_PATH for face, _run in runs) or (user and runs != ((None, text),)):
+        if any(face == QT_PATH for face, _run in runs):
             runs = ((QT_PATH, text),)
     if len(_run_cache) > 512:
         _run_cache.clear()
@@ -400,21 +511,6 @@ def _placed(font: QFont, runs: tuple) -> Tuple[list, float]:
         out.append((f, run, x))
         x += QFontMetricsF(f).horizontalAdvance(run)
     return out, x
-
-
-def run_layouts(font: QFont, text: str) -> List[QTextLayout]:
-    """The known-face runs of an own string as laid out for drawing (tests inspect their glyphs)."""
-    layouts = []
-    for f, run, _x in _placed(font, text_runs(font, text))[0]:
-        layout = QTextLayout(run, f if f.styleStrategy() & QFont.StyleStrategy.NoFontMerging else run_font(f, None))
-        option = QTextOption()
-        option.setWrapMode(QTextOption.WrapMode.NoWrap)
-        layout.setTextOption(option)
-        layout.beginLayout()
-        layout.createLine()
-        layout.endLayout()
-        layouts.append(layout)
-    return layouts
 
 
 class WidgetFontMetrics(QFontMetrics):
@@ -501,5 +597,7 @@ def reset_caches() -> None:
     _registry = None
     _resolved.clear()
     _raw_fonts.clear()
+    _gdi_cache.clear()
+    _gdi_faces.clear()
     _run_cache.clear()
     _font_cache.clear()

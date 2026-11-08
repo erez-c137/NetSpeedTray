@@ -27,7 +27,6 @@ class TimelineSelector(QWidget):
 
     # Display order by how a person reads time (NOT PERIOD_MAP index order).
     _ORDER = [0, 6, 7, 8, 9, 10, 2, 11, 3, 4, 5, 1]
-    _CHEVRON = "▾"   # ▾ - a down triangle that renders in normal fonts (no asset, no font mixing)
 
     def __init__(self, i18n, current_index: int = 2, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -46,11 +45,11 @@ class TimelineSelector(QWidget):
         r = tokens.RADIUS_CONTROL
         self._btn.setStyleSheet(
             f"QToolButton {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
-            f" border: 1px solid {c['card_stroke']}; border-radius: {r}px; padding: 4px 12px;"
-            f" text-align: left; }}"
+            f" border: 1px solid {c['card_stroke']}; border-radius: {r}px;"
+            f" padding: 4px {su.MENU_CHEVRON_PADDING}px 4px 12px; text-align: left; }}"
             f" QToolButton:hover {{ border-color: {c['accent']}; }}"
             f" QToolButton:focus {{ border-color: {c['accent']}; }}"
-            f" QToolButton::menu-indicator {{ image: none; width: 0; }}")   # we draw our own ▾
+            + su.menu_chevron_qss())   # the Fluent chevron reads it as a pulldown
 
         self._menu = QMenu(self._btn)
         self._menu.setStyleSheet(
@@ -90,7 +89,7 @@ class TimelineSelector(QWidget):
 
     def _sync(self) -> None:
         label = self._label(self._period_key())
-        self._btn.setText(f"{label}    {self._CHEVRON}")
+        self._btn.setText(label)
         self._btn.setAccessibleName(label)   # screen readers announce the selected window
         act = self._actions.get(self._index)
         if act is not None:

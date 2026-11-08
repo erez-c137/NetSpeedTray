@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QPushButton, QWidget
 
 from netspeedtray.utils import styles as su
@@ -54,12 +55,17 @@ class LiveToggle(QPushButton):
             self.setText("● " + self._tr("MONITOR_LIVE", "Live"))     # ● filled dot = broadcasting
             self.setToolTip(self._tr("MONITOR_PAUSE_TIP", "Pause live updates"))
             fg, border, weight = green, c["card_stroke"], "600"
+            self.setIcon(QIcon())
         else:
-            self.setText("▶ " + self._tr("MONITOR_PAUSED", "Paused"))  # ▶ play = press to resume
+            # Play = press to resume: the Fluent Play glyph as the icon, not a "▶" in the label - most
+            # UI faces lack that glyph, and Qt searched every installed family for it.
+            self.setText(self._tr("MONITOR_PAUSED", "Paused"))
             self.setToolTip(self._tr("MONITOR_RESUME_TIP", "Resume live updates"))
             fg, border, weight = c["accent"], c["accent"], "600"
+            self.setIcon(su.fluent_icon(0xE768, 12, fg))
+            self.setIconSize(QSize(12, 12))
         # accessibleName carries the STATE for screen readers; the tooltip carries the action.
-        self.setAccessibleName(self.text().replace("● ", "").replace("▶ ", ""))
+        self.setAccessibleName(self.text().replace("● ", ""))
         self.setStyleSheet(
             f"QPushButton {{ background: {c['subtle_fill']}; color: {fg}; font-weight: {weight};"
             f" border: 1px solid {border}; border-radius: {tokens.RADIUS_CONTROL}px;"

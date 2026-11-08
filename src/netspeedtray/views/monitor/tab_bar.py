@@ -90,7 +90,7 @@ class FlatTabBar(QWidget):
                 border: none;
                 border-bottom: 2px solid transparent;
                 padding: 8px 14px 6px 14px;
-                font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+                {su.ui_family_css()}
                 font-size: 14px;
             }}
             QToolButton:hover {{

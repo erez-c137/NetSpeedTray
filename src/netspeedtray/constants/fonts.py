@@ -59,6 +59,13 @@ class FontConstants:
         'Microsoft Yi Baiti', 'Microsoft New Tai Lue', 'Microsoft Tai Le', 'Microsoft PhagsPa',
         'Javanese Text', 'MV Boli', 'Sylfaen', 'Segoe UI Historic', 'SimSun-ExtB', 'SimSun-ExtG')
     SYMBOL_FAMILIES: Final[tuple] = ('Tahoma', 'MS UI Gothic', 'Segoe UI Symbol')
+    # The app UI's ONE face per language (utils/styles.ui_family): SCRIPT_FAMILIES' first installed face
+    # for those languages, Segoe UI for a right-to-left UI (#194: Segoe UI Variable has no Hebrew),
+    # else Segoe UI Variable (Windows 10: Segoe UI). Optical sizes of Segoe UI Variable (opsz axis) per
+    # style-name prefix of the type ramp: the app font and every su.font() set theirs explicitly.
+    UI_OPSZ: Final[Dict[str, float]] = {'Small': 8.0, 'Text': 10.5, 'Display': 36.0}
+    # The one monospace face (Monitor's connection details): the first installed.
+    MONO_FAMILIES: Final[tuple] = ('Cascadia Mono', 'Consolas', 'Courier New')
     EMOJI_FAMILIES: Final[tuple] = ('Segoe UI Emoji',)
     NOTE_FONT_SIZE: Final[int] = 8
 

@@ -274,11 +274,9 @@ class SettingsDialog(QDialog):
             # Page-level H1 (the native Win11 Settings header) - fixed above the scrolling content, giving
             # the page identity + the top breathing room WinUI opens with. Updated on sidebar selection.
             self._page_title = QLabel()
-            _title_font = QFont()
-            _title_font.setFamilies(["Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI"])
-            _title_font.setPixelSize(24)
-            _title_font.setWeight(QFont.Weight.DemiBold)
-            self._page_title.setFont(_title_font)
+            # The UI face's Display cut, one family ("Segoe UI Variable Display" is a cut of Segoe UI
+            # Variable - the same file -, not a family Qt can match: asking for it loads every family).
+            self._page_title.setFont(style_utils.font(("Display Semibold", 24, 600)))
             # Size + weight in the stylesheet too: the dialog's QSS sets a body font-size on every QLabel,
             # which beat setFont() and drew this H1 at 13 px (S9).
             self._page_title.setStyleSheet(

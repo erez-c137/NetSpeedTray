@@ -3,10 +3,13 @@ General Settings Page.
 """
 from typing import Dict, Any, Callable, Optional
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QWidget, QComboBox
 
 from netspeedtray import constants
 from netspeedtray.constants.update_mode import UpdateMode
+from netspeedtray.utils import styles as su
 from netspeedtray.utils.timer_utils import snap_update_rate
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, SettingCard, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
@@ -36,9 +39,19 @@ class GeneralPage(QWidget):
             getattr(self.i18n, "LANGUAGE_AUTO_DETECT", "Auto-detect (system)"), userData=None)
         for code, name in self.i18n.LANGUAGE_MAP.items():
             self.language_combo.addItem(name, userData=code)
+            # Each language's name is in its own script ("日本語", "বাংলা"): a name the UI face lacks is
+            # drawn in that language's own face, so Qt never searches every installed family for it.
+            face = su.face_for_text(name, code)
+            if face:
+                self.language_combo.setItemData(self.language_combo.count() - 1, QFont(face),
+                                                Qt.ItemDataRole.FontRole)
         # Qt defaults to 10 visible rows; we ship 14 languages plus the auto-detect row, so the
         # last entries sat below the fold with no wheel scrolling in the popup (#237).
         self.language_combo.setMaxVisibleItems(self.language_combo.count())
+        try:   # rows sized by the first one: the faces above load when the list opens, not with Settings
+            self.language_combo.view().setUniformItemSizes(True)
+        except Exception:
+            pass
         self.language_combo.currentIndexChanged.connect(self.on_change)
 
         # Name what auto-detect resolved to. Without it the row is unfalsifiable - a user whose

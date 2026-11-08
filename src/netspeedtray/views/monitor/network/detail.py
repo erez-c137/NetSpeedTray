@@ -53,7 +53,7 @@ class ConnectionDetailPanel(QWidget):
         self._close.setToolTip(self._tr("APP_ACTIVITY_CLOSE_BUTTON", "Close"))
         self._close.setStyleSheet(
             f"QToolButton {{ background: transparent; color: {c['text_secondary']};"
-            f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets';"
+            f" font-family: '{su.icon_font_family()}';"
             f" border: none; padding: 2px 6px; font-size: 12px; }}"
             f" QToolButton:hover {{ color: {c['text_primary']}; }}")
         self._close.clicked.connect(self.closed.emit)
@@ -63,9 +63,8 @@ class ConnectionDetailPanel(QWidget):
         self._body = QPlainTextEdit()
         self._body.setReadOnly(True)
         self._body.setFrameShape(QPlainTextEdit.Shape.NoFrame)
-        mono = QFont("Cascadia Mono", 9)
+        mono = QFont(su.mono_family(), 9)   # ONE installed mono face: a family list loads every family
         mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setFamilies(["Cascadia Mono", "Consolas", "Courier New", "monospace"])
         self._body.setFont(mono)
         self._body.setStyleSheet(
             f"QPlainTextEdit {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
