@@ -64,7 +64,7 @@ class WidgetMetrics:
         return up, dw
 
 
-def font_from_config(config: Dict[str, Any]) -> QFont:
+def font_from_config(config: Dict[str, Any], i18n: Any = None) -> QFont:
     """
     Build the main display QFont from a config dict - mirrors
     ``WidgetLayoutManager.set_font`` so a preview's text metrics match the live widget.
@@ -80,7 +80,7 @@ def font_from_config(config: Dict[str, Any]) -> QFont:
     else:
         weight = QFont.Weight.Normal
     from netspeedtray.utils.widget_renderer import make_widget_font
-    return make_widget_font(family, int(size), weight)
+    return make_widget_font(family, int(size), weight, i18n, config)
 
 
 def demo_metrics() -> WidgetMetrics:

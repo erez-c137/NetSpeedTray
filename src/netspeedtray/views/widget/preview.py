@@ -43,7 +43,7 @@ class PreviewWidget(QWidget):
         self._metrics: WidgetMetrics = demo_metrics()
         self._cycle_mode: str = "network_only"
         self._layout_mode: str = "horizontal"
-        self._font = font_from_config(self._config)
+        self._font = font_from_config(self._config, self.i18n)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._min_width = width
         self._min_height = height
@@ -58,7 +58,7 @@ class PreviewWidget(QWidget):
         """Apply a new config dict and repaint (rebuilds the renderer's RenderConfig + font)."""
         self._config = dict(config)
         self._renderer.update_config(self._config)
-        self._font = font_from_config(self._config)
+        self._font = font_from_config(self._config, self.i18n)
         self._fit_to_content()
         self.update()
 

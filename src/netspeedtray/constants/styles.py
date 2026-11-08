@@ -57,6 +57,8 @@ class UIStyleConstants:
     # back to plain Segoe UI at the px/weight on Win10.
     FONT_FAMILY_VARIABLE: Final[str] = "Segoe UI Variable"
     FONT_FALLBACK: Final[str] = "Segoe UI"
+    # The Fluent icon font, first installed wins (Win11, Win10) - utils/styles.icon_font_family.
+    ICON_FONT_FAMILIES: Final[tuple] = ("Segoe Fluent Icons", "Segoe MDL2 Assets")
 
     # (style_name, pixel_size, weight)
     TYPE_CAPTION: Final[tuple] = ("Small", 12, 400)               # hints, notes

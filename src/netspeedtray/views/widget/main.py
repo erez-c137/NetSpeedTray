@@ -1298,10 +1298,14 @@ class NetworkSpeedWidget(QWidget):
         clip). The badge width tracks the ACTUAL band + truncated SSID; a network change (rare) re-lays
         out. Either element being absent (alert_only on a good band, blocked SSID, band-only) shrinks it.
         """
-        from netspeedtray.utils.widget_renderer import IDENTITY_BAND_GAP_PX, identity_layout
+        from netspeedtray.utils.widget_renderer import IDENTITY_BAND_GAP_PX, identity_layout, ssid_font
         band_text, _c, _s = self._identity_presentation()
         ssid = self._identity_ssid_text()
-        total, _parts = identity_layout(fm, ssid, band_text)
+        # The name may be drawn in another face than the widget font behind ``fm`` (ssid_font).
+        font = getattr(self, "current_font", None)
+        name_font = ssid_font(font, ssid) if (isinstance(font, QFont) and ssid) else None
+        ssid_fm = QFontMetrics(name_font) if (name_font is not None and name_font is not font) else None
+        total, _parts = identity_layout(fm, ssid, band_text, ssid_fm)
         return (IDENTITY_BAND_GAP_PX + total) if total else 0
 
     def _identity_reserve_signature(self) -> object:

@@ -453,7 +453,7 @@ def test_the_default_font_is_segoe_ui_variable_at_its_text_size(q_app, name):
         assert f.family() == "Segoe UI"
         return
     assert f.family() == "Segoe UI Variable" and QFontInfo(f).family() == "Segoe UI Variable"
-    assert f.families() == ["Segoe UI Variable", "Segoe UI"]
+    assert f.families() == ["Segoe UI Variable"]     # ONE family: a list loads every installed family
     assert f.variableAxisValue(QFont.Tag.fromString("opsz")) == 10.5
     small = QFont("Segoe UI Variable", 9, 400)
     small.setVariableAxis(QFont.Tag.fromString("opsz"), 8.0)
@@ -461,18 +461,22 @@ def test_the_default_font_is_segoe_ui_variable_at_its_text_size(q_app, name):
     assert text_w < small_w, "the Text optical size did not apply"
 
 
-def test_hebrew_falls_back_to_segoe_ui_not_an_arbitrary_face(q_app):
-    """Segoe UI Variable has no Hebrew. A Hebrew Wi-Fi name in the identity badge takes its letters from
-    Segoe UI - the second family of the request, the Hebrew UI's face (#194) - so it measures like Segoe
-    UI (an arbitrary fallback drew some letters at a mismatched size)."""
+def test_hebrew_is_drawn_in_segoe_ui_not_an_arbitrary_face(q_app):
+    """Segoe UI Variable has no Hebrew. A Hebrew Wi-Fi name in the identity badge is drawn in Segoe UI -
+    the Hebrew UI's face (#194) - so it measures like Segoe UI (an arbitrary fallback drew some letters
+    at a mismatched size). Since 2.2.1 that is ssid_font's choice, not a second family of the widget
+    font (a family list makes Qt load every installed family, ~38 MB)."""
     from PyQt6.QtGui import QFontDatabase, QFontMetrics, QRawFont
+    from netspeedtray.utils.widget_renderer import ssid_font
     if "Segoe UI Variable" not in QFontDatabase.families():
         pytest.skip("Windows 10: the widget draws Segoe UI outright")
     heb = "\u05e7\u05e4\u05d4\u05e0\u05ea\u05d1\u05d9\u05ea"
     f = make_widget_font("Segoe UI Variable", 9, 400)
     assert not QRawFont.fromFont(f).supportsCharacter(heb[0])        # the variable face itself has none
+    name = ssid_font(f, heb)
+    assert name.family() == "Segoe UI"
     seg = QFont("Segoe UI", 9, 400)
-    assert QFontMetrics(f).horizontalAdvance(heb) == QFontMetrics(seg).horizontalAdvance(heb)
+    assert QFontMetrics(name).horizontalAdvance(heb) == QFontMetrics(seg).horizontalAdvance(heb)
 
 
 _NATIVE_FONT_PROBE = r"""
@@ -480,17 +484,18 @@ import json, sys
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetrics, QRawFont
 app = QApplication(sys.argv[:1])
-from netspeedtray.utils.widget_renderer import make_widget_font
+from netspeedtray.utils.widget_renderer import make_widget_font, ssid_font
 out = {"installed": "Segoe UI Variable" in QFontDatabase.families()}
 if out["installed"]:
     heb = "קפהנתבית"
     f = make_widget_font("Segoe UI Variable", 9, 400)
+    out["families"] = f.families()
     small = QFont("Segoe UI Variable", 9, 400); small.setVariableAxis(QFont.Tag.fromString("opsz"), 8.0)
     out.update(resolved=QFontInfo(f).family(),
                text_w=QFontMetrics(f).horizontalAdvance("888.8 Mbps"),
                small_w=QFontMetrics(small).horizontalAdvance("888.8 Mbps"),
                face_has_hebrew=QRawFont.fromFont(f).supportsCharacter(heb[0]),
-               heb_w=QFontMetrics(f).horizontalAdvance(heb),
+               heb_w=QFontMetrics(ssid_font(f, heb)).horizontalAdvance(heb),
                heb_segoe_w=QFontMetrics(QFont("Segoe UI", 9, 400)).horizontalAdvance(heb))
 print(json.dumps(out))
 """
@@ -499,8 +504,8 @@ print(json.dumps(out))
 @pytest.mark.skipif(not __import__("sys").platform.startswith("win"), reason="Windows fonts")
 def test_the_variable_font_on_the_native_platform():
     """The suite paints offscreen, where Qt's font database has no "Segoe UI Variable" (the widget then
-    draws Segoe UI). On the real Windows platform: the Text optical size applies (narrower than Small),
-    and Hebrew - which the variable face lacks - measures exactly as Segoe UI."""
+    draws Segoe UI). On the real Windows platform: the font is that ONE family, the Text optical size
+    applies (narrower than Small), and Hebrew - which the variable face lacks - is drawn in Segoe UI."""
     import os
     import subprocess
     import sys
@@ -511,7 +516,7 @@ def test_the_variable_font_on_the_native_platform():
     out = json.loads(res.stdout.strip().splitlines()[-1])
     if not out["installed"]:
         pytest.skip("no Segoe UI Variable on this machine (Windows 10 / Server)")
-    assert out["resolved"] == "Segoe UI Variable"
+    assert out["resolved"] == "Segoe UI Variable" and out["families"] == ["Segoe UI Variable"], out
     assert out["text_w"] < out["small_w"], out
     assert out["face_has_hebrew"] is False and out["heb_w"] == out["heb_segoe_w"], out
 

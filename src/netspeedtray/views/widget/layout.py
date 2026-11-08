@@ -73,8 +73,10 @@ class WidgetLayoutManager:
         else:
             font_weight = QFont.Weight.Normal
 
-        from netspeedtray.utils.widget_renderer import make_widget_font
-        font = make_widget_font(font_family, font_size, font_weight)   # Segoe UI Variable -> Text opsz (7a)
+        from netspeedtray.utils.widget_renderer import make_widget_font, widget_arrow_font
+        i18n = getattr(self.widget, "i18n", None)
+        # One family, per locale (Segoe UI Variable -> Text opsz, 7a): never a fallback list (~38 MB).
+        font = make_widget_font(font_family, font_size, font_weight, i18n, config)
         self.widget.setFont(font)
         self.widget.current_font = font # Update public attribute
         
@@ -98,7 +100,9 @@ class WidgetLayoutManager:
                 
             arrow_font = make_widget_font(arrow_family, arrow_size, arrow_weight)
         else:
-            arrow_font = font
+            glyphs = [config.get("arrow_up_symbol") or getattr(i18n, "UPLOAD_ARROW", ""),
+                      config.get("arrow_down_symbol") or getattr(i18n, "DOWNLOAD_ARROW", "")]
+            arrow_font = widget_arrow_font(font, glyphs, font_family, font_size, font_weight)
             
         self.arrow_metrics = QFontMetrics(arrow_font)
         # Kept for the thin-strip fit check, which re-measures them at each display scale (#322).
@@ -229,7 +233,13 @@ class WidgetLayoutManager:
                     
                     _up_glyph = self.widget.config.get("arrow_up_symbol") or self.widget.i18n.UPLOAD_ARROW
                     _down_glyph = self.widget.config.get("arrow_down_symbol") or self.widget.i18n.DOWNLOAD_ARROW
-                    arrow_width = max(self.metrics.horizontalAdvance(_up_glyph), self.metrics.horizontalAdvance(_down_glyph)) if not hide_arrows else 0
+                    # Arrows that share the main font are measured with the font that draws them: the
+                    # arrow font differs from it only where the main face has no ↑↓ (Bengali's Nirmala
+                    # UI, widget_arrow_font) - measuring them in Nirmala UI would make Qt load a fallback
+                    # (~38 MB). A separate arrow font keeps the main-font measure it has always had.
+                    _afm = (self.metrics if self.widget.config.get("use_separate_arrow_font", False)
+                            else (self.arrow_metrics or self.metrics))
+                    arrow_width = max(_afm.horizontalAdvance(_up_glyph), _afm.horizontalAdvance(_down_glyph)) if not hide_arrows else 0
                     arrow_gap = constants.renderer.ARROW_NUMBER_GAP if not hide_arrows else 0
                     unit_gap = constants.renderer.VALUE_UNIT_GAP if not hide_units else 0
 
