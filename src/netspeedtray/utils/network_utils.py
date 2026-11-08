@@ -38,8 +38,8 @@ def guid_to_friendly_name(guid: str) -> Optional[str]:
     if sys.platform != "win32":
         return None
     try:
-        import wmi
-        c = wmi.WMI()
+        from netspeedtray.utils.com_utils import import_wmi
+        c = import_wmi().WMI()
         for iface in c.Win32_NetworkAdapter():
             # NetConnectionID is the friendly name, GUID is in the GUID property
             if hasattr(iface, 'GUID') and iface.GUID and iface.GUID.lower() == guid.strip('{}').lower():

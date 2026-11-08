@@ -545,13 +545,9 @@ def main() -> int:
                 logger.warning("UI font not applied for %s: %s",
                                getattr(i18n_strings, "language", None), e)
 
-            # 4c. Import wmi HERE, on the GUI thread, before the widget starts any worker: the module
-            # owns a COM object from its import on, and a worker that imported it first would leave
-            # it to be released after that worker's CoUninitialize (an exit-time pywin32 error line).
-            from netspeedtray.core.latency_probe import preload_wmi
-            wmi_ms = preload_wmi()
-            if wmi_ms is not None:
-                logger.debug("wmi preloaded on the GUI thread in %.1f ms.", wmi_ms)
+            # (No wmi preload here since rc.7: wmi / win32com.client load on first use, on the worker
+            # that needs them - utils/com_utils.import_wmi releases wmi's import-time COM object in
+            # that worker's apartment, which is what the GUI-thread preload used to guarantee.)
 
             # 5. Create and configure the main widget.
             taskbar_height = get_taskbar_height()
