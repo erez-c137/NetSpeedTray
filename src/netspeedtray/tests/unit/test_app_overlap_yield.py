@@ -1847,24 +1847,27 @@ def test_the_layout_probe_keeps_the_widgets_content(layout):
     assert taskbar_utils.taskbar_layout_widgets_content(HWND) == (1617, 1039, 1682, 1071)
 
 
-def test_no_clear_tray_spot_means_the_yield_steps_aside_and_returns_with_the_margin(rig):
+def test_no_clear_tray_spot_means_the_yield_steps_aside_and_returns_on_the_usual_gap(rig):
     """The tray spot would cover the weather text (or the text's extent is unknown): no fallback - the
     #24 yield hides the widget for the STEPPED spot (Windows shrinks a left-aligned bar's buttons before
-    they ever reach the tray spot), and shows it again with the fallback's return margin."""
-    margin = constants.layout.WIDGETS_FALLBACK_RETURN_MARGIN_PX
+    they ever reach the tray spot), and shows it again on the SAME gap it hid at (rc.5 #373: with the
+    fallback's 22 px return margin, a group ending 8..30 px short kept it hidden though it fit)."""
     r = rig(STEPPED[0])
     r.stepped, r.tray_spot, r.tray_spot_clear = STEPPED, TRAY_SPOT, False
     r.start(left_aligned(28, overflow=True))         # "..." ends 1377: reaches the stepped spot only
     assert r.y.yielded and not r.y.retreated and r.changes == 1
-    r.y.note_foreground_change()
-    r.probe(left_aligned(28, stray=(1333, 1362)), advance=1.0)   # clear by 10 only: stays hidden
-    assert r.y.yielded and r.y._state.clear_since is None   # not even a first clear reading
-    end = int(STEPPED[0] - GAP - margin)
+    end = int(STEPPED[0] - GAP - 2)                  # one button gone: clear by GAP + 2, under the old margin
     r.y.note_foreground_change()
     r.probe(left_aligned(28, stray=(1333, end)), advance=1.0)
     assert r.y.yielded                                # first clear reading: confirmation pending
     r.probe(left_aligned(28, stray=(1333, end)), advance=0.5)
     assert not r.y.yielded
+    r.y.note_foreground_change()                      # the same bar seen from a shown widget: stays up
+    r.probe(left_aligned(28, stray=(1333, end)), advance=1.0)
+    assert not r.y.yielded
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, stray=(1333, int(STEPPED[0] - GAP + 2))), advance=1.0)
+    assert r.y.yielded                                # inside the gap: hides again at once
 
 
 def test_weather_text_growing_under_a_held_widget_steps_it_aside_at_once(rig):
