@@ -52,6 +52,11 @@ class FontConstants:
         'zh_TW': ('Microsoft JhengHei UI', 'Microsoft JhengHei'),
         'bn_BD': ('Nirmala UI',),
     }
+    # Windows' per-script UI faces, for a Wi-Fi name in any other script (Thai, Ethiopic, Myanmar...).
+    EXTRA_SCRIPT_FAMILIES: Final[tuple] = (
+        'Leelawadee UI', 'Ebrima', 'Gadugi', 'Myanmar Text', 'Mongolian Baiti', 'Microsoft Himalaya',
+        'Microsoft Yi Baiti', 'Microsoft New Tai Lue', 'Microsoft Tai Le', 'Microsoft PhagsPa',
+        'Javanese Text', 'MV Boli', 'Sylfaen', 'Segoe UI Historic', 'SimSun-ExtB', 'SimSun-ExtG')
     SYMBOL_FAMILIES: Final[tuple] = ('MS UI Gothic', 'Segoe UI Symbol')
     EMOJI_FAMILIES: Final[tuple] = ('Segoe UI Emoji',)
     NOTE_FONT_SIZE: Final[int] = 8
