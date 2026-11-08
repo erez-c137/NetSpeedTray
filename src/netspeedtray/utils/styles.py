@@ -19,20 +19,41 @@ from netspeedtray.constants import ui, color as color_constants
 _variable_present = None  # lazy cache: is "Segoe UI Variable" installed?
 
 
+_icon_family: Optional[str] = None   # lazy cache: the installed Fluent icon family
+
+
+def icon_font_family() -> str:
+    """The Fluent icon font: 'Segoe Fluent Icons' (Win11), else 'Segoe MDL2 Assets' (Win10). Picked from
+    ``QFontDatabase.families()`` - names only, no styles loaded - rather than handed to Qt as a fallback
+    list: a QFont with more than one family makes Qt load the styles of every installed font family on
+    its first use (~38 MB, process-wide, never freed)."""
+    global _icon_family
+    if _icon_family is None:
+        try:
+            installed = set(QFontDatabase.families())
+        except Exception:
+            installed = set()
+        _icon_family = next((fam for fam in style_constants.ICON_FONT_FAMILIES if fam in installed),
+                            style_constants.ICON_FONT_FAMILIES[-1])
+    return _icon_family
+
+
 def fluent_icon(codepoint: int, size: int = 16, color: str = "#FFFFFF") -> QIcon:
     """Render a Segoe Fluent Icons glyph to a tintable QIcon - the native Win11 iconography.
 
-    Win11 ships 'Segoe Fluent Icons'; Win10 ships 'Segoe MDL2 Assets'. Listing both lets Win11 win and
-    Win10 degrade. The glyph is drawn to a transparent pixmap in ``color`` so it can be tinted per state
+    Win11 ships 'Segoe Fluent Icons'; Win10 ships 'Segoe MDL2 Assets' (icon_font_family picks the one
+    installed). The glyph is drawn to a transparent pixmap in ``color`` so it can be tinted per state
     (e.g. text_secondary at rest → accent when a tab/nav row is selected). Uses setPixelSize for a
     DPI-crisp icon optically matched to the label's px font. NEVER pass an emoji - only Fluent codepoints.
+    No font merging: both icon fonts carry every codepoint the app uses, and a Fluent codepoint has no
+    meaningful fallback glyph - searching for one would load every installed family.
     """
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
     try:
-        f = QFont()
-        f.setFamilies(["Segoe Fluent Icons", "Segoe MDL2 Assets"])
+        f = QFont(icon_font_family())
+        f.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
         f.setPixelSize(size)
         p.setFont(f)
         p.setPen(QColor(color))
@@ -146,27 +167,35 @@ def font(token: tuple) -> QFont:
 # UI languages whose script the Segoe families lack, and the Windows font that has it (#457). Qt
 # already falls back per run of that script, but a script-neutral mark after Latin text - the
 # Bengali danda "।" after ")" or "</b>" - is resolved from the Latin side and lands on Fixedsys, a
-# bitmap tick. Registering the script's font as a substitute of the Segoe families fixes that. A
-# substitute is consulted only for glyphs the family lacks, so Latin, arrows, CJK, Hebrew and emoji
-# render exactly as before.
+# bitmap tick. Registering the script's font as Qt's application fallback for the script AND for
+# script-neutral (Common) text fixes that. A fallback is consulted only for glyphs a face lacks, so
+# Latin, arrows, CJK, Hebrew and emoji render exactly as before.
+#
+# Not a substitute of the Segoe families (rc.4 - 2.2.0): a substitute makes every Segoe font resolve
+# its fallback chain on its first measurement, which loads the styles of every installed font family
+# (~38 MB, never freed) at startup. A fallback family is looked up only when a glyph is missing.
 SCRIPT_FONT_FALLBACKS = {"bn_BD": ("Nirmala UI",)}
+_SCRIPT_FALLBACK_SCRIPTS = {"bn_BD": ("Script_Bengali", "Script_Common")}
 
 
 def apply_script_font_fallbacks(language: Optional[str]) -> list:
-    """Register SCRIPT_FONT_FALLBACKS[language] as substitutes of the app's Segoe families. Call once
-    at startup (a language change needs a restart). Returns the families changed ([] = no-op)."""
-    subs = SCRIPT_FONT_FALLBACKS.get(str(language or ""))
-    if not subs:
+    """Register SCRIPT_FONT_FALLBACKS[language] as Qt application fallback families for the language's
+    script and for script-neutral text. Call once at startup (a language change needs a restart).
+    Returns the scripts changed, as QChar.Script names ([] = no-op)."""
+    from PyQt6.QtCore import QChar
+    language = str(language or "")
+    families = SCRIPT_FONT_FALLBACKS.get(language)
+    if not families:
         return []
-    families = []
-    for family in (style_constants.FONT_FAMILY_VARIABLE, style_constants.FONT_FALLBACK):
-        if family in families:
-            continue
-        for sub in subs:
-            if sub.lower() not in (x.lower() for x in QFont.substitutes(family)):   # Qt stores them lower-cased
-                QFont.insertSubstitution(family, sub)
-        families.append(family)
-    return families
+    changed = []
+    for name in _SCRIPT_FALLBACK_SCRIPTS.get(language, ()):
+        script = getattr(QChar.Script, name)
+        present = [x.lower() for x in QFontDatabase.applicationFallbackFontFamilies(script)]
+        for family in families:
+            if family.lower() not in present:
+                QFontDatabase.addApplicationFallbackFontFamily(script, family)
+        changed.append(name)
+    return changed
 
 
 def semantic_colors() -> dict:

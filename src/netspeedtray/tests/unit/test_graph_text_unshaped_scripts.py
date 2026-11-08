@@ -133,27 +133,29 @@ def test_hover_readout_unchanged_where_graph_text_is_localized(agg):
 
 # --------------------------------------------------------------------------- Qt script fallback
 
-def test_bengali_registers_nirmala_as_segoe_substitute(q_app):
-    from PyQt6.QtGui import QFont
+def test_bengali_registers_nirmala_as_a_lazy_script_fallback(q_app):
+    """Nirmala UI is Qt's application fallback for Bengali and script-neutral text (the danda after
+    Latin), NOT a substitute of the Segoe families: a substitute makes every Segoe font resolve its
+    fallback chain on its first measurement - every installed family's styles loaded at startup, ~38 MB."""
+    from PyQt6.QtCore import QChar
+    from PyQt6.QtGui import QFont, QFontDatabase
     from netspeedtray.constants import styles as sc
     from netspeedtray.utils.styles import apply_script_font_fallbacks
-    families = (sc.FONT_FAMILY_VARIABLE, sc.FONT_FALLBACK)
-    before = {f: list(QFont.substitutes(f)) for f in families}
+    scripts = (QChar.Script.Script_Bengali, QChar.Script.Script_Common)
+    before = {s: list(QFontDatabase.applicationFallbackFontFamilies(s)) for s in scripts}
+    subs_before = {f: list(QFont.substitutes(f)) for f in (sc.FONT_FAMILY_VARIABLE, sc.FONT_FALLBACK)}
     try:
         assert apply_script_font_fallbacks("de_DE") == []
         assert apply_script_font_fallbacks(None) == []
-        assert {f: list(QFont.substitutes(f)) for f in families} == before
-        assert set(apply_script_font_fallbacks("bn_BD")) == set(families)
-        for f in families:
-            assert "nirmala ui" in [x.lower() for x in QFont.substitutes(f)]
+        assert {s: list(QFontDatabase.applicationFallbackFontFamilies(s)) for s in scripts} == before
+        assert apply_script_font_fallbacks("bn_BD") == ["Script_Bengali", "Script_Common"]
         apply_script_font_fallbacks("bn_BD")                    # idempotent
-        for f in families:
-            assert [x.lower() for x in QFont.substitutes(f)].count("nirmala ui") == 1
+        for s in scripts:
+            assert [x.lower() for x in QFontDatabase.applicationFallbackFontFamilies(s)].count("nirmala ui") == 1
+        assert {f: list(QFont.substitutes(f)) for f in subs_before} == subs_before    # no substitutes
     finally:
-        for f in families:
-            QFont.removeSubstitutions(f)
-            for s in before[f]:
-                QFont.insertSubstitution(f, s)
+        for s in scripts:
+            QFontDatabase.setApplicationFallbackFontFamilies(s, before[s])
 
 
 # --------------------------------------------------------------------------- the Hardware graph

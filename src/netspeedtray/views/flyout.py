@@ -73,7 +73,7 @@ class Flyout(QWidget):
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(
             f"QPushButton {{ color: {c['text_secondary']}; background: transparent; border: none;"
-            f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 11px; }}"
+            f" font-family: '{su.icon_font_family()}'; font-size: 11px; }}"   # one family (no fallback walk)
             f"QPushButton:hover {{ color: {c['text_primary']}; }}"
         )
         close_btn.clicked.connect(self._dismiss)

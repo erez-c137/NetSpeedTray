@@ -24,6 +24,8 @@ from netspeedtray import constants
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import hardware_vendors
 from netspeedtray.utils import color_scheme
+from netspeedtray.utils.font_runs import (WidgetFontMetrics, draw_text, draw_text_centered, set_text_language,
+                                         user_text_advance)
 
 # v2.1 network-identity band tag, drawn as a rounded pill/badge. The layout RESERVES the fixed
 # worst-case slot and the renderer DRAWS the actual (usually narrower) tag in it - both MUST use these
@@ -50,7 +52,7 @@ def identity_layout(fm, ssid, band):
     """
     pad = IDENTITY_PILL_PAD_X
     h = fm.height() + 2
-    ssid_w = fm.horizontalAdvance(ssid) if ssid else 0
+    ssid_w = user_text_advance(fm, ssid) if ssid else 0   # a Wi-Fi name is user text (font_runs)
     band_pill_w = (fm.horizontalAdvance(band) + 2 * pad) if band else 0
     if ssid and band:
         w = pad + ssid_w + pad + band_pill_w
@@ -82,11 +84,15 @@ def make_widget_font(family: str, point_size: int, weight: int) -> QFont:
     """The widget's QFont for a configured family (7a). "Segoe UI Variable" (the default) gets its Text
     optical size through the opsz axis - set explicitly, so every Qt measures it alike (Qt 6.9 applied the
     Text size by itself, 6.10 the Small one: "888.8 Mbps" 60 vs 64 px). The named sizes ("... Text",
-    "... Small", "... Display") map to the family and their axis value. Segoe UI is the second family of
-    the request: the variable font has no Hebrew (or Arabic, CJK...) glyphs, and Qt then takes those from
-    Segoe UI - the face the Hebrew UI uses (#194) - instead of an arbitrary fallback at mismatched sizes.
-    Without the variable font (Windows 10) it is Segoe UI outright; QFont alone would pick Tahoma. Every
-    other family is passed through unchanged, exactly as before."""
+    "... Small", "... Display") map to the family and their axis value. Without the variable font
+    (Windows 10) it is Segoe UI outright; QFont alone would pick Tahoma. Every other family is passed
+    through unchanged, exactly as before.
+
+    Always ONE family. Until 2.2.0 Segoe UI was a second family of the request, for the glyphs the
+    variable font lacks (Hebrew, CJK...): a family list makes Qt resolve its whole fallback chain on the
+    first measurement, which loads the styles of every installed font family (~38 MB, never freed).
+    Those glyphs are now drawn run by run in a face that has them (utils/font_runs, #194's Segoe UI for
+    Hebrew), measured with WidgetFontMetrics."""
     f = constants.fonts
     family = f.FAMILY_RENAMES.get(family, family)
     opsz = f.VARIABLE_OPSZ.get(family)
@@ -95,7 +101,6 @@ def make_widget_font(family: str, point_size: int, weight: int) -> QFont:
     if not _has_variable_font():
         return QFont(f.FALLBACK_FONT, point_size, weight)
     font = QFont(f.VARIABLE_FAMILY, point_size, weight)
-    font.setFamilies([f.VARIABLE_FAMILY, f.FALLBACK_FONT])
     try:
         font.setVariableAxis(QFont.Tag.fromString("opsz"), float(opsz))
     except Exception:   # Qt < 6.7: the variable font's default instance
@@ -772,15 +777,16 @@ class WidgetRenderer:
         self.low_color = QColor(self.config.low_speed_color)
         
         weight = int(self.config.font_weight)
+        set_text_language(getattr(getattr(self, "i18n", None), "language", ""))
         self.font = make_widget_font(self.config.font_family, self.config.font_size, weight)
-        self.metrics = QFontMetrics(self.font)
+        self.metrics = WidgetFontMetrics(self.font)   # measures runs as draw_text draws them
         
         if self.config.use_separate_arrow_font:
             self.arrow_font = make_widget_font(self.config.arrow_font_family, self.config.arrow_font_size,
                                                int(self.config.arrow_font_weight))
         else:
             self.arrow_font = self.font
-        self.arrow_metrics = QFontMetrics(self.arrow_font)
+        self.arrow_metrics = WidgetFontMetrics(self.arrow_font)
         
         # Pre-cache pens
         self._cached_pens = {
@@ -807,7 +813,7 @@ class WidgetRenderer:
         error_font = QFont(self.font)
         error_font.setPointSize(max(6, base_size - 2))
         painter.setFont(error_font)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, message)
+        draw_text_centered(painter, rect, message)
         painter.restore()
 
 
@@ -1067,7 +1073,7 @@ class WidgetRenderer:
                 widest = max(family, key=fm.horizontalAdvance)
                 if fm.horizontalAdvance(widest) > width - 2 * margin:
                     unit_font, _ = self._fit_font(widest, width - 2 * margin)
-                    unit_w = QFontMetrics(unit_font).horizontalAdvance(unit)
+                    unit_w = WidgetFontMetrics(unit_font).horizontalAdvance(unit)
             x0 = max(margin, (width - block_w) // 2)
 
             line_h, asc, gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
@@ -1099,7 +1105,7 @@ class WidgetRenderer:
             if show_unit_row:
                 painter.setFont(unit_font)
                 painter.setPen(self._cached_pens['default'])
-                painter.drawText(max(margin, (width - unit_w) // 2), y, unit)
+                draw_text(painter, max(margin, (width - unit_w) // 2), y, unit)
             painter.restore()
 
             self._last_text_rect = QRect(min(x0, (width - unit_w) // 2) if show_unit_row else x0,
@@ -1130,19 +1136,19 @@ class WidgetRenderer:
         """(font, width): the widget font stepped down in half points until ``text`` fits ``avail``
         px, never below _MIN_UNIT_POINT_SIZE (past that it is clipped - and logged - as before)."""
         font = QFont(self.font)
-        width = QFontMetrics(font).horizontalAdvance(text)
+        width = WidgetFontMetrics(font).horizontalAdvance(text)
         size = font.pointSizeF()
         if size <= 0:   # a pixel-sized font
             px = font.pixelSize()
             while width > avail and px > 6:
                 px -= 1
                 font.setPixelSize(px)
-                width = QFontMetrics(font).horizontalAdvance(text)
+                width = WidgetFontMetrics(font).horizontalAdvance(text)
             return font, width
         while width > avail and size > self._MIN_UNIT_POINT_SIZE:
             size = max(self._MIN_UNIT_POINT_SIZE, size - 0.5)
             font.setPointSizeF(size)
-            width = QFontMetrics(font).horizontalAdvance(text)
+            width = WidgetFontMetrics(font).horizontalAdvance(text)
         return font, width
 
     def draw_hardware_compact(self, painter: QPainter, stats: List[Tuple[str, Optional[float]]], width: int,
@@ -1180,16 +1186,16 @@ class WidgetRenderer:
                 icon_x = x0 if inline else (width - icon_w) // 2
                 if style == "text":
                     painter.setPen(QPen(color))
-                    painter.drawText(icon_x, y, label)
+                    draw_text(painter, icon_x, y, label)
                 else:
                     self._draw_icon(painter, label, icon_x, y, color)
                 painter.setFont(self.font)
                 painter.setPen(self.default_color)
                 if inline:
-                    painter.drawText(x0 + icon_w + gap + pct_col - fm.horizontalAdvance(pct), y, pct)
+                    draw_text(painter, x0 + icon_w + gap + pct_col - fm.horizontalAdvance(pct), y, pct)
                 else:
                     y += line_h + row_gap
-                    painter.drawText((width - fm.horizontalAdvance(pct)) // 2, y, pct)
+                    draw_text(painter, (width - fm.horizontalAdvance(pct)) // 2, y, pct)
                 y += line_h + row_gap
             painter.restore()
             self._last_text_rect = QRect(x0, top - asc, block_w, block_h)
@@ -1238,7 +1244,8 @@ class WidgetRenderer:
         self._last_text_rect = QRect(arrow_x, y - self.metrics.ascent(), row_width, self.metrics.height())
         self._extend_content_bounds(self._last_text_rect)
 
-    def _draw_pill(self, painter: QPainter, rect: QRectF, accent: QColor, text: str, solid: bool, radius: float) -> None:
+    def _draw_pill(self, painter: QPainter, rect: QRectF, accent: QColor, text: str, solid: bool, radius: float,
+                   user: bool = False) -> None:
         """Draw one rounded pill: SOLID fills `accent` with white text; OUTLINE strokes `accent`, text in `accent`."""
         if solid:
             painter.setPen(Qt.PenStyle.NoPen)
@@ -1251,7 +1258,7 @@ class WidgetRenderer:
             painter.drawRoundedRect(rect, radius, radius)
             painter.setPen(accent)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+        draw_text_centered(painter, rect, text, user)
 
     def _draw_identity_badge(self, painter: QPainter, x: float, y: float, parts: dict,
                              ssid: Optional[str], band: Optional[str],
@@ -1268,7 +1275,7 @@ class WidgetRenderer:
             self._draw_pill(painter, QRectF(x, y, parts["band_w"], h), accent, band, band_solid, radius)
         elif mode == "ssid":
             # Neutral outline pill with the name.
-            self._draw_pill(painter, QRectF(x, y, parts["w"], h), self.default_color, ssid, False, radius)
+            self._draw_pill(painter, QRectF(x, y, parts["w"], h), self.default_color, ssid, False, radius, user=True)
         elif mode == "both":
             # Outer outline capsule holding the name; band as a same-height pill nested flush to the
             # right edge ("two left edges"). The nested band honors band_solid just like the band-only
@@ -1281,7 +1288,7 @@ class WidgetRenderer:
             painter.drawRoundedRect(outer, radius, radius)
             painter.setPen(self.default_color)
             ssid_baseline = int(y + (h + self.metrics.ascent() - self.metrics.descent()) / 2)
-            painter.drawText(int(x + parts["ssid_x"]), ssid_baseline, ssid)
+            draw_text(painter, int(x + parts["ssid_x"]), ssid_baseline, ssid, user=True)
             band_rect = QRectF(x + parts["band_x"], y, parts["band_w"], h)
             self._draw_pill(painter, band_rect, accent, band, band_solid, radius)
         painter.restore()
@@ -1347,7 +1354,7 @@ class WidgetRenderer:
             # the band pen set above and the whole line stays one color signal.
             if config.use_custom_arrow_colors:
                 painter.setPen(self._cached_pens['arrow_up' if is_upload else 'arrow_down'])
-            painter.drawText(arrow_x, y, arrow)
+            draw_text(painter, arrow_x, y, arrow)
             if config.use_custom_arrow_colors:
                 # Restore the band pen BEFORE the number. Forgetting this makes the value silently
                 # inherit the arrow color, which reads as a color-coding regression (cf. #153).
@@ -1362,11 +1369,11 @@ class WidgetRenderer:
         painter.setFont(self.font)
         val_width = self.metrics.horizontalAdvance(val)
         aligned_number_x = number_x + (number_area_width - val_width)
-        painter.drawText(int(aligned_number_x), y, val)
+        draw_text(painter, int(aligned_number_x), y, val)
         
         # 3. Draw Unit
         if not config.hide_unit_suffix:
-            painter.drawText(unit_x, y, unit)
+            draw_text(painter, unit_x, y, unit)
 
 
 
@@ -1501,7 +1508,7 @@ class WidgetRenderer:
             for r in rows:
                 if style == "text":
                     painter.setPen(QPen(QColor(r['color'])))
-                    painter.drawText(current_x, y, r['label'])
+                    draw_text(painter, current_x, y, r['label'])
                 else:
                     self._draw_icon(painter, r['label'], current_x, y, QColor(r['color']))
                 vx = current_x + label_col
@@ -1516,9 +1523,9 @@ class WidgetRenderer:
                 has_mem_below = (not inline_mem) and bool(r['mem'])
                 right_align_pct = has_trailing or not has_mem_below
                 px = (vx + pct_col - self.metrics.horizontalAdvance(r['pct'])) if right_align_pct else vx
-                painter.drawText(px, y, r['pct'])
+                draw_text(painter, px, y, r['pct'])
                 if suffix_col and r['suffix']:
-                    painter.drawText(vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
+                    draw_text(painter, vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
                 if inline_mem and mem_col and r['mem']:
                     mx = vx + pct_col + suffix_col
                     label_x = mx + sep_col
@@ -1528,7 +1535,7 @@ class WidgetRenderer:
                     num_x = number_col_x + mem_num_col - self.metrics.horizontalAdvance(r['mem'])
                     if mem_label_col:
                         self._draw_memory_label(painter, label_x, y, r)
-                    painter.drawText(num_x, y, r['mem'])
+                    draw_text(painter, num_x, y, r['mem'])
                 y += line_height
                 if not inline_mem and r['mem']:
                     # Right-align memory to the segment's right edge while keeping the
@@ -1541,7 +1548,7 @@ class WidgetRenderer:
                     if mem_label_col:
                         self._draw_memory_label(painter, label_x, y, r)
 
-                    painter.drawText(num_x, y, r['mem'])
+                    draw_text(painter, num_x, y, r['mem'])
                     y += line_height
 
             self._last_text_rect = QRect(x_offset, top_y, seg_w + margin, total_height)
@@ -1586,7 +1593,7 @@ class WidgetRenderer:
         """Paint a row's RAM/VRAM label at the fixed start of its reserved label cell,
         in the row's CPU/GPU colour, then restore the value pen."""
         painter.setPen(QPen(QColor(row['color'])))
-        painter.drawText(label_x, y, row['mem_label'])
+        draw_text(painter, label_x, y, row['mem_label'])
         painter.setPen(self.default_color)
 
     def _draw_icon(self, painter: QPainter, icon_type: str, x: int, y_ascent: int, color: Optional[QColor] = None) -> None:
