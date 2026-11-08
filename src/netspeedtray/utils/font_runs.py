@@ -292,7 +292,8 @@ def text_runs(font: QFont, text: str) -> tuple:
     hit = _run_cache.get(key)
     if hit is not None:
         return hit
-    if not text or (text.isascii() and family_covers(base, text)):   # the readout: digits, units, Latin
+    if (not text or (text.isascii() and family_covers(base, text))   # the readout: digits, units, Latin
+            or resolve_family(base) is None):     # a face we can't see (offscreen tests): as before
         runs = ((None, text),)
     else:
         out: List[list] = []
