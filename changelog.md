@@ -75,6 +75,35 @@ ALSO
 
 ---
 
+## [2.2.0-rc.6] - November 8, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+One fix from the rc.5 tests: a widget that stepped aside for app buttons comes back as soon as
+there is room again.
+
+### Fixed
+
+- **A widget that stepped aside for app buttons comes back as soon as they leave it room.** On a
+  taskbar with the Widgets/weather button beside the tray, it could stay hidden with visible room
+  to spare - for example after closing NetSpeedTray's own Settings window - until another app
+  closed. ([#373], [#483], reported by [@relu616])
+
+  *Under the hood: the yield hid at `TRAY_EDGE_MIN_GAP_PX` (8 px) but, hidden for the spot left of
+  the Widgets button, returned only at 8 + `WIDGETS_FALLBACK_RETURN_MARGIN_PX` (22) px - a margin
+  copied in #466 from the full-bar fallback, where moving the widget between two spots changes the
+  next judgment. Hiding moves nothing, so it only made a dead zone: a group ending 8-30 px short
+  kept a hidden widget hidden and a shown one up (relu616's laptop: 22 px). One gap now hides and
+  shows; the two-reading confirmation still covers animating buttons. The fallback keeps its
+  margin.*
+
+[#373]: https://github.com/erez-c137/NetSpeedTray/issues/373
+[#483]: https://github.com/erez-c137/NetSpeedTray/pull/483
+[@relu616]: https://github.com/relu616
+
+---
+
 ## [2.2.0-rc.5] - November 4, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app
