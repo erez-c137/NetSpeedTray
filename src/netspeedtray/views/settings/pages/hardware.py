@@ -129,7 +129,7 @@ class HardwarePage(QWidget):
             f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
         layout.addWidget(temps_note)
         # LHM v0.9.5+ is read over its web server (#187), which is off until the user enables it.
-        self.lhm_web_server_hint = QLabel(
+        self.lhm_web_server_hint = su.ui_label(   # "Options → Remote Web Server": no arrow in Nirmala UI
             self.i18n.LHM_WEB_SERVER_HINT.format(port=constants.lhm.HTTP_PORT))
         self.lhm_web_server_hint.setWordWrap(True)
         self.lhm_web_server_hint.setStyleSheet(temps_note.styleSheet())
@@ -326,7 +326,7 @@ class HardwarePage(QWidget):
             self.i18n.LHM_PASSWORD_UNREADABLE if self._lhm_password_unreadable else " ")
 
     def _on_lhm_port_changed(self, _value: int = 0) -> None:
-        self.lhm_web_server_hint.setText(self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
+        su.set_ui_text(self.lhm_web_server_hint, self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
         self.refresh_lhm_status()
         self.on_change()
 
@@ -422,7 +422,7 @@ class HardwarePage(QWidget):
         self.lhm_port.blockSignals(True)
         self.lhm_port.setValue(lhm_port if L.MIN_PORT <= lhm_port <= L.MAX_PORT else L.HTTP_PORT)
         self.lhm_port.blockSignals(False)
-        self.lhm_web_server_hint.setText(self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
+        su.set_ui_text(self.lhm_web_server_hint, self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
         self.lhm_username.setText(str(config.get("lhm_username", "") or ""))
         # A blob this Windows user cannot decrypt (a config copied from another account or PC, DPAPI
         # broken) shows as an empty field with a hint, and is KEPT until the user types a new password

@@ -557,8 +557,14 @@ class ConnectionCheckSheet(QDialog):
         sub = self._c["text_secondary"]
         if self._state == "running":
             # An LTR embedding keeps "12 / 20" reading left to right in an RTL (Hebrew) layout, not "20 / 12".
+            # Only there: Yu Gothic UI, Malgun Gothic, YaHei/JhengHei UI and Nirmala UI have no glyph for
+            # the embedding marks, and Qt searched every installed family for one (Segoe UI, the Hebrew UI
+            # face, has them).
             done = len(self._echoes.get(hop, []))
-            return f"<span style='color:{sub};'>\u202a{done} / {self._total}\u202c</span>"
+            text = f"{done} / {self._total}"
+            if getattr(self._i18n, "is_rtl", False):
+                text = f"\u202a{text}\u202c"
+            return f"<span style='color:{sub};'>{text}</span>"
         if self._state == "stopped":
             return f"<span style='color:{sub};'>{self._tr('CHECK_CONN_STOPPED', 'Stopped')}</span>"
         if not st.sent:

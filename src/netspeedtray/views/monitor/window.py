@@ -122,7 +122,7 @@ class MonitorWindow(QWidget):
         self._gear.setAccessibleName(self._tr("MONITOR_SETTINGS_TIP", "Monitor display settings"))
         self._gear.setStyleSheet(
             f"QToolButton {{ background: transparent; color: {c['text_primary']};"
-            f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 15px;"
+            f" font-family: '{su.icon_font_family()}'; font-size: 15px;"
             f" border: none; padding: 4px 6px; }} QToolButton:hover {{ color: {c['accent']}; }}"
             f" QToolButton:disabled {{ color: {c['text_secondary']}; }}")
         self._gear.clicked.connect(self._open_settings_flyout)

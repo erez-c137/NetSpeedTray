@@ -725,7 +725,7 @@ class OverviewTab(QWidget):
                             period_start=getattr(mw, "_hover_usage_period_start", None),
                             coverage=getattr(self, "_cap_coverage", None))
 
-            self._session_lbl.setText(self._session_text(mw))
+            su.set_ui_text(self._session_lbl, self._session_text(mw))   # arrows not in every UI face
             self._context_r_lbl.setText(self._context_right_text(mw))
         except Exception as e:
             if not getattr(self, "_render_err_logged", False):

@@ -73,11 +73,11 @@ class _ClampedNote(QLabel):
 
 
 class _ElidingMenuButton(QToolButton):
-    """A dropdown button whose label elides ("Ethernet 3 (Realt…  ▾") when the band is short of room,
+    """A dropdown button whose label elides ("Ethernet 3 (Realt…") when the band is short of room,
     instead of being squeezed under its neighbours (M9). It asks for its full label's width, but can
     shrink to ``min_width``; the tooltip always carries the whole name."""
 
-    _CHEVRON = "    \u25be"
+    _CHROME = 26 + su.MENU_CHEVRON_PADDING - 12   # border + padding + the chevron (su.menu_chevron_qss)
     _nst_elides = True   # the label elides by design; the rc layout harness skips it in its clip check
 
     def __init__(self, min_width: int, parent: Optional[QWidget] = None) -> None:
@@ -94,7 +94,7 @@ class _ElidingMenuButton(QToolButton):
         self.updateGeometry()
 
     def _chrome(self) -> int:
-        return 26 + self.fontMetrics().horizontalAdvance(self._CHEVRON)   # padding + border + chevron
+        return self._CHROME
 
     def sizeHint(self) -> QSize:
         h = super().sizeHint().height()
@@ -106,8 +106,8 @@ class _ElidingMenuButton(QToolButton):
     def _apply(self) -> None:
         avail = max(10, self.width() - self._chrome())
         text = self.fontMetrics().elidedText(self._label, Qt.TextElideMode.ElideRight, avail)
-        if text + self._CHEVRON != self.text():
-            self.setText(text + self._CHEVRON)
+        if text != self.text():
+            self.setText(text)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -241,11 +241,11 @@ class NetworkHeader(QWidget):
         _r = tokens.RADIUS_CONTROL
         self._iface_btn.setStyleSheet(
             f"QToolButton {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
-            f" border: 1px solid {c['card_stroke']}; border-radius: {_r}px; padding: 4px 12px;"
-            f" text-align: left; }}"
+            f" border: 1px solid {c['card_stroke']}; border-radius: {_r}px;"
+            f" padding: 4px {su.MENU_CHEVRON_PADDING}px 4px 12px; text-align: left; }}"
             f" QToolButton:hover {{ border-color: {c['accent']}; }}"
             f" QToolButton:focus {{ border-color: {c['accent']}; }}"
-            f" QToolButton::menu-indicator {{ image: none; width: 0; }}")
+            + su.menu_chevron_qss())
         self._iface_menu = QMenu(self._iface_btn)
         self._iface_menu.setStyleSheet(
             f"QMenu {{ background: {c['card_bg']}; color: {c['text_primary']};"
@@ -394,7 +394,7 @@ class NetworkHeader(QWidget):
         name = QLabel(label)
         name.setFont(su.font(tokens.TYPE_CAPTION))
         name.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        value = QLabel(f"{glyph} -")     # seed the populated shape so the first emit only swaps the number
+        value = su.ui_label(f"{glyph} -")   # seed the populated shape; ↑ ↓ are not in every UI face
         value.setFont(su.font(tokens.TYPE_SUBTITLE))
         value.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         col.addWidget(name)
@@ -411,8 +411,8 @@ class NetworkHeader(QWidget):
                    reconstructed: bool = False) -> None:
         dv, du = format_data_size(down_bytes, self._i18n, precision=1)
         uv, uu = format_data_size(up_bytes, self._i18n, precision=1)
-        self._down[1].setText(f"↓ {self._fmt(dv)} {du}")
-        self._up[1].setText(f"↑ {self._fmt(uv)} {uu}")
+        su.set_ui_text(self._down[1], f"↓ {self._fmt(dv)} {du}")
+        su.set_ui_text(self._up[1], f"↑ {self._fmt(uv)} {uu}")
         self._note_wanted = bool(reconstructed) and bool(self._history_note.full_text())
         if not self._note_wanted or not self.isVisible():
             # Shown again on demand; _fit (via _refit / showEvent) trims it to the room the band has.

@@ -43,7 +43,8 @@ def test_timeline_selector_emits_period_index(q_app):
     sel = TimelineSelector(I18nStrings("en_US"), current_index=2)
     assert sel.current_index() == 2                       # 24h default
     assert len(sel._actions) == 12                         # all periods (incl. session + boot)
-    assert sel._CHEVRON in sel._btn.text()                 # reads as a pulldown
+    assert "menu-indicator" in sel._btn.styleSheet()       # reads as a pulldown (the Fluent chevron)
+    assert "\u25be" not in sel._btn.text()                 # not a glyph the UI face lacks
     seen = []
     sel.period_changed.connect(seen.append)
     sel.set_period_index(6, emit=False)                    # 30m, silent

@@ -58,15 +58,16 @@ class TempOnboardingDialog(QDialog):
         title.setFont(font)
         layout.addWidget(title)
 
-        body = QLabel(i18n.TEMP_ONBOARDING_BODY, self)
+        from netspeedtray.utils import styles as su
+        body = QLabel(su.ui_rich(i18n.TEMP_ONBOARDING_BODY), self)   # arrows not in every UI face
         body.setTextFormat(Qt.TextFormat.RichText)
+        body.setAccessibleName(su.rich_plain_text(i18n.TEMP_ONBOARDING_BODY))   # not the anchor letters
         body.setWordWrap(True)
         body.setMinimumWidth(440)
         layout.addWidget(body)
 
         # Current LHM is read over its web server, which is off by default: say how to turn it on.
-        self.web_server_hint = QLabel(
-            i18n.LHM_WEB_SERVER_HINT.format(port=lhm_port), self)
+        self.web_server_hint = su.ui_label(i18n.LHM_WEB_SERVER_HINT.format(port=lhm_port), self)
         self.web_server_hint.setWordWrap(True)
         layout.addWidget(self.web_server_hint)
 

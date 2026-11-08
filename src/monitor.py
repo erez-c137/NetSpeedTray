@@ -535,13 +535,14 @@ def main() -> int:
             from PyQt6.QtCore import Qt
             app.setLayoutDirection(
                 Qt.LayoutDirection.RightToLeft if i18n_strings.is_rtl else Qt.LayoutDirection.LeftToRight)
-            # Script font fallback (Bengali -> Nirmala UI), before any widget builds its fonts. Cosmetic
-            # only, so it can never abort startup.
+            # The UI's one face for the language (Segoe UI Variable; Segoe UI for Hebrew; the CJK/Bengali
+            # UI face) as the application font, plus the Bengali script fallback - before any widget
+            # builds its fonts. Cosmetic only, so it can never abort startup.
             try:
-                from netspeedtray.utils.styles import apply_script_font_fallbacks
-                apply_script_font_fallbacks(i18n_strings.language)
+                from netspeedtray.utils.styles import apply_ui_language
+                apply_ui_language(app, i18n_strings.language)
             except Exception as e:
-                logger.warning("Script font fallback not applied for %s: %s",
+                logger.warning("UI font not applied for %s: %s",
                                getattr(i18n_strings, "language", None), e)
 
             # 4c. Import wmi HERE, on the GUI thread, before the widget starts any worker: the module

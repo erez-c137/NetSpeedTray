@@ -192,10 +192,11 @@ class WidgetPage(QWidget):
             # trailing digit included - in any UI direction (Qt's bidi, checked with QTextLayout).
             # In a right-to-left UI a leading RLM makes the line itself RTL (Qt picks a label's
             # direction from its first strong character, which would otherwise be the "D").
+            # Left to right the name needs no marks - and must get none: most CJK/Bengali UI faces have no
+            # glyph for them, and Qt then searches every installed family (Segoe UI, the Hebrew face, has).
             rtl = QGuiApplication.layoutDirection() == Qt.LayoutDirection.RightToLeft
-            self.preferred_monitor_combo.addItem(
-                f"{chr(0x200F) if rtl else ''}\u202a{saved}\u202c\u200e {self.i18n.SETTINGS_NOT_CONNECTED_TAG}",
-                userData=saved)
+            name = f"\u200f\u202a{saved}\u202c\u200e" if rtl else saved
+            self.preferred_monitor_combo.addItem(f"{name} {self.i18n.SETTINGS_NOT_CONNECTED_TAG}", userData=saved)
 
         # Restore previous selection if it still exists; otherwise fall back to "Primary (auto)".
         if previous_selection is not None:
