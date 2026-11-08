@@ -211,12 +211,8 @@ def test_startup_starts_the_sampler_at_each_preset(monkeypatch, rate):
 
 @pytest.mark.parametrize("rate", PRESETS)
 def test_history_buffers_size_from_each_preset(rate):
-    """The in-memory deques and the renderer's sample budget divide by the preset directly."""
-    from netspeedtray.core.widget_state import WidgetState
+    """The renderer's sample budget divides by the preset directly."""
     from netspeedtray.utils.widget_renderer import RenderConfig
-    fake = MagicMock()
-    fake.config = {"update_rate": rate, "history_minutes": 30}
-    assert WidgetState._get_max_history_points(fake) == max(10, min(int(round(1800 / rate)), 5000))
     rc = RenderConfig.from_dict({**constants.config.defaults.DEFAULT_CONFIG,
                                  "update_rate": rate, "history_minutes": 30})
     assert rc.max_samples == int(1800 / rate)

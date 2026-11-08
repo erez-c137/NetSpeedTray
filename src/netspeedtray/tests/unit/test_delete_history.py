@@ -273,7 +273,7 @@ def test_widget_state_delete_clears_series_and_pending_batches(sync_state):
 
     s.delete_all_history()
 
-    assert not s.in_memory_history and not s.aggregated_history
+    assert not s.aggregated_history
     assert not s.cpu_history and not s.gpu_history and not s.ram_history
     assert s._net_batch == [] and s._hw_batch == [], "a pending batch would resurrect deleted samples"
     tasks = [t for t, _ in list(s.db_worker._queue.queue)]

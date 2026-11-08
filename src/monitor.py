@@ -2,6 +2,17 @@
 Application entry point and lifecycle management for NetSpeedTray.
 """
 
+# numpy's bundled OpenBLAS starts one worker thread per core the first time numpy loads (the
+# Monitor's graphs; the spike filter's convolutions) and reserves a buffer for each: ~350 MB of
+# commit and ~11 threads on a 12-core box, for four tiny convolutions that gain nothing from
+# threads. The env var is read once, when OpenBLAS initializes, so it must be set before ANY import
+# that can pull numpy in - hence first, ahead of every other import. This file is the only entry
+# point (the frozen exe's Analysis script, and every headless flag: --export-csv, --apply-update,
+# --shutdown). setdefault: a user's or developer's own value still wins. A unit test pins it.
+import os as _os
+_os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+_os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 # matplotlib's Qt backend setup lives at the top of `views/graph/window.py`
 # (the only module that imports matplotlib). Loading it here would cost
 # ~30-50 MB of RAM at startup even for users who never open the graph
