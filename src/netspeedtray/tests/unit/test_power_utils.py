@@ -6,6 +6,7 @@ UsageFlyout rows built from the summary dict.
 The state reads are pure functions over a filled _SYSTEM_POWER_STATUS, so the
 tests monkeypatch _power_status_struct rather than shelling out to the kernel.
 """
+import sys
 import types
 
 import pytest
@@ -24,6 +25,19 @@ def _status(ac=1, flags=0, pct=80, life=14400, full=18000):
     st.BatteryLifeTime = life
     st.BatteryFullLifeTime = full
     return st
+
+
+# power_utils imports wmi on first use (utils/com_utils.import_wmi): the tests hand it this fake
+# module, so no real WMI / COM runs here.
+FAKE_WMI = types.ModuleType("wmi")
+
+
+@pytest.fixture(autouse=True)
+def _fake_wmi_module(monkeypatch):
+    def _no_wmi(namespace=None):
+        raise AssertionError("a test reached WMI without faking it")
+    monkeypatch.setattr(FAKE_WMI, "WMI", _no_wmi, raising=False)
+    monkeypatch.setitem(sys.modules, "wmi", FAKE_WMI)
 
 
 @pytest.fixture(autouse=True)
@@ -83,7 +97,7 @@ def test_state_api_failure_is_none(monkeypatch):
 def test_capacity_sane_value_accepted(monkeypatch):
     class _Batt:
         DesignedCapacity = 54700
-    monkeypatch.setattr(power_utils.wmi, "WMI",
+    monkeypatch.setattr(FAKE_WMI, "WMI",
                         lambda namespace=None: types.SimpleNamespace(
                             query=lambda q: [_Batt()]))
     assert power_utils.read_design_capacity_mwh() == 54700
@@ -92,7 +106,7 @@ def test_capacity_sane_value_accepted(monkeypatch):
 def test_capacity_nonsense_rejected(monkeypatch):
     class _Batt:
         DesignedCapacity = 5  # mWh - not a pack; a bare sensor misreporting
-    monkeypatch.setattr(power_utils.wmi, "WMI",
+    monkeypatch.setattr(FAKE_WMI, "WMI",
                         lambda namespace=None: types.SimpleNamespace(
                             query=lambda q: [_Batt()]))
     assert power_utils.read_design_capacity_mwh() is None
@@ -104,7 +118,7 @@ def test_capacity_cached_across_calls(monkeypatch):  # a GOOD value is cached fo
     def _wmi(namespace=None):
         calls["n"] += 1
         return types.SimpleNamespace(query=lambda q: [types.SimpleNamespace(DesignedCapacity=60000)])
-    monkeypatch.setattr(power_utils.wmi, "WMI", _wmi)
+    monkeypatch.setattr(FAKE_WMI, "WMI", _wmi)
     assert power_utils.read_design_capacity_mwh() == 60000
     assert power_utils.read_design_capacity_mwh() == 60000
     assert calls["n"] == 1
@@ -113,7 +127,7 @@ def test_capacity_cached_across_calls(monkeypatch):  # a GOOD value is cached fo
 def test_capacity_wmi_failure_returns_none(monkeypatch):
     def _boom(namespace=None):
         raise OSError("WMI unavailable")
-    monkeypatch.setattr(power_utils.wmi, "WMI", _boom)
+    monkeypatch.setattr(FAKE_WMI, "WMI", _boom)
     assert power_utils.read_design_capacity_mwh() is None
 
 
@@ -359,7 +373,7 @@ def test_ac_line_status(monkeypatch):
 
 def test_capacity_sums_every_pack(monkeypatch):
     # Dual-battery laptops (ThinkPad internal + hot-swap): the runtime is the sum of packs.
-    monkeypatch.setattr(power_utils.wmi, "WMI",
+    monkeypatch.setattr(FAKE_WMI, "WMI",
                         lambda namespace=None: types.SimpleNamespace(query=lambda q: [
                             types.SimpleNamespace(DesignedCapacity=23_000),
                             types.SimpleNamespace(DesignedCapacity=72_000)]))
@@ -376,7 +390,7 @@ def test_capacity_failure_is_retried_after_a_backoff(monkeypatch):
         if calls["n"] == 1:
             raise OSError("RPC server unavailable")          # transient, e.g. right after resume
         return types.SimpleNamespace(query=lambda q: [types.SimpleNamespace(DesignedCapacity=60000)])
-    monkeypatch.setattr(power_utils.wmi, "WMI", _wmi)
+    monkeypatch.setattr(FAKE_WMI, "WMI", _wmi)
     assert power_utils.read_design_capacity_mwh() is None
     assert power_utils.read_design_capacity_mwh() is None   # inside the backoff: no new query
     assert calls["n"] == 1
@@ -389,7 +403,7 @@ def test_cached_capacity_never_queries_wmi(monkeypatch):
     """The hover (GUI thread) reads only the cache the monitor thread fills."""
     def _boom(namespace=None):
         raise AssertionError("WMI on the GUI thread")
-    monkeypatch.setattr(power_utils.wmi, "WMI", _boom)
+    monkeypatch.setattr(FAKE_WMI, "WMI", _boom)
     assert power_utils.cached_design_capacity_mwh() is None
     power_utils._design_mwh = 54700
     assert power_utils.cached_design_capacity_mwh() == 54700
