@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "今期",
     "EXIT_MENU_ITEM": "終了(&X)",
     "SELECT_FONT_BUTTON": "選択",
+    "FONT_PICKER_TITLE": "フォントの選択",
+    "FONT_PICKER_SEARCH": "フォントを検索",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "サポートバンドルをエクスポート",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "ログ、設定、システム情報を ZIP にバンドルし、GitHub の問題報告に添付できるようにします。個人情報は自動的に編集されます。",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "サポートバンドルを保存",

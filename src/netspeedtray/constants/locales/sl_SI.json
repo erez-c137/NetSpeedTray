@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "To obdobje",
     "EXIT_MENU_ITEM": "I&zhod",
     "SELECT_FONT_BUTTON": "Izberi",
+    "FONT_PICKER_TITLE": "Izberite pisavo",
+    "FONT_PICKER_SEARCH": "Iskanje pisav",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "Izvozi paket za podporo",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "Združi dnevnike, konfiguracijo in informacije o sistemu v datoteko zip, primerno za pripenjanje k prijavi težave na GitHub. Osebni podatki so samodejno prikriti.",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "Shrani paket za podporo",

@@ -297,7 +297,8 @@ class HardwarePage(QWidget):
 
     def _forget_lhm_password(self) -> None:
         """Keep the plain-text password in memory only while the page is on screen: the Settings dialog
-        is hidden, not destroyed, between uses. A pending edit is encrypted into the blob first."""
+        hides before it is destroyed, and a page switch hides it too. A pending edit is encrypted into the
+        blob first."""
         self._lhm_password_setting()
         self.lhm_password.clear()
         self._lhm_password_plain = ""

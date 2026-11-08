@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "Este período",
     "EXIT_MENU_ITEM": "&Salir",
     "SELECT_FONT_BUTTON": "Seleccionar",
+    "FONT_PICKER_TITLE": "Elegir una fuente",
+    "FONT_PICKER_SEARCH": "Buscar fuentes",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "Exportar paquete de soporte",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "Agrupa registros, configuración e información del sistema en un zip adecuado para adjuntar a una incidencia de GitHub. Los datos personales se ocultan automáticamente.",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "Guardar paquete de soporte",

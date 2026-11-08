@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent, QKeySequence, QShortcut, QShowEvent
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QColorDialog, QDialog, QFileDialog, QFontDialog,
+    QApplication, QCheckBox, QColorDialog, QDialog, QFileDialog,
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
     QStackedWidget, QVBoxLayout, QWidget
 )
@@ -116,6 +116,7 @@ class SettingsDialog(QDialog):
         self.startup_enabled_initial_state = is_startup_enabled
 
         self._ui_setup_done = False
+        self._closing_via_save = False   # Save's accept() is under way (closeEvent must not revert)
         
         # Timer for throttling live setting updates
         self._update_timer = QTimer(self)
@@ -650,13 +651,31 @@ class SettingsDialog(QDialog):
 
     # --- Callbacks ---
 
+    def _make_font_picker(self, initial_font: QFont, target: str = "main"):
+        """Our own font picker (memory plan 2.2), preselected on the page's current family / weight /
+        size. Not QFontDialog: that one loads the styles of every installed font (~38 MB)."""
+        from netspeedtray.views.settings.font_picker import FontPickerDialog
+        page = self.appearance_page
+        if target == "main":
+            size, weight = int(page.font_size.value()), page.current_weight()
+        else:
+            size, weight = int(page.arrow_font_size.value()), None
+        return FontPickerDialog(self.i18n, initial_font.family(), size, weight,
+                                preview_config=self.get_settings() or self.config,
+                                target=target, parent=self)
+
     def _open_font_dialog(self, initial_font: QFont, target: str = "main") -> None:
-        font, ok = QFontDialog.getFont(initial_font, self)
-        if ok:
-            if target == "main":
-                self.appearance_page.set_font_family(font)
-            else:
-                self.appearance_page.set_arrow_font_family(font)
+        picker = self._make_font_picker(initial_font, target)
+        try:
+            if picker.exec() == QDialog.DialogCode.Accepted and picker.selected_family():
+                if target == "main":
+                    self.appearance_page.apply_font_choice(
+                        picker.selected_family(), picker.selected_size(), picker.selected_weight())
+                else:
+                    self.appearance_page.apply_arrow_font_choice(
+                        picker.selected_family(), picker.selected_size())
+        finally:
+            picker.deleteLater()
 
     def _paint_preview_backdrop(self) -> None:
         """The preview strip's backdrop follows the Windows (taskbar) mode, like the colours drawn on
@@ -972,8 +991,11 @@ class SettingsDialog(QDialog):
             # Persist the position after the settings save so it can't be clobbered
             # by the saved config snapshot.
             save_window_position(self, self.parent_widget, "settings_window_pos")
-            self.hide()
-            self.logger.info("Settings saved and dialog hidden.")
+            # accept(), not hide(): it emits finished, and the owner destroys the dialog (memory plan 2.3).
+            # Qt eats the close event done() sends, and the flag keeps closeEvent from reverting anyway.
+            self._closing_via_save = True
+            self.accept()
+            self.logger.info("Settings saved and dialog closed.")
         except Exception as e:
             self.logger.error(f"Failed to save settings: {e}", exc_info=True)
             QMessageBox.critical(
@@ -1004,6 +1026,7 @@ class SettingsDialog(QDialog):
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        self._closing_via_save = False
         # Native Win11 chrome (dark title bar + rounded corners), applied at
         # show-time so the native handle exists. Fail-safe: a silent no-op on
         # Windows 10 / older builds. Mica stays off until the dialog surface is
@@ -1012,11 +1035,28 @@ class SettingsDialog(QDialog):
             apply_win11_chrome(int(self.winId()), dark=is_dark_mode())
         except Exception as e:
             self.logger.debug(f"Win11 chrome not applied: {e}")
-        # Always-on-top (#213). Applied here rather than as a Qt window flag: the dialog is a cached
-        # instance that is hidden rather than destroyed, and setWindowFlags on a live window
-        # re-creates the native handle - which is exactly what makes frame-vs-client geometry drift.
+        # Always-on-top (#213). Applied here rather than as a Qt window flag: setWindowFlags on a live
+        # window re-creates the native handle - which is exactly what makes frame-vs-client geometry
+        # drift - and the rare dialog kept alive for an unfinished backup is shown again, not rebuilt.
         set_window_always_on_top(self, bool(self.config.get("keep_windows_on_top", False)))
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        # The title-bar X (or a system close): revert like Cancel. reject() closes the dialog and emits
+        # finished, on which the owner destroys it; the event itself is ignored, as reject() already hid it.
+        if self._closing_via_save or not self.isVisible():
+            event.ignore()
+            return
         self._cancel_and_close()
         event.ignore()
+
+    def has_pending_work(self) -> bool:
+        """A history backup or delete started here has not reported back yet: destroying the dialog now
+        would lose its result (the backup's flyout, the delete's re-armed cap alerts)."""
+        try:
+            page = getattr(self, "advanced_page", None)
+            if page is not None and page.backup_running():
+                return True
+            timeout = getattr(self, "_delete_timeout", None)
+            return bool(timeout is not None and timeout.isActive())
+        except RuntimeError:   # already being destroyed
+            return False

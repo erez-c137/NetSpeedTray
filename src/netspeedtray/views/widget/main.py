@@ -2541,7 +2541,15 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error("Error opening data-usage settings: %s", e, exc_info=True)
 
     def show_settings(self) -> None:
-        """Creates and displays the settings dialog as a normal, non-modal window."""
+        """Build and show the Settings dialog (non-modal, top-level), or bring the open one forward.
+
+        The dialog is destroyed when it closes and rebuilt on the next open (memory plan 2.3: a hidden,
+        reused dialog kept ~26 MB, most of it fonts). Everything the hidden-reuse design gave is per
+        instance anyway: the config is read fresh at construction, the position is restored from
+        ``settings_window_pos`` (saved by every close path), and always-on-top is applied in its
+        showEvent. The one exception is a dialog still running a history backup / delete when it
+        closes: it is kept, hidden, until that work reports back (_release_settings_dialog), and a
+        reopen in the meantime reuses it the old way."""
         self.logger.debug("Showing settings dialog...")
         try:
             from netspeedtray.views.settings import SettingsDialog
@@ -2549,7 +2557,7 @@ class NetworkSpeedWidget(QWidget):
             if self.settings_dialog is None:
                 self.logger.debug("Creating new SettingsDialog instance.")
                 # Create the dialog as a top-level window (parent=None)
-                self.settings_dialog = SettingsDialog(
+                dialog = SettingsDialog(
                     main_widget=self,
                     config=self.config.copy(),
                     version=constants.app.VERSION,
@@ -2558,13 +2566,19 @@ class NetworkSpeedWidget(QWidget):
                     is_startup_enabled=self.is_startup_enabled(),
                     primary_interface=self._primary_interface_for_picker(),
                 )
+                # Qt destroys it (deleteLater in _release_settings_dialog), never Python's GC on some
+                # other thread (utils/qt_lifetime) - the wrapper is kept until its destroyed signal.
+                from netspeedtray.utils.qt_lifetime import hand_to_qt
+                hand_to_qt(dialog)
                 # Connect signal for live preview updates (don't save to disk during preview)
-                self.settings_dialog.settings_changed.connect(
+                dialog.settings_changed.connect(
                     lambda cfg: self.handle_settings_changed(cfg, save_to_disk=False)
                 )
-
-            if not self.settings_dialog.isVisible():
-                # Also update the interface list when showing an existing dialog
+                dialog.finished.connect(self._on_settings_dialog_finished)
+                self.settings_dialog = dialog
+                dialog.show()
+            elif not self.settings_dialog.isVisible():
+                # Only a dialog kept alive for an unfinished backup / delete gets here: reuse it.
                 self.settings_dialog.update_interface_list(
                     self.get_unified_interface_list(), self._primary_interface_for_picker())
                 self.settings_dialog.reset_with_config(
@@ -2583,6 +2597,43 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error showing settings: {e}", exc_info=True)
             QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Could not open settings:\n\n{str(e)}")
+
+    def _on_settings_dialog_finished(self, _result: int = 0) -> None:
+        """Save, Cancel, Esc or the title-bar X: the dialog has applied/reverted and saved its position."""
+        self._release_settings_dialog()
+
+    def _release_settings_dialog(self) -> None:
+        """Destroy the closed Settings dialog - deferred (deleteLater), never inside its own handlers.
+        A dialog with a history backup / delete still running stays alive, hidden, until it is done,
+        so the result is still reported (the flyout for a backup, the delete's re-armed cap alerts)."""
+        dialog = self.settings_dialog
+        if dialog is None:
+            return
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(dialog):
+                self.settings_dialog = None
+                return
+            if dialog.isVisible():
+                return   # reopened meanwhile
+            if dialog.has_pending_work():
+                QTimer.singleShot(constants.timeouts.SETTINGS_DESTROY_RETRY_MS, self._release_settings_dialog)
+                return
+            self.settings_dialog = None
+            dialog.destroyed.connect(self._on_font_heavy_window_destroyed)
+            dialog.deleteLater()
+        except Exception as e:
+            self.logger.error("Releasing the Settings dialog failed: %s", e, exc_info=True)
+
+    def _font_heavy_window_open(self) -> bool:
+        """Settings or the Monitor is (still / again) open: they may need Qt's full font database."""
+        return self.settings_dialog is not None or getattr(self, "monitor_window", None) is not None
+
+    def _on_font_heavy_window_destroyed(self, *_args) -> None:
+        """Settings / the Monitor is gone: hand back the font memory it made Qt load (utils/font_release),
+        on the event loop, unless the other one is still open by then."""
+        from netspeedtray.utils.font_release import schedule_font_release
+        schedule_font_release(self._font_heavy_window_open)
 
 
 
@@ -2635,7 +2686,12 @@ class NetworkSpeedWidget(QWidget):
         # Restore the widget's Z-order/visibility after the Monitor closes - via the authoritative
         # refresh, which RESPECTS fullscreen obstruction (so it won't flash the widget over a
         # fullscreen app). A second deferred pass lets the Windows focus transition settle.
-        self.monitor_window = None
+        window, self.monitor_window = self.monitor_window, None
+        if window is not None:
+            try:   # WA_DeleteOnClose destroys it right after this close: release the fonts then
+                window.destroyed.connect(self._on_font_heavy_window_destroyed)
+            except Exception as e:
+                self.logger.debug("Monitor destroyed hook not connected: %s", e)
         self._execute_refresh()
         QTimer.singleShot(constants.timeouts.GRAPH_CLOSE_REFRESH_DELAY_MS, self._execute_refresh)
 
@@ -3207,6 +3263,10 @@ class NetworkSpeedWidget(QWidget):
         def _position_config() -> None:
             self._capture_position_config()
 
+        def _font_release() -> None:
+            from netspeedtray.utils.font_release import cancel_pending_release
+            cancel_pending_release()
+
         def _history_backup() -> None:
             # A running Settings > Advanced > Back up history (#334): interrupt its copy and give its
             # thread a moment to delete the unfinished file + -journal. It only ever reads the live
@@ -3228,7 +3288,8 @@ class NetworkSpeedWidget(QWidget):
             ("mirrors", _mirrors),
             ("hover card", _hover_card), ("event hooks", _event_hooks),
             ("position manager", _position_manager), ("state watcher", _state_watcher),
-            ("monitor window", _monitor_window), ("history backup", _history_backup),
+            ("monitor window", _monitor_window), ("font release", _font_release),
+            ("history backup", _history_backup),
             ("monitor thread", _monitor_thread), ("latency probe", _latency_probe),
             ("update checker", _update_checker),
             ("metrics endpoint", _metrics_endpoint), ("controller", _controller),

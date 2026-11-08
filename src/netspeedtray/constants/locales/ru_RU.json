@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "В этом периоде",
     "EXIT_MENU_ITEM": "&Выход",
     "SELECT_FONT_BUTTON": "Выбрать",
+    "FONT_PICKER_TITLE": "Выбор шрифта",
+    "FONT_PICKER_SEARCH": "Поиск шрифтов",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "Экспорт пакета поддержки",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "Собирает журналы, конфигурацию и сведения о системе в ZIP-архив, удобный для прикрепления к обращению на GitHub. Личные данные удаляются автоматически.",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "Сохранить пакет поддержки",

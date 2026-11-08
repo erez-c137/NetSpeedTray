@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "Ten okres",
     "EXIT_MENU_ITEM": "Za&kończ",
     "SELECT_FONT_BUTTON": "Wybierz",
+    "FONT_PICKER_TITLE": "Wybierz czcionkę",
+    "FONT_PICKER_SEARCH": "Szukaj czcionek",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "Eksportuj pakiet pomocy",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "Spakuj logi, konfigurację i informacje o systemie do pliku zip nadającego się do dołączenia do zgłoszenia na GitHub. Dane osobowe są automatycznie usuwane.",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "Zapisz pakiet pomocy",

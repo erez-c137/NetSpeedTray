@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "התקופה הנוכחית",
     "EXIT_MENU_ITEM": "&יציאה",
     "SELECT_FONT_BUTTON": "בחר",
+    "FONT_PICKER_TITLE": "בחירת גופן",
+    "FONT_PICKER_SEARCH": "חיפוש גופנים",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "ייצא חבילת תמיכה",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "אורז יומנים, תצורה ומידע מערכת לקובץ zip המתאים לצירוף ל-issue ב-GitHub. נתונים אישיים מוסתרים אוטומטית.",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "שמירת חבילת תמיכה",

@@ -195,6 +195,12 @@ class TimeoutConstants:
     # Widget / UI Delays (milliseconds)
     WIDGET_INIT_DELAY_MS: Final[int] = 500
     GRAPH_CLOSE_REFRESH_DELAY_MS: Final[int] = 300
+    # Settings / Monitor closed -> reset Qt's font database (utils/font_release) this long after the
+    # window is destroyed, so its deferred deletes and the widget's next repaint have settled.
+    FONT_RELEASE_DELAY_MS: Final[int] = 1500
+    # A Settings dialog closed while a history backup / delete is still running is destroyed only once
+    # that work has reported back; polled at this interval.
+    SETTINGS_DESTROY_RETRY_MS: Final[int] = 1000
     
     # Thread / App Lifecycle (milliseconds/seconds)
     APP_CLOSE_WAIT_MS: Final[int] = 2000
