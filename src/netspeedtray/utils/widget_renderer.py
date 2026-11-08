@@ -18,12 +18,13 @@ from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedDat
 from netspeedtray.utils.helpers import (has_dedicated_vram, format_speed, calculate_monotone_cubic_interpolation,
                                         memory_label_width, effective_display_mode, format_temperature,
                                         hw_suffix_reference, temperature_unit)
-from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QFontMetricsF, QPen, QPainterPath, QFontDatabase
+from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath, QFontDatabase
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import hardware_vendors
 from netspeedtray.utils import color_scheme
+from netspeedtray.utils.font_runs import WidgetFontMetrics, draw_text, draw_text_centered, set_text_language
 
 # v2.1 network-identity band tag, drawn as a rounded pill/badge. The layout RESERVES the fixed
 # worst-case slot and the renderer DRAWS the actual (usually narrower) tag in it - both MUST use these
@@ -38,9 +39,8 @@ def identity_pill_width(fm, text: str) -> int:
     return fm.horizontalAdvance(text) + 2 * IDENTITY_PILL_PAD_X
 
 
-def identity_layout(fm, ssid, band, ssid_fm=None):
-    """Geometry for the identity badge. Returns (total_width, parts dict). ``ssid_fm`` measures the
-    name when it is drawn in another face than ``fm``'s (ssid_font); the capsule height stays ``fm``'s.
+def identity_layout(fm, ssid, band):
+    """Geometry for the identity badge. Returns (total_width, parts dict).
 
     Three shapes, all one capsule high:
       - band only  -> a single band pill.
@@ -51,7 +51,7 @@ def identity_layout(fm, ssid, band, ssid_fm=None):
     """
     pad = IDENTITY_PILL_PAD_X
     h = fm.height() + 2
-    ssid_w = (ssid_fm or fm).horizontalAdvance(ssid) if ssid else 0
+    ssid_w = fm.horizontalAdvance(ssid) if ssid else 0
     band_pill_w = (fm.horizontalAdvance(band) + 2 * pad) if band else 0
     if ssid and band:
         w = pad + ssid_w + pad + band_pill_w
@@ -79,167 +79,31 @@ def _has_variable_font() -> bool:
     return _variable_font_installed
 
 
-_raw_fonts: Dict[str, Any] = {}
-_installed_families: Optional[frozenset] = None
+def make_widget_font(family: str, point_size: int, weight: int) -> QFont:
+    """The widget's QFont for a configured family (7a). "Segoe UI Variable" (the default) gets its Text
+    optical size through the opsz axis - set explicitly, so every Qt measures it alike (Qt 6.9 applied the
+    Text size by itself, 6.10 the Small one: "888.8 Mbps" 60 vs 64 px). The named sizes ("... Text",
+    "... Small", "... Display") map to the family and their axis value. Without the variable font
+    (Windows 10) it is Segoe UI outright; QFont alone would pick Tahoma. Every other family is passed
+    through unchanged, exactly as before.
 
-# Text every locale's widget can paint besides its own strings: digits, the hardware rows ("CPU 37%",
-# "(62°C, 12.5W)", "RAM 9.2/16"), band tags ("2.4G"). Checked against the candidate family too.
-_WIDGET_FIXED_TEXT = "0123456789.,:/%()+-°CFW KMGTPBbiops RAMVCPUG"
-
-
-def _family_installed(family: str) -> bool:
-    """``family`` is an installed font family. ``QFontDatabase.families()`` lists names only - it does
-    not load any family's styles, so it costs nothing (measured: +0.4 MB for 323 families)."""
-    global _installed_families
-    if _installed_families is None:
-        try:
-            _installed_families = frozenset(QFontDatabase.families())
-        except Exception:
-            _installed_families = frozenset()
-    return family in _installed_families
-
-
-def family_covers(family: str, text: str) -> bool:
-    """``family`` itself has a glyph for every character of ``text``. Asked of that ONE face: a QRawFont of
-    a no-merging QFont - QFontMetrics.inFont() on a merging font walks Qt's fallback list, which loads the
-    styles of every installed family (the very ~38 MB this check exists to avoid). A family that is not
-    installed covers nothing (and Qt's stand-in box font must not be asked: familyName() on it crashes)."""
-    if not _family_installed(family):
-        return False
-    raw = _raw_fonts.get(family)
-    if raw is None:
-        from PyQt6.QtGui import QRawFont
-        probe = QFont(family)
-        probe.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
-        raw = QRawFont.fromFont(probe)
-        _raw_fonts[family] = raw
-    try:
-        if not raw.isValid() or raw.familyName().lower() != family.lower():
-            return False
-        return all(raw.supportsCharacter(ord(ch)) for ch in set(text) if not ch.isspace())
-    except Exception:
-        return False
-
-
-def _config_value(config, key: str, default):
-    """``key`` of a config dict or a RenderConfig."""
-    if config is None:
-        return default
-    if isinstance(config, dict):
-        return config.get(key, default)
-    return getattr(config, key, default)
-
-
-def widget_locale_text(i18n, config=None) -> str:
-    """The locale strings the taskbar widget can paint under ``config`` (bar the arrows - see
-    widget_arrow_font): the unit labels of the configured unit type, long and short, and - when a
-    CPU or GPU row can show - the "N/A" text; plus the decimal separator and the percent template.
-    Without ``config``, every unit type and the "N/A". A family that covers it never makes Qt look for a
-    fallback glyph. Only what the config can show counts, so a Japanese widget in bits ("Mbps") keeps
-    the default face, and only bytes ("MB/秒") need the Japanese one."""
-    from netspeedtray.utils.helpers import (get_all_possible_unit_labels, get_unit_labels_for_type,
-                                            effective_display_mode)
-    if config is None:
-        parts = list(get_all_possible_unit_labels(i18n))
-        show_hardware = True
-    else:
-        unit_type = str(_config_value(config, "unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE))
-        parts = [str(u) for short in (False, True) for u in get_unit_labels_for_type(i18n, unit_type, short)]
-        if isinstance(config, dict):
-            mode = effective_display_mode(config)
-        else:
-            mode = getattr(config, "widget_display_mode", "network_only")
-        # "N/A" is drawn only in a CPU/GPU row (its percent, or its temperature/power suffix).
-        show_hardware = mode != "network_only" and bool(
-            _config_value(config, "monitor_cpu_enabled", False) or _config_value(config, "monitor_gpu_enabled", False))
-    keys = ["DECIMAL_SEPARATOR", "PERCENT_TEMPLATE"] + (["DEFAULT_TEXT"] if show_hardware else [])
-    for key in keys:
-        parts.append(str(getattr(i18n, key, "") or ""))
-    return "".join(parts).replace("{value}", "")
-
-
-def widget_font_family(family: str, i18n=None, config=None) -> str:
-    """The ONE family the widget draws ``family`` with (see make_widget_font). The default Segoe faces
-    resolve to "Segoe UI Variable" (Segoe UI without it, Windows 10); when the widget strings ``i18n``
-    and ``config`` can show need glyphs that face lacks (Japanese and Korean byte units "MB/秒",
-    Korean, Chinese and Bengali "N/A"), it is the locale's script family instead
-    (constants.fonts.SCRIPT_FAMILIES). A family the user picked is kept as chosen."""
+    Always ONE family. Until 2.2.0 Segoe UI was a second family of the request, for the glyphs the
+    variable font lacks (Hebrew, CJK...): a family list makes Qt resolve its whole fallback chain on the
+    first measurement, which loads the styles of every installed font family (~38 MB, never freed).
+    Those glyphs are now drawn run by run in a face that has them (utils/font_runs, #194's Segoe UI for
+    Hebrew), measured with WidgetFontMetrics."""
     f = constants.fonts
     family = f.FAMILY_RENAMES.get(family, family)
-    if family in f.VARIABLE_OPSZ:
-        family = f.VARIABLE_FAMILY if _has_variable_font() else f.FALLBACK_FONT
-    elif family != f.FALLBACK_FONT:
-        return family
-    language = str(getattr(i18n, "language", "") or "") if i18n is not None else ""
-    candidates = f.SCRIPT_FAMILIES.get(language)
-    if not candidates:
-        return family
-    text = widget_locale_text(i18n, config) + _WIDGET_FIXED_TEXT
-    if family_covers(family, text):
-        return family
-    for candidate in candidates:
-        if _family_installed(candidate) and family_covers(candidate, text):
-            return candidate
-    return family
-
-
-def make_widget_font(family: str, point_size: int, weight: int, i18n=None, config=None) -> QFont:
-    """The widget's QFont for a configured family (7a), always ONE family. "Segoe UI Variable" (the
-    default) gets its Text optical size through the opsz axis - set explicitly, so every Qt measures it
-    alike (Qt 6.9 applied the Text size by itself, 6.10 the Small one: "888.8 Mbps" 60 vs 64 px). The
-    named sizes ("... Text", "... Small", "... Display") map to the family and their axis value. Without
-    the variable font (Windows 10) it is Segoe UI outright; QFont alone would pick Tahoma. Every other
-    family is passed through unchanged.
-
-    Never a fallback list (``setFamilies([...])``, 2.2 rc.6 and before): with more than one family Qt
-    resolves the whole fallback chain on the first measurement, which loads the styles of every installed
-    font family - ~38 MB on a typical PC, process-wide and never freed. A glyph the face lacks costs the
-    same, so with ``i18n`` the default face becomes the locale's script family when the strings
-    ``config`` can show need it (widget_font_family). The variable font has no Hebrew, but no widget
-    string is Hebrew (#194's Hebrew is Settings text, styles.font_for)."""
-    f = constants.fonts
-    requested = f.FAMILY_RENAMES.get(family, family)
-    resolved = widget_font_family(requested, i18n, config)
-    font = QFont(resolved, point_size, weight)
-    opsz = f.VARIABLE_OPSZ.get(requested)
-    if opsz is not None and resolved == f.VARIABLE_FAMILY:
-        try:
-            font.setVariableAxis(QFont.Tag.fromString("opsz"), float(opsz))
-        except Exception:   # Qt < 6.7: the variable font's default instance
-            pass
-    return font
-
-
-def widget_arrow_font(font: QFont, glyphs, family: str, point_size: int, weight: int) -> QFont:
-    """The font the arrows are drawn with when they share the main font: ``font`` itself, unless its
-    family lacks an arrow glyph (Nirmala UI, the Bengali widget face, has no ↑↓) - then the configured
-    family without the locale switch, which has them. That one is set to no font merging: its coverage is
-    checked here, and Qt must not resolve a fallback chain for it (a substitute registered for the Segoe
-    families - styles.apply_script_font_fallbacks - would make it do that on the first measurement)."""
-    text = "".join(str(g) for g in glyphs if g)
-    if not text or family_covers(font.family(), text):
-        return font
-    alt = make_widget_font(family, point_size, weight)
-    if alt.family() != font.family() and family_covers(alt.family(), text):
-        alt.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
-        return alt
-    return font
-
-
-def ssid_font(font: QFont, text: Optional[str]) -> QFont:
-    """The face the Wi-Fi name in the identity badge is drawn with: ``font``, unless its family lacks a
-    letter of the name and the widget font is Segoe UI Variable - then Segoe UI, at the same size,
-    which has Hebrew, Arabic, Greek... (#194: the variable face has no Hebrew; Segoe UI's letters, not an
-    arbitrary fallback's). Until rc.6 the widget font listed Segoe UI as its second family, which made
-    Qt load every installed family's styles; a name neither face covers (CJK, emoji) still falls back
-    the ordinary way."""
-    if not text or family_covers(font.family(), text):
-        return font
-    f = constants.fonts
-    if font.family() == f.VARIABLE_FAMILY and family_covers(f.FALLBACK_FONT, text):
-        alt = QFont(font)
-        alt.setFamily(f.FALLBACK_FONT)
-        return alt
+    opsz = f.VARIABLE_OPSZ.get(family)
+    if opsz is None:
+        return QFont(family, point_size, weight)
+    if not _has_variable_font():
+        return QFont(f.FALLBACK_FONT, point_size, weight)
+    font = QFont(f.VARIABLE_FAMILY, point_size, weight)
+    try:
+        font.setVariableAxis(QFont.Tag.fromString("opsz"), float(opsz))
+    except Exception:   # Qt < 6.7: the variable font's default instance
+        pass
     return font
 
 
@@ -912,17 +776,16 @@ class WidgetRenderer:
         self.low_color = QColor(self.config.low_speed_color)
         
         weight = int(self.config.font_weight)
-        i18n = getattr(self, "i18n", None)
-        self.font = make_widget_font(self.config.font_family, self.config.font_size, weight, i18n, self.config)
-        self.metrics = QFontMetrics(self.font)
+        set_text_language(getattr(getattr(self, "i18n", None), "language", ""))
+        self.font = make_widget_font(self.config.font_family, self.config.font_size, weight)
+        self.metrics = WidgetFontMetrics(self.font)   # measures runs as draw_text draws them
         
         if self.config.use_separate_arrow_font:
             self.arrow_font = make_widget_font(self.config.arrow_font_family, self.config.arrow_font_size,
                                                int(self.config.arrow_font_weight))
         else:
-            self.arrow_font = widget_arrow_font(
-                self.font, self._arrow_glyphs(), self.config.font_family, self.config.font_size, weight)
-        self.arrow_metrics = QFontMetrics(self.arrow_font)
+            self.arrow_font = self.font
+        self.arrow_metrics = WidgetFontMetrics(self.arrow_font)
         
         # Pre-cache pens
         self._cached_pens = {
@@ -939,28 +802,6 @@ class WidgetRenderer:
         }
 
 
-    def _ssid_font(self, ssid: Optional[str]) -> Tuple[QFont, QFontMetrics]:
-        """(font, metrics) the identity badge draws ``ssid`` with (ssid_font); the widget font's own for
-        a name it covers. Cached per name - the SSID changes only on a network change."""
-        if not ssid:
-            return self.font, self.metrics
-        cache = self.__dict__.setdefault("_ssid_font_cache", {})
-        key = (self.font.key(), ssid)
-        hit = cache.get(key)
-        if hit is None:
-            font = ssid_font(self.font, ssid)
-            hit = (self.font, self.metrics) if font is self.font else (font, QFontMetrics(font))
-            if len(cache) > 8:
-                cache.clear()
-            cache[key] = hit
-        return hit
-
-    def _arrow_glyphs(self) -> List[str]:
-        """The up/down glyphs the arrows draw: the custom ones, else the locale's."""
-        i18n = getattr(self, "i18n", None)
-        return [self.config.arrow_up_symbol or getattr(i18n, "UPLOAD_ARROW", ""),
-                self.config.arrow_down_symbol or getattr(i18n, "DOWNLOAD_ARROW", "")]
-
     def _draw_error(self, painter: QPainter, rect: QRect, message: str) -> None:
         """Draws an error message on the widget."""
         painter.save()
@@ -971,7 +812,7 @@ class WidgetRenderer:
         error_font = QFont(self.font)
         error_font.setPointSize(max(6, base_size - 2))
         painter.setFont(error_font)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, message)
+        draw_text_centered(painter, rect, message)
         painter.restore()
 
 
@@ -1018,8 +859,7 @@ class WidgetRenderer:
             # v2.1: reserve the identity badge slot (SSID pill / band pill / compound capsule) so
             # right-align accounts for it and the layout reserves the same amount. Matches
             # NetworkSpeedWidget._identity_reserve_px (same identity_layout geometry).
-            identity_badge_w, identity_parts = identity_layout(self.metrics, identity_ssid, identity_text,
-                                                               self._ssid_font(identity_ssid)[1])
+            identity_badge_w, identity_parts = identity_layout(self.metrics, identity_ssid, identity_text)
             identity_reserve = (IDENTITY_BAND_GAP_PX + identity_badge_w) if identity_badge_w else 0
             block_width = max_arrow_width + arrow_gap + number_area_width + unit_gap + max_unit_width + identity_reserve
             if slot_width and slot_width > block_width + 2 * margin:
@@ -1113,7 +953,7 @@ class WidgetRenderer:
     def identity_reserve(self, identity_text: Optional[str], identity_ssid: Optional[str]) -> int:
         """Width the identity badge adds after the unit column (0 without one) - the same geometry
         draw_network_speeds and NetworkSpeedWidget._identity_reserve_px use."""
-        badge_w, _parts = identity_layout(self.metrics, identity_ssid, identity_text, self._ssid_font(identity_ssid)[1])
+        badge_w, _parts = identity_layout(self.metrics, identity_ssid, identity_text)
         return (IDENTITY_BAND_GAP_PX + badge_w) if badge_w else 0
 
     def network_panel_width(self, upload: float, download: float, config: RenderConfig) -> int:
@@ -1232,7 +1072,7 @@ class WidgetRenderer:
                 widest = max(family, key=fm.horizontalAdvance)
                 if fm.horizontalAdvance(widest) > width - 2 * margin:
                     unit_font, _ = self._fit_font(widest, width - 2 * margin)
-                    unit_w = QFontMetrics(unit_font).horizontalAdvance(unit)
+                    unit_w = WidgetFontMetrics(unit_font).horizontalAdvance(unit)
             x0 = max(margin, (width - block_w) // 2)
 
             line_h, asc, gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
@@ -1264,7 +1104,7 @@ class WidgetRenderer:
             if show_unit_row:
                 painter.setFont(unit_font)
                 painter.setPen(self._cached_pens['default'])
-                painter.drawText(max(margin, (width - unit_w) // 2), y, unit)
+                draw_text(painter, max(margin, (width - unit_w) // 2), y, unit)
             painter.restore()
 
             self._last_text_rect = QRect(min(x0, (width - unit_w) // 2) if show_unit_row else x0,
@@ -1295,19 +1135,19 @@ class WidgetRenderer:
         """(font, width): the widget font stepped down in half points until ``text`` fits ``avail``
         px, never below _MIN_UNIT_POINT_SIZE (past that it is clipped - and logged - as before)."""
         font = QFont(self.font)
-        width = QFontMetrics(font).horizontalAdvance(text)
+        width = WidgetFontMetrics(font).horizontalAdvance(text)
         size = font.pointSizeF()
         if size <= 0:   # a pixel-sized font
             px = font.pixelSize()
             while width > avail and px > 6:
                 px -= 1
                 font.setPixelSize(px)
-                width = QFontMetrics(font).horizontalAdvance(text)
+                width = WidgetFontMetrics(font).horizontalAdvance(text)
             return font, width
         while width > avail and size > self._MIN_UNIT_POINT_SIZE:
             size = max(self._MIN_UNIT_POINT_SIZE, size - 0.5)
             font.setPointSizeF(size)
-            width = QFontMetrics(font).horizontalAdvance(text)
+            width = WidgetFontMetrics(font).horizontalAdvance(text)
         return font, width
 
     def draw_hardware_compact(self, painter: QPainter, stats: List[Tuple[str, Optional[float]]], width: int,
@@ -1345,16 +1185,16 @@ class WidgetRenderer:
                 icon_x = x0 if inline else (width - icon_w) // 2
                 if style == "text":
                     painter.setPen(QPen(color))
-                    painter.drawText(icon_x, y, label)
+                    draw_text(painter, icon_x, y, label)
                 else:
                     self._draw_icon(painter, label, icon_x, y, color)
                 painter.setFont(self.font)
                 painter.setPen(self.default_color)
                 if inline:
-                    painter.drawText(x0 + icon_w + gap + pct_col - fm.horizontalAdvance(pct), y, pct)
+                    draw_text(painter, x0 + icon_w + gap + pct_col - fm.horizontalAdvance(pct), y, pct)
                 else:
                     y += line_h + row_gap
-                    painter.drawText((width - fm.horizontalAdvance(pct)) // 2, y, pct)
+                    draw_text(painter, (width - fm.horizontalAdvance(pct)) // 2, y, pct)
                 y += line_h + row_gap
             painter.restore()
             self._last_text_rect = QRect(x0, top - asc, block_w, block_h)
@@ -1416,7 +1256,7 @@ class WidgetRenderer:
             painter.drawRoundedRect(rect, radius, radius)
             painter.setPen(accent)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+        draw_text_centered(painter, rect, text)
 
     def _draw_identity_badge(self, painter: QPainter, x: float, y: float, parts: dict,
                              ssid: Optional[str], band: Optional[str],
@@ -1433,20 +1273,7 @@ class WidgetRenderer:
             self._draw_pill(painter, QRectF(x, y, parts["band_w"], h), accent, band, band_solid, radius)
         elif mode == "ssid":
             # Neutral outline pill with the name.
-            name_font, name_fm = self._ssid_font(ssid)
-            if name_font is self.font:
-                self._draw_pill(painter, QRectF(x, y, parts["w"], h), self.default_color, ssid, False, radius)
-            else:
-                # On the widget font's baseline, as when Segoe UI was that font's fallback (a line box
-                # is its FIRST face's): AlignCenter in the name's own face, moved by the baselines'
-                # difference, so the pill looks exactly as before.
-                rect = QRectF(x, y, parts["w"], h)
-                self._draw_pill(painter, rect, self.default_color, "", False, radius)
-                own, name = QFontMetricsF(self.font), QFontMetricsF(name_font)
-                dy = ((own.ascent() - own.descent()) - (name.ascent() - name.descent())) / 2.0
-                painter.setFont(name_font)
-                painter.drawText(rect.translated(0, dy), Qt.AlignmentFlag.AlignCenter, ssid)
-                painter.setFont(self.font)
+            self._draw_pill(painter, QRectF(x, y, parts["w"], h), self.default_color, ssid, False, radius)
         elif mode == "both":
             # Outer outline capsule holding the name; band as a same-height pill nested flush to the
             # right edge ("two left edges"). The nested band honors band_solid just like the band-only
@@ -1459,9 +1286,7 @@ class WidgetRenderer:
             painter.drawRoundedRect(outer, radius, radius)
             painter.setPen(self.default_color)
             ssid_baseline = int(y + (h + self.metrics.ascent() - self.metrics.descent()) / 2)
-            painter.setFont(self._ssid_font(ssid)[0])
-            painter.drawText(int(x + parts["ssid_x"]), ssid_baseline, ssid)
-            painter.setFont(self.font)
+            draw_text(painter, int(x + parts["ssid_x"]), ssid_baseline, ssid)
             band_rect = QRectF(x + parts["band_x"], y, parts["band_w"], h)
             self._draw_pill(painter, band_rect, accent, band, band_solid, radius)
         painter.restore()
@@ -1527,7 +1352,7 @@ class WidgetRenderer:
             # the band pen set above and the whole line stays one color signal.
             if config.use_custom_arrow_colors:
                 painter.setPen(self._cached_pens['arrow_up' if is_upload else 'arrow_down'])
-            painter.drawText(arrow_x, y, arrow)
+            draw_text(painter, arrow_x, y, arrow)
             if config.use_custom_arrow_colors:
                 # Restore the band pen BEFORE the number. Forgetting this makes the value silently
                 # inherit the arrow color, which reads as a color-coding regression (cf. #153).
@@ -1542,11 +1367,11 @@ class WidgetRenderer:
         painter.setFont(self.font)
         val_width = self.metrics.horizontalAdvance(val)
         aligned_number_x = number_x + (number_area_width - val_width)
-        painter.drawText(int(aligned_number_x), y, val)
+        draw_text(painter, int(aligned_number_x), y, val)
         
         # 3. Draw Unit
         if not config.hide_unit_suffix:
-            painter.drawText(unit_x, y, unit)
+            draw_text(painter, unit_x, y, unit)
 
 
 
@@ -1681,7 +1506,7 @@ class WidgetRenderer:
             for r in rows:
                 if style == "text":
                     painter.setPen(QPen(QColor(r['color'])))
-                    painter.drawText(current_x, y, r['label'])
+                    draw_text(painter, current_x, y, r['label'])
                 else:
                     self._draw_icon(painter, r['label'], current_x, y, QColor(r['color']))
                 vx = current_x + label_col
@@ -1696,9 +1521,9 @@ class WidgetRenderer:
                 has_mem_below = (not inline_mem) and bool(r['mem'])
                 right_align_pct = has_trailing or not has_mem_below
                 px = (vx + pct_col - self.metrics.horizontalAdvance(r['pct'])) if right_align_pct else vx
-                painter.drawText(px, y, r['pct'])
+                draw_text(painter, px, y, r['pct'])
                 if suffix_col and r['suffix']:
-                    painter.drawText(vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
+                    draw_text(painter, vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
                 if inline_mem and mem_col and r['mem']:
                     mx = vx + pct_col + suffix_col
                     label_x = mx + sep_col
@@ -1708,7 +1533,7 @@ class WidgetRenderer:
                     num_x = number_col_x + mem_num_col - self.metrics.horizontalAdvance(r['mem'])
                     if mem_label_col:
                         self._draw_memory_label(painter, label_x, y, r)
-                    painter.drawText(num_x, y, r['mem'])
+                    draw_text(painter, num_x, y, r['mem'])
                 y += line_height
                 if not inline_mem and r['mem']:
                     # Right-align memory to the segment's right edge while keeping the
@@ -1721,7 +1546,7 @@ class WidgetRenderer:
                     if mem_label_col:
                         self._draw_memory_label(painter, label_x, y, r)
 
-                    painter.drawText(num_x, y, r['mem'])
+                    draw_text(painter, num_x, y, r['mem'])
                     y += line_height
 
             self._last_text_rect = QRect(x_offset, top_y, seg_w + margin, total_height)
@@ -1766,7 +1591,7 @@ class WidgetRenderer:
         """Paint a row's RAM/VRAM label at the fixed start of its reserved label cell,
         in the row's CPU/GPU colour, then restore the value pen."""
         painter.setPen(QPen(QColor(row['color'])))
-        painter.drawText(label_x, y, row['mem_label'])
+        draw_text(painter, label_x, y, row['mem_label'])
         painter.setPen(self.default_color)
 
     def _draw_icon(self, painter: QPainter, icon_type: str, x: int, y_ascent: int, color: Optional[QColor] = None) -> None:

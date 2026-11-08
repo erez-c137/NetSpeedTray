@@ -464,19 +464,18 @@ def test_the_default_font_is_segoe_ui_variable_at_its_text_size(q_app, name):
 def test_hebrew_is_drawn_in_segoe_ui_not_an_arbitrary_face(q_app):
     """Segoe UI Variable has no Hebrew. A Hebrew Wi-Fi name in the identity badge is drawn in Segoe UI -
     the Hebrew UI's face (#194) - so it measures like Segoe UI (an arbitrary fallback drew some letters
-    at a mismatched size). Since 2.2.1 that is ssid_font's choice, not a second family of the widget
-    font (a family list makes Qt load every installed family, ~38 MB)."""
+    at a mismatched size). Since 2.2.1 it is a run in Segoe UI (utils/font_runs), not a second family of
+    the widget font (a family list makes Qt load every installed family, ~38 MB)."""
     from PyQt6.QtGui import QFontDatabase, QFontMetrics, QRawFont
-    from netspeedtray.utils.widget_renderer import ssid_font
+    from netspeedtray.utils.font_runs import WidgetFontMetrics, text_runs
     if "Segoe UI Variable" not in QFontDatabase.families():
         pytest.skip("Windows 10: the widget draws Segoe UI outright")
-    heb = "\u05e7\u05e4\u05d4\u05e0\u05ea\u05d1\u05d9\u05ea"
+    heb = "קפהנתבית"
     f = make_widget_font("Segoe UI Variable", 9, 400)
     assert not QRawFont.fromFont(f).supportsCharacter(heb[0])        # the variable face itself has none
-    name = ssid_font(f, heb)
-    assert name.family() == "Segoe UI"
+    assert text_runs(f, heb) == (("Segoe UI", heb),)
     seg = QFont("Segoe UI", 9, 400)
-    assert QFontMetrics(name).horizontalAdvance(heb) == QFontMetrics(seg).horizontalAdvance(heb)
+    assert WidgetFontMetrics(f).horizontalAdvance(heb) == QFontMetrics(seg).horizontalAdvance(heb)
 
 
 _NATIVE_FONT_PROBE = r"""
@@ -484,7 +483,8 @@ import json, sys
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetrics, QRawFont
 app = QApplication(sys.argv[:1])
-from netspeedtray.utils.widget_renderer import make_widget_font, ssid_font
+from netspeedtray.utils.widget_renderer import make_widget_font
+from netspeedtray.utils.font_runs import WidgetFontMetrics
 out = {"installed": "Segoe UI Variable" in QFontDatabase.families()}
 if out["installed"]:
     heb = "קפהנתבית"
@@ -495,7 +495,7 @@ if out["installed"]:
                text_w=QFontMetrics(f).horizontalAdvance("888.8 Mbps"),
                small_w=QFontMetrics(small).horizontalAdvance("888.8 Mbps"),
                face_has_hebrew=QRawFont.fromFont(f).supportsCharacter(heb[0]),
-               heb_w=QFontMetrics(ssid_font(f, heb)).horizontalAdvance(heb),
+               heb_w=WidgetFontMetrics(f).horizontalAdvance(heb),
                heb_segoe_w=QFontMetrics(QFont("Segoe UI", 9, 400)).horizontalAdvance(heb))
 print(json.dumps(out))
 """

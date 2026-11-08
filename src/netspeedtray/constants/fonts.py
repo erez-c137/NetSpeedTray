@@ -39,11 +39,12 @@ class FontConstants:
     }
     # Pre-release builds of 2.2 rc.2 wrote the optical size as the family name: always read it as the family.
     FAMILY_RENAMES: Final[Dict[str, str]] = {'Segoe UI Variable Text': 'Segoe UI Variable'}
-    # The widget's face for a UI language whose widget strings (unit labels, "N/A", ...) the Segoe
-    # families can't draw, first installed one wins (utils/widget_renderer.widget_font_family). The widget
-    # font is ONE family, never a fallback list: a list - and a glyph Qt has to find elsewhere - makes Qt
-    # load the styles of every installed family (~38 MB, process-wide, never freed). Only for the default
-    # Segoe faces; a family the user picked is kept as chosen.
+    # Faces for the glyphs the widget's own face lacks (utils/font_runs): each such glyph is drawn in the
+    # first installed face of the list that has it, never through a Qt fallback search - that loads the
+    # styles of every installed family (~38 MB, never freed). Segoe UI comes first (the widget font's
+    # second family until 2.2.0 - Hebrew, #194), then the UI language's own faces (Japanese and Chinese
+    # share Han code points), the other languages' faces, the symbol and emoji faces. Symbols (the ▴ △ ▵ ⇑ arrow presets) try SYMBOL_FAMILIES first: MS UI Gothic
+    # is the face Qt's fallback drew them in until 2.2.0.
     SCRIPT_FAMILIES: Final[Dict[str, tuple]] = {
         'ja_JP': ('Yu Gothic UI', 'Meiryo UI'),
         'ko_KR': ('Malgun Gothic',),
@@ -51,6 +52,8 @@ class FontConstants:
         'zh_TW': ('Microsoft JhengHei UI', 'Microsoft JhengHei'),
         'bn_BD': ('Nirmala UI',),
     }
+    SYMBOL_FAMILIES: Final[tuple] = ('MS UI Gothic', 'Segoe UI Symbol')
+    EMOJI_FAMILIES: Final[tuple] = ('Segoe UI Emoji',)
     NOTE_FONT_SIZE: Final[int] = 8
 
     # This map points numeric font weights to their corresponding i18n translation keys.
