@@ -3,7 +3,8 @@
 from LibreHardwareMonitor. The widget read "3% (38°C, 17.5W)": the NVIDIA's utilization and power,
 but the APU's "GPU VR SoC" (a voltage-regulator sensor) as the temperature. NVIDIA said 26 °C.
 
-Temperature, power and utilization for "the GPU" must describe ONE adapter. The fixture below is
+Temperature and power must come from ONE card, never mixed; Automatic's utilization stays the busiest
+engine on any adapter (#239), exactly as in rc.7. The fixture below is
 that machine's LHM tree (as data.json, and as LHM 0.9.4's WMI rows), sensor for sensor.
 """
 import types
@@ -119,48 +120,64 @@ def _poll(t, util):
 NVIDIA_BUSIER = {_eng(RTX_LUID, 10): 3.0, _eng(APU_LUID, 20): 0.0}
 
 
-# --- the parser: one card's die temperature, never a VR or memory sensor -------------------------
+# --- the parser: each card's own die temperature first; VR / memory sensors only as its last resort --
 
-def test_data_json_groups_each_card_and_skips_vr_and_junk():
+def test_data_json_groups_each_card_and_ranks_vr_last():
     snap = parse_snapshot(balciseri_data_json())
     by_id = {g.hardware_id: g for g in snap.gpus}
     nv, amd = by_id["/gpu-nvidia/0"], by_id["/gpu-amd/0"]
     assert (nv.temperature, nv.temperature_sensor, nv.power) == (26.0, "GPU Core", 17.5)
-    # The APU's only temperature is a voltage regulator: not the GPU's temperature.
-    assert amd.temperature is None
-    assert amd.power == 6.0
+    # The APU's only temperature is its VR SoC: still ITS reading (as in rc.7), never the RTX's.
+    assert (amd.temperature, amd.temperature_sensor, amd.power) == (38.0, "GPU VR SoC", 6.0)
     assert snap.preferred_gpu is nv
 
 
-def test_memory_junction_never_stands_in_for_the_die():
+def _nvidia_temps(*sensors):
     tree = balciseri_data_json(nvidia_temps=False)
-    nv_node = tree["Children"][0]["Children"][2]
-    nv_node["Children"][1]["Children"] = [
+    tree["Children"][0]["Children"][2]["Children"][1]["Children"] = list(sensors)
+    return parse_snapshot(tree).gpus[0]
+
+
+def test_a_die_sensor_beats_memory_junction_and_255_is_never_read():
+    nv = _nvidia_temps(
+        _sensor("GPU Memory Junction", "/gpu-nvidia/0/temperature/1", "Temperature", "90,0 °C"),
         _sensor("GPU Memory Junction", "/gpu-nvidia/0/temperature/3", "Temperature", "255,0 °C"),
-        _sensor("GPU Memory Junction", "/gpu-nvidia/0/temperature/4", "Temperature", "84,0 °C")]
-    nv = parse_snapshot(tree).gpus[0]
-    assert nv.hardware_id == "/gpu-nvidia/0"
-    assert nv.temperature is None and nv.power == 17.5
+        _sensor("GPU Hot Spot", "/gpu-nvidia/0/temperature/2", "Temperature", "27,0 °C"))
+    assert nv.temperature == 27.0
+    only_junk = _nvidia_temps(
+        _sensor("GPU Memory Junction", "/gpu-nvidia/0/temperature/3", "Temperature", "255,0 °C"))
+    assert only_junk.temperature is None and only_junk.power == 17.5
 
 
-def test_hot_spot_when_there_is_no_core_sensor():
-    tree = balciseri_data_json(nvidia_temps=False)
-    tree["Children"][0]["Children"][2]["Children"][1]["Children"] = [
-        _sensor("GPU Memory Junction", "/gpu-nvidia/0/temperature/3", "Temperature", "90,0 °C"),
-        _sensor("GPU Hot Spot", "/gpu-nvidia/0/temperature/2", "Temperature", "27,0 °C")]
-    assert parse_snapshot(tree).gpus[0].temperature == 27.0
+def test_apu_only_machine_whose_only_sensor_is_vr_soc_still_reads_it(thread):
+    """(a) rc.7 showed 52 °C on an APU-only box whose only LHM temperature is "GPU VR SoC"."""
+    thread._gpu_adapters = [APU, BRD]
+    tree = {"Text": "Sensor", "Children": [{"Text": "PC", "Children": [
+        {"Text": "AMD Radeon(TM) Graphics", "HardwareId": "/gpu-amd/0", "Children": [
+            _group("Powers", _sensor("GPU Core", "/gpu-amd/0/power/0", "Power", "9,0 W")),
+            _group("Temperatures",
+                   _sensor("GPU VR SoC", "/gpu-amd/0/temperature/4", "Temperature", "52,0 °C"))]}]}]}
+    thread._lhm_http.get_snapshot.return_value = parse_snapshot(tree)
+    r = _poll(thread, {_eng(APU_LUID, 20): 12.0})
+    assert (r.util, r.temp, r.power) == (12.0, 52.0, 9.0)
+    # Same over LHM 0.9.4's WMI.
+    thread._lhm_http.get_snapshot.return_value = None
+    thread._wmi_ohm = _wmi(temps=[_wmi_row("GPU VR SoC", "/gpu-amd/0/temperature/4", 52.0)],
+                           powers=[_wmi_row("GPU Core", "/gpu-amd/0/power/0", 9.0)])
+    r = _poll(thread, {_eng(APU_LUID, 20): 12.0})
+    assert (r.temp, r.power) == (52.0, 9.0)
 
 
-# --- Automatic on the hybrid machine --------------------------------------------------------------
+# --- Automatic on the hybrid machine: utilization exactly as rc.7, sensors from one card ----------
 
-def test_automatic_lhm_web_server_reads_the_nvidia_for_all_three(thread):
+def test_automatic_lhm_web_server_reads_the_nvidia(thread):
     thread._lhm_http.get_snapshot.return_value = parse_snapshot(balciseri_data_json())
     r = _poll(thread, NVIDIA_BUSIER)
     assert (r.util, r.temp, r.power) == (3.0, 26.0, 17.5)
 
 
-def test_automatic_wmi_fallback_reads_one_card_not_the_first_row_of_each_type(thread):
-    """LHM 0.9.4 over WMI (no web server): the report itself - 38 °C was the APU's VR SoC."""
+def test_balciseri_wmi_case_reads_one_card_not_the_first_row_of_each_type(thread):
+    """(d) LHM 0.9.4 over WMI: the report itself - 38 °C was the APU's VR SoC."""
     thread._wmi_ohm = _wmi()
     r = _poll(thread, NVIDIA_BUSIER)
     assert (r.util, r.temp, r.power) == (3.0, 26.0, 17.5)
@@ -183,32 +200,44 @@ def test_web_server_card_without_a_temp_is_not_completed_from_another_card(threa
     assert r.temp is None
 
 
-def test_automatic_follows_a_clearly_busier_igpu_with_its_own_sensors(thread):
+@pytest.mark.parametrize("util, expected", [
+    ({_eng(APU_LUID, 20): 9.0, _eng(RTX_LUID, 10): 0.0}, 9.0),
+    ({_eng(APU_LUID, 20): 45.0, _eng(RTX_LUID, 10): 50.0}, 50.0),
+    ({_eng(APU_LUID, 20): 45.0, _eng(RTX_LUID, 10): 50.0, "unparseable_instance": 70.0}, 70.0),
+])
+def test_automatic_utilization_is_still_the_max_across_adapters(thread, util, expected):
+    """(c) #239: Automatic's utilization is the busiest engine on ANY adapter, unparsed ones included."""
     thread._lhm_http.get_snapshot.return_value = parse_snapshot(balciseri_data_json())
-    r = _poll(thread, {_eng(RTX_LUID, 10): 2.0, _eng(APU_LUID, 20): 40.0})
-    assert r.util == 40.0
-    assert r.temp is None        # the APU has no die sensor in LHM - not the RTX's 26 °C
-    assert r.power == 6.0        # the APU's, not the RTX's 17.5 W
+    r = _poll(thread, util)
+    assert r.util == expected
+    assert (r.temp, r.power) == (26.0, 17.5)   # sensors stay the preferred (discrete) card's
 
 
-def test_automatic_does_not_flip_cards_on_idle_noise(thread):
-    thread._lhm_http.get_snapshot.return_value = parse_snapshot(balciseri_data_json())
-    first = _poll(thread, {})                                                     # idle: the dGPU
-    noise = _poll(thread, {_eng(RTX_LUID, 10): 2.0, _eng(APU_LUID, 20): 8.0})     # within the margin
-    assert (first.temp, first.power) == (26.0, 17.5)
-    assert (noise.util, noise.temp, noise.power) == (2.0, 26.0, 17.5)
-    busy = _poll(thread, {_eng(RTX_LUID, 10): 2.0, _eng(APU_LUID, 20): 40.0})
-    back = _poll(thread, {_eng(RTX_LUID, 10): 60.0, _eng(APU_LUID, 20): 40.0})
-    assert busy.power == 6.0 and (back.util, back.temp, back.power) == (60.0, 26.0, 17.5)
+def test_two_identical_nvidia_cards_in_automatic_read_as_rc7(thread):
+    """(b) Automatic with twin cards: LHM's first NVIDIA group and nvidia-smi's first line, as rc.7."""
+    twin = AdapterInfo("NVIDIA GeForce RTX 5070", 0x10DE, (0, APU_LUID), 12 * GIB, int(15 * GIB), False)
+    thread._gpu_adapters = [RTX, twin, BRD]
+    thread._lhm_http.get_snapshot.return_value = LhmSnapshot(gpus=(
+        LhmGpu("/gpu-nvidia/0", "NVIDIA GeForce RTX 5070", 40.0, "GPU Core", 100.0, "GPU Package"),
+        LhmGpu("/gpu-nvidia/1", "NVIDIA GeForce RTX 5070", 45.0, "GPU Core", 120.0, "GPU Package")))
+    r = _poll(thread, {_eng(RTX_LUID, 10): 20.0, _eng(APU_LUID, 20): 80.0})
+    assert (r.util, r.temp, r.power) == (80.0, 40.0, 100.0)
+    # Without LHM: nvidia-smi's first line, as rc.7's Automatic query reads it.
+    thread._lhm_http.get_snapshot.return_value = None
+    thread._nvidia_smi_path = "nvidia-smi.exe"
+    thread._NVIDIA_POLL_INTERVAL_SEC = 0.0
+    thread._run_child = MagicMock(return_value="61, 12227, 150.5\n66, 12227, 170.0\n")
+    r = _poll(thread, {_eng(RTX_LUID, 10): 20.0, _eng(APU_LUID, 20): 80.0})
+    assert (r.util, r.temp, r.power) == (80.0, 61.0, 150.5)
 
 
 # --- a picked GPU --------------------------------------------------------------------------------
 
-def test_picked_apu_never_reads_its_vr_sensor_as_the_gpu_temperature(thread):
+def test_picked_apu_reads_its_own_sensors(thread):
     thread.config = dict(thread.config, gpu_adapter=APU.name)
     thread._lhm_http.get_snapshot.return_value = parse_snapshot(balciseri_data_json())
     r = _poll(thread, NVIDIA_BUSIER)
-    assert (r.util, r.temp, r.power) == (0.0, None, 6.0)
+    assert (r.util, r.temp, r.power) == (0.0, 38.0, 6.0)
 
 
 def test_picked_rtx_reads_the_rtx(thread):
@@ -216,6 +245,32 @@ def test_picked_rtx_reads_the_rtx(thread):
     thread._wmi_ohm = _wmi()
     r = _poll(thread, NVIDIA_BUSIER)
     assert (r.util, r.temp, r.power) == (3.0, 26.0, 17.5)
+
+
+# --- WMI: only the wanted query runs; a temperature-only error keeps the connection --------------
+
+def test_wmi_temperature_error_keeps_the_power_reading_and_the_connection(thread):
+    wmi = MagicMock()
+
+    def query(q):
+        if "Temperature" in q:
+            raise RuntimeError("RPC server is unavailable")
+        return list(WMI_POWERS)
+    wmi.ExecQuery.side_effect = query
+    thread._wmi_ohm = wmi
+    r = _poll(thread, NVIDIA_BUSIER)
+    assert (r.temp, r.power) == (None, 17.5)
+    assert thread._wmi_ohm is wmi
+
+
+def test_wmi_power_only_poll_does_not_query_temperatures(thread):
+    thread._wmi_ohm = _wmi()
+    with patch("win32pdh.CollectQueryData"), \
+         patch("win32pdh.GetFormattedCounterArray", side_effect=[NVIDIA_BUSIER, {}, {}]), \
+         patch.object(StatsMonitorThread, "_init_ohm_wmi"):
+        r = thread._poll_gpu_hybrid(include_temp=False, include_power=True)
+    assert r.power == 17.5
+    assert all("Temperature" not in c.args[0] for c in thread._wmi_ohm.ExecQuery.call_args_list)
 
 
 # --- one GPU: Automatic is untouched --------------------------------------------------------------
@@ -226,4 +281,3 @@ def test_single_gpu_automatic_is_the_plain_busiest_engine(thread):
         gpus=(LhmGpu("/gpu-nvidia/0", "NVIDIA GeForce RTX 5070", 26.0, "GPU Core", 17.5, "GPU Package"),))
     r = _poll(thread, {_eng(RTX_LUID, 10): 30.0, "unparseable_instance": 45.0})
     assert (r.util, r.temp, r.power) == (45.0, 26.0, 17.5)
-    assert thread._auto_gpu_luid is None

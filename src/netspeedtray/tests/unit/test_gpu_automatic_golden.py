@@ -8,10 +8,6 @@ of them fails here (adapted from the #435 review's side-by-side test, which need
 Regenerate ONLY for a deliberate, reviewed change to Automatic:  python -m
 netspeedtray.tests.unit.test_gpu_automatic_golden --write   (from src/, with the change explained in
 the PR - the file is the contract).
-
-Regenerated once, deliberately (#236, balciseri's Ryzen APU + RTX 5070): on a hybrid machine whose
-iGPU is clearly the busiest, Automatic's temperature and power now describe that iGPU - the GPU its
-utilization shows - instead of the dGPU's. Utilization and VRAM did not move in any scenario.
 """
 import json
 import sys
