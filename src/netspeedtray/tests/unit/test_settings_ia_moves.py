@@ -35,6 +35,7 @@ def dlg(qtbot, monkeypatch):
 
 
 def _page(dlg, index: int) -> QWidget:
+    dlg._build_all_pages()   # pages are built lazily (on first visit)
     return dlg.stack.widget(index).widget()
 
 
@@ -187,9 +188,11 @@ def test_graph_style_change_updates_the_live_preview(dlg, qtbot):
     seen = []
     dlg.preview_widget.set_config = lambda cfg: seen.append(cfg)
     g = dlg.widget_page.mini_graph_section
-    g.graph_style.setCurrentIndex(g.graph_style.findData("trend"))
-    qtbot.waitUntil(lambda: bool(seen) and seen[-1].get("graph_style") == "trend", timeout=2000)
-    assert dlg.get_settings()["graph_style"] == "trend"
+    # A style other than the loaded one (the default is "trend"): a real change, not the open's echo.
+    other = "detailed" if g.graph_style.currentData() == "trend" else "trend"
+    g.graph_style.setCurrentIndex(g.graph_style.findData(other))
+    qtbot.waitUntil(lambda: bool(seen) and seen[-1].get("graph_style") == other, timeout=2000)
+    assert dlg.get_settings()["graph_style"] == other
 
 
 # --- change 4: Preferred Monitor -> Widget > Behavior ----------------------------------------------

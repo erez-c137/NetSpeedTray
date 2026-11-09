@@ -239,12 +239,13 @@ def _gdi_covers(name: str, chars: Set[str]) -> Optional[bool]:
     return all(_gdi_cache.get((name, ch), False) for ch in chars)
 
 
-def family_covers(family: str, text: str) -> bool:
+def family_covers(family: str, text: str, keep: bool = True) -> bool:
     """``family`` itself has a glyph for every character of ``text`` (bar whitespace and default-ignorable
     code points) - asked of that ONE face: of GDI where it can answer (``_gdi_covers``: no font file
     mapped into this process), else of a QRawFont of a no-merging QFont. A family that is not installed
     covers nothing (and Qt's stand-in box font must never be asked: QRawFont.familyName() on it
-    crashes)."""
+    crashes). ``keep=False`` (the Settings font picker, asking about arbitrary installed faces): the
+    QRawFont is not cached, so the face's files are unmapped again once Qt's font database is reset."""
     name = resolve_family(family)
     if name is None:
         return False
@@ -260,7 +261,8 @@ def family_covers(family: str, text: str) -> bool:
         probe = QFont(name)
         probe.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
         raw = QRawFont.fromFont(probe)
-        _raw_fonts[name] = raw
+        if keep:
+            _raw_fonts[name] = raw
     try:
         if not raw.isValid():
             return False

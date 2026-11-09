@@ -9,7 +9,8 @@ life of the process. This picker asks Qt only for what it shows:
 * each row's name is drawn in its own face LAZILY, by the delegate, for the rows actually painted
   (a few dozen, never the whole list), with font merging off so a face that lacks a character never
   sends Qt searching the fallback chain (#487) - such a name, and a symbol font's, is drawn in the
-  list's own font instead;
+  list's own font, the UI face (#489: one face per language, never a family list), with merging off
+  when that face lacks a character too;
 * weights come from ``QFontDatabase.styles()`` of the SELECTED family only;
 * the preview is the widget's own renderer (PreviewWidget) on the taskbar-coloured strip Settings uses.
 
@@ -32,6 +33,7 @@ from PyQt6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit,
 from netspeedtray import constants
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils import color_scheme
+from netspeedtray.utils.font_runs import family_covers
 
 logger = logging.getLogger("NetSpeedTray.FontPicker")
 
@@ -85,16 +87,28 @@ class FamilyDelegate(QStyledItemDelegate):
             # One family, merging off: a missing glyph is never looked up in other fonts (#487).
             f.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
             symbol = QFontDatabase.WritingSystem.Symbol in QFontDatabase.writingSystems(family)
-            if not symbol:
-                fm = QFontMetrics(f)
-                if all(fm.inFontUcs4(ord(ch)) for ch in family if not ch.isspace()):
-                    face = f
+            # Coverage asked of that one face (GDI first: no font file mapped just to ask).
+            if not symbol and family_covers(family, family, keep=False):
+                face = f
         except Exception as e:
             logger.debug("No face for %r: %s", family, e)
         if len(self._faces) >= _FACE_CACHE_MAX:
             self._faces.clear()
         self._faces[family] = face
         return face
+
+    def fallback_font(self, base: QFont, family: str) -> QFont:
+        """The list's own font (the UI face, #489) for a name drawn outside its face. If the UI face
+        lacks a character of the name too, merging is switched off: a missing glyph shows as a box
+        rather than sending Qt through every installed family."""
+        try:
+            if family_covers(style_utils.ui_family(), family, keep=False):
+                return base
+        except Exception:
+            pass
+        f = QFont(base)
+        f.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
+        return f
 
     def painted_families(self) -> List[str]:
         """Families a face was built for (tests: proof the list stays lazy)."""
@@ -119,7 +133,7 @@ class FamilyDelegate(QStyledItemDelegate):
         painter.save()
         try:
             painter.setPen(opt.palette.color(role))
-            painter.setFont(face if face is not None else opt.font)
+            painter.setFont(face if face is not None else self.fallback_font(opt.font, family))
             rect = opt.rect.adjusted(10, 0, -10, 0)
             text = QFontMetrics(painter.font()).elidedText(family, Qt.TextElideMode.ElideRight, rect.width())
             align = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeading

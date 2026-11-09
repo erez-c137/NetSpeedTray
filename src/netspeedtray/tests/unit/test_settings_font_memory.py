@@ -196,6 +196,95 @@ def test_has_pending_work_sees_a_backup_and_a_delete(host):
     assert dlg.has_pending_work() is True
 
 
+# --- lazy pages: only the page shown is built ----------------------------------------------------------
+
+# Non-default values on every page (General, Widget, Appearance, Hardware, Network, Advanced).
+_SPREAD = {"reduce_motion": True, "graph_opacity": 37, "font_size": 11, "monitor_cpu_enabled": True,
+           "interface_mode": "selected", "selected_interfaces": ["Ethernet"], "keep_data": 365,
+           "metrics_endpoint_port": 9555}
+
+
+def _lazy_dialog(qt_owned, **extra):
+    cfg = dict(DEFAULTS, **_SPREAD, **extra)
+    host = _Host()
+    host.config = dict(cfg)
+    dlg = qt_owned(SettingsDialog(main_widget=host, config=cfg, version="x", i18n=EN,
+                                  available_interfaces=["Ethernet", "Wi-Fi"]))
+    dlg.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    return dlg, host, cfg
+
+
+def test_settings_opens_with_only_its_first_page_built(qt_owned):
+    dlg, _, _ = _lazy_dialog(qt_owned)
+    assert set(dlg._built_pages) == {"general"}
+    assert [dlg.stack.widget(i).widget() is not None for i in range(dlg.stack.count())] == \
+        [True, False, False, False, False, False]
+
+
+def test_save_keeps_the_unbuilt_pages_settings(qt_owned):
+    """Save with only General built: every other page's keys are the config's, never a fresh page's
+    constructor defaults."""
+    dlg, host, cfg = _lazy_dialog(qt_owned)
+    saved = []
+    host.handle_settings_changed = lambda c, save_to_disk=True: saved.append((dict(c), save_to_disk))
+    dlg.save_button.click()
+    assert saved and saved[-1][1] is True
+    got = saved[-1][0]
+    assert set(dlg._built_pages) == {"general"}
+    for key in ("graph_opacity", "font_size", "monitor_cpu_enabled", "interface_mode",
+                "selected_interfaces", "keep_data", "metrics_endpoint_port"):
+        assert got[key] == cfg[key], key
+
+
+def test_live_preview_with_unbuilt_pages_changes_nothing_else(qt_owned):
+    dlg, _, cfg = _lazy_dialog(qt_owned)
+    got = dlg.get_settings()
+    # start_with_windows mirrors the Run key (General shows the live state), the position is the window's.
+    changed = sorted(k for k in cfg if k not in ("settings_window_pos", "start_with_windows")
+                     and got.get(k) != cfg[k])
+    assert changed == [], changed
+
+
+def test_a_page_is_built_and_loaded_on_first_visit(qt_owned):
+    dlg, _, cfg = _lazy_dialog(qt_owned)
+    dlg.navigate_to_page(dlg.PAGE_NETWORK)
+    assert "interfaces" in dlg._built_pages
+    assert dlg.stack.currentIndex() == dlg.PAGE_NETWORK
+    assert dlg.stack.currentWidget().widget() is dlg._built_pages["interfaces"]
+    got = dlg._built_pages["interfaces"].get_settings()
+    assert got["interface_mode"] == "selected" and got["selected_interfaces"] == ["Ethernet"]
+    dlg.navigate_to_page(dlg.PAGE_HARDWARE)
+    assert dlg._built_pages["hardware"].monitor_cpu.isChecked() is True
+
+
+def test_open_to_the_network_page(host):
+    host.open_data_usage_settings = NetworkSpeedWidget.open_data_usage_settings.__get__(host)
+    host.open_data_usage_settings()
+    dlg = host.settings_dialog
+    assert dlg.stack.currentIndex() == dlg.PAGE_NETWORK
+    assert set(dlg._built_pages) == {"general", "interfaces"}
+    assert dlg.sidebar.currentRow() == dlg.PAGE_NETWORK
+
+
+def test_record_card_follows_the_live_hardware_toggles_when_built_later(qt_owned):
+    """S6 with lazy pages: switch CPU monitoring off on Hardware, THEN open Advanced for the first time -
+    its Record-hardware-history card must follow the live toggle, not the config it loads from."""
+    dlg, _, _ = _lazy_dialog(qt_owned)   # config: monitor_cpu_enabled True
+    dlg.navigate_to_page(dlg.PAGE_HARDWARE)
+    dlg._built_pages["hardware"].monitor_cpu.setChecked(False)
+    dlg.navigate_to_page(5)
+    assert dlg._built_pages["advanced"]._record_card.isEnabled() is False
+
+
+def test_reset_all_reaches_every_page(qt_owned, monkeypatch):
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    dlg, _, _ = _lazy_dialog(qt_owned)
+    dlg._reset_all_to_defaults()
+    got = dlg.get_settings()
+    for key in ("graph_opacity", "font_size", "monitor_cpu_enabled", "keep_data", "metrics_endpoint_port"):
+        assert got[key] == DEFAULTS[key], key
+
+
 # --- font-database release ---------------------------------------------------------------------------
 
 def _count_releases(monkeypatch):

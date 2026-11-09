@@ -47,6 +47,7 @@ def _make(qtbot, cfg=None, lang="en_US"):
 
 
 def _owner(dlg, key):
+    dlg._build_all_pages()   # pages are built lazily; _color_pages() lists the built ones
     return next(pg for pg in dlg._color_pages() if key in pg.get_settings())
 
 
@@ -84,6 +85,7 @@ def test_load_and_get_round_trip_every_key(qtbot):
     values = _distinct()
     dlg, _ = _make(qtbot, dict(D.DEFAULT_CONFIG, **values, medium_speed_threshold=4.5))
     s = {}
+    dlg._build_all_pages()   # pages are built lazily (on first visit)
     for page in dlg._pages():   # what the CONTROLS hold, not the dialog's copy of the config
         s.update(page.get_settings())
     assert {k: s.get(k) for k in THEMED_KEYS} == values

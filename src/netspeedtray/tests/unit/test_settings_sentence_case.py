@@ -59,6 +59,7 @@ def _dialog(qtbot, monkeypatch, locale):
 
 def _titles(dlg):
     out = []
+    dlg._build_all_pages()   # pages are built lazily (on first visit)
     for i in range(dlg.stack.count()):
         page = dlg.stack.widget(i).widget()
         for card in page.findChildren(SettingCard):

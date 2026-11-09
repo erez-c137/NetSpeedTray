@@ -160,7 +160,9 @@ def test_only_the_languages_font_files_are_loaded(lang):
     assert out["widget"] == base[0] and out["icons"] == base[1]
 
 
-# The Monitor window (every tab) adds no face. Settings adds two, and only these, while it is open:
+# The Monitor window (every tab) adds no face. Settings adds two, and only these, while it is open (its
+# font picker adds the faces of the rows it draws); once Settings is closed and destroyed, Qt's font
+# database is reset and all of them are unmapped again:
 #  - Nirmala UI: the Language list names each language in its own script; laying the list out measures
 #    its last row, "বাংলা" (the other native names' faces load only when the list is opened);
 #  - MS UI Gothic: the arrow-style buttons show ▴▾ △▽ ▵▿ ⇑⇓, which neither Segoe UI Variable nor
@@ -229,6 +231,17 @@ combo = w.settings_dialog.widget_page.preferred_monitor_combo
 out["not_connected_item"] = any("DISPLAY97" in combo.itemText(i) for i in range(combo.count()))
 combo.view().grab()                                           # its items, drawn
 out["settings"] = files()
+# The font picker maps the faces of the rows it draws, only while it is open.
+picker = w.settings_dialog._make_font_picker(w.settings_dialog.appearance_page.current_font, "main")
+picker.show(); pump(0.5); picker.list.grab()
+out["picker"] = files()
+picker.reject(); picker.deleteLater()
+# Settings closed: once it is destroyed and Qt's font database reset (utils/font_release), every face
+# it or the picker mapped is unmapped again - back to the Monitor-closed set.
+w.settings_dialog.close()
+from netspeedtray import constants as _c
+pump(_c.timeouts.FONT_RELEASE_DELAY_MS / 1000.0 + 1.5)
+out["settings_closed"] = files()
 print(json.dumps(out), flush=True)
 os._exit(0)
 """
@@ -258,6 +271,11 @@ def test_the_monitor_and_settings_load_only_the_faces_they_show(lang, tmp_path):
         stray = sorted(f for f, fam in owners.items() if fam is None)
         assert not stray, f"{lang} {stage}: font files of faces it doesn't need: {stray}"
         assert set(owners.values()) == expected, f"{lang} {stage}: {sorted(set(owners.values()))}"
+    assert len(out["picker"]) < 80, f"{lang} picker: {len(out['picker'])} font files - Qt loaded every family"
+    # After Settings (and the picker) closed and the font database was reset: nothing they mapped stays.
+    closed = _families_of(out["settings_closed"], sorted(base, key=len, reverse=True))
+    stray = sorted(f for f, fam in closed.items() if fam is None)
+    assert not stray, f"{lang} after Settings closed: font files still mapped: {stray}"
 
 
 # Left-to-right Wi-Fi names a known face covers cluster by cluster take the widget's known-face runs:
