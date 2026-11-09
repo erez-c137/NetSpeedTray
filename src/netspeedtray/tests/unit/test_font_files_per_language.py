@@ -91,7 +91,7 @@ files = sorted({os.path.basename(m.path) for m in psutil.Process().memory_maps()
 print(json.dumps({"files": files, "ui": su.ui_family() if hasattr(su, "ui_family") else app.font().family(), "widget": r.font.family(), "icons": su.icon_font_family(),
                   "installed": {f: fr.resolve_family(f) is not None for f in
                                 ["Segoe UI Variable", "Segoe Fluent Icons", "Leelawadee UI", "Segoe UI Emoji",
-                                 "MS UI Gothic"] + list(set(%r.values()))}}))
+                                 "MS UI Gothic", "Microsoft YaHei UI"] + list(set(%r.values()))}}))
 """ % LANGUAGE_FACE
 
 _STYLE_WORDS = {"regular", "bold", "italic", "oblique", "light", "semilight", "semibold", "medium", "black",
@@ -137,8 +137,15 @@ def _probe(lang: str, *ssids: str) -> dict:
 def _families_of(files, families) -> dict:
     """file -> the expected family it belongs to (None: it belongs to none of them)."""
     registered = _faces_by_file()
-    return {f: next((fam for fam in families for face in registered.get(f.lower(), []) if _is_face(face, fam)),
-                    None) for f in files}
+
+    def owner(f):
+        faces = registered.get(f.lower())
+        if faces is None:   # not in the Fonts key (Cascadia Mono): its file name ("CascadiaMonoItalic.ttf")
+            stem = f.lower().replace(" ", "")
+            return next((fam for fam in families if stem.startswith(fam.lower().replace(" ", ""))), None)
+        return next((fam for fam in families for face in faces if _is_face(face, fam)), None)
+
+    return {f: owner(f) for f in files}
 
 
 @pytest.mark.parametrize("lang", sorted(I18nStrings.LANGUAGE_MAP))
@@ -175,10 +182,14 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QTimer, QEventLoop
 app = QApplication(sys.argv[:1])
 lang = sys.argv[1]
+names = json.loads(sys.argv[2])                               # the adapter names (never this PC's own)
+system_text = json.loads(sys.argv[3])                         # other system / user text, or {}
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.utils.config import ConfigManager
 i18n = constants.i18n.get_i18n(lang)
+if system_text.get("windows"):
+    su._windows_language = system_text["windows"]             # the Windows display language
 app.setLayoutDirection(Qt.LayoutDirection.RightToLeft if i18n.is_rtl else Qt.LayoutDirection.LeftToRight)
 if hasattr(su, "apply_ui_language"):
     su.apply_ui_language(app, i18n.language)
@@ -190,11 +201,16 @@ _sm._clear_startup_approved = lambda name: None
 from netspeedtray.core import shutdown_channel as _sc
 _sc.arm_window = lambda hwnd: True
 from netspeedtray.views.widget import NetworkSpeedWidget
+NetworkSpeedWidget.get_unified_interface_list = lambda self: list(names)
 app.setQuitOnLastWindowClosed(False)
 cfg = ConfigManager().load()
 cfg["language"] = lang
 cfg["check_for_updates"] = False
 cfg["preferred_monitor"] = chr(92) * 2 + "." + chr(92) + "DISPLAY97"   # a saved monitor, not connected
+if system_text.get("host"):
+    cfg["latency_public_host"] = system_text["host"]          # Check connection's tick + Settings' host box
+if system_text.get("gpu"):
+    cfg["gpu_adapter"] = system_text["gpu"]                   # a saved GPU: listed and selected in Settings
 w = NetworkSpeedWidget(taskbar_height=40, config=cfg, i18n=i18n)
 
 
@@ -222,6 +238,30 @@ sheet._state = "running"
 sheet._refresh()
 sheet.adjustSize()
 sheet.grab()
+if system_text:
+    # The Monitor's other system text, drawn: the adapter menu + its button showing a picked adapter,
+    # a process name in the Network and Hardware lists and the detail panel, an adapter driver's name in
+    # Check connection's details, and a Wi-Fi name in the hover card.
+    from netspeedtray.views.monitor.network.header import NetworkHeader
+    from netspeedtray.views.monitor.network.app_list import AppRow
+    from netspeedtray.views.monitor.network.detail import ConnectionDetailPanel
+    from netspeedtray.views.monitor.hardware.list import HardwareRow
+    from netspeedtray.views.usage_flyout import UsageFlyout
+    from types import SimpleNamespace
+    head = NetworkHeader(i18n, "TIMELINE_24_HOURS")
+    head.show(); head.set_interfaces(names); head._select_iface(names[0], names[0]); pump(0.2)
+    head.grab(); head._iface_menu.adjustSize(); head._iface_menu.grab(); head.hide()
+    proc = system_text["process"]
+    row = {"identity_key": proc, "display_name": proc, "conn_count": 3, "established_count": 2,
+           "host_count": 1, "pids": [42], "cpu_pct": 12.0, "rss_bytes": 1e8, "gpu_pct": 0.0}
+    for widget in (AppRow(i18n), HardwareRow(i18n)):
+        widget.update_row(row, 5, True) if isinstance(widget, HardwareRow) else widget.update_row(row, 5)
+        widget.adjustSize(); widget.grab()
+    panel = ConnectionDetailPanel(i18n); panel.set_row(row); panel._title.adjustSize(); panel._title.grab()
+    sheet._details_card.show_details(SimpleNamespace(adapter=system_text["adapter"])); sheet._details_card.setVisible(True)
+    sheet.adjustSize(); sheet.grab()
+    card = UsageFlyout(i18n, hardware={"cpu": {"usage": 5.0}, "identity": system_text["wifi"]})
+    card.adjustSize(); card.grab()
 out["monitor"] = files()
 w.monitor_window.close(); pump(0.5)
 w.show_settings(); pump(1)
@@ -247,33 +287,70 @@ os._exit(0)
 """
 
 
-@pytest.mark.parametrize("lang", sorted(I18nStrings.LANGUAGE_MAP))
-def test_the_monitor_and_settings_load_only_the_faces_they_show(lang, tmp_path):
+# The adapter names Settings and the Monitor list - fixed, never this PC's own (a CJK adapter name on
+# the machine running the suite changed what loaded until rc.7's fix).
+_ASCII_ADAPTERS = ["Ethernet", "Wi-Fi", "Local Area Connection* 1", "Bluetooth Network Connection"]
+# A Chinese Windows' adapters, and the other text that comes from the system or the user, in Chinese:
+# each must draw in the ONE face that has it (Microsoft YaHei UI), never through Qt's search of every
+# installed family (852 font files before the fix: just building Settings' Network rows was enough).
+_CJK_ADAPTERS = ["以太网", "WLAN", "本地连接* 1", "蓝牙网络连接"]
+# On a Chinese Windows (its display language picks the face: every Han name in the same one).
+_CJK_SYSTEM_TEXT = {"windows": "zh_CN", "gpu": "显示适配器", "process": "微信.exe",
+                    "adapter": "网络适配器", "wifi": "我的网络"}
+CJK_FACE = "Microsoft YaHei UI"
+# A typed host in Han only in a Latin UI: Check connection's "Also check the internet (sends pings to
+# {host})" puts it in a Bengali / Hebrew sentence there, which no one face has - Qt's path, as before.
+_CJK_HOST = "例子.测试"
+
+
+def _app_probe(lang, tmp_path, names, system_text) -> dict:
     env = dict(os.environ, QT_QPA_PLATFORM="windows", PYTHONPATH=str(SRC), PYTHONIOENCODING="utf-8",
                APPDATA=str(tmp_path))     # an isolated config / database, never the user's
-    res = subprocess.run([sys.executable, "-c", _APP_PROBE, lang], env=env, capture_output=True, text=True,
-                         encoding="utf-8", timeout=240)
+    res = subprocess.run([sys.executable, "-c", _APP_PROBE, lang, json.dumps(names), json.dumps(system_text)],
+                         env=env, capture_output=True, text=True, encoding="utf-8", timeout=240)
     assert res.returncode == 0, res.stderr[-2000:]
-    out = json.loads(res.stdout.strip().splitlines()[-1])
+    return json.loads(res.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.parametrize("lang", sorted(I18nStrings.LANGUAGE_MAP))
+def test_the_monitor_and_settings_load_only_the_faces_they_show(lang, tmp_path):
+    _assert_only_shown_faces(lang, _app_probe(lang, tmp_path, _ASCII_ADAPTERS, {}), set())
+
+
+@pytest.mark.parametrize("lang", ["bn_BD", "en_US", "he_IL"])
+def test_system_text_in_another_script_loads_only_its_face(lang, tmp_path):
+    """Chinese adapter names (Settings' Network rows, the Monitor's adapter menu), process names, a
+    Wi-Fi name, a GPU name, an adapter driver's name and a typed host, in a UI whose face lacks Han: one
+    face more - Microsoft YaHei UI - in the Monitor and in Settings, and gone again once Settings closes."""
+    text = dict(_CJK_SYSTEM_TEXT, **({"host": _CJK_HOST} if lang == "en_US" else {}))
+    # The connection detail panel (its title: the process name) draws its body in the mono face in a
+    # Latin-script UI - by design, not this text: allowed, not required.
+    from netspeedtray.constants import fonts as font_constants
+    _assert_only_shown_faces(lang, _app_probe(lang, tmp_path, _CJK_ADAPTERS, text), {CJK_FACE},
+                             optional=set(font_constants.MONO_FAMILIES))
+
+
+def _assert_only_shown_faces(lang, out, more, optional=frozenset()) -> None:
     installed = _probe("en_US")["installed"]
     if not installed["Segoe UI Variable"] or not installed["Segoe Fluent Icons"]:
         pytest.skip("the Windows 11 fonts are not installed here")
     extra = LANGUAGE_FACE.get(lang)
-    missing = sorted(f for f in ({extra} if extra else set()) | SETTINGS_FACES if not installed.get(f, False))
+    missing = sorted(f for f in ({extra} if extra else set()) | SETTINGS_FACES | set(more)
+                     if not installed.get(f, False))
     if missing:
         pytest.skip(f"not installed here: {missing}")
     assert out["not_connected_item"], "the disconnected saved monitor was not listed"
     base = {"Segoe UI Variable", "Segoe Fluent Icons"} | ({extra} if extra else set())
-    for stage, expected in (("monitor", base), ("settings", base | SETTINGS_FACES)):
+    for stage, expected in (("monitor", base | more), ("settings", base | SETTINGS_FACES | more)):
         found = out[stage]
         assert len(found) < 40, f"{lang} {stage}: {len(found)} font files mapped - Qt loaded every family"
-        owners = _families_of(found, sorted(expected, key=len, reverse=True))
+        owners = _families_of(found, sorted(expected | set(optional), key=len, reverse=True))
         stray = sorted(f for f, fam in owners.items() if fam is None)
         assert not stray, f"{lang} {stage}: font files of faces it doesn't need: {stray}"
-        assert set(owners.values()) == expected, f"{lang} {stage}: {sorted(set(owners.values()))}"
+        assert set(owners.values()) - set(optional) == expected, f"{lang} {stage}: {sorted(set(owners.values()))}"
     assert len(out["picker"]) < 80, f"{lang} picker: {len(out['picker'])} font files - Qt loaded every family"
     # After Settings (and the picker) closed and the font database was reset: nothing they mapped stays.
-    closed = _families_of(out["settings_closed"], sorted(base, key=len, reverse=True))
+    closed = _families_of(out["settings_closed"], sorted(base | set(optional), key=len, reverse=True))
     stray = sorted(f for f, fam in closed.items() if fam is None)
     assert not stray, f"{lang} after Settings closed: font files still mapped: {stray}"
 

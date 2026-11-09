@@ -136,6 +136,20 @@ use the font Windows itself uses for that language.
 
 ### Fixed
 
+- **Names that come from Windows no longer load every font.** On a Windows set to another language -
+  network adapters named `以太网` on Chinese Windows, for example - Settings, the Monitor and Check
+  connection loaded every installed font to draw those names, even in an English UI. Adapter, app,
+  GPU and host names are now drawn in the one font that has their characters. Found by
+  [@XYuki-cloud]'s test run. ([#495])
+
+  *Under the hood: `text_face` / `apply_text_face` (`utils/styles.py`) pick the face for system text
+  (preferring the Windows display language's), set it as the widget's font and a marked per-widget
+  style-sheet rule (the dialog's `QLabel { font-family }` rule overrides `setFont`), and only then set
+  the text - text in the constructor already falls back. Combos with a per-item face are sized from
+  the item text. Text no single face covers, and emoji, keep Qt's normal path. The per-language font
+  test no longer reads the machine's real adapters; a new case simulates Chinese Windows. Measured:
+  Settings with Chinese adapter names, 852 -> 11 font files mapped.*
+
 - A test that failed if the test suite ran across midnight. ([#491])
 
 [#485]: https://github.com/erez-c137/NetSpeedTray/pull/485
@@ -144,6 +158,8 @@ use the font Windows itself uses for that language.
 [#489]: https://github.com/erez-c137/NetSpeedTray/pull/489
 [#490]: https://github.com/erez-c137/NetSpeedTray/pull/490
 [#491]: https://github.com/erez-c137/NetSpeedTray/pull/491
+[#495]: https://github.com/erez-c137/NetSpeedTray/pull/495
+[@XYuki-cloud]: https://github.com/XYuki-cloud
 
 ---
 

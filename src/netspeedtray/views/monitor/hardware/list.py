@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFontMetrics
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
 )
@@ -80,12 +79,12 @@ class HardwareRow(QFrame):
 
         c = su.semantic_colors()
         text = c["text_primary"] if busy else c["text_secondary"]
-        fm = QFontMetrics(self._name.font())
-        self._name.setText(fm.elidedText(name, Qt.TextElideMode.ElideRight, _NAME_W))
         # Emphasise/recede the WHOLE row together (name + numbers), not just the name, so a busy row
         # doesn't read as half-disabled. Re-resolved each tick -> picks up a theme switch.
         for lbl in (self._name, self._cpu, self._ram, self._gpu):
             lbl.setStyleSheet(f"color: {text}; background: transparent;")
+        # After the sheets: a process name the UI face lacks gets its own face, measured in it.
+        su.set_elided_text_in_face(self._name, name, _NAME_W)
 
         # CPU bar is RELATIVE to the busiest process (the heavy hitter should lead) but the
         # denominator is floored so an idle desktop's small leader isn't drawn as a full bar; the
@@ -98,7 +97,7 @@ class HardwareRow(QFrame):
         self._gpu.setText(f"{gpu:.0f}%" if (gpu_available and gpu >= _GPU_SHOW_MIN) else "-")
 
         summary = f"{name} - CPU {cpu:.0f}% · RAM {rv_s} {ru} · GPU {gpu:.0f}%"
-        self.setToolTip(summary)
+        self.setToolTip(su.tooltip_in_face(summary))
         self.setAccessibleName(summary)   # tooltips aren't exposed to screen readers; accessible name is
 
 

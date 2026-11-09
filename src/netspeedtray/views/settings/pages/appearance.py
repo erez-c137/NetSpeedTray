@@ -211,7 +211,7 @@ class AppearancePage(QWidget):
     def load_settings(self, config: Dict[str, Any]):
         # Main Font
         fam = config.get("font_family", constants.config.defaults.DEFAULT_FONT_FAMILY)
-        self.font_family_label.setText(fam)
+        style_utils.set_text_in_face(self.font_family_label, fam)   # a font's own (maybe CJK) name
         self.current_font.setFamily(_qt_family(fam))
         self.font_size.setValue(int(config.get("font_size", constants.config.defaults.DEFAULT_FONT_SIZE)))
         self._update_weight_options(fam)
@@ -234,7 +234,7 @@ class AppearancePage(QWidget):
         # Arrow Fonts
         self.use_separate_arrow_font.setChecked(bool(config.get("use_separate_arrow_font", False)))
         a_fam = config.get("arrow_font_family", fam) # Fallback to main
-        self.arrow_font_family_label.setText(a_fam)
+        style_utils.set_text_in_face(self.arrow_font_family_label, a_fam)   # a font's own (maybe CJK) name
         self.current_arrow_font.setFamily(_qt_family(a_fam))
         
         main_size = int(config.get("font_size", constants.config.defaults.DEFAULT_FONT_SIZE))
@@ -276,7 +276,7 @@ class AppearancePage(QWidget):
 
     def set_font_family(self, font: QFont):
         fam = font.family()
-        self.font_family_label.setText(fam)
+        style_utils.set_text_in_face(self.font_family_label, fam)   # a font's own (maybe CJK) name
         self.current_font.setFamily(fam)
         self._update_weight_options(fam)
         self._set_slider_weight(self.current_font.weight())
@@ -291,7 +291,7 @@ class AppearancePage(QWidget):
 
     def apply_font_choice(self, family: str, size: int, weight=None) -> None:
         """The font picker's result for the main font: family, size and (when it had one) weight."""
-        self.font_family_label.setText(family)
+        style_utils.set_text_in_face(self.font_family_label, family)   # a font's own (maybe CJK) name
         self.current_font.setFamily(family)
         self._update_weight_options(family)
         self._set_slider_weight(weight if weight else self.current_font.weight())
@@ -300,14 +300,14 @@ class AppearancePage(QWidget):
 
     def apply_arrow_font_choice(self, family: str, size: int) -> None:
         """The font picker's result for the arrow font (its weight is fixed)."""
-        self.arrow_font_family_label.setText(family)
+        style_utils.set_text_in_face(self.arrow_font_family_label, family)   # a font's own (maybe CJK) name
         self.current_arrow_font.setFamily(family)
         self.arrow_font_size.setValue(int(size))
         self.on_change()
 
     def set_arrow_font_family(self, font: QFont):
         fam = font.family()
-        self.arrow_font_family_label.setText(fam)
+        style_utils.set_text_in_face(self.arrow_font_family_label, fam)   # a font's own (maybe CJK) name
         self.current_arrow_font.setFamily(fam)
         self.on_change()
 

@@ -83,7 +83,7 @@ class ConnectionDetailPanel(QWidget):
         endpoints: List[Any] = row.get("endpoints", []) or []
 
         pid_text = ", ".join(str(p) for p in pids) if pids else "-"
-        self._title.setText(
+        su.set_text_in_face(self._title,   # a process name the UI face lacks: in its own face
             self._tr("APP_ACTIVITY_DETAILS_HEADER_TEMPLATE", "{name}   (PID {pids})")
             .format(name=name, pids=pid_text) if pids else name)
 
@@ -103,7 +103,7 @@ class ConnectionDetailPanel(QWidget):
         """The selected app dropped off the list (no live connections). Keep its name in the header
         but show that there's nothing to detail right now, rather than blanking or closing."""
         if self._last_name:
-            self._title.setText(self._last_name)
+            su.set_text_in_face(self._title, self._last_name)
         self._set_body(self._tr("APP_ACTIVITY_NO_CONNECTION_DETAILS", "No connection details available."),
                        reset_scroll=True)
 

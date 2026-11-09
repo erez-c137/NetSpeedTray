@@ -312,11 +312,11 @@ def needs_ui_html(text: str) -> bool:
     return bool(text) and resolve_family(base) is not None and not family_covers(base, text)
 
 
-def face_for_text(text: str, language: Optional[str] = None) -> Optional[str]:
+def face_for_text(text: str, language: Optional[str] = None, also=()) -> Optional[str]:
     """None when the UI face draws all of ``text``; else the first known face that does - ``language``'s
-    own UI face first (a language's name in its own script: "日本語", "বাংলা"), then every UI language's
-    face, Segoe UI Variable and Segoe UI. None too when no known face has it all (Qt's fallback, as
-    before) or the face can't be seen (offscreen tests)."""
+    own UI face first (a language's name in its own script: "日本語", "বাংলা"), then those of the
+    languages in ``also``, then every UI language's face, Segoe UI Variable and Segoe UI. None too when
+    no known face has it all (Qt's fallback, as before) or the face can't be seen (offscreen tests)."""
     from netspeedtray.constants import fonts as font_constants
     from netspeedtray.constants.i18n import I18nStrings
     from netspeedtray.utils.font_runs import family_covers, resolve_family
@@ -325,11 +325,230 @@ def face_for_text(text: str, language: Optional[str] = None) -> Optional[str]:
     own = list(font_constants.SCRIPT_FAMILIES.get(str(language or ""), ()))
     if language in I18nStrings.RTL_LANGUAGES:
         own.append(style_constants.FONT_FALLBACK)
+    for extra in also or ():
+        own.extend(font_constants.SCRIPT_FAMILIES.get(str(extra or ""), ()))
     others = [f for fams in font_constants.SCRIPT_FAMILIES.values() for f in fams]
     for candidate in own + [style_constants.FONT_FAMILY_VARIABLE, style_constants.FONT_FALLBACK] + others:
         if family_covers(candidate, text):
             return resolve_family(candidate)
     return None
+
+
+# --------------------------------------------------------------------------- system / user text (rc.7)
+#
+# Text that comes from Windows or the user, not from our locale files - adapter names (以太网 on a
+# Chinese Windows), Wi-Fi names, process names, GPU names, font names, a typed host - may need a script
+# the UI face lacks. Laid out in the UI face, Qt then searches its fallback chain, which loads EVERY
+# installed family (~850 mapped files) - just building a Settings row is enough. So such text is drawn
+# in the one known face that has all of it (face_for_text); text no known face places alone (mixed
+# scripts, none installed) keeps Qt's normal path, as before.
+
+_FACE_MARK = "/*nst-text-face*/"
+_FACE_END = "/*/nst-text-face*/"
+_FACE_BASE_FONT = "nst_text_face_base_font"
+
+
+_windows_language: Optional[str] = None
+
+
+def windows_language() -> str:
+    """The Windows display language as one of the app's locale codes ("" when unknown): the language
+    Windows names its adapters in (以太网 on a Chinese Windows)."""
+    global _windows_language
+    if _windows_language is None:
+        from netspeedtray.constants.i18n import I18nStrings
+        try:
+            raw = I18nStrings._read_ui_language()
+            _windows_language = I18nStrings.resolve_language(raw) if raw else ""
+        except Exception:
+            _windows_language = ""
+    return _windows_language
+
+
+def text_face(text) -> Optional[str]:
+    """The face system/user ``text`` must be drawn in (None: the UI face draws it - or nothing known
+    does, and Qt's own fallback runs as before). The UI language's own faces are tried first (a
+    Japanese UI draws a Han adapter name in Yu Gothic UI, the face it already loaded), then the
+    Windows display language's (an English UI on a Chinese Windows draws every Han name in Microsoft
+    YaHei UI - not some in Yu Gothic UI and others in YaHei, by which characters each one has)."""
+    text = str(text or "")
+    if any(ord(ch) > 0xFFFF for ch in text):
+        # Emoji and other astral characters: GDI can't be asked about them (UTF-16 glyph lookup), so
+        # each candidate face would be probed through a cached QRawFont - mapping ~27 CJK/Nirmala files
+        # for good - and none of the known faces has emoji anyway. Qt's path, as before.
+        return None
+    return face_for_text(text, _ui_language, also=(windows_language(),))
+
+
+def face_font(face: str, like: QFont) -> QFont:
+    """A QFont in ``face`` at ``like``'s size, weight and style (a fresh font: none of the UI face's
+    optical-size axis carried over)."""
+    f = QFont(face)
+    if like.pixelSize() > 0:
+        f.setPixelSize(like.pixelSize())
+    elif like.pointSizeF() > 0:
+        f.setPointSizeF(like.pointSizeF())
+    f.setWeight(like.weight())
+    f.setItalic(like.italic())
+    return f
+
+
+def _strip_face_qss(qss: str) -> str:
+    import re
+    return re.sub(re.escape(_FACE_MARK) + r".*?" + re.escape(_FACE_END), "", qss or "", flags=re.S).rstrip()
+
+
+def _qt_class_name(widget) -> str:
+    """The nearest Qt class of ``widget`` ("QComboBox" for a Win11ComboBox) - a style sheet type
+    selector that also matches subclasses."""
+    meta = widget.metaObject()
+    while meta is not None and not meta.className().startswith("Q"):
+        meta = meta.superClass()
+    return meta.className() if meta is not None else "QWidget"
+
+
+def apply_text_face(widget, text) -> Optional[str]:
+    """Call BEFORE system/user ``text`` is set on ``widget`` (a label, a button, a check box): when it
+    needs a face of its own (``text_face``) the widget is drawn in that face - its font AND its own
+    style sheet, since an ancestor's ``QLabel { font-family: <UI face> }`` rule (the Settings dialog's)
+    overrides setFont, and a widget's own sheet beats any inherited one. Otherwise any face an earlier
+    call gave it is taken back. Returns the face (None: the widget's own font, as before). Measuring
+    (fontMetrics().elidedText) must come after this call too."""
+    face = text_face(text)
+    qss = widget.styleSheet() or ""
+    marked = _FACE_MARK in qss
+    if face is None and not marked and widget.property(_FACE_BASE_FONT) is None:
+        return None
+    base = widget.property(_FACE_BASE_FONT)
+    if base is None:
+        base = QFont(widget.font())
+        widget.setProperty(_FACE_BASE_FONT, base)
+    plain = _strip_face_qss(qss)
+    if face is None:
+        widget.setFont(base)
+        widget.setProperty(_FACE_BASE_FONT, None)
+        if marked:
+            widget.setStyleSheet(plain)
+        return None
+    widget.setFont(face_font(face, base))
+    decl = "font-family: '%s';" % face.replace("'", "")
+    if not plain or "{" in plain:
+        # A rule of its own for the widget's Qt class (the widget's sheet wins over its parents'), so it
+        # doesn't reach the widget's children - a combo box's popup list keeps its rows' own faces.
+        decl = "%s { %s }" % (_qt_class_name(widget), decl)
+    elif not plain.endswith(";"):   # bare declarations: one more
+        plain += ";"
+    new_qss = "%s %s%s%s" % (plain, _FACE_MARK, decl, _FACE_END)
+    if new_qss.strip() != qss.strip():
+        widget.setStyleSheet(new_qss.strip())
+    return face
+
+
+def set_text_in_face(label, text) -> Optional[str]:
+    """``label.setText(text)`` for system/user text, in its own face (``apply_text_face``) when the UI
+    face lacks a character of it. Returns the face."""
+    text = str(text)
+    face = apply_text_face(label, text)
+    label.setText(text)
+    return face
+
+
+def set_elided_text_in_face(label, text, width: int) -> Optional[str]:
+    """``set_text_in_face`` for a fixed-width label: ``text`` elided at its right to ``width`` px,
+    measured in the face it is drawn in. Call after any setStyleSheet on ``label`` (a new sheet drops
+    the face; this puts it back). Returns the face."""
+    from PyQt6.QtGui import QFontMetrics
+    text = str(text)
+    face = apply_text_face(label, text)
+    label.setText(QFontMetrics(label.font()).elidedText(text, Qt.TextElideMode.ElideRight, int(width)))
+    return face
+
+
+def add_combo_item_in_face(combo, text, user_data=None) -> None:
+    """``combo.addItem(text, user_data)`` for system/user text: the item draws in its own face in the
+    popup (FontRole) when it needs one. Pair with ``keep_combo_face`` for the closed box's text."""
+    text = str(text)
+    combo.addItem(text, user_data)
+    face = text_face(text)
+    if face:
+        combo.setItemData(combo.count() - 1, face_font(face, combo.font()), Qt.ItemDataRole.FontRole)
+        _size_combo_by_length(combo)
+
+
+def _size_combo_by_length(combo) -> None:
+    """A combo box sizes itself by measuring every item in ITS font - the UI face's "Auto" in Bengali
+    measured in Microsoft YaHei UI is a glyph that face lacks (every family loads). Once an item has a
+    face of its own, the box is sized by its longest item's length in characters instead (an East
+    Asian wide character counts two), and no item is measured in a face that isn't its own."""
+    import unicodedata
+    from PyQt6.QtWidgets import QComboBox
+    longest = 0
+    for i in range(combo.count()):
+        t = combo.itemText(i)
+        longest = max(longest, sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in t))
+    combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(max(combo.minimumContentsLength(), longest))
+    try:   # rows sized by the first one (the Language picker's way): a relayout measures no other row
+        combo.view().setUniformItemSizes(True)
+    except Exception:
+        pass
+
+
+def _follow_combo_face(combo, text) -> None:
+    # An editable box draws its text in its line edit. The line edit FIRST: the box's face would
+    # otherwise flow into it before apply_text_face saved its own (UI face) font, and switching back to
+    # "1.1.1.1" would "restore" Microsoft YaHei UI.
+    if combo.isEditable() and combo.lineEdit() is not None:
+        apply_text_face(combo.lineEdit(), text)
+    apply_text_face(combo, text)
+
+
+def set_combo_text_in_face(combo, text) -> None:
+    """``combo.setCurrentText(text)`` for system/user text in an editable box, its face set FIRST: the
+    line edit lays the text out before currentTextChanged reaches ``keep_combo_face``. (Typed text
+    can't be ahead of itself: a first keystroke the face lacks takes Qt's path, as before.)"""
+    text = str(text)
+    _follow_combo_face(combo, text)
+    combo.setCurrentText(text)
+
+
+def keep_combo_face(combo) -> None:
+    """The closed combo box draws its current text in that text's own face (``apply_text_face``),
+    now and whenever the selection changes."""
+    def follow(text, c=combo) -> None:
+        _follow_combo_face(c, text)
+
+    if not combo.property("nst_keeps_text_face"):
+        combo.setProperty("nst_keeps_text_face", True)
+        # The popup list keeps the box's CURRENT font for good (set explicitly, so the box's face
+        # change doesn't propagate to it): its rows draw in the UI face or their own (FontRole) -
+        # Bengali "Auto" laid out in Microsoft YaHei UI would load every family.
+        view = combo.view()
+        if view is not None:
+            view.setFont(QFont(view.font()))
+        combo.currentTextChanged.connect(follow)
+    follow(combo.currentText())
+
+
+def action_text_in_face(action, text, like: QFont) -> None:
+    """``action.setText(text)`` for system/user text in a menu, with its own font (in ``like``'s size)
+    when it needs a face (``text_face``). A menu's sheet must not set font-family for this to hold."""
+    face = text_face(text)
+    if face:
+        action.setFont(face_font(face, like))
+    action.setText(str(text))
+
+
+def tooltip_in_face(text) -> str:
+    """A tooltip for system/user ``text``: rich text in its own face when it needs one (tooltips draw in
+    the application font), else the plain text unchanged."""
+    import html
+    text = str(text or "")
+    face = text_face(text)
+    if not face:
+        return text
+    return "<span style=\"font-family:'%s'; white-space:pre-wrap;\">%s</span>" % (
+        face.replace("'", ""), html.escape(text, quote=False))
 
 
 def symbol_face(text: str) -> Optional[str]:
