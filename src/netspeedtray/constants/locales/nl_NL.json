@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "Deze periode",
     "EXIT_MENU_ITEM": "A&fsluiten",
     "SELECT_FONT_BUTTON": "Selecteren",
+    "FONT_PICKER_TITLE": "Lettertype kiezen",
+    "FONT_PICKER_SEARCH": "Lettertypen zoeken",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "Supportpakket exporteren",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "Bundelt logbestanden, configuratie en systeeminformatie in een zip die geschikt is om bij een GitHub-issue te voegen. Persoonlijke gegevens worden automatisch geanonimiseerd.",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "Supportpakket opslaan",

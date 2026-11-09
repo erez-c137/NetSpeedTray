@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "এই সময়কাল",
     "EXIT_MENU_ITEM": "প্রস্থান (&X)",
     "SELECT_FONT_BUTTON": "নির্বাচন করুন",
+    "FONT_PICKER_TITLE": "ফন্ট বেছে নিন",
+    "FONT_PICKER_SEARCH": "ফন্ট খুঁজুন",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "সাপোর্ট বান্ডেল এক্সপোর্ট করুন",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "GitHub ইস্যুতে যুক্ত করার উপযোগী একটি জিপ ফাইলে লগ, কনফিগ এবং সিস্টেম তথ্য একত্রিত করুন। ব্যক্তিগত তথ্য স্বয়ংক্রিয়ভাবে মুছে ফেলা হয়।",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "সাপোর্ট বান্ডেল সংরক্ষণ করুন",

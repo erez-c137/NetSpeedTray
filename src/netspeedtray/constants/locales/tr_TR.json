@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "Bu dönem",
     "EXIT_MENU_ITEM": "Çı&kış",
     "SELECT_FONT_BUTTON": "Seç",
+    "FONT_PICKER_TITLE": "Yazı tipi seçin",
+    "FONT_PICKER_SEARCH": "Yazı tiplerinde ara",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "Destek paketini dışa aktar",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "Destek loglarını, yapılandırmayı ve sistem bilgilerini GitHub sorun bildirimine eklemeye uygun bir ZIP dosyasında birleştirir. Kişisel veriler otomatik olarak gizlenir.",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "Destek paketini kaydet",

@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "이번 기간",
     "EXIT_MENU_ITEM": "종료(&X)",
     "SELECT_FONT_BUTTON": "선택",
+    "FONT_PICKER_TITLE": "글꼴 선택",
+    "FONT_PICKER_SEARCH": "글꼴 검색",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "지원 번들 내보내기",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "로그, 구성 및 시스템 정보를 GitHub 문제에 연결하기에 적합한 zip에 번들로 묶습니다. 개인 데이터는 자동으로 가려집니다.",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "지원 번들 저장",

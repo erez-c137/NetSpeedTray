@@ -45,6 +45,7 @@ def dialog(qtbot, monkeypatch):
 
 def test_every_focusable_settings_control_is_named(dialog):
     unnamed = []
+    dialog._build_all_pages()   # pages are built lazily (on first visit)
     for i in range(dialog.stack.count()):
         page = dialog.stack.widget(i).widget()
         for w in page.findChildren(QWidget):

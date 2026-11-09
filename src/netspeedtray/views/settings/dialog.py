@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent, QKeySequence, QShortcut, QShowEvent
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QColorDialog, QDialog, QFileDialog, QFontDialog,
+    QApplication, QCheckBox, QColorDialog, QDialog, QFileDialog,
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
     QStackedWidget, QVBoxLayout, QWidget
 )
@@ -116,6 +116,7 @@ class SettingsDialog(QDialog):
         self.startup_enabled_initial_state = is_startup_enabled
 
         self._ui_setup_done = False
+        self._closing_via_save = False   # Save's accept() is under way (closeEvent must not revert)
         
         # Timer for throttling live setting updates
         self._update_timer = QTimer(self)
@@ -171,6 +172,8 @@ class SettingsDialog(QDialog):
         sidebar_w = self.sidebar.maximumWidth()   # fixed; widened past SIDEBAR_WIDTH for long page names
         chrome_w = sidebar_w + (2 * margin) + 40
         desired_w = chrome_w + content_w
+        # Pages built later widen the window if their floor needs it (_fit_width_to_page).
+        self._chrome_w, self._floor_w = chrome_w, floor_w
 
         # Resizing the window narrower never makes a page scroll sideways, and never clips the footer
         # (preview strip + Support bundle / Cancel / Save, whose labels are longer in some languages).
@@ -292,59 +295,21 @@ class SettingsDialog(QDialog):
             self.stack = QStackedWidget()
             content_layout.addWidget(self.stack)
 
-            # Instantiate Pages (2.0 IA)
-            self.general_page = GeneralPage(self.i18n, self._schedule_settings_update)
-            self.widget_page = WidgetPage(self.i18n, self._schedule_settings_update, self._open_color_dialog)
-            self.appearance_page = AppearancePage(
-                self.i18n,
-                self._schedule_settings_update,
-                self._open_font_dialog,
-                self._open_color_dialog
-            )
-            # The old Color Coding + Display(Units) pages are now sections INSIDE Appearance. Keep
-            # references so the existing color-picker routing + Force-MB rule reach the same objects.
-            self.colors_page = self.appearance_page.colors_section
-            self.units_page = self.appearance_page.units_section
-
-            self.hardware_page = HardwarePage(self.i18n, self._schedule_settings_update,
-                                              self._open_color_dialog,
-                                              lhm_status_provider=self._lhm_status)
-            self.interfaces_page = InterfacesPage(
-                self.i18n,
-                self.available_interfaces,
-                self._schedule_settings_update,
-                primary_interface=self.primary_interface,
-            )
-            self.advanced_page = AdvancedPage(
-                self.i18n,
-                self._schedule_settings_update,
-                reset_page_callback=self._reset_advanced_page,
-                reset_all_callback=self._reset_all_to_defaults,
-                delete_history_callback=self._delete_all_history,
-                history_path_callback=self._history_db_path,
-                notify_callback=self._notify_backup_result,
-            )
-            # The Record-hardware-history card greys out live as CPU/GPU monitoring is switched.
-            # The battery hover toggle counts too (#323) - see _sync_record_card.
-            self.hardware_page.monitor_cpu.toggled.connect(self._sync_record_card)
-            self.hardware_page.monitor_gpu.toggled.connect(self._sync_record_card)
-            self.general_page.power_display.toggled.connect(self._sync_record_card)
+            # Pages are built LAZILY (memory plan, rc.7): one empty scroll area per sidebar row now, the
+            # page itself when it is first shown or first used (_ensure_page). Opening Settings builds
+            # only the page it opens on.
+            self._built_pages: Dict[str, QWidget] = {}
+            self._page_scrolls: List[QScrollArea] = []
+            self._loading_page = False
+            for _name in self._PAGE_NAMES:
+                scroll = self._make_scroll()
+                self._page_scrolls.append(scroll)
+                self.stack.addWidget(scroll)
             # Safety net for Delete all history: if the worker never answers, give the button back.
             self._delete_timeout = QTimer(self)
             self._delete_timeout.setSingleShot(True)
             self._delete_timeout.setInterval(constants.timeouts.DB_DELETE_HISTORY_UI_TIMEOUT_MS)
             self._delete_timeout.timeout.connect(self._on_delete_timeout)
-
-            # Add pages wrapped in scroll areas (order matches sidebar)
-            for page in [
-                self.general_page,       # 0 - General
-                self.widget_page,        # 1 - Widget (layout, placement, mini graph)
-                self.appearance_page,    # 2 - Appearance (font/units/color-coding/background/arrows)
-                self.hardware_page,      # 3 - Hardware
-                self.interfaces_page,    # 4 - Network
-                self.advanced_page,      # 5 - Advanced
-            ]:
-                self.stack.addWidget(self._wrap_in_scroll(page))
 
             # Hairline that anchors the fixed footer (preview + command buttons) below the scrolling
             # content - the native Win11 command-bar separator.
@@ -420,15 +385,157 @@ class SettingsDialog(QDialog):
         """Grey "Record hardware history" by the LIVE Hardware-page toggles - never by a config
         snapshot, which is stale once the user flips CPU/GPU in this session (S6). The battery hover
         toggle counts too: with CPU/GPU monitoring off it governs battery recording, and a user who
-        switched the record card off could not switch it back on (#323 review)."""
+        switched the record card off could not switch it back on (#323 review). A page not built yet
+        still shows what it loaded from, so its value is the dialog's config."""
+        if not self._is_built("advanced"):
+            return   # built later: _ensure_page syncs it then
+        def on(page_name: str, attr: str, key: str) -> bool:
+            if self._is_built(page_name):
+                return getattr(self._built_pages[page_name], attr).isChecked()
+            return bool(self.config.get(key, False))
         self.advanced_page.set_hardware_monitoring_active(
-            self.hardware_page.monitor_cpu.isChecked()
-            or self.hardware_page.monitor_gpu.isChecked()
-            or self.general_page.power_display.isChecked())
+            on("hardware", "monitor_cpu", "monitor_cpu_enabled")
+            or on("hardware", "monitor_gpu", "monitor_gpu_enabled")
+            or on("general", "power_display", "power_display_enabled"))
+
+    # --- Lazy pages ---------------------------------------------------------------------------------
+    # Sidebar / stack order. A page is built the first time it is shown or used (any access to its
+    # attribute builds it), loaded from the dialog's config, and wired up then. Until then it holds
+    # exactly what it would have loaded, so get_settings() takes its keys from self.config unchanged.
+    _PAGE_NAMES = ("general", "widget", "appearance", "hardware", "interfaces", "advanced")
+
+    def _is_built(self, name: str) -> bool:
+        return name in getattr(self, "_built_pages", {})
+
+    def _construct_page(self, name: str) -> QWidget:
+        s = self._schedule_settings_update
+        if name == "general":
+            return GeneralPage(self.i18n, s)
+        if name == "widget":
+            return WidgetPage(self.i18n, s, self._open_color_dialog)
+        if name == "appearance":
+            return AppearancePage(self.i18n, s, self._open_font_dialog, self._open_color_dialog)
+        if name == "hardware":
+            return HardwarePage(self.i18n, s, self._open_color_dialog, lhm_status_provider=self._lhm_status)
+        if name == "interfaces":
+            return InterfacesPage(self.i18n, self.available_interfaces, s,
+                                  primary_interface=self.primary_interface)
+        if name == "advanced":
+            return AdvancedPage(
+                self.i18n, s,
+                reset_page_callback=self._reset_advanced_page,
+                reset_all_callback=self._reset_all_to_defaults,
+                delete_history_callback=self._delete_all_history,
+                history_path_callback=self._history_db_path,
+                notify_callback=self._notify_backup_result,
+            )
+        raise KeyError(name)
+
+    def _ensure_page(self, name: str) -> QWidget:
+        """The page ``name``, built (and loaded and wired) on first use."""
+        built = self._built_pages
+        if name in built:
+            return built[name]
+        page = self._construct_page(name)
+        built[name] = page
+        self._fill_scroll(self._page_scrolls[self._PAGE_NAMES.index(name)], page)
+        self._load_page(name)
+        self._wire_page(name, page)   # after the load, as before (its signals would echo the load)
+        self._fit_width_to_page(page)
+        if name in ("advanced", "hardware", "general"):
+            self._sync_record_card()
+        if name == "advanced":
+            self._refresh_metrics_status()
+        if name == "widget":   # its display-mode note, from the preview as it stands
+            try:
+                pv = getattr(self, "preview_widget", None)
+                page.set_display_mode_note(self._display_mode_note_kind(
+                    self.get_settings() or self.config, pv.side_fit if pv is not None else None))
+            except Exception as e:
+                self.logger.debug("display-mode note not set: %s", e)
+        return page
+
+    def _wire_page(self, name: str, page: QWidget) -> None:
+        """The cross-page and dialog hookups a page needs, made when it is built."""
+        if name in ("widget", "appearance", "interfaces", "hardware"):
+            page.layout_changed.connect(self._adjust_size_and_reposition)
+        if name == "appearance":
+            units, colors = page.units_section, page.colors_section
+            units.unit_type.currentIndexChanged.connect(
+                lambda _i: colors.set_unit_type(units.unit_type.currentData()))
+        if name == "hardware":
+            # The Record-hardware-history card greys out live as CPU/GPU monitoring is switched.
+            page.monitor_cpu.toggled.connect(self._sync_record_card)
+            page.monitor_gpu.toggled.connect(self._sync_record_card)
+            # Enabling a hardware monitor nudges the Widget page out of network-only (display-mode
+            # lives there), so the freshly-enabled stat is actually visible.
+            try:
+                page.hardware_enabled.connect(lambda: self.widget_page.ensure_hardware_visible())
+            except Exception:
+                pass
+        if name == "general":
+            # The battery hover toggle counts too (#323) - see _sync_record_card.
+            page.power_display.toggled.connect(self._sync_record_card)
+
+    def _load_page(self, name: str) -> None:
+        """Load one built page from the dialog's config. A page that fails is remembered, and
+        get_settings() leaves its keys at their loaded values instead of reading them back from
+        half-initialised controls (C1)."""
+        page = self._built_pages[name]
+        failed = getattr(self, "_failed_pages", None)
+        if failed is None:
+            failed = self._failed_pages = set()
+        failed.discard(name)
+        self._loading_page = True   # loading changes nothing: no live-apply round trip
+        try:
+            if name == "general":
+                page.load_settings(self.config, self.startup_enabled_initial_state)
+            else:
+                page.load_settings(self.config)   # Appearance includes its units + colours sections
+        except Exception as e:
+            failed.add(name)
+            self.logger.error("Settings page '%s' failed to load; its settings will be kept as "
+                              "they are on Save: %s", name, e, exc_info=True)
+        finally:
+            self._loading_page = False
+
+    def _fit_width_to_page(self, page: QWidget) -> None:
+        """A page built after the window was sized: widen the window if this page's floor needs it,
+        so no page ever scrolls sideways (the __init__ sizing measured only the pages built then)."""
+        chrome_w = getattr(self, "_chrome_w", None)
+        if chrome_w is None:
+            return   # still in __init__: its sizing pass measures this page
+        try:
+            floor_w = page.minimumSizeHint().width()
+            if floor_w <= self._floor_w:
+                return
+            self._floor_w = floor_w
+            need = chrome_w + floor_w
+            screen = self.screen() or QApplication.primaryScreen()
+            if screen is not None:
+                need = min(need, screen.availableGeometry().width())
+            if need > self.minimumWidth():
+                self.setMinimumWidth(need)
+            if self.width() < need:
+                self.resize(need, self.height())
+                self._adjust_size_and_reposition()
+        except Exception as e:
+            self.logger.debug("Fitting the window to a new page failed: %s", e)
+
+    general_page = property(lambda self: self._ensure_page("general"))
+    widget_page = property(lambda self: self._ensure_page("widget"))
+    appearance_page = property(lambda self: self._ensure_page("appearance"))
+    hardware_page = property(lambda self: self._ensure_page("hardware"))
+    interfaces_page = property(lambda self: self._ensure_page("interfaces"))
+    advanced_page = property(lambda self: self._ensure_page("advanced"))
+    # The old Color Coding + Display(Units) pages are sections INSIDE Appearance; these keep the
+    # color-picker routing + Force-MB rule reaching the same objects.
+    colors_page = property(lambda self: self.appearance_page.colors_section)
+    units_page = property(lambda self: self.appearance_page.units_section)
 
     @staticmethod
-    def _wrap_in_scroll(page: QWidget) -> QScrollArea:
-        """Wraps a settings page in a frameless, transparent scroll area."""
+    def _make_scroll() -> QScrollArea:
+        """A frameless, transparent scroll area for a settings page (filled by _fill_scroll)."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -437,12 +544,22 @@ class SettingsDialog(QDialog):
         # otherwise renders an opaque mid-gray that the cards blend into - the "cards section is a
         # different shade" bug). Mirrors how the Monitor's Overview scroll content is made transparent.
         scroll.viewport().setAutoFillBackground(False)
+        return scroll
+
+    @staticmethod
+    def _fill_scroll(scroll: QScrollArea, page: QWidget) -> None:
         page.setStyleSheet("background: transparent;")   # cards/inputs keep their own fill (more specific)
         scroll.setWidget(page)
         # Scrolling the page should scroll it - not change the slider/combo/spin box the cursor
         # happens to pass over. The guard forwards stray wheel events to this scroll area.
         from netspeedtray.utils.components import install_wheel_guard
         install_wheel_guard(page)
+
+    @classmethod
+    def _wrap_in_scroll(cls, page: QWidget) -> QScrollArea:
+        """Wraps a settings page in a frameless, transparent scroll area."""
+        scroll = cls._make_scroll()
+        cls._fill_scroll(scroll, page)
         return scroll
 
     def _init_ui_state(self) -> None:
@@ -452,21 +569,15 @@ class SettingsDialog(QDialog):
         # every LATER page on its blank constructor defaults - and Save then wrote those blanks over
         # ~25 real settings. A page that fails is remembered, and get_settings() leaves its keys at
         # their loaded values instead of reading them back from half-initialised controls.
+        # Only the pages built so far are loaded (the rest load from self.config when they are built);
+        # on the first call none is: the page the dialog opens on is built here.
         self._failed_pages = set()
-        for name, load in (
-            ("general", lambda: self.general_page.load_settings(self.config, self.startup_enabled_initial_state)),
-            ("widget", lambda: self.widget_page.load_settings(self.config)),
-            ("appearance", lambda: self.appearance_page.load_settings(self.config)),   # + units + colors
-            ("hardware", lambda: self.hardware_page.load_settings(self.config)),
-            ("interfaces", lambda: self.interfaces_page.load_settings(self.config)),
-            ("advanced", lambda: self.advanced_page.load_settings(self.config)),
-        ):
-            try:
-                load()
-            except Exception as e:
-                self._failed_pages.add(name)
-                self.logger.error("Settings page '%s' failed to load; its settings will be kept as "
-                                  "they are on Save: %s", name, e, exc_info=True)
+        if not self._built_pages:
+            self._ensure_page(self._PAGE_NAMES[max(0, self.sidebar.currentRow())])
+        else:
+            for name in list(self._built_pages):
+                self._load_page(name)
+            self._sync_record_card()
         try:
             self._refresh_metrics_status()
 
@@ -485,19 +596,7 @@ class SettingsDialog(QDialog):
              self.logger.error(f"Error initializing UI state: {e}", exc_info=True)
 
     def _connect_signals(self) -> None:
-        """Connects additional global signals."""
-        self.widget_page.layout_changed.connect(self._adjust_size_and_reposition)
-        self.appearance_page.layout_changed.connect(self._adjust_size_and_reposition)
-        self.interfaces_page.layout_changed.connect(self._adjust_size_and_reposition)
-        self.hardware_page.layout_changed.connect(self._adjust_size_and_reposition)
-        self.units_page.unit_type.currentIndexChanged.connect(
-            lambda _i: self.colors_page.set_unit_type(self.units_page.unit_type.currentData()))
-        # Enabling a hardware monitor nudges the Widget page out of network-only (display-mode lives
-        # there now), so the freshly-enabled stat is actually visible.
-        try:
-            self.hardware_page.hardware_enabled.connect(self.widget_page.ensure_hardware_visible)
-        except Exception:
-            pass
+        """Page hookups are made per page as it is built (_wire_page)."""
 
     def _step_page(self, delta: int) -> None:
         """Ctrl+Tab / Ctrl+PgDn (+1) and Ctrl+Shift+Tab / Ctrl+PgUp (-1): the next / previous page,
@@ -508,6 +607,11 @@ class SettingsDialog(QDialog):
 
     def _on_sidebar_selection_changed(self, row: int) -> None:
         """Handles sidebar row changes to switch the stacked page + retitle the page header."""
+        if 0 <= row < len(self._PAGE_NAMES):
+            try:
+                self._ensure_page(self._PAGE_NAMES[row])   # built on first visit
+            except Exception as e:
+                self.logger.error("Building settings page %s failed: %s", row, e, exc_info=True)
         self.stack.setCurrentIndex(row)
         try:
             item = self.sidebar.item(row)
@@ -553,7 +657,7 @@ class SettingsDialog(QDialog):
 
     def _schedule_settings_update(self) -> None:
         """Starts the throttle timer to emit settings_changed."""
-        if not self._ui_setup_done: return
+        if not self._ui_setup_done or getattr(self, "_loading_page", False): return
         self._update_timer.start()
 
     def _emit_settings_changed_throttled(self) -> None:
@@ -575,6 +679,8 @@ class SettingsDialog(QDialog):
         """Show the local metrics endpoint's live status (listening / port in use) under its address."""
         try:
             from netspeedtray.core.metrics_endpoint import EndpointStatus
+            if not self._is_built("advanced"):
+                return   # shown when the page is built (_ensure_page)
             ep = getattr(self.parent_widget, "metrics_endpoint", None)
             status = getattr(ep, "status", None) if ep is not None else None
             self.advanced_page.set_metrics_endpoint_status(
@@ -592,7 +698,8 @@ class SettingsDialog(QDialog):
             pv.set_bar_width(self._docked_side_bar_width())
             merged = {**self.config, **(settings or {})}
             pv.set_config(merged)
-            self.widget_page.set_display_mode_note(self._display_mode_note_kind(merged, pv.side_fit))
+            if self._is_built("widget"):
+                self._built_pages["widget"].set_display_mode_note(self._display_mode_note_kind(merged, pv.side_fit))
         except Exception as e:
             self.logger.debug("preview update failed: %s", e)
 
@@ -625,11 +732,20 @@ class SettingsDialog(QDialog):
         the embedded units + colour sections). A page that failed to load is left out: its keys are
         never written from controls that never received them (C1)."""
         failed = getattr(self, "_failed_pages", set())
-        return [page for name, page in (
-            ("general", self.general_page), ("widget", self.widget_page),
-            ("appearance", self.appearance_page), ("hardware", self.hardware_page),
-            ("interfaces", self.interfaces_page), ("advanced", self.advanced_page),
-        ) if name not in failed]
+        built = getattr(self, "_built_pages", None)
+        if built is None:   # a stand-in object with plain page attributes (tests)
+            return [page for name, page in (
+                ("general", self.general_page), ("widget", self.widget_page),
+                ("appearance", self.appearance_page), ("hardware", self.hardware_page),
+                ("interfaces", self.interfaces_page), ("advanced", self.advanced_page),
+            ) if name not in failed]
+        # Only BUILT pages: an unbuilt one never left its loaded state, so its keys are self.config's
+        # (get_settings starts from that copy) - never a constructor's defaults.
+        return [built[name] for name in self._PAGE_NAMES if name in built and name not in failed]
+
+    def _build_all_pages(self) -> None:
+        for name in self._PAGE_NAMES:
+            self._ensure_page(name)
 
     def get_settings(self) -> Dict[str, Any]:
         """Collects settings from all pages."""
@@ -650,13 +766,31 @@ class SettingsDialog(QDialog):
 
     # --- Callbacks ---
 
+    def _make_font_picker(self, initial_font: QFont, target: str = "main"):
+        """Our own font picker (memory plan 2.2), preselected on the page's current family / weight /
+        size. Not QFontDialog: that one loads the styles of every installed font (~38 MB)."""
+        from netspeedtray.views.settings.font_picker import FontPickerDialog
+        page = self.appearance_page
+        if target == "main":
+            size, weight = int(page.font_size.value()), page.current_weight()
+        else:
+            size, weight = int(page.arrow_font_size.value()), None
+        return FontPickerDialog(self.i18n, initial_font.family(), size, weight,
+                                preview_config=self.get_settings() or self.config,
+                                target=target, parent=self)
+
     def _open_font_dialog(self, initial_font: QFont, target: str = "main") -> None:
-        font, ok = QFontDialog.getFont(initial_font, self)
-        if ok:
-            if target == "main":
-                self.appearance_page.set_font_family(font)
-            else:
-                self.appearance_page.set_arrow_font_family(font)
+        picker = self._make_font_picker(initial_font, target)
+        try:
+            if picker.exec() == QDialog.DialogCode.Accepted and picker.selected_family():
+                if target == "main":
+                    self.appearance_page.apply_font_choice(
+                        picker.selected_family(), picker.selected_size(), picker.selected_weight())
+                else:
+                    self.appearance_page.apply_arrow_font_choice(
+                        picker.selected_family(), picker.selected_size())
+        finally:
+            picker.deleteLater()
 
     def _paint_preview_backdrop(self) -> None:
         """The preview strip's backdrop follows the Windows (taskbar) mode, like the colours drawn on
@@ -682,8 +816,15 @@ class SettingsDialog(QDialog):
     def _color_pages(self) -> list:
         """The sections that hold colour fields, most specific first (Appearance's get_settings also
         carries its embedded Color coding section's keys)."""
-        return [self.colors_page, self.appearance_page, self.hardware_page,
-                self.widget_page.mini_graph_section]
+        b = self._built_pages   # the colour button that asked is on a built page; never build the rest
+        out = []
+        if "appearance" in b:
+            out += [b["appearance"].colors_section, b["appearance"]]
+        if "hardware" in b:
+            out.append(b["hardware"])
+        if "widget" in b:
+            out.append(b["widget"].mini_graph_section)
+        return out
 
     def _open_color_dialog(self, key_name: str) -> None:
         """Pick a colour for config key ``key_name`` (e.g. ``high_speed_color_light``) and show it in the
@@ -691,6 +832,9 @@ class SettingsDialog(QDialog):
         takes the full key in set_color_input (the old ``key.replace("_color", "")`` convention could not
         express the _dark / _light suffixes)."""
         page = next((pg for pg in self._color_pages() if key_name in pg.get_settings()), None)
+        if page is None:   # asked for a field on a page not built yet: build them, then look again
+            self._build_all_pages()
+            page = next((pg for pg in self._color_pages() if key_name in pg.get_settings()), None)
         if page is None:
             self.logger.warning("No settings section owns colour key %r", key_name)
             return
@@ -751,7 +895,7 @@ class SettingsDialog(QDialog):
         clears the mark - no route right now)."""
         self.available_interfaces = new_interfaces
         self.primary_interface = primary_interface
-        if hasattr(self, 'interfaces_page'):
+        if self._is_built("interfaces"):
             # Read what the page shows NOW, before the rebuild throws its checkboxes away (S2): reading
             # after it found no boxes ticked, so re-opening Settings while it was open (tray, Monitor
             # "Set a limit" link) emptied selected_interfaces and a Save made the widget show 0.
@@ -796,6 +940,7 @@ class SettingsDialog(QDialog):
         # - and keep RESET_ALL_KEEPS, the app's state, as it is. test_rc_settings_fixes requires every
         # DEFAULT_CONFIG key to be in one of the three, so a new key forces a decision.
         owned = set(self.RESET_ALL_HIDDEN)
+        self._build_all_pages()   # every page's keys are needed (rare action)
         for page in self._pages():
             owned |= set(page.get_settings())
         owned -= set(self.RESET_ALL_KEEPS)
@@ -900,16 +1045,16 @@ class SettingsDialog(QDialog):
                 except Exception as e:
                     self.logger.debug("hover usage cache not invalidated: %s", e)
         if status == DatabaseWorker.DELETE_DONE:
-            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE)
+            self._show_result("information", self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE)
         elif status == DatabaseWorker.DELETE_COMPACT_PENDING:
-            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_COMPACTING)
+            self._show_result("information", self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_COMPACTING)
         elif status == DatabaseWorker.DELETE_BACKUP_KEPT_UPGRADE:
             # Honest: the upgrade's backup is still needed by an unfinished upgrade - not "shortly".
-            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_UPGRADE)
+            self._show_result("information", self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_UPGRADE)
         elif status == DatabaseWorker.DELETE_BACKUP_KEPT:
-            QMessageBox.warning(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_KEPT)
+            self._show_result("warning", self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_KEPT)
         else:
-            QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
+            self._show_result("critical", self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
 
     def _on_delete_timeout(self) -> None:
         """No answer from the write thread in DB_DELETE_HISTORY_UI_TIMEOUT_MS: give the button back
@@ -919,7 +1064,7 @@ class SettingsDialog(QDialog):
             self.advanced_page.delete_history_btn.setEnabled(True)
         except Exception:
             pass
-        QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
+        self._show_result("critical", self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
 
     def _save_and_close(self) -> None:
         """Saves settings and closes."""
@@ -972,8 +1117,11 @@ class SettingsDialog(QDialog):
             # Persist the position after the settings save so it can't be clobbered
             # by the saved config snapshot.
             save_window_position(self, self.parent_widget, "settings_window_pos")
-            self.hide()
-            self.logger.info("Settings saved and dialog hidden.")
+            # accept(), not hide(): it emits finished, and the owner destroys the dialog (memory plan 2.3).
+            # Qt eats the close event done() sends, and the flag keeps closeEvent from reverting anyway.
+            self._closing_via_save = True
+            self.accept()
+            self.logger.info("Settings saved and dialog closed.")
         except Exception as e:
             self.logger.error(f"Failed to save settings: {e}", exc_info=True)
             QMessageBox.critical(
@@ -1004,6 +1152,7 @@ class SettingsDialog(QDialog):
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        self._closing_via_save = False
         # Native Win11 chrome (dark title bar + rounded corners), applied at
         # show-time so the native handle exists. Fail-safe: a silent no-op on
         # Windows 10 / older builds. Mica stays off until the dialog surface is
@@ -1012,11 +1161,49 @@ class SettingsDialog(QDialog):
             apply_win11_chrome(int(self.winId()), dark=is_dark_mode())
         except Exception as e:
             self.logger.debug(f"Win11 chrome not applied: {e}")
-        # Always-on-top (#213). Applied here rather than as a Qt window flag: the dialog is a cached
-        # instance that is hidden rather than destroyed, and setWindowFlags on a live window
-        # re-creates the native handle - which is exactly what makes frame-vs-client geometry drift.
+        # Always-on-top (#213). Applied here rather than as a Qt window flag: setWindowFlags on a live
+        # window re-creates the native handle - which is exactly what makes frame-vs-client geometry
+        # drift - and the rare dialog kept alive for an unfinished backup is shown again, not rebuilt.
         set_window_always_on_top(self, bool(self.config.get("keep_windows_on_top", False)))
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        # The title-bar X (or a system close): revert like Cancel. reject() closes the dialog and emits
+        # finished, on which the owner destroys it; the event itself is ignored, as reject() already hid it.
+        if self._closing_via_save or not self.isVisible():
+            event.ignore()
+            return
         self._cancel_and_close()
         event.ignore()
+
+    def has_pending_work(self) -> bool:
+        """A history backup or delete started here has not reported back yet: destroying the dialog now
+        would lose its result (the backup's flyout, the delete's re-armed cap alerts)."""
+        try:
+            page = getattr(self, "_built_pages", {}).get("advanced")   # never build it just to ask
+            if page is not None and page.backup_running():
+                return True
+            timeout = getattr(self, "_delete_timeout", None)
+            if timeout is not None and timeout.isActive():
+                return True
+            # A box or picker of ours still up (it may be running its own exec loop on our stack).
+            if any(d.isVisible() for d in self.findChildren(QDialog)):
+                return True
+            return False
+        except RuntimeError:   # already being destroyed
+            return False
+
+    def _show_result(self, kind: str, title: str, text: str) -> None:
+        """A result that arrives on its own (Delete all history's answer or timeout): a message box over
+        Settings while it is on screen; once it is closed, the widget's non-focus notice flyout - never
+        a modal box hanging off a hidden dialog that is about to be destroyed (#490 review P0)."""
+        if self.isVisible() and not self.isMinimized():
+            getattr(QMessageBox, kind)(self, title, text)
+            return
+        notify = getattr(self.parent_widget, "show_backup_notice", None)
+        if notify is not None:
+            try:
+                notify(title, text, None)
+                return
+            except Exception as e:
+                self.logger.error("Could not show the result as a notice: %s", e, exc_info=True)
+        self.logger.info("%s: %s", title, text)

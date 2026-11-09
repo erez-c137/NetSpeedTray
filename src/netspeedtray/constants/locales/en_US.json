@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "This Period",
     "EXIT_MENU_ITEM": "E&xit",
     "SELECT_FONT_BUTTON": "Select",
+    "FONT_PICKER_TITLE": "Choose a font",
+    "FONT_PICKER_SEARCH": "Search fonts",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "Export support bundle",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "Bundle logs, config, and system info into a zip suitable for attaching to a GitHub issue. Personal data is redacted automatically.",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "Save support bundle",

@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "Ebben az időszakban",
     "EXIT_MENU_ITEM": "&Kilépés",
     "SELECT_FONT_BUTTON": "Kiválasztás",
+    "FONT_PICKER_TITLE": "Betűtípus kiválasztása",
+    "FONT_PICKER_SEARCH": "Betűtípusok keresése",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "Támogatási csomag exportálása",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "A naplók, konfiguráció és rendszerinformációk ZIP-fájlba csomagolása, amely GitHub-hibajegyhez csatolható. A személyes adatok automatikusan kitakarásra kerülnek.",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "Támogatási csomag mentése",

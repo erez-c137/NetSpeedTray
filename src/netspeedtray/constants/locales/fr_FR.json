@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "Cette période",
     "EXIT_MENU_ITEM": "&Quitter",
     "SELECT_FONT_BUTTON": "Sélectionner",
+    "FONT_PICKER_TITLE": "Choisir une police",
+    "FONT_PICKER_SEARCH": "Rechercher une police",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "Exporter le pack de support",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "Regroupe les journaux, la configuration et les informations système dans un fichier zip pouvant être joint à un ticket GitHub. Les données personnelles sont masquées automatiquement.",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "Enregistrer le pack de support",

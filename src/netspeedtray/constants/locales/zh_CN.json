@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "本期",
     "EXIT_MENU_ITEM": "退出(&X)",
     "SELECT_FONT_BUTTON": "选择",
+    "FONT_PICKER_TITLE": "选择字体",
+    "FONT_PICKER_SEARCH": "搜索字体",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "导出支持包",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "将日志、配置及系统信息打包为 zip 文件，便于提交 GitHub Issue。个人信息会自动脱敏。",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "保存支持包",

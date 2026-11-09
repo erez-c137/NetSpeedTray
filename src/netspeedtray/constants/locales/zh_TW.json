@@ -190,6 +190,8 @@
     "USAGE_THIS_PERIOD_LABEL": "本期",
     "EXIT_MENU_ITEM": "結束(&X)",
     "SELECT_FONT_BUTTON": "選擇",
+    "FONT_PICKER_TITLE": "選擇字型",
+    "FONT_PICKER_SEARCH": "搜尋字型",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "匯出支援套件",
     "EXPORT_SUPPORT_BUNDLE_TOOLTIP": "將紀錄檔、設定與系統資訊打包成 zip，方便附加到 GitHub issue。個人資料會自動去除敏感內容。",
     "EXPORT_SUPPORT_BUNDLE_TITLE": "儲存支援套件",
