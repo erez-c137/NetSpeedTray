@@ -33,7 +33,7 @@ logger = logging.getLogger("NetSpeedTray.FontRelease")
 # caption-button glyph font) and nothing in the app draws with it.
 _PROBE_FILES = ("marlett.ttf", "segoeui.ttf", "arial.ttf", "tahoma.ttf")
 
-_state: dict = {"timer": None, "still_needed": None}
+_state: dict = {"timer": None, "still_needed": None, "shut_down": False}
 
 
 def _probe_font_path() -> Optional[str]:
@@ -86,6 +86,8 @@ def schedule_font_release(still_needed: Callable[[], bool],
     """Run release_font_database() on the event loop ``delay_ms`` from now, unless ``still_needed()``
     says a window that uses the full database (Settings, the Monitor) is open by then. A call made
     while one is pending restarts it (the latest ``still_needed`` is used)."""
+    if _state["shut_down"]:
+        return   # the app is quitting: a window destroyed during cleanup schedules nothing
     if delay_ms is None:
         delay_ms = constants.timeouts.FONT_RELEASE_DELAY_MS
     try:
@@ -107,9 +109,11 @@ def release_pending() -> bool:
     return timer is not None and timer.isActive()
 
 
-def cancel_pending_release() -> None:
-    """Drop a scheduled release (app shutdown, tests)."""
+def cancel_pending_release(shutdown: bool = False) -> None:
+    """Drop a scheduled release (tests); ``shutdown``: and ignore every later request (app quit)."""
     timer = _state["timer"]
     if timer is not None:
         timer.stop()
     _state["still_needed"] = None
+    if shutdown:
+        _state["shut_down"] = True

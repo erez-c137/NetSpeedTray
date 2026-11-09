@@ -185,6 +185,79 @@ def test_a_dialog_with_a_running_backup_is_kept_until_it_is_done(host, monkeypat
     assert sip.isdeleted(dlg)
 
 
+_DELETE_WHILE_CLOSED_PROBE = r"""
+import os, sys, faulthandler
+faulthandler.enable()
+sys.path.insert(0, sys.argv[1])
+from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtCore import QTimer
+app = QApplication([])
+from test_settings_font_memory import _Host
+from netspeedtray import constants
+from netspeedtray.core.database import DatabaseWorker
+h = _Host(); h.show_settings(); dlg = h.settings_dialog
+dlg._delete_timeout.start()                      # a Delete all history is in flight
+dlg._cancel_and_close()                          # the user closes Settings meanwhile: kept, hidden
+print("kept", h.settings_dialog is dlg, flush=True)
+QTimer.singleShot(200, lambda: dlg._on_history_deleted(sys.argv[2]))      # the worker answers
+def close_boxes():
+    for w in app.topLevelWidgets():
+        if isinstance(w, QMessageBox):
+            w.accept()
+QTimer.singleShot(constants.timeouts.SETTINGS_DESTROY_RETRY_MS * 3, close_boxes)
+QTimer.singleShot(constants.timeouts.SETTINGS_DESTROY_RETRY_MS * 4, app.quit)
+app.exec()
+print("survived", h.settings_dialog is None, flush=True)
+"""
+
+
+@pytest.mark.parametrize("status", ["done", "compact_pending", "backup_kept", "failed"])
+def test_a_delete_answer_after_settings_closed_does_not_crash(status, tmp_path):
+    """#490 review P0: the answer's QMessageBox was parented to the hidden dialog; the release retry
+    fired inside the box's exec loop and destroyed the dialog under it (0xc0000374). Now the answer
+    is a notice and the release never deletes from inside a nested loop."""
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONPATH=str(SRC), PYTHONIOENCODING="utf-8",
+               APPDATA=str(tmp_path / "R"), LOCALAPPDATA=str(tmp_path / "L"))
+    res = subprocess.run([sys.executable, "-c", _DELETE_WHILE_CLOSED_PROBE, str(Path(__file__).parent), status],
+                         env=env, capture_output=True, text=True, timeout=120)
+    assert res.returncode == 0, (res.returncode, res.stderr[-1500:])
+    assert "survived True" in res.stdout, res.stdout
+
+
+def test_release_waits_while_a_modal_loop_runs(host, monkeypatch):
+    host.show_settings()
+    dlg = host.settings_dialog
+    dlg.hide()
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: dlg))
+    host._release_settings_dialog()
+    _drain()
+    assert host.settings_dialog is dlg and not sip.isdeleted(dlg)
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: None))
+    host._release_settings_dialog()
+    _drain()
+    assert host.settings_dialog is None and sip.isdeleted(dlg)
+
+
+def test_a_visible_child_box_counts_as_pending_work(host):
+    host.show_settings()
+    dlg = host.settings_dialog
+    box = QMessageBox(dlg)
+    box.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    box.show()
+    assert dlg.has_pending_work() is True
+    box.hide()
+    assert dlg.has_pending_work() is False
+
+
+def test_no_release_is_scheduled_after_shutdown(monkeypatch):
+    font_release.cancel_pending_release(shutdown=True)
+    try:
+        font_release.schedule_font_release(lambda: False, 10)
+        assert not font_release.release_pending()
+    finally:
+        font_release._state["shut_down"] = False
+
+
 def test_has_pending_work_sees_a_backup_and_a_delete(host):
     host.show_settings()
     dlg = host.settings_dialog

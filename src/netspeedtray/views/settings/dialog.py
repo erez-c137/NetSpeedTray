@@ -1045,16 +1045,16 @@ class SettingsDialog(QDialog):
                 except Exception as e:
                     self.logger.debug("hover usage cache not invalidated: %s", e)
         if status == DatabaseWorker.DELETE_DONE:
-            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE)
+            self._show_result("information", self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE)
         elif status == DatabaseWorker.DELETE_COMPACT_PENDING:
-            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_COMPACTING)
+            self._show_result("information", self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_COMPACTING)
         elif status == DatabaseWorker.DELETE_BACKUP_KEPT_UPGRADE:
             # Honest: the upgrade's backup is still needed by an unfinished upgrade - not "shortly".
-            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_UPGRADE)
+            self._show_result("information", self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_UPGRADE)
         elif status == DatabaseWorker.DELETE_BACKUP_KEPT:
-            QMessageBox.warning(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_KEPT)
+            self._show_result("warning", self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_KEPT)
         else:
-            QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
+            self._show_result("critical", self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
 
     def _on_delete_timeout(self) -> None:
         """No answer from the write thread in DB_DELETE_HISTORY_UI_TIMEOUT_MS: give the button back
@@ -1064,7 +1064,7 @@ class SettingsDialog(QDialog):
             self.advanced_page.delete_history_btn.setEnabled(True)
         except Exception:
             pass
-        QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
+        self._show_result("critical", self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
 
     def _save_and_close(self) -> None:
         """Saves settings and closes."""
@@ -1183,6 +1183,27 @@ class SettingsDialog(QDialog):
             if page is not None and page.backup_running():
                 return True
             timeout = getattr(self, "_delete_timeout", None)
-            return bool(timeout is not None and timeout.isActive())
+            if timeout is not None and timeout.isActive():
+                return True
+            # A box or picker of ours still up (it may be running its own exec loop on our stack).
+            if any(d.isVisible() for d in self.findChildren(QDialog)):
+                return True
+            return False
         except RuntimeError:   # already being destroyed
             return False
+
+    def _show_result(self, kind: str, title: str, text: str) -> None:
+        """A result that arrives on its own (Delete all history's answer or timeout): a message box over
+        Settings while it is on screen; once it is closed, the widget's non-focus notice flyout - never
+        a modal box hanging off a hidden dialog that is about to be destroyed (#490 review P0)."""
+        if self.isVisible() and not self.isMinimized():
+            getattr(QMessageBox, kind)(self, title, text)
+            return
+        notify = getattr(self.parent_widget, "show_backup_notice", None)
+        if notify is not None:
+            try:
+                notify(title, text, None)
+                return
+            except Exception as e:
+                self.logger.error("Could not show the result as a notice: %s", e, exc_info=True)
+        self.logger.info("%s: %s", title, text)

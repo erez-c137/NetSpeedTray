@@ -2616,7 +2616,13 @@ class NetworkSpeedWidget(QWidget):
                 return
             if dialog.isVisible():
                 return   # reopened meanwhile
-            if dialog.has_pending_work():
+            # Never from inside a nested event loop (a message box's exec, anyone's modal dialog): a
+            # deleteLater posted there is processed there, possibly under a box parented to this
+            # dialog (#490 review P0, heap corruption). Re-checked on the next retry.
+            from PyQt6.QtCore import QThread
+            nested = (QApplication.activeModalWidget() is not None
+                      or QThread.currentThread().loopLevel() > 1)
+            if nested or dialog.has_pending_work():
                 QTimer.singleShot(constants.timeouts.SETTINGS_DESTROY_RETRY_MS, self._release_settings_dialog)
                 return
             self.settings_dialog = None
@@ -3265,7 +3271,7 @@ class NetworkSpeedWidget(QWidget):
 
         def _font_release() -> None:
             from netspeedtray.utils.font_release import cancel_pending_release
-            cancel_pending_release()
+            cancel_pending_release(shutdown=True)   # and none scheduled later (the Monitor's destroyed)
 
         def _history_backup() -> None:
             # A running Settings > Advanced > Back up history (#334): interrupt its copy and give its

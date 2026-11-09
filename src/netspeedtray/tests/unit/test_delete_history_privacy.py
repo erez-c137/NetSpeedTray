@@ -18,6 +18,7 @@ Privacy review 2.2 (finding 1) and data-integrity review (A, B): what "Delete al
   * B: a usage reset while the file is still opening drops the polls buffered before it (they used to
     be replayed into the fresh counter: 5 x 100 MB -> 500000001 after the first poll).
 """
+import types
 import os
 import sqlite3
 import stat
@@ -729,6 +730,9 @@ def test_settings_re_arms_cap_alerts_only_after_a_successful_delete():
         logger=NS(debug=lambda *a, **k: None),
         _delete_include_usage=True,
     )
+    fake._show_result = types.MethodType(SettingsDialog._show_result, fake)
+    fake.isVisible = lambda: True
+    fake.isMinimized = lambda: False
     with patch("netspeedtray.views.settings.dialog.QMessageBox"):
         SettingsDialog._on_history_deleted(fake, DatabaseWorker.DELETE_FAILED)
         assert fake.config["usage_alert_state"] == "2026-10-01:80" and calls == []
@@ -964,6 +968,9 @@ def test_settings_tells_the_user_a_backup_was_kept(status, key, box):
               config={}, original_config={}, logger=NS(debug=lambda *a, **k: None),
               i18n=NS(SUCCESS_TITLE="ok", DELETE_HISTORY_DONE_BACKUP_UPGRADE="UPG", DELETE_HISTORY_DONE_BACKUP_KEPT="KEPT"),
               _delete_include_usage=False)
+    fake._show_result = types.MethodType(SettingsDialog._show_result, fake)
+    fake.isVisible = lambda: True
+    fake.isMinimized = lambda: False
     with patch("netspeedtray.views.settings.dialog.QMessageBox") as mb:
         getattr(mb, box).side_effect = lambda *a: shown.append(a[2])
         SettingsDialog._on_history_deleted(fake, status)
