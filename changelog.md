@@ -75,6 +75,78 @@ ALSO
 
 ---
 
+## [2.2.0-rc.7] - November 9, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+NetSpeedTray now uses much less memory: on a typical PC the widget settles around 35-40 MB instead
+of 75-90 MB, loads only the font its language needs, and gives memory back when you close Settings or
+the Monitor. Nothing was removed and nothing looks different, apart from a few characters that now
+use the font Windows itself uses for that language.
+
+### Changed
+
+- **Much less memory.** On a typical PC Task Manager shows about 35-40 MB for the widget, down
+  from about 75-90 MB, in every language; the more fonts installed, the bigger the saving. ([#485], [#487], [#488], [#489])
+
+  *Under the hood: the widget font named a fallback family (`setFamilies(["Segoe UI Variable",
+  "Segoe UI"])`), and resolving that list made Qt's DirectWrite database load the styles of every
+  installed family - about 38 MB, process-wide, never freed. The tray menu's icon font, the flyout
+  close button and the Bengali script fallback did the same. The widget now draws in one family
+  and only the glyphs that family lacks go, run by run, to one known face that has them
+  (`utils/font_runs.py`). Wi-Fi names that need anything else, and any right-to-left text, are drawn
+  exactly as before. Measured with an isolated-APPDATA harness: en_US 76 -> 39 MB. Frozen builds in a test VM with few fonts installed (private working set after 2 minutes idle):
+  2.1.7 34.0, rc.6 27.7, rc.7 18.8 MB; commit after closing the Monitor 151 / 162 / 50 MB.*
+
+- **Only the font your language needs is loaded.** English and the other Latin-script languages
+  load Segoe UI Variable and the icon font, nothing else; Japanese, Korean, Chinese and Bengali add
+  exactly their one font. The tray menu, hover card, notices, Settings and the Monitor all use that
+  same font. ([#489])
+
+  *Under the hood: one application font per language (Segoe UI Variable; Segoe UI for Hebrew, which
+  the variable font barely covers; Yu Gothic UI, Malgun Gothic, Microsoft YaHei UI / JhengHei UI,
+  Nirmala UI), every fallback list removed, and characters no UI font has replaced or drawn in the
+  font that has them. A test pins the mapped font files per language for the widget, menu, hover
+  card, a notice, Settings and the Monitor - before this, Japanese, Korean, Chinese and Bengali
+  mapped all 852 font files.*
+
+- **Settings and the Monitor give their memory back when you close them**, and Settings opens
+  faster (about 0.1 s instead of 0.5 s); reopening it takes a little longer than before. ([#490])
+
+  *Under the hood: Settings was hidden for reuse and kept ~26 MB; it is now destroyed on close and
+  its pages are built when first shown (an unbuilt page saves its settings unchanged). Qt keeps its
+  font database for the whole process, so 1.5 s after Settings or the Monitor closes it is reset
+  (`utils/font_release.py`: add and remove one application font) - the measured way to free it.*
+
+- **The font picker in Settings is our own.** It shows each font in its own face, has a search box,
+  and applies weight and size too (the old Windows dialog ignored them). ([#490])
+
+- **The mini graph's Trend style no longer loads numpy**, and neither does the hover card. The
+  curve is the same - within a thousandth of a pixel. ([#488])
+
+  *Under the hood: `trend_smooth`, the monotone cubic interpolation and `utils/summaries.py` are pure
+  Python; long histories compute only the points the graph draws, and the axis keeps the true peak.
+  numpy (~9 MB, and ~350 MB of reserved memory plus one idle thread per CPU from its math library)
+  now loads only with the Monitor - and with `OPENBLAS_NUM_THREADS=1`, so even then it reserves
+  ~40 MB and starts no threads.*
+
+- **A few small things load only when used:** the Settings code, the update check's network code
+  and a raw-history buffer nothing read are gone from startup. ([#485])
+
+### Fixed
+
+- A test that failed if the test suite ran across midnight. ([#491])
+
+[#485]: https://github.com/erez-c137/NetSpeedTray/pull/485
+[#487]: https://github.com/erez-c137/NetSpeedTray/pull/487
+[#488]: https://github.com/erez-c137/NetSpeedTray/pull/488
+[#489]: https://github.com/erez-c137/NetSpeedTray/pull/489
+[#490]: https://github.com/erez-c137/NetSpeedTray/pull/490
+[#491]: https://github.com/erez-c137/NetSpeedTray/pull/491
+
+---
+
 ## [2.2.0-rc.6] - November 8, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app
