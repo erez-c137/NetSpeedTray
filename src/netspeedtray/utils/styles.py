@@ -371,7 +371,13 @@ def text_face(text) -> Optional[str]:
     Japanese UI draws a Han adapter name in Yu Gothic UI, the face it already loaded), then the
     Windows display language's (an English UI on a Chinese Windows draws every Han name in Microsoft
     YaHei UI - not some in Yu Gothic UI and others in YaHei, by which characters each one has)."""
-    return face_for_text(str(text or ""), _ui_language, also=(windows_language(),))
+    text = str(text or "")
+    if any(ord(ch) > 0xFFFF for ch in text):
+        # Emoji and other astral characters: GDI can't be asked about them (UTF-16 glyph lookup), so
+        # each candidate face would be probed through a cached QRawFont - mapping ~27 CJK/Nirmala files
+        # for good - and none of the known faces has emoji anyway. Qt's path, as before.
+        return None
+    return face_for_text(text, _ui_language, also=(windows_language(),))
 
 
 def face_font(face: str, like: QFont) -> QFont:
@@ -489,9 +495,12 @@ def _size_combo_by_length(combo) -> None:
 
 
 def _follow_combo_face(combo, text) -> None:
-    apply_text_face(combo, text)
-    if combo.isEditable() and combo.lineEdit() is not None:   # an editable box draws its text in its line edit
+    # An editable box draws its text in its line edit. The line edit FIRST: the box's face would
+    # otherwise flow into it before apply_text_face saved its own (UI face) font, and switching back to
+    # "1.1.1.1" would "restore" Microsoft YaHei UI.
+    if combo.isEditable() and combo.lineEdit() is not None:
         apply_text_face(combo.lineEdit(), text)
+    apply_text_face(combo, text)
 
 
 def set_combo_text_in_face(combo, text) -> None:
