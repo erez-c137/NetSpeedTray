@@ -413,7 +413,8 @@ class UsageFlyout(QWidget):
             self._hw_values[("vram", "label")].setText(
                 self._tr("VRAM_SHARED_LABEL", "VRAM (shared)") if hardware.get("vram_shared") else "VRAM")
         if ("identity", "text") in self._hw_values:
-            self._hw_values[("identity", "text")].setText(str(hardware.get("identity") or dash))
+            # The Wi-Fi name (我的网络) in its own face when the UI face lacks it (styles.set_text_in_face).
+            su.set_text_in_face(self._hw_values[("identity", "text")], str(hardware.get("identity") or dash))
 
     # ----------------------------------------------------------------- battery
 

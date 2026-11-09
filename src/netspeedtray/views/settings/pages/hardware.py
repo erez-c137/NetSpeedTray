@@ -464,17 +464,18 @@ class HardwarePage(QWidget):
             name = a.name.strip()
             if name and name.casefold() not in {n.casefold() for n in names}:
                 names.append(name)
-        for name in names:
-            self.gpu_adapter.addItem(name, userData=name)
+        for name in names:   # the driver's name: in its own face if the UI face lacks it
+            su.add_combo_item_in_face(self.gpu_adapter, name, name)
         saved = saved.strip()
         idx = 0
         if saved:
             idx = next((i for i in range(self.gpu_adapter.count())
                         if str(self.gpu_adapter.itemData(i)).casefold() == saved.casefold()), -1)
             if idx < 0:
-                self.gpu_adapter.addItem(saved, userData=saved)
+                su.add_combo_item_in_face(self.gpu_adapter, saved, saved)
                 idx = self.gpu_adapter.count() - 1
         self.gpu_adapter.setCurrentIndex(idx)
+        su.keep_combo_face(self.gpu_adapter)
         self._gpu_adapter_card.setVisible(len(names) >= 2 or bool(saved))
 
     def _throttle_c(self) -> int:
