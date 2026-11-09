@@ -569,7 +569,7 @@
     "BAND_DISPLAY_COLORED": "颜色区分 (2.4G / 5G / 6G)",
     "BAND_DISPLAY_ALERT_ONLY": "仅提醒",
     "IDENTITY_MODE_LABEL": "显示内容",
-    "IDENTITY_MODE_SUB": "所有电脑均可显示频段。若要显示网络名称 (SSID)，需开启 Windows 位置服务。",
+    "IDENTITY_MODE_SUB": "读取当前已连接的 Wi-Fi 名称，不扫描附近网络。",
     "IDENTITY_MODE_BAND": "仅频段 (2.4G / 5G)",
     "IDENTITY_MODE_SSID": "网络名称 (SSID)",
     "IDENTITY_MODE_BOTH": "名称与频段",

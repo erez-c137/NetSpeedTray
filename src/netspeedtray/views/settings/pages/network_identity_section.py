@@ -2,7 +2,7 @@
 
 Surfaces the Wi-Fi band / network indicator on the taskbar widget:
   • show_network_identity - the header toggle; shows the band tag (2.4G/5G/6G) on the widget. The band
-    is read locally with no Location permission; the SSID (a later add) needs Windows Location on.
+    is read locally with no Location permission; the SSID uses the connected-profile API, without a Wi-Fi scan.
   • band_display - how the band presents: Always (neutral), Color-coded (2.4G amber / 5G green /
     6G blue), or Alert only (show a red 2.4G ONLY when you've dropped to the slow band; clean otherwise).
 """
@@ -44,7 +44,7 @@ class NetworkIdentitySettings(QWidget):
         self._exp.toggled.connect(lambda _on: self.on_change())
         body = self._exp.contentLayout()
 
-        # What to show: band, the network name (SSID), or both. SSID is Location-gated (honest note).
+        # What to show: band, the network name (SSID), or both. Read only the requested fields.
         self._mode = Win11ComboBox()
         self._mode.setMinimumWidth(220)
         for value, key, default in self._CONTENT:
@@ -53,7 +53,7 @@ class NetworkIdentitySettings(QWidget):
         body.addWidget(SettingCard(
             self._tr("IDENTITY_MODE_LABEL", "Show"),
             self._tr("IDENTITY_MODE_SUB",
-                     "The band shows on every PC. The network name (SSID) needs Windows Location turned on."),
+                     "Read the connected Wi-Fi name without scanning nearby networks."),
             control=self._mode))
 
         # How the band presents.

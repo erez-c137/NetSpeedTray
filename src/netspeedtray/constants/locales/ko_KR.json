@@ -569,7 +569,7 @@
     "BAND_DISPLAY_COLORED": "색상 코드 (2.4G / 5G / 6G)",
     "BAND_DISPLAY_ALERT_ONLY": "알림만 표시 (2.4GHz에서 경고)",
     "IDENTITY_MODE_LABEL": "표시",
-    "IDENTITY_MODE_SUB": "대역이 모든 PC에 표시됩니다. 네트워크 이름 (SSID)을 확인하려면 Windows 위치 정보가 켜져 있어야 합니다.",
+    "IDENTITY_MODE_SUB": "주변 네트워크를 검색하지 않고 현재 연결된 Wi-Fi 이름을 읽습니다.",
     "IDENTITY_MODE_BAND": "대역만 (2.4G / 5G)",
     "IDENTITY_MODE_SSID": "네트워크 이름 (SSID)",
     "IDENTITY_MODE_BOTH": "이름 및 대역",

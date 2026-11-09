@@ -569,7 +569,7 @@
     "BAND_DISPLAY_COLORED": "কালার-কোডেড (2.4G / 5G / 6G)",
     "BAND_DISPLAY_ALERT_ONLY": "শুধুমাত্র সতর্কতা (2.4 GHz-এ সতর্ক করুন)",
     "IDENTITY_MODE_LABEL": "দেখান",
-    "IDENTITY_MODE_SUB": "ব্যান্ড সব পিসিতেই দেখায়। নেটওয়ার্কের নাম (SSID) দেখানোর জন্য উইন্ডোজ লোকেশন চালু থাকা প্রয়োজন।",
+    "IDENTITY_MODE_SUB": "আশেপাশের নেটওয়ার্ক স্ক্যান না করেই সংযুক্ত Wi-Fi-এর নাম পড়ুন।",
     "IDENTITY_MODE_BAND": "শুধুমাত্র ব্যান্ড (2.4G / 5G)",
     "IDENTITY_MODE_SSID": "নেটওয়ার্কের নাম (SSID)",
     "IDENTITY_MODE_BOTH": "নাম এবং ব্যান্ড",

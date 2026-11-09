@@ -57,13 +57,9 @@ from netspeedtray.core import gpu_adapters
 from netspeedtray.core.lhm_http import LhmHttpClient
 from netspeedtray.utils import secret_store
 from netspeedtray.utils.rdp_utils import is_rdp_session
-from netspeedtray.utils.network_utils import get_connected_network_identity
+from netspeedtray.utils.network_identity_monitor import NetworkIdentityMonitor
 
 logger = logging.getLogger("NetSpeedTray.StatsMonitorThread")
-
-# Network identity (Wi-Fi band / SSID) changes rarely, so poll it on a slow sub-cadence off the
-# per-second network readout - never on the GUI thread. See releases/v2.1/KICKOFF.md §2/§3.
-_IDENTITY_POLL_INTERVAL_SEC: float = 5.0
 
 # LibreHardwareMonitor identifier prefixes that scope a sensor to something that is NOT the CPU.
 # The CPU-temperature search falls back to matching sensor *names* (for boards that label the die
@@ -213,7 +209,8 @@ class StatsMonitorThread(QThread):
         self._thermal_placeholder_logged: set = set()
         self._lhm_notice_emitted: bool = False  # One-time notification flag
         self._lhm_check_polls: int = 0  # Count polls before emitting notice
-        self._last_identity_poll: float = 0.0  # monotonic ts of the last network-identity sub-poll (0 = poll immediately)
+        self._network_identity_monitor = NetworkIdentityMonitor()
+        self._com_initialized = False
         self._last_link_stats_poll: float = 0.0  # monotonic ts of the last net_if_stats sub-poll (v8 link history)
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
         # The helper process in flight, if any - stop() kills it (see _run_child).
@@ -1533,14 +1530,13 @@ class StatsMonitorThread(QThread):
                         except Exception as e:
                             self.logger.debug("net_if_stats failed: %s", e)
 
-                # 1b. Network identity (Wi-Fi band / SSID) - only when the widget wants it, and only
-                # on the slow sub-cadence. get_connected_network_identity() never raises. Emitting on
-                # a present key lets the controller forward it exactly like the temp/power stats.
+                # The event-driven cache does no Windows work on unchanged ticks.
+                # Send cached values too, so resuming a paused widget cannot miss an update.
                 if self.config.get('show_network_identity', False):
-                    now = time.monotonic()
-                    if now - self._last_identity_poll >= _IDENTITY_POLL_INTERVAL_SEC:
-                        self._last_identity_poll = now
-                        stats['network_identity'] = get_connected_network_identity()
+                    stats['network_identity'] = self._network_identity_monitor.read(
+                        self.config.get('identity_mode', 'band'))
+                else:
+                    self._network_identity_monitor.close()
 
                 # Monitor-window override forces hardware collection even with the widget's flags off.
                 _force_hw = self._force_hardware_collection
@@ -1636,6 +1632,7 @@ class StatsMonitorThread(QThread):
                 time.sleep(sleep_slice)
                 sleep_remaining -= sleep_slice
 
+        self._network_identity_monitor.close()
         self._cleanup_gpu_query()
         self._cleanup_thermal_query()
         self._cleanup_power_query()
@@ -1652,20 +1649,23 @@ class StatsMonitorThread(QThread):
         self._wmi_ohm = None
 
     def _init_com(self) -> None:
-        """Initialize the COM apartment ONCE for this thread (WMI/LHM access)."""
+        """Use MTA for WMI and WinRT callbacks; this polling thread has no STA message pump."""
+        self._com_initialized = False
         try:
             import pythoncom
-            pythoncom.CoInitialize()
-        except Exception:
-            pass
+            pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
+            self._com_initialized = True
+        except Exception as e:
+            self.logger.debug("Monitor COM initialization unavailable: %s", e)
 
     def _cleanup_com(self) -> None:
-        """Releases COM apartment initialized for WMI access."""
-        try:
-            import pythoncom
-            pythoncom.CoUninitialize()
-        except Exception:
-            pass
+        """Balance this worker's successful COM initialization only."""
+        if self._com_initialized:
+            try:
+                import pythoncom
+                pythoncom.CoUninitialize()
+            finally:
+                self._com_initialized = False
 
     def _run_child(self, argv, timeout: float) -> str:
         """Run a short-lived helper (nvidia-smi) and return its stdout, like check_output - but the

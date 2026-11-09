@@ -569,7 +569,7 @@
     "BAND_DISPLAY_COLORED": "Met kleurcodering (2.4G / 5G / 6G)",
     "BAND_DISPLAY_ALERT_ONLY": "Alleen waarschuwen (bij 2.4 GHz)",
     "IDENTITY_MODE_LABEL": "Tonen",
-    "IDENTITY_MODE_SUB": "De band wordt op elke pc getoond. Voor de netwerknaam (SSID) moet Locatie in Windows ingeschakeld zijn.",
+    "IDENTITY_MODE_SUB": "Lees de naam van het verbonden wifi-netwerk zonder netwerken in de buurt te scannen.",
     "IDENTITY_MODE_BAND": "Alleen de band (2.4G / 5G)",
     "IDENTITY_MODE_SSID": "Netwerknaam (SSID)",
     "IDENTITY_MODE_BOTH": "Naam en band",

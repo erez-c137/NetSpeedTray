@@ -393,10 +393,10 @@ class ConfigConstants:
         "widget_display_mode": DEFAULT_WIDGET_DISPLAY_MODE,
         "widget_display_order": DEFAULT_WIDGET_DISPLAY_ORDER,
         "widget_cycle_interval": DEFAULT_WIDGET_CYCLE_INTERVAL,
-        # v2.1 network identity: the Wi-Fi band (2.4G/5G) is Location-free; the SSID is gated behind
-        # the Windows Location permission, so it is opt-in and defaults off. See releases/v2.1/KICKOFF.md.
+        # Network identity uses the connected-profile SSID API and location-free channel query.
+        # The optional identity indicator remains disabled by default.
         "show_network_identity": False,
-        "identity_mode": "band",           # band (Location-free) | ssid (Location-gated) | both
+        "identity_mode": "band",           # band | ssid | both (no Wi-Fi scans)
         "band_display": "always",          # always (neutral) | colored (by band) | alert_only (2.4G warning)
         "location_onboarding_dismissed": False,  # user permanently dismissed the SSID/Location explainer
         "widgets_overlap_nudge_shown": False,  # one-time #200 nudge: widget overlaps the Widgets/weather panel

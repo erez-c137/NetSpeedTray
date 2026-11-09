@@ -569,7 +569,7 @@
     "BAND_DISPLAY_COLORED": "色分け (2.4G / 5G / 6G)",
     "BAND_DISPLAY_ALERT_ONLY": "アラートのみ (2.4 GHz での警告)",
     "IDENTITY_MODE_LABEL": "表示",
-    "IDENTITY_MODE_SUB": "すべての PC でバンドが表示されます。ネットワーク名 (SSID) を表示するには、Windows の位置情報機能を有効にする必要があります。",
+    "IDENTITY_MODE_SUB": "周辺ネットワークをスキャンせずに、接続中の Wi-Fi 名を読み取ります。",
     "IDENTITY_MODE_BAND": "バンドのみ (2.4G / 5G)",
     "IDENTITY_MODE_SSID": "ネットワーク名 (SSID)",
     "IDENTITY_MODE_BOTH": "名前とバンド",

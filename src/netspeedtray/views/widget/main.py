@@ -917,17 +917,16 @@ class NetworkSpeedWidget(QWidget):
     def update_network_identity(self, identity: Optional[object]) -> None:
         """Update the connected network's identity (Wi-Fi band / SSID) and repaint if shown.
 
-        `identity` is a NetworkIdentity (or None). Sub-polled ~5s in StatsMonitorThread, never on the
-        hot path. The on-widget rendering + width reserve land with the identity element (KICKOFF §3);
-        for now we store the value so the paint path can read it and repaint when the feature is on.
+        `identity` is a NetworkIdentity (or None), cached on the stats worker and refreshed on
+        network changes or by its safety interval. Store it for the paint path and update the layout.
         """
         if self.is_paused:
             return
         self.network_identity = identity
         if not self.config.get("show_network_identity", False):
             return
-        # The user asked for the network name but Windows Location is off (SSID came back blocked):
-        # explain once why, and how, rather than silently showing nothing.
+        # Compatibility with identities produced by an older location-gated reader. The current
+        # connected-profile reader does not set ssid_blocked.
         self._maybe_prompt_location(identity)
         # The reserved identity slot depends on which band shows (alert_only flips on/off 2.4G) and on
         # the SSID text (variable width). Both change only on a network change (rare), so re-lay out on
@@ -1265,8 +1264,7 @@ class NetworkSpeedWidget(QWidget):
     def _identity_ssid_text(self) -> Optional[str]:
         """The truncated SSID / connection name to draw, or None (off, band-only mode, or unavailable).
 
-        Location-gated: for Wi-Fi with Location off, `NetworkIdentity.name` is None (ssid_blocked) and
-        this returns None - the band still shows and Settings explains why (never a blank/fake name).
+        A missing connected-profile name stays unavailable; it is not replaced with a stale SSID.
         """
         if not self.config.get("show_network_identity", False):
             return None
@@ -2825,10 +2823,10 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
 
     def _maybe_prompt_location(self, identity: Optional[object]) -> None:
-        """One-time, honest explainer when the user wants the SSID but Windows Location is off.
+        """Handle the legacy ssid_blocked flag from older identity readers.
 
-        Fires at most once per session and is suppressible forever. Only when the network name was
-        actually requested (ssid/both mode) and actually blocked - never for band-only users.
+        The current connected-profile reader does not set this flag. An older source that does
+        can still show the one-time explainer in ssid/both mode.
         """
         try:
             if identity is None or not getattr(identity, "ssid_blocked", False):

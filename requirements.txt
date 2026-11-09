@@ -49,5 +49,19 @@ six==1.17.0
     # via python-dateutil
 truststore==0.10.4
     # via -r requirements.in
+typing-extensions==4.16.0
+    # via winrt-runtime
+winrt-runtime==3.2.1 ; sys_platform == "win32"
+    # via
+    #   -r requirements.in
+    #   winrt-windows-foundation
+    #   winrt-windows-foundation-collections
+    #   winrt-windows-networking-connectivity
+winrt-windows-foundation==3.2.1 ; sys_platform == "win32"
+    # via -r requirements.in
+winrt-windows-foundation-collections==3.2.1 ; sys_platform == "win32"
+    # via -r requirements.in
+winrt-windows-networking-connectivity==3.2.1 ; sys_platform == "win32"
+    # via -r requirements.in
 wmi==1.5.1 ; sys_platform == "win32"
     # via -r requirements.in

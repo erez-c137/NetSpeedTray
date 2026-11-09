@@ -569,7 +569,7 @@
     "BAND_DISPLAY_COLORED": "Színkódolt (2,4GHz / 5GHz / 6GHz)",
     "BAND_DISPLAY_ALERT_ONLY": "Csak riasztás (figyelmeztetés 2,4GHz-en)",
     "IDENTITY_MODE_LABEL": "Megjelenítés",
-    "IDENTITY_MODE_SUB": "A sáv minden PC-n megjeleníthető. A hálózatnévhez (SSID) be kell kapcsolni a Windows Helymeghatározás funkcióját.",
+    "IDENTITY_MODE_SUB": "A csatlakoztatott Wi-Fi neve a közeli hálózatok keresése nélkül olvasható ki.",
     "IDENTITY_MODE_BAND": "Csak sáv (2,4GHz / 5GHz)",
     "IDENTITY_MODE_SSID": "Hálózatnév (SSID)",
     "IDENTITY_MODE_BOTH": "Név és sáv",

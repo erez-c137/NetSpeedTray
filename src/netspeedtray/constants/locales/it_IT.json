@@ -569,7 +569,7 @@
     "BAND_DISPLAY_COLORED": "Con colori (2.4G / 5G / 6G)",
     "BAND_DISPLAY_ALERT_ONLY": "Solo avviso (avvisa su 2,4 GHz)",
     "IDENTITY_MODE_LABEL": "Mostra",
-    "IDENTITY_MODE_SUB": "La banda è visibile su ogni PC. Il nome della rete (SSID) richiede che la Posizione di Windows sia attiva.",
+    "IDENTITY_MODE_SUB": "Legge il nome della rete Wi-Fi connessa senza cercare reti nelle vicinanze.",
     "IDENTITY_MODE_BAND": "Solo banda (2.4G / 5G)",
     "IDENTITY_MODE_SSID": "Nome rete (SSID)",
     "IDENTITY_MODE_BOTH": "Nome e banda",

@@ -569,7 +569,7 @@
     "BAND_DISPLAY_COLORED": "彩色標示 (2.4G / 5G / 6G)",
     "BAND_DISPLAY_ALERT_ONLY": "只在需要時提醒 (2.4 GHz 時警示)",
     "IDENTITY_MODE_LABEL": "顯示內容",
-    "IDENTITY_MODE_SUB": "頻段在每台電腦上都能顯示。網路名稱 (SSID) 則需要開啟 Windows 定位服務。",
+    "IDENTITY_MODE_SUB": "讀取目前已連線的 Wi-Fi 名稱，不掃描附近網路。",
     "IDENTITY_MODE_BAND": "只有顯示頻段 (2.4G / 5G)",
     "IDENTITY_MODE_SSID": "無線網路名稱 (SSID)",
     "IDENTITY_MODE_BOTH": "名稱與頻段",

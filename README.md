@@ -242,8 +242,15 @@ Yes - **Settings → Network → Data usage**, or the tray's **Data cap…**. Se
 Only if you ask it to. The default target is your own **gateway**, which never leaves your LAN - a burst of four small pings every 3 seconds, about 1.3 packets a second. Pinging a public host is a separate, explicit opt-in where *you* choose the host. The Monitor's **Check connection** button sends 20 pings to your router, and to the public host only if that opt-in is on or you tick the box that names it, just for that check. Nothing else about your network is sent anywhere - there's no telemetry of any kind.
 
 <a id="why-does-the-network-name-need-location-access"></a>
-**Why does the network name need "Location" access?**
-The Wi-Fi **band** (2.4G / 5G) shows on any PC with **no permission**. The **network name (SSID)** is different: since Windows 11, Windows only hands the SSID to apps that have **Location** access - a Windows privacy gate, the same one your browser hits for Wi-Fi features. It is **not** GPS and **not** tracking: NetSpeedTray never uses your position, reads the name **locally** only to show it on the widget, and never stores or transmits it (see the [Privacy Policy](privacy.md)). Prefer not to? Leave "Network name" off and use the band - it needs nothing. The first time the name is blocked, NetSpeedTray shows a one-time explainer with a shortcut straight to the Windows Location setting.
+**Does showing the network name need "Location" access?**
+When network names are enabled, NetSpeedTray uses
+`WlanConnectionProfileDetails.GetConnectedSsid`, the API Microsoft recommends when an app needs
+the SSID. It does not scan nearby networks or query `WlanQueryInterface(current_connection)`,
+which includes location-sensitive data. The name is cached and refreshed on network changes,
+with a 60-second recovery refresh. If the name is unavailable, NetSpeedTray does not retry with
+that location-gated query or ask you to change Location settings. Availability may depend on
+Windows and the connection. Network names remain local and are not written to the history
+database or sent anywhere.
 
 **Where does it store data and settings?**
 `%APPDATA%\NetSpeedTray\` - `NetSpeedTray_Config.json` for settings, `speed_history.db` (SQLite) for network/hardware history, and rotated logs. Everything stays local. Settings has an **Export Support Bundle** button that auto-redacts paths, IPs, hostnames, MACs, and adapter names for clean bug reports. The database's schema, example queries, and how to restore a backup are all documented in [DATABASE.md](DATABASE.md).
@@ -264,7 +271,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **Auto-primary mode** - follows the adapter your internet traffic is routed through right now (with a full-tunnel VPN connected, that is the VPN's)
 - **Interface filtering** - all hardware, specific adapters, or include virtual interfaces
 - **Color coding** - custom speed thresholds and colors to read load at a glance
-- **Network identity** - show the Wi-Fi **band** (2.4G / 5G / 6G) and, optionally, the **network name (SSID)** on the widget as a small pill; color-code it, or use **alert-only** mode to flash a red `2.4G` *only* when your PC has silently dropped to the slow band. The band needs no permission; the SSID needs Windows Location on - a Windows privacy gate, read locally and never sent ([why?](#why-does-the-network-name-need-location-access))
+- **Network identity** - show an estimated Wi-Fi **band** (2.4G / 5G) and, optionally, the **network name (SSID)** on the widget as a small pill; color-code it or use **alert-only** mode for a `2.4G` warning. The band is inferred from the channel number, so overlapping 6 GHz channels can be mislabeled or unavailable. The name uses the connected-profile SSID API, read locally and never sent ([details](#why-does-the-network-name-need-location-access))
 - **Per-app connections** (in the Monitor) - live connection counts and remote hosts per program, no admin needed
 
 ### Hardware Monitoring

@@ -569,7 +569,7 @@
     "BAND_DISPLAY_COLORED": "צביעה לפי תדר (2.4G / 5G / 6G)",
     "BAND_DISPLAY_ALERT_ONLY": "התראה בלבד (אזהרה על 2.4 GHz)",
     "IDENTITY_MODE_LABEL": "הצג",
-    "IDENTITY_MODE_SUB": "התדר מוצג בכל מחשב. שם הרשת (SSID) דורש הפעלת מיקום של Windows.",
+    "IDENTITY_MODE_SUB": "קריאת שם רשת ה-Wi-Fi המחוברת בלי לסרוק רשתות בקרבת מקום.",
     "IDENTITY_MODE_BAND": "תדר בלבד (2.4G / 5G)",
     "IDENTITY_MODE_SSID": "שם רשת (SSID)",
     "IDENTITY_MODE_BOTH": "שם ותדר",

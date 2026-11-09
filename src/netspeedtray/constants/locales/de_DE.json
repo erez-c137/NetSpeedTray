@@ -569,7 +569,7 @@
     "BAND_DISPLAY_COLORED": "Farbkodiert (2.4G / 5G / 6G)",
     "BAND_DISPLAY_ALERT_ONLY": "Nur Warnung (warnt bei 2,4 GHz)",
     "IDENTITY_MODE_LABEL": "Anzeigen",
-    "IDENTITY_MODE_SUB": "Das Band wird auf jedem PC angezeigt. Für den Netzwerknamen (SSID) muss der Windows-Standortzugriff aktiviert sein.",
+    "IDENTITY_MODE_SUB": "Den Namen des verbundenen WLANs lesen, ohne nach Netzwerken in der Nähe zu suchen.",
     "IDENTITY_MODE_BAND": "Nur Band (2.4G / 5G)",
     "IDENTITY_MODE_SSID": "Netzwerkname (SSID)",
     "IDENTITY_MODE_BOTH": "Name und Band",
