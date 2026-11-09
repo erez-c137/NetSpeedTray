@@ -54,7 +54,7 @@ from functools import lru_cache
 
 from netspeedtray import constants
 from netspeedtray.core import gpu_adapters
-from netspeedtray.core.lhm_http import LhmHttpClient
+from netspeedtray.core.lhm_http import LhmGpu, LhmHttpClient, LhmSensor, gpu_groups
 from netspeedtray.utils import secret_store
 from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.network_utils import get_connected_network_identity
@@ -139,6 +139,22 @@ def aggregate_gpu_engine_utilization(samples: Dict[Any, Any],
             key = ("unparsed", instance)
         engines[key] = engines.get(key, 0.0) + value
     return max(engines.values(), default=0.0)
+
+
+def _is_nvidia_group(gpu: LhmGpu) -> bool:
+    return "nvidia" in f"{gpu.hardware_id} {gpu.hardware_name}".casefold()
+
+
+def _is_intel_group(gpu: LhmGpu) -> bool:
+    return "intel" in f"{gpu.hardware_id} {gpu.hardware_name}".casefold()
+
+
+# Automatic's tie-break between real GPUs (#236): discrete before integrated, then this maker order
+# (the same order LHM's GPU groups are ranked in), then more dedicated memory, then DXGI's order.
+_AUTO_VENDOR_RANK: Dict[int, int] = {
+    constants.gpu.VENDOR_NVIDIA: 0, constants.gpu.VENDOR_AMD: 1, constants.gpu.VENDOR_AMD_ALT: 1,
+    constants.gpu.VENDOR_INTEL: 2,
+}
 
 
 class GpuPollResult(NamedTuple):
@@ -254,6 +270,8 @@ class StatsMonitorThread(QThread):
         self._gpu_luids_tries: int = 0
         # The picked adapter name last logged as missing (#236), so the fallback is logged once.
         self._gpu_missing_logged: Optional[str] = None
+        # Automatic on a multi-GPU machine: the LUID of the adapter it currently describes (#236).
+        self._auto_gpu_luid: Optional[Tuple[int, int]] = None
         # FALLBACK ONLY (no DXGI): True once any adapter has reported dedicated usage at or above
         # constants.gpu.DEDICATED_USAGE_FALLBACK_MIB. From then on VRAM is the dedicated figure.
         # Not reset on a query rebuild, like _gpu_engine_seen.
@@ -521,10 +539,14 @@ class StatsMonitorThread(QThread):
         # 2c. A GPU that came or went since the DXGI list was read (G4), then the picked one (#236).
         self._refresh_adapters_on_luid_change(set(dedicated_mib) | set(shared_mib))
         selected = self._selected_gpu_adapter()
+        # The ONE adapter utilization, temperature and power describe (#236): the picked one, or - in
+        # Automatic on a multi-GPU machine - the busiest adapter, the discrete GPU when that is a
+        # close call. VRAM keeps Automatic's all-adapter readout (``selected`` below).
+        sensor_gpu = selected if selected is not None else self._auto_gpu_adapter(util_arr)
         if util_arr is not None:
             try:
                 util_pct = aggregate_gpu_engine_utilization(
-                    util_arr, selected.luid if selected is not None else None)
+                    util_arr, sensor_gpu.luid if sensor_gpu is not None else None)
             except Exception as e:
                 self.logger.debug("GPU utilization aggregation failed: %s", e)
         if selected is not None and dedicated_read_ok:
@@ -535,9 +557,12 @@ class StatsMonitorThread(QThread):
         # 3. Temperature & Power - prefer LHM/OHM (all vendors) over nvidia-smi (NVIDIA only)
         # A picked adapter (#236) takes temperature / power only from a sensor of its own maker;
         # nvidia-smi is NVIDIA's, so it is not asked for another maker's card.
-        smi_matches = selected is None or selected.vendor_id == constants.gpu.VENDOR_NVIDIA
+        smi_matches = sensor_gpu is None or sensor_gpu.vendor_id == constants.gpu.VENDOR_NVIDIA
         need_smi_temp = include_temp and smi_matches
         need_smi_power = include_power and smi_matches
+        # The sensor group (LHM web server or WMI) that supplied a reading. Once one has, every other
+        # reading comes from that same card or is N/A - never another adapter's sensor (#236).
+        source_gpu = None
 
         # LHM 0.9.5+ HTTP source. SensorId/HardwareId grouping in lhm_http
         # prevents the iGPU or a motherboard "CPU Socket" sensor from winning.
@@ -545,11 +570,12 @@ class StatsMonitorThread(QThread):
         lhm_gpu = lhm_snapshot.preferred_gpu if lhm_snapshot else None
         if lhm_gpu is not None:
             self._lhm_gpu_seen = True
-        if selected is not None:
-            lhm_gpu = (lhm_snapshot.gpu_for(selected.vendor_id, selected.name,
-                                            gpu_adapters.is_integrated(selected))
+        if sensor_gpu is not None:
+            lhm_gpu = (lhm_snapshot.gpu_for(sensor_gpu.vendor_id, sensor_gpu.name,
+                                            gpu_adapters.is_integrated(sensor_gpu))
                        if lhm_snapshot else None)
         if lhm_gpu:
+            source_gpu = lhm_gpu
             if include_temp and lhm_gpu.temperature is not None:
                 temp_c = lhm_gpu.temperature
                 need_smi_temp = False
@@ -560,48 +586,34 @@ class StatsMonitorThread(QThread):
         if (include_temp and temp_c is None) or (include_power and power_w is None):
             self._init_ohm_wmi()
             if self._wmi_ohm:
-                # 3a. LHM/OHM GPU temperature
-                if include_temp and temp_c is None:
-                    try:
-                        sensors = self._wmi_ohm.ExecQuery(
-                            "SELECT Value, Identifier, Name FROM Sensor WHERE SensorType='Temperature'"
-                        )
-                        for s in sensors:
-                            identifier = str(getattr(s, 'Identifier', '')).lower()
-                            if 'gpu' not in identifier or not self._gpu_sensor_matches(identifier, selected):
-                                continue
-                            val = float(s.Value)
-                            if 0.0 < val < 150.0:
-                                temp_c = val
-                                self.logger.debug("LHM/OHM GPU temp from sensor '%s': %.1f°C", getattr(s, 'Name', '?'), val)
-                                break
-                        if temp_c is None:
-                            self.logger.debug("LHM/OHM: no valid GPU temperature sensor found")
-                        else:
-                            need_smi_temp = False
-                    except Exception as e:
-                        self.logger.debug("LHM/OHM GPU temp error: %s", e)
-                        self._wmi_ohm = None
+                # 3a/3b. LHM v0.9.4 / OHM WMI (all vendors). Grouped per GPU exactly like the web
+                # server's tree: taking the first 'gpu' sensor of each type separately read an APU's
+                # "GPU VR SoC" as the temperature beside the dGPU's power (#236).
+                wmi_gpu = self._wmi_gpu_group(sensor_gpu, source_gpu)
+                if wmi_gpu is not None:
+                    source_gpu = source_gpu or wmi_gpu
+                    if include_temp and temp_c is None and wmi_gpu.temperature is not None:
+                        temp_c = wmi_gpu.temperature
+                        need_smi_temp = False
+                        self.logger.debug("LHM/OHM GPU temp from sensor '%s': %.1f°C",
+                                          wmi_gpu.temperature_sensor, temp_c)
+                    if include_power and power_w is None and wmi_gpu.power is not None:
+                        power_w = wmi_gpu.power
+                        need_smi_power = False
+                        self.logger.debug("LHM/OHM GPU power from sensor '%s': %.1fW",
+                                          wmi_gpu.power_sensor, power_w)
 
-                # 3b. LHM/OHM GPU power (all vendors)
-                if include_power and power_w is None and self._wmi_ohm:
-                    try:
-                        sensors = self._wmi_ohm.ExecQuery(
-                            "SELECT Value, Identifier, Name FROM Sensor WHERE SensorType='Power'"
-                        )
-                        for s in sensors:
-                            identifier = str(getattr(s, 'Identifier', '')).lower()
-                            if 'gpu' not in identifier or not self._gpu_sensor_matches(identifier, selected):
-                                continue
-                            val = float(s.Value)
-                            if 0.0 < val < 1000.0:
-                                power_w = val
-                                self.logger.debug("LHM/OHM GPU power from sensor '%s': %.1fW", getattr(s, 'Name', '?'), val)
-                                break
-                        if power_w is not None:
-                            need_smi_power = False
-                    except Exception as e:
-                        self.logger.debug("LHM/OHM GPU power error: %s", e)
+        # nvidia-smi is NVIDIA's: in Automatic without an adapter, it only fills in for a sensor group
+        # that IS the NVIDIA card (or when there is no sensor group at all).
+        if source_gpu is not None and not _is_nvidia_group(source_gpu):
+            need_smi_temp = need_smi_power = False
+        # Automatic on a multi-GPU box resolved to an NVIDIA card: the auto query reads nvidia-smi's
+        # FIRST line, which is only certainly that card when it is the only NVIDIA one.
+        auto_smi_pick = (selected is None and sensor_gpu is not None and smi_matches
+                         and len(gpu_adapters.same_maker_siblings(self._gpu_adapters, sensor_gpu)) > 0)
+        auto_need_smi_temp, auto_need_smi_power = need_smi_temp, need_smi_power
+        if auto_smi_pick:
+            need_smi_temp = need_smi_power = False
 
         # 4. nvidia-smi fallback for temp/power (vram_total comes as bonus). The subprocess
         #    runs on a slow sub-cadence; values are cached and reused on intervening polls so
@@ -655,6 +667,13 @@ class StatsMonitorThread(QThread):
                     temp_c = self._nvidia_cache_temp
                 if need_smi_power and power_w is None and self._nvidia_cache_power is not None:
                     power_w = self._nvidia_cache_power
+            if auto_smi_pick and self._nvidia_smi_path and (auto_need_smi_temp or auto_need_smi_power):
+                # Two NVIDIA cards and Automatic chose one: its OWN line, as for a picked card.
+                smi_pick = self._nvidia_smi_for(sensor_gpu, True)
+                if auto_need_smi_temp and temp_c is None:
+                    temp_c = smi_pick[0]
+                if auto_need_smi_power and power_w is None:
+                    power_w = smi_pick[1]
         elif smi_matches and self._nvidia_smi_path:
             # A picked NVIDIA card: its OWN nvidia-smi line (by name), never the first line.
             smi_pick = self._nvidia_smi_for(selected, need_smi_temp or need_smi_power)
@@ -691,9 +710,15 @@ class StatsMonitorThread(QThread):
         # the old guard checked the counter before anything could ever set it, so this whole
         # fallback was dead code.
         # RAPL PP1 is the Intel iGPU's power plane: never an Arc's (or any discrete card's) reading.
-        if include_power and power_w is None and (
-                selected is None or (selected.vendor_id == constants.gpu.VENDOR_INTEL
-                                     and gpu_adapters.is_integrated(selected))):
+        # Without an adapter, it is not paired with another card's temperature either (#236).
+        if sensor_gpu is not None:
+            rapl_matches = (sensor_gpu.vendor_id == constants.gpu.VENDOR_INTEL
+                            and gpu_adapters.is_integrated(sensor_gpu))
+        elif source_gpu is not None:
+            rapl_matches = _is_intel_group(source_gpu)
+        else:
+            rapl_matches = temp_c is None   # a temperature here came from nvidia-smi: NVIDIA's
+        if include_power and power_w is None and rapl_matches:
             try:
                 self._init_power_query()
                 if self._power_query and self._power_pp1_counter is not None:
@@ -764,6 +789,70 @@ class StatsMonitorThread(QThread):
             return None
         total = adapter.shared_system_bytes / mib if adapter.shared_system_bytes > 0 else None
         return sum(mine), total if total else self._half_ram_mib()
+
+    def _auto_gpu_adapter(self, util_arr: Optional[Dict[Any, Any]]) -> Optional[gpu_adapters.AdapterInfo]:
+        """Automatic's ONE adapter on a machine with two or more real GPUs (#236), or None (one GPU,
+        no DXGI facts, or engines PDH cannot tie to a listed adapter): the plain busiest-engine path.
+
+        Utilization, temperature and power all describe it. It is the busiest adapter, but it only
+        moves off the current one when another is busier by more than AUTO_SWITCH_MARGIN_PERCENT, and
+        it starts on (and an idle machine stays on) the discrete GPU - so near-idle noise on an iGPU
+        driving the desktop never flips the readout between two cards' sensors."""
+        hw = [a for a in gpu_adapters.hardware_adapters(self._gpu_adapters or [])
+              if a.vendor_id in _AUTO_VENDOR_RANK]
+        if len(hw) < 2:
+            self._auto_gpu_luid = None
+            return None
+        default = min(hw, key=lambda a: (gpu_adapters.is_integrated(a), _AUTO_VENDOR_RANK[a.vendor_id],
+                                         -a.dedicated_video_bytes, hw.index(a)))
+        current = next((a for a in hw if a.luid == self._auto_gpu_luid), default)
+        if util_arr:
+            try:
+                loads = {a.luid: aggregate_gpu_engine_utilization(util_arr, a.luid) for a in hw}
+                if max(loads.values()) <= 0.0 and aggregate_gpu_engine_utilization(util_arr) > 0.0:
+                    return None
+                busiest = max(hw, key=lambda a: (loads[a.luid], a == current, a == default))
+                if loads[busiest.luid] - loads[current.luid] > constants.gpu.AUTO_SWITCH_MARGIN_PERCENT:
+                    current = busiest
+            except Exception as e:
+                self.logger.debug("GPU per-adapter utilization failed: %s", e)
+        self._auto_gpu_luid = current.luid
+        return current
+
+    def _wmi_gpu_group(self, adapter: Optional[gpu_adapters.AdapterInfo],
+                       same_as: Optional[LhmGpu]) -> Optional[LhmGpu]:
+        """LHM v0.9.4 / OHM WMI: the ONE GPU sensor group for ``adapter`` (or, without one, the
+        best-ranked - discrete first), its temperature and power from that card only (#236).
+        ``same_as``: a group the web server already supplied - WMI may only complete that same card.
+        A failed temperature query drops the WMI connection (re-probed next poll), as before."""
+        rows: List[LhmSensor] = []
+        for sensor_type in ("Temperature", "Power"):
+            try:
+                sensors = self._wmi_ohm.ExecQuery(
+                    f"SELECT Value, Identifier, Name FROM Sensor WHERE SensorType='{sensor_type}'")
+                for s in sensors:
+                    identifier = str(getattr(s, 'Identifier', '')).lower()
+                    if 'gpu' not in identifier or not self._gpu_sensor_matches(identifier, adapter):
+                        continue
+                    try:
+                        value = float(s.Value)
+                    except (TypeError, ValueError):
+                        continue
+                    rows.append(LhmSensor(name=str(getattr(s, 'Name', '') or ''),
+                                          sensor_type=sensor_type.lower(), sensor_id=identifier,
+                                          hardware_id="", hardware_name="", value=value))
+            except Exception as e:
+                self.logger.debug("LHM/OHM GPU %s error: %s", sensor_type.lower(), e)
+                if sensor_type == "Temperature":
+                    self._wmi_ohm = None
+                    return None
+        groups = gpu_groups(rows)
+        if same_as is not None:
+            wanted = same_as.hardware_id.casefold()
+            return next((g for g in groups if g.hardware_id.casefold() == wanted), None)
+        if not groups:
+            self.logger.debug("LHM/OHM: no valid GPU temperature/power sensor found")
+        return groups[0] if groups else None
 
     def _selected_gpu_adapter(self) -> Optional[gpu_adapters.AdapterInfo]:
         """The adapter picked in Settings > Hardware (#236), or None for Automatic. A picked GPU that

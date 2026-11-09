@@ -62,9 +62,15 @@ class GpuConstants:
     SHARED_BUDGET_FRACTION_OF_RAM: Final[float] = 0.5
 
     # GPU picker (#236). "" = Automatic: the busiest engine on ANY adapter, VRAM summed across all of
-    # them - exactly the pre-picker readout. Otherwise the DXGI adapter Description the user picked;
-    # stored as the NAME, never the LUID, because LUIDs are reassigned on every boot.
+    # them - the pre-picker readout - except that on a multi-GPU machine utilization, temperature and
+    # power follow one adapter (AUTO_SWITCH_MARGIN_PERCENT below). Otherwise the DXGI adapter
+    # Description the user picked; stored as the NAME, never the LUID, because LUIDs are reassigned on every boot.
     ADAPTER_AUTO: Final[str] = ""
+    # Automatic on a multi-GPU machine (#236) describes ONE adapter - utilization, temperature and
+    # power together. It follows the busiest adapter, but only leaves the current one when another is
+    # busier by more than this many points (it starts on the discrete GPU), so idle noise on the iGPU
+    # never flips the readout between two cards' sensors.
+    AUTO_SWITCH_MARGIN_PERCENT: Final[float] = 10.0
     # PCI vendor ids (DXGI_ADAPTER_DESC1.VendorId). A picked adapter's temperature / power are only
     # taken from a sensor of the SAME maker: LibreHardwareMonitor's GPU groups and its WMI identifiers
     # name the vendor (/gpu-nvidia/, /gpu-amd/, /gpu-intel-integrated/), nvidia-smi is NVIDIA-only and
