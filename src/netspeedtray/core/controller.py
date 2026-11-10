@@ -233,6 +233,14 @@ class StatsController(QObject):
                     self.view.gpu_present = True
                 except Exception:
                     pass
+            # Every GPU of a multi-GPU PC for the hover card's list (#236): live display only, never
+            # persisted. Set on every hardware poll, so an absent key (one GPU, GPU off, the list
+            # switched off) clears it.
+            if self.view is not None:
+                try:
+                    self.view.gpu_cards = tuple(stats.get('gpu_cards') or ())
+                except Exception:
+                    pass
             # Forward temp/power whenever the thread reported the key, even if the
             # value is None (sensor unavailable this poll). Emitting None lets the
             # widget clear a stale reading to "(N/A)" rather than freezing the last

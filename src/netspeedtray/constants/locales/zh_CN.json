@@ -72,6 +72,8 @@
     "GPU_ADAPTER_LABEL": "显示的 GPU",
     "GPU_ADAPTER_DESCRIPTION": "仅当传感器属于此 GPU 的厂商时，才显示温度和功耗。",
     "GPU_ADAPTER_AUTO": "自动（最繁忙）",
+    "HOVER_LIST_ALL_GPUS_LABEL": "悬停小部件时列出所有 GPU",
+    "GPU_ON_TASKBAR_MARKER": "任务栏显示",
     "TEMPERATURE_UNIT_LABEL": "温度单位",
     "TEMPERATURE_UNIT_CELSIUS": "摄氏度 (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "华氏度 (°F)",

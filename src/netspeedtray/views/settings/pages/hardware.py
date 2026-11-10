@@ -92,6 +92,14 @@ class HardwarePage(QWidget):
                                              control=self.gpu_adapter)
         layout.addWidget(self._gpu_adapter_card)
         self._gpu_adapter_card.setVisible(False)
+        # Beside the picker, by the same rules (#236): the hover card lists every GPU - only on a
+        # machine with two or more, so it is shown and hidden with the picker.
+        self.hover_list_all_gpus = Win11Toggle(label_text="")
+        self.hover_list_all_gpus.toggled.connect(self.on_change)
+        self._hover_gpus_card = SettingCard(self.i18n.HOVER_LIST_ALL_GPUS_LABEL,
+                                            control=self.hover_list_all_gpus)
+        layout.addWidget(self._hover_gpus_card)
+        self._hover_gpus_card.setVisible(False)
 
         # #250: "RAM"/"VRAM" in front of the memory values. Only meaningful when one of them shows,
         # so the RAM/VRAM toggles re-sync its enabled state too.
@@ -385,6 +393,7 @@ class HardwarePage(QWidget):
         self.hardware_in_hover_card.blockSignals(True)
         self.temperature_unit.blockSignals(True)
         self.gpu_adapter.blockSignals(True)
+        self.hover_list_all_gpus.blockSignals(True)
 
         self.hardware_in_hover_card.setChecked(bool(config.get(
             "hardware_in_hover_card", constants.config.defaults.DEFAULT_HARDWARE_IN_HOVER_CARD)))
@@ -412,6 +421,8 @@ class HardwarePage(QWidget):
         unit_idx = self.temperature_unit.findData(helpers.temperature_unit(config))
         self.temperature_unit.setCurrentIndex(max(0, unit_idx))
         self._load_gpu_adapters(str(config.get("gpu_adapter", constants.gpu.ADAPTER_AUTO) or ""))
+        self.hover_list_all_gpus.setChecked(bool(config.get(
+            "hover_list_all_gpus", constants.config.defaults.DEFAULT_HOVER_LIST_ALL_GPUS)))
         self._show_throttle(float(config.get("throttle_temp_c", 0) or 0),
                             self.temperature_unit.currentData())
 
@@ -442,6 +453,7 @@ class HardwarePage(QWidget):
         self.hardware_in_hover_card.blockSignals(False)
         self.temperature_unit.blockSignals(False)
         self.gpu_adapter.blockSignals(False)
+        self.hover_list_all_gpus.blockSignals(False)
         # Signals were blocked above, so _on_monitor_toggled never fired - sync the dependent
         # (temp/power) cards' enabled state to the just-loaded CPU/GPU monitor values directly.
         self._sync_dependent_cards()
@@ -460,7 +472,8 @@ class HardwarePage(QWidget):
         self.gpu_adapter.clear()
         self.gpu_adapter.addItem(self.i18n.GPU_ADAPTER_AUTO, userData=constants.gpu.ADAPTER_AUTO)
         names = []
-        for a in gpu_adapters.hardware_adapters(gpu_adapters.enumerate_adapters() or []):
+        real = gpu_adapters.hardware_adapters(gpu_adapters.enumerate_adapters() or [])
+        for a in real:
             name = a.name.strip()
             if name and name.casefold() not in {n.casefold() for n in names}:
                 names.append(name)
@@ -477,6 +490,8 @@ class HardwarePage(QWidget):
         self.gpu_adapter.setCurrentIndex(idx)
         su.keep_combo_face(self.gpu_adapter)
         self._gpu_adapter_card.setVisible(len(names) >= 2 or bool(saved))
+        # The list counts cards, not names: two identical cards are listed as #1 and #2.
+        self._hover_gpus_card.setVisible(len(real) >= 2 or bool(saved))
 
     def _throttle_c(self) -> int:
         """The throttle slider's value as stored: whole Celsius, 0 = off."""
@@ -586,6 +601,7 @@ class HardwarePage(QWidget):
         self._set_card_enabled(self._ram_card, cpu_on)
         self._set_card_enabled(self._vram_card, gpu_on)
         self._set_card_enabled(self._gpu_adapter_card, gpu_on)
+        self._set_card_enabled(self._hover_gpus_card, gpu_on)
         mem_on = (cpu_on and self.monitor_ram.isChecked()) or (gpu_on and self.monitor_vram.isChecked())
         self._set_card_enabled(self._mem_labels_card, mem_on)
         # A greyed card says why (rc.2 G6). Qt shows a tooltip on a disabled widget, and the card's
@@ -599,6 +615,7 @@ class HardwarePage(QWidget):
         self._ram_card.setToolTip("" if cpu_on else self.i18n.HARDWARE_NEEDS_CPU_TOOLTIP)
         self._vram_card.setToolTip("" if gpu_on else self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP)
         self._gpu_adapter_card.setToolTip("" if gpu_on else self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP)
+        self._hover_gpus_card.setToolTip("" if gpu_on else self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP)
         self._mem_labels_card.setToolTip("" if mem_on else self._mem_labels_reason(cpu_on, gpu_on))
 
     def _mem_labels_reason(self, cpu_on: bool, gpu_on: bool) -> str:
@@ -635,6 +652,7 @@ class HardwarePage(QWidget):
             "throttle_temp_c": self._throttle_c(),
             "temperature_unit": self.temperature_unit.currentData() or constants.hardware.temperature.CELSIUS,
             "gpu_adapter": str(self.gpu_adapter.currentData() or constants.gpu.ADAPTER_AUTO),
+            "hover_list_all_gpus": self.hover_list_all_gpus.isChecked(),
             "lhm_port": int(self.lhm_port.value()),
             "lhm_username": self.lhm_username.text(),
             "lhm_password_protected": self._lhm_password_setting(),

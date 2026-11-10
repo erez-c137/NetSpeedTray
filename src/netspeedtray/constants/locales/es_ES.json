@@ -72,6 +72,8 @@
     "GPU_ADAPTER_LABEL": "GPU que se muestra",
     "GPU_ADAPTER_DESCRIPTION": "La temperatura y el consumo solo aparecen cuando su sensor es del fabricante de esta GPU.",
     "GPU_ADAPTER_AUTO": "Automática (la más ocupada)",
+    "HOVER_LIST_ALL_GPUS_LABEL": "Mostrar todas las GPU al pasar el cursor por el widget",
+    "GPU_ON_TASKBAR_MARKER": "en la barra",
     "TEMPERATURE_UNIT_LABEL": "Unidad de temperatura",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",

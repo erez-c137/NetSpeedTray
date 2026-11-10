@@ -243,6 +243,10 @@ class ConfigConstants:
     # Side-taskbar design phase C: keep the taskbar widget to network speed and show the enabled
     # CPU/GPU/memory in the hover card instead. Off by default, so nobody's widget changes.
     DEFAULT_HARDWARE_IN_HOVER_CARD: Final[bool] = False
+    # #236 (2.2.1): on a PC with two or more GPUs, the hover card lists every one of them (name, usage,
+    # temperature, power, memory) in place of its single GPU/VRAM rows. Inert with one GPU or with GPU
+    # monitoring off. Owner-pending default (design Q1): on.
+    DEFAULT_HOVER_LIST_ALL_GPUS: Final[bool] = True
     # CPU/GPU label SHAPE and COLOUR are two settings (2.2): the style is "icons" | "text", the
     # colour "brand" | "match_text" | "custom". The pre-2.2 three-way style (icons_colored /
     # icons_monochrome / text) is split in two by ConfigManager._migrate_config.
@@ -390,6 +394,7 @@ class ConfigConstants:
         "throttle_temp_c": 0,
         "stack_hardware_stats": DEFAULT_STACK_HARDWARE_STATS,
         "hardware_in_hover_card": DEFAULT_HARDWARE_IN_HOVER_CARD,
+        "hover_list_all_gpus": DEFAULT_HOVER_LIST_ALL_GPUS,
         "widget_display_mode": DEFAULT_WIDGET_DISPLAY_MODE,
         "widget_display_order": DEFAULT_WIDGET_DISPLAY_ORDER,
         "widget_cycle_interval": DEFAULT_WIDGET_CYCLE_INTERVAL,
@@ -562,6 +567,7 @@ class ConfigConstants:
         "lhm_password_protected": {"type": str, "default": ""},
         "stack_hardware_stats": {"type": bool, "default": DEFAULT_STACK_HARDWARE_STATS},
         "hardware_in_hover_card": {"type": bool, "default": DEFAULT_HARDWARE_IN_HOVER_CARD},
+        "hover_list_all_gpus": {"type": bool, "default": DEFAULT_HOVER_LIST_ALL_GPUS},
         "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},
         "widget_display_order": {"type": list, "default": DEFAULT_WIDGET_DISPLAY_ORDER, "item_type": str},
         "widget_cycle_interval": {"type": int, "default": DEFAULT_WIDGET_CYCLE_INTERVAL, "min": 1, "max": 60},
