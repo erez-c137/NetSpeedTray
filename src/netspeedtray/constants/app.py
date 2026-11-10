@@ -68,6 +68,13 @@ class AppConstants:
     # It removes the previous version's folder after a portable update, and that folder is the
     # rollback until the new version has shown it can start - so not immediately (#260).
     UPDATE_JANITOR_DELAY_MS: Final[int] = 10_000
+    # Automatic update checks while the app keeps running (a PC that sleeps instead of rebooting can
+    # run one instance for weeks). Each tick only asks UpdateChecker.should_check(), which still
+    # enforces the 24 h interval, the user's toggle and the IT policy - so this is how promptly a due
+    # check happens, not how often GitHub is contacted.
+    UPDATE_RECHECK_INTERVAL_MS: Final[int] = 3 * 60 * 60 * 1000
+    # After a wake from sleep the network is often not back yet; wait this long before the check.
+    UPDATE_RESUME_CHECK_DELAY_MS: Final[int] = 60_000
     # How long after the event loop starts the crash log's fault handler stays on (netspeedtray/
     # crash_log.py): long enough to cover the widget's first show and stats ticks, short enough
     # that handled access violations later in the run are never logged as crashes.
