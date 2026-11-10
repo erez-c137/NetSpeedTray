@@ -113,7 +113,11 @@ class TestReadSystemLocale:
         (1033, "en_US"),    # English (US)
     ])
     def test_lcid_is_translated_to_a_locale_code(self, lcid, expected):
-        with patch("ctypes.windll", self._fake_windll(lcid), create=True):
+        # The regional format is pinned too: an English display language falls back to a supported
+        # format locale (by design, see TestDisplayLanguageVersusRegionalFormat), so leaving the machine's real
+        # `locale.getlocale()` in play made the 1033 case fail on German regional settings.
+        with patch("ctypes.windll", self._fake_windll(lcid), create=True), \
+             patch("locale.getlocale", return_value=("en_US", "UTF-8")):
             assert I18nStrings._read_system_locale() == expected
 
     def test_unmapped_lcid_falls_through_to_the_locale_module(self):
