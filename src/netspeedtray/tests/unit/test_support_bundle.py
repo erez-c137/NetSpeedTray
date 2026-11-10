@@ -420,3 +420,56 @@ class TestCrashLog:
         assert "access violation" in text
         assert self._home.lower() not in text.lower()
         assert _open_zip_entry(dest, f"logs/{CRASH_LOG_FILENAME}.1") == "older\n"
+
+
+class TestGpuNameRedaction:
+    """The MANIFEST promises no GPU model ships: the config's `gpu_adapter` and the adapter names
+    monitor_thread logs ("GPU adapters changed: [...]", "Picked GPU ...") are redacted at export."""
+
+    @staticmethod
+    def _adapter(name, vendor_id=0x10DE, software=False):
+        from netspeedtray.core.gpu_adapters import AdapterInfo
+        return AdapterInfo(name=name, vendor_id=vendor_id, luid=(0, 1), dedicated_video_bytes=0,
+                           shared_system_bytes=0, software=software)
+
+    def test_config_gpu_adapter_is_redacted_and_automatic_kept(self):
+        picked = support_bundle._sanitize_config({"gpu_adapter": "NVIDIA GeForce RTX 4060 Laptop GPU"})
+        assert picked["gpu_adapter"] == "<redacted-gpu>"
+        assert support_bundle._sanitize_config({"gpu_adapter": ""})["gpu_adapter"] == ""
+
+    def test_log_gpu_names_redacted_with_stable_tokens(self, q_app, tmp_path, fake_log_dir, monkeypatch):
+        from netspeedtray.core import gpu_adapters
+        # "AMD Radeon(TM) Graphics" is a substring of the longer name: the longer one must win.
+        adapters = [self._adapter("AMD Radeon(TM) Graphics", 0x1002),
+                    self._adapter("AMD Radeon(TM) Graphics Pro", 0x1002),
+                    self._adapter("Microsoft Basic Render Driver", 0x1414, software=True)]
+        monkeypatch.setattr(gpu_adapters, "enumerate_adapters", lambda: adapters)
+        (fake_log_dir / "NetSpeedTray_Log.log").write_text(
+            "INFO - GPU adapters changed: ['AMD Radeon(TM) Graphics', 'AMD Radeon(TM) Graphics Pro']\n"
+            "INFO - Picked GPU 'amd radeon(tm) graphics pro' is not present\n"
+            "INFO - Picked GPU 'NVIDIA GeForce RTX 4060 Laptop GPU' is not present\n",
+            encoding="utf-8")
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(
+            dest, {"language": "en_US", "gpu_adapter": "NVIDIA GeForce RTX 4060 Laptop GPU"})
+        log = _open_zip_entry(dest, "logs/NetSpeedTray_Log.log")
+        assert "radeon" not in log.lower() and "geforce" not in log.lower()
+        lines = log.splitlines()
+        assert lines[0].endswith("['<gpu-1>', '<gpu-2>']")
+        assert "'<gpu-2>' is not present" in lines[1]          # case-insensitive, same token
+        assert "'<gpu-3>' is not present" in lines[2]          # the config's (absent) GPU too
+
+    def test_enumeration_failure_still_redacts_config_name(self, q_app, tmp_path, fake_log_dir, monkeypatch):
+        from netspeedtray.core import gpu_adapters
+
+        def boom():
+            raise RuntimeError("DXGI exploded")
+        monkeypatch.setattr(gpu_adapters, "enumerate_adapters", boom)
+        (fake_log_dir / "NetSpeedTray_Log.log").write_text(
+            "INFO - Picked GPU 'NVIDIA GeForce RTX 4060 Laptop GPU' is not present\n", encoding="utf-8")
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(
+            dest, {"language": "en_US", "gpu_adapter": "NVIDIA GeForce RTX 4060 Laptop GPU"})
+        log = _open_zip_entry(dest, "logs/NetSpeedTray_Log.log")
+        assert "GeForce" not in log and "'<gpu-1>'" in log
+        assert json.loads(_open_zip_entry(dest, "config.json"))["gpu_adapter"] == "<redacted-gpu>"
