@@ -183,6 +183,48 @@ class NetSample:
     flags: int = 0
 
 
+class FailureEpisode:
+    """Logs a run of repeated write failures as ONE episode instead of a line per attempt (a full disk
+    once logged an ERROR every 10 s - into a log on that same disk). The first failure is an ERROR with
+    the exception; further ones are DEBUG, plus one WARNING with the running count every
+    ``repeat_warn_s``; the first success afterwards logs one INFO "... recovered after N failures over
+    X s". Not thread-safe: keep one per owning object, used only on that object's thread."""
+
+    def __init__(self, logger_: logging.Logger, what: str, *, repeat_warn_s: float = 600.0,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.logger = logger_
+        self.what = what
+        self.repeat_warn_s = float(repeat_warn_s)
+        self._clock = clock
+        self.failures = 0
+        self._started = 0.0
+        self._last_warn = 0.0
+
+    @property
+    def active(self) -> bool:
+        return self.failures > 0
+
+    def failed(self, exc: BaseException, first_msg: Optional[str] = None) -> None:
+        now = self._clock()
+        self.failures += 1
+        if self.failures == 1:
+            self._started = self._last_warn = now
+            self.logger.error(first_msg or (self.what + " failed: %s"), exc)
+        elif now - self._last_warn >= self.repeat_warn_s:
+            self._last_warn = now
+            self.logger.warning("%s still failing: %d failures over %.0f s (latest: %s)",
+                                self.what, self.failures, now - self._started, exc)
+        else:
+            self.logger.debug("%s failed again (%d so far): %s", self.what, self.failures, exc)
+
+    def succeeded(self, extra: str = "") -> None:
+        if not self.failures:
+            return
+        self.logger.info("%s recovered after %d failure(s) over %.0f s%s",
+                         self.what, self.failures, self._clock() - self._started, extra)
+        self.failures = 0
+
+
 class WriterV8:
     """Writes v8 history on ONE connection (the DatabaseWorker's). See the module docstring."""
 
@@ -221,6 +263,10 @@ class WriterV8:
         self._clock_ref: Optional[Tuple[int, Optional[float]]] = None
         self._clock_cand: Optional[Tuple[int, int, Optional[float]]] = None
         self._clock_warned = False
+        # Log hygiene for a storage outage (a full disk): one episode per run of failed flushes, and
+        # one over-the-cap WARNING per episode with the dropped rows totalled for the recovery line.
+        self._persist_episode = FailureEpisode(self.logger, "v8 persist")
+        self._trim_dropped = 0
 
     # ---- threads / transactions ----------------------------------------------------------------
 
@@ -429,11 +475,14 @@ class WriterV8:
     def _trim(self) -> None:
         over = self.pending_rows() - MAX_PENDING_ROWS
         if over > 0:
+            if not self._trim_dropped:   # once per episode; the total is reported when it ends
+                self.logger.warning("v8 writer: pending rows over the cap; the oldest are being dropped "
+                                    "until a persist succeeds.")
+            self._trim_dropped += over
             for buf in (self._hw_rows, self._net_rows, self._link_obs):
                 k = min(over, len(buf))
                 del buf[:k]
                 over -= k
-            self.logger.warning("v8 writer: pending rows over the cap; the oldest were dropped.")
 
     # ---- the persist tick --------------------------------------------------------------------
 
@@ -452,7 +501,6 @@ class WriterV8:
             self._heartbeat(now)
             _killpoint("writer_flush_before_commit")
             self.conn.commit()
-            return True
         except BaseException as e:
             # ANY failure - not only sqlite3.Error - rolls back here: a transaction left open would be
             # committed, half-written, by the next _begin().
@@ -461,8 +509,15 @@ class WriterV8:
             self._trim()
             if not isinstance(e, sqlite3.Error):
                 raise
-            self.logger.error("v8 persist failed (rows kept for the next tick): %s", e)
+            self._persist_episode.failed(e, "v8 persist failed (rows kept for the next tick): %s")
             return False
+        dropped, self._trim_dropped = self._trim_dropped, 0
+        extra = f"; {dropped} pending row(s) were dropped over the cap meanwhile" if dropped else ""
+        if self._persist_episode.active:
+            self._persist_episode.succeeded(extra)
+        elif dropped:   # cannot happen today (only failed flushes fill the cap), but never lose the count
+            self.logger.warning("v8 writer: %d pending row(s) were dropped over the cap.", dropped)
+        return True
 
     def _write_net(self, rows: Sequence[Tuple[int, str, int, int, int, int]]) -> None:
         if not rows:

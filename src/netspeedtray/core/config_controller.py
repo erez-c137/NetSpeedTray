@@ -269,7 +269,7 @@ class ConfigController:
             # 6. Schedule a repaint to reflect all changes.
             w.update()
             
-            self.logger.info("All settings applied successfully.")
+            self.logger.debug("All settings applied successfully.")   # every live-preview change
         except Exception as e:
             self.logger.error(f"Error applying settings to components: {e}", exc_info=True)
             raise RuntimeError(f"Failed to apply settings: {e}") from e

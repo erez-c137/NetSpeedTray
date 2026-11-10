@@ -76,6 +76,12 @@ _NON_CPU_SENSOR_IDENTS: tuple = (
 )
 
 
+# Which one-time sensor-source guidance lines this PROCESS has logged ("empty" = a namespace with 0
+# sensors, "none" = no source at all). Module-level, not per thread: the monitor thread is rebuilt
+# (settings changes, resume) and each rebuild used to repeat the same advice in the log.
+_OHM_GUIDANCE_LOGGED: set = set()
+
+
 # Stats that only a temperature / power sensor source can fill.
 _SENSOR_STAT_KEYS = ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power')
 
@@ -1254,6 +1260,11 @@ class StatsMonitorThread(QThread):
         # Nothing connected across all namespaces. Surface ONE actionable line, once.
         if not self._ohm_guidance_logged:
             self._ohm_guidance_logged = True
+            kind = "empty" if saw_empty_namespace else "none"
+            if kind in _OHM_GUIDANCE_LOGGED:
+                self.logger.debug("Hardware monitor: no sensor source (guidance already logged).")
+                return
+            _OHM_GUIDANCE_LOGGED.add(kind)
             if saw_empty_namespace:
                 # Genuine "running but not elevated" case: a namespace exists, 0 sensors.
                 self.logger.info(

@@ -277,16 +277,35 @@ class TestNicPseudonymization:
                 ctrl._update_primary_interface_name()
 
         changes = [r.getMessage() for r in caplog.records
-                   if "Primary network interface changed" in r.getMessage()]
+                   if "Primary network interface" in r.getMessage()]
         assert len(changes) == 3
         joined = "\n".join(changes)
         assert "ACME-HQ Office VPN" not in joined
         assert "Wi-Fi 3" not in joined
         vpn = stable_pseudonym("ACME-HQ Office VPN")
         wifi = stable_pseudonym("Wi-Fi 3")
-        assert changes[0].endswith(f"None -> {vpn}")
-        assert changes[1].endswith(f"{vpn} -> {wifi}")
-        assert changes[2].endswith(f"{wifi} -> {vpn}")
+        # The first resolution at startup is not a change: no "None -> X" (log hygiene, 2.2.0).
+        assert changes[0] == f"Primary network interface: {vpn}"
+        assert changes[1].endswith(f"changed: {vpn} -> {wifi}")
+        assert changes[2].endswith(f"changed: {wifi} -> {vpn}")
+
+    def test_controller_later_none_to_name_is_still_a_change(self, q_app, caplog):
+        """Only the FIRST resolution drops "changed": the link going down and back up later is a
+        real change and keeps the "changed: None -> X" wording (and the pseudonym)."""
+        import netspeedtray.core.controller as controller_mod
+        from netspeedtray.utils.config import stable_pseudonym
+
+        ctrl = controller_mod.StatsController({}, None)
+        with caplog.at_level(logging.INFO, logger="NetSpeedTray.StatsController"):
+            for name in ("Wi-Fi 3", None, "Wi-Fi 3"):
+                with patch.object(controller_mod, "get_primary_interface_name", return_value=name):
+                    ctrl.last_primary_check_time = 0.0
+                    ctrl._update_primary_interface_name()
+        lines = [r.getMessage() for r in caplog.records if "Primary network interface" in r.getMessage()]
+        wifi = stable_pseudonym("Wi-Fi 3")
+        assert lines == [f"Primary network interface: {wifi}",
+                         f"Primary network interface changed: {wifi} -> None",
+                         f"Primary network interface changed: None -> {wifi}"]
 
 
 class TestSystemInfo:
