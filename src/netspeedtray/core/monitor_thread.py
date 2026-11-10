@@ -285,6 +285,17 @@ class StatsMonitorThread(QThread):
         self._nvidia_pick_cache: Tuple[Optional[str], Tuple[Optional[float], Optional[float], Optional[float]]] = (
             None, (None, None, None))
         self._nvidia_pick_last_poll: float = 0.0
+        # Failure backoff, shared by both queries (one binary): failures in a row, and the earliest
+        # monotonic time nvidia-smi may run again (0.0 = no backoff).
+        self._nvidia_fail_streak: int = 0
+        self._nvidia_retry_at: float = 0.0
+        # Hybrid (Optimus) gate, 2.2.1: when our last nvidia-smi call ended, the last time the NVIDIA
+        # dGPU showed engine activity of its own (None = never), whether the Automatic query has run
+        # at least once (its VRAM total is then a one-shot on a hybrid), and the battery fact (cached).
+        self._nvidia_smi_ran_at: Optional[float] = None
+        self._nvidia_active_at: Optional[float] = None
+        self._nvidia_auto_tried: bool = False
+        self._has_battery: Optional[bool] = None
 
         # PDH Queries for GPU
         self._gpu_query: Optional[int] = None
@@ -659,20 +670,33 @@ class StatsMonitorThread(QThread):
         # were needed FROM it, so with LibreHardwareMonitor supplying those, nvidia-smi never ran and
         # the total silently never arrived. Users saw VRAM as used-only with LHM open and used/total
         # with it closed, which is a bizarre thing to have to notice (#250).
+        # Hybrid (Optimus) laptop, 2.2.1: nvidia-smi wakes a sleeping dGPU, so temperature / power are
+        # asked only while it is awake anyway (_nvidia_awake) - asleep, they are N/A. Desktops and
+        # NVIDIA-only laptops: unchanged.
         smi_pick: Tuple[Optional[float], Optional[float], Optional[float]] = (None, None, None)
+        hybrid = bool(self._nvidia_smi_path) and smi_matches and self._is_hybrid_laptop()
+        if hybrid:
+            nvidia_luids = [a.luid for a in gpu_adapters.hardware_adapters(self._gpu_adapters or [])
+                            if a.vendor_id == constants.gpu.VENDOR_NVIDIA] if selected is None else [selected.luid]
+            if not self._nvidia_awake(util_arr, nvidia_luids):
+                need_smi_temp = need_smi_power = False
         if selected is None:
-            need_smi_vram_total = self._nvidia_cache_vram_total is None
+            # On a hybrid, the total alone is asked once (the first query); after that it comes along
+            # with an awake-time query, or from DXGI below - never a wake of its own.
+            need_smi_vram_total = (self._nvidia_cache_vram_total is None
+                                   and not (hybrid and self._nvidia_auto_tried))
             if self._nvidia_smi_path and (need_smi_temp or need_smi_power or need_smi_vram_total):
                 now_mono = time.monotonic()
-                if (now_mono - self._nvidia_last_poll) >= self._NVIDIA_POLL_INTERVAL_SEC:
+                if ((now_mono - self._nvidia_last_poll) >= self._NVIDIA_POLL_INTERVAL_SEC
+                        and now_mono >= self._nvidia_retry_at):
                     # Stamp first: a hung/failed call then waits the full interval before retry,
                     # instead of re-running (and re-stalling) every poll.
                     self._nvidia_last_poll = now_mono
+                    self._nvidia_auto_tried = True
                     try:
                         query_fields = "temperature.gpu,memory.total,power.draw"
-                        output = self._run_child(
-                            [self._nvidia_smi_path, f"--query-gpu={query_fields}", "--format=csv,noheader,nounits"],
-                            constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC)
+                        output = self._query_nvidia_smi(
+                            [self._nvidia_smi_path, f"--query-gpu={query_fields}", "--format=csv,noheader,nounits"])
                         parts = output.strip().split('\n')[0].split(',')
                         if len(parts) > 0:
                             try:
@@ -693,9 +717,9 @@ class StatsMonitorThread(QThread):
                         self.logger.debug("nvidia-smi temp/power query failed: %s", e)
                         # Sensor likely dropped out - invalidate the cache so readings fall back to
                         # N/A instead of freezing the last good value forever (the N/A design intent).
+                        # The total is kept: it is a property of the card, not a reading.
                         self._nvidia_cache_temp = None
                         self._nvidia_cache_power = None
-                        self._nvidia_cache_vram_total = None
 
                 # Apply the (possibly just-refreshed) cached values to whatever still needs a source.
                 if need_smi_temp and temp_c is None and self._nvidia_cache_temp is not None:
@@ -703,8 +727,13 @@ class StatsMonitorThread(QThread):
                 if need_smi_power and power_w is None and self._nvidia_cache_power is not None:
                     power_w = self._nvidia_cache_power
         elif smi_matches and self._nvidia_smi_path:
-            # A picked NVIDIA card: its OWN nvidia-smi line (by name), never the first line.
-            smi_pick = self._nvidia_smi_for(selected, need_smi_temp or need_smi_power)
+            # A picked NVIDIA card: its OWN nvidia-smi line (by name), never the first line. On a
+            # hybrid, only while it is awake: asleep, its cached total (if any) and DXGI's below.
+            if hybrid and not (need_smi_temp or need_smi_power):
+                cached_name, cached = self._nvidia_pick_cache
+                smi_pick = (None, None, cached[2] if cached_name == selected.name.strip().casefold() else None)
+            else:
+                smi_pick = self._nvidia_smi_for(selected, need_smi_temp or need_smi_power)
             if need_smi_temp and temp_c is None:
                 temp_c = smi_pick[0]
             if need_smi_power and power_w is None:
@@ -715,6 +744,13 @@ class StatsMonitorThread(QThread):
         if selected is None:
             if vram_total is None and self._nvidia_cache_vram_total is not None:
                 vram_total = self._nvidia_cache_vram_total
+            elif vram_total is None and self._nvidia_smi_path:
+                # nvidia-smi has not given a total (a hybrid's asleep dGPU, or nvidia-smi failing):
+                # the one NVIDIA card's DXGI dedicated size - what Task Manager shows - not N/A.
+                nvidia = [a for a in gpu_adapters.hardware_adapters(self._gpu_adapters or [])
+                          if a.vendor_id == constants.gpu.VENDOR_NVIDIA]
+                if len(nvidia) == 1 and nvidia[0].dedicated_video_bytes > 0:
+                    vram_total = nvidia[0].dedicated_video_bytes / (1024.0 * 1024.0)
 
             # 4b. Integrated GPU: no adapter has dedicated memory, so "VRAM 0.0 GB" says nothing. Report
             # the shared system memory the iGPU actually uses instead (see _shared_vram_reading).
@@ -1003,12 +1039,14 @@ class StatsMonitorThread(QThread):
                 (now - self._nvidia_pick_last_poll) < self._NVIDIA_POLL_INTERVAL_SEC
                 or (not want_readings and cached[2] is not None)):   # only the total wanted: known
             return cached
+        if now < self._nvidia_retry_at:   # failing: backing off (see _query_nvidia_smi)
+            return cached if cached_name == name else (None, None, None)
         self._nvidia_pick_last_poll = now
         result: Tuple[Optional[float], Optional[float], Optional[float]] = (None, None, None)
         try:
-            output = self._run_child(
+            output = self._query_nvidia_smi(
                 [self._nvidia_smi_path, "--query-gpu=name,temperature.gpu,memory.total,power.draw",
-                 "--format=csv,noheader,nounits"], constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC)
+                 "--format=csv,noheader,nounits"])
             rows = [[p.strip() for p in line.split(',')] for line in output.strip().splitlines() if line.strip()]
             mine = [r for r in rows if r and r[0].casefold() == name]
             nvidia_cards = [a for a in gpu_adapters.hardware_adapters(self._gpu_adapters or [])
@@ -1028,6 +1066,68 @@ class StatsMonitorThread(QThread):
             self.logger.debug("nvidia-smi query for the picked GPU failed: %s", e)
         self._nvidia_pick_cache = (name, result)
         return result
+
+    def _query_nvidia_smi(self, argv) -> str:
+        """Run nvidia-smi through _run_child, with the failure backoff: the n-th failure in a row
+        delays the next call by NVIDIA_SMI_BACKOFF_BASE_SEC * 2^(n-1) s (capped at ..._MAX_SEC) and
+        is logged once per streak; a success ends the streak. Raises like _run_child."""
+        g = constants.gpu
+        try:
+            output = self._run_child(argv, constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC)
+        except Exception as e:
+            now = time.monotonic()
+            self._nvidia_smi_ran_at = now
+            self._nvidia_fail_streak += 1
+            delay = min(g.NVIDIA_SMI_BACKOFF_MAX_SEC,
+                        g.NVIDIA_SMI_BACKOFF_BASE_SEC * 2 ** min(self._nvidia_fail_streak - 1, 16))
+            self._nvidia_retry_at = now + delay
+            if self._nvidia_fail_streak == g.NVIDIA_SMI_BACKOFF_LOG_AFTER:
+                self.logger.info("nvidia-smi failed %d times in a row (%s); retrying at most every %d s.",
+                                 self._nvidia_fail_streak, type(e).__name__, int(g.NVIDIA_SMI_BACKOFF_MAX_SEC))
+            raise
+        self._nvidia_smi_ran_at = time.monotonic()
+        if self._nvidia_fail_streak >= g.NVIDIA_SMI_BACKOFF_LOG_AFTER:
+            self.logger.info("nvidia-smi answers again.")
+        self._nvidia_fail_streak = 0
+        self._nvidia_retry_at = 0.0
+        return output
+
+    def _is_hybrid_laptop(self) -> bool:
+        """A hybrid (Optimus) laptop, where an idle NVIDIA dGPU sleeps: a battery, an NVIDIA GPU and a
+        GPU of another maker (DXGI facts) - on a laptop that one is the CPU's integrated GPU. Not
+        gpu_adapters.is_integrated: an AMD APU reports its 512 MiB+ UMA frame buffer as dedicated
+        memory, and Ryzen + GeForce is the commonest Optimus pair. A desktop with its iGPU enabled has
+        no battery, and its dGPU never powers down - nvidia-smi there wakes nothing."""
+        real = gpu_adapters.hardware_adapters(self._gpu_adapters or [])
+        if not (any(a.vendor_id == constants.gpu.VENDOR_NVIDIA for a in real)
+                and any(a.vendor_id != constants.gpu.VENDOR_NVIDIA for a in real)):
+            return False
+        if self._has_battery is None:
+            try:
+                from netspeedtray.utils import power_utils
+                self._has_battery = bool(power_utils.has_battery())
+            except Exception as e:
+                self.logger.debug("Battery check failed: %s", e)
+                self._has_battery = False
+        return self._has_battery
+
+    def _nvidia_awake(self, util_arr: Optional[Dict[Any, Any]], luids: List[Tuple[int, int]]) -> bool:
+        """Whether a hybrid's NVIDIA dGPU is awake by itself: its PDH engine utilization (this tick's
+        array - PDH never wakes a GPU) was above HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT within the last
+        HYBRID_DGPU_AWAKE_HOLD_SEC. Activity right after our own nvidia-smi call (within
+        NVIDIA_SMI_SELF_ACTIVITY_GRACE_SEC) is not counted, so nvidia-smi can never keep itself going."""
+        g = constants.gpu
+        now = time.monotonic()
+        try:
+            utils = per_adapter_engine_utilization(util_arr) if util_arr else {}
+        except Exception as e:
+            self.logger.debug("GPU per-adapter utilization failed: %s", e)
+            utils = {}
+        if (any(utils.get(luid, 0.0) > g.HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT for luid in luids)
+                and (self._nvidia_smi_ran_at is None
+                     or now - self._nvidia_smi_ran_at >= g.NVIDIA_SMI_SELF_ACTIVITY_GRACE_SEC)):
+            self._nvidia_active_at = now
+        return self._nvidia_active_at is not None and now - self._nvidia_active_at <= g.HYBRID_DGPU_AWAKE_HOLD_SEC
 
     def _refresh_adapters_on_luid_change(self, pdh_instances) -> None:
         """Re-read the DXGI adapter list when PDH's GPU set no longer matches it (rc.2 G4).
