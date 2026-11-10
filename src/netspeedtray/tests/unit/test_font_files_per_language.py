@@ -272,6 +272,12 @@ if system_text:
     sheet.adjustSize(); sheet.grab()
     card = UsageFlyout(i18n, hardware={"cpu": {"usage": 5.0}, "identity": system_text["wifi"]})
     card.adjustSize(); card.grab()
+    # The hover card's GPU list (#236): a Han adapter name beside a Latin one, the picked one marked.
+    gpus = [{"key": (0, 1), "name": system_text["gpu"], "usage": 3.0, "temp": 26.0, "on_taskbar": True},
+            {"key": (0, 2), "name": "Intel UHD Graphics 770", "usage": 0.0, "temp": None,
+             "vram": (0.7, 7.8), "vram_shared": True}]
+    card = UsageFlyout(i18n, hardware={"gpus": gpus})
+    card.adjustSize(); card.grab()
 out["monitor"] = files()
 w.monitor_window.close(); pump(0.5)
 w.show_settings(); pump(1)

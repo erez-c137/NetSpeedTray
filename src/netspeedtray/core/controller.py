@@ -181,6 +181,15 @@ class StatsController(QObject):
             self._handle_network_counters(stats['network'], stats.get('network_sampled_at'),
                                           stats.get('network_if_stats'))
 
+        # Every GPU of a multi-GPU PC for the hover card's list (#236): live display only, never
+        # persisted. The thread sends () to clear it (one GPU, GPU collection or the list off) and no
+        # key at all on a failed GPU poll - which keeps the list the card shows instead of blinking it.
+        if 'gpu_cards' in stats and self.view is not None:
+            try:
+                self.view.gpu_cards = tuple(stats['gpu_cards'] or ())
+            except Exception:
+                pass
+
         # Forward the network identity (band/SSID) whenever the thread sub-polled it (present-key
         # emits, like temp/power). The payload is a NetworkIdentity or None.
         if 'network_identity' in stats:
@@ -231,14 +240,6 @@ class StatsController(QObject):
             if stats.get('gpu_present') and self.view is not None:
                 try:
                     self.view.gpu_present = True
-                except Exception:
-                    pass
-            # Every GPU of a multi-GPU PC for the hover card's list (#236): live display only, never
-            # persisted. Set on every hardware poll, so an absent key (one GPU, GPU off, the list
-            # switched off) clears it.
-            if self.view is not None:
-                try:
-                    self.view.gpu_cards = tuple(stats.get('gpu_cards') or ())
                 except Exception:
                     pass
             # Forward temp/power whenever the thread reported the key, even if the

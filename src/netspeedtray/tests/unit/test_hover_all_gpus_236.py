@@ -80,6 +80,14 @@ def test_balciseri_machine_lists_each_card_with_its_own_readings(thread):
     assert not rtx.picked and not apu.picked                   # Automatic: no card is "the taskbar's"
 
 
+def test_an_igpu_without_a_shared_reading_shows_no_memory(thread):
+    """No Shared Usage for the iGPU: "—", never its BIOS carve-out as dedicated "VRAM 0.3 / 0.3 GB"."""
+    thread._lhm_http.get_snapshot.return_value = parse_snapshot(balciseri_data_json())
+    _poll(thread, shared={})
+    _rtx, apu = thread._gpu_cards(True, True)
+    assert (apu.vram_used_gib, apu.vram_total_gib, apu.vram_shared) == (None, None, True)
+
+
 def test_switches_off_leave_temperature_and_power_out(thread):
     thread._lhm_http.get_snapshot.return_value = parse_snapshot(balciseri_data_json())
     _poll(thread)
@@ -226,14 +234,34 @@ TWO = (GpuCard((0, RTX_LUID), "RTX", False, 3.0), GpuCard((0, APU_LUID), "APU", 
     ({"monitor_gpu_enabled": True, "hover_list_all_gpus": False}, TWO, False),
     ({"monitor_gpu_enabled": True}, TWO[:1], False),                       # one GPU: no list
     ({"monitor_vram_enabled": True}, TWO, False),                          # VRAM-only poll: no GPU line
+    ({}, TWO, False),                                                      # nothing collected
 ])
 def test_gpu_cards_ride_the_stats_only_with_gpu_monitoring_and_two_cards(thread, config, cards, listed):
+    """Every tick says what the list is: the cards, or () to clear it."""
     got, build = _one_tick(thread, config, cards)
-    assert ("gpu_cards" in got) is listed
-    if listed:
-        assert got["gpu_cards"] == TWO
+    assert got["gpu_cards"] == (TWO if listed else ())
     if not config.get("monitor_gpu_enabled") or config.get("hover_list_all_gpus") is False:
         build.assert_not_called()
+
+
+def test_a_failed_gpu_poll_sends_no_list_so_the_card_keeps_the_last_one(thread):
+    """A transient PDH/driver error must not blink the list out of an open card (review #4)."""
+    thread.config = {"monitor_gpu_enabled": True}
+    thread._is_running = True
+    got = {}
+
+    def emit(stats):
+        got.update(stats)
+        thread._is_running = False
+
+    thread.stats_ready = types.SimpleNamespace(emit=emit)
+    with patch("netspeedtray.core.monitor_thread.is_rdp_session", return_value=False), \
+         patch.object(thread, "_init_com"), patch.object(thread, "_cleanup_com"), \
+         patch.object(thread, "_poll_gpu_hybrid", side_effect=RuntimeError("PDH_CSTATUS_INVALID_DATA")), \
+         patch.object(thread, "_collect_power_stats"), \
+         patch.object(thread, "_gpu_cards", MagicMock(return_value=TWO)):
+        thread.run()
+    assert "gpu_cards" not in got
 
 
 # --- 6. config + controller -----------------------------------------------------------------------
@@ -269,7 +297,11 @@ def test_controller_hands_the_cards_to_the_view_and_never_records_them(q_app, tm
         ctl.handle_stats(dict(base, gpu_cards=TWO))
         assert view.gpu_cards == TWO
         assert [(t, v) for _ts, t, v in ws._hw_batch] == without     # nothing more persisted
-        ctl.handle_stats(dict(base))                                   # one card again: cleared
+        ctl.handle_stats(dict(base))                                   # a failed GPU poll: kept
+        assert view.gpu_cards == TWO
+        ctl.handle_stats({"network": {}})                              # a tick without GPU keys: kept
+        assert view.gpu_cards == TWO
+        ctl.handle_stats(dict(base, gpu_cards=()))                     # one GPU / list off: cleared
         assert view.gpu_cards == ()
     finally:
         ws.cleanup()
@@ -294,18 +326,60 @@ def _hover_fake(cards=TWO, layout="horizontal", **config):
 
 CARDS = (GpuCard((0, RTX_LUID), "NVIDIA GeForce RTX 5070", False, 3.0, 1.17, 12.0, False, 26.0, 17.5),
          GpuCard((0, APU_LUID), "AMD Radeon Graphics", True, 0.0, 0.88, 15.0, True, 38.0, 6.0))
-ALL = dict(monitor_gpu_enabled=True, monitor_vram_enabled=True, show_hardware_temps=True,
-           show_hardware_power=True)
+GPU_ON = dict(monitor_gpu_enabled=True, monitor_vram_enabled=True, show_hardware_temps=True,
+              show_hardware_power=True)
+# ...with the hover card on (the usage rows) and a taskbar that paints the GPU.
+ALL = dict(GPU_ON, show_usage_on_hover=True, widget_display_mode="side_by_side")
 
 
-def test_bottom_bar_opens_the_card_for_the_list_alone(q_app):
-    on = _hover_fake(CARDS, **ALL)
+@pytest.mark.parametrize("switch", ["show_usage_on_hover", "show_hover_tips", "power_display_enabled"])
+def test_bottom_bar_lists_the_gpus_in_a_card_the_user_already_gets(q_app, switch):
+    on = _hover_fake(CARDS, **{**GPU_ON, switch: True})
     assert on._hover_hardware_wanted()
     assert on._hover_hardware_snapshot() == {"gpus": [
         {"key": (0, RTX_LUID), "name": "NVIDIA GeForce RTX 5070", "usage": 3.0, "on_taskbar": False,
          "temp": 26.0, "power": 17.5, "vram": (1.17, 12.0)},
         {"key": (0, APU_LUID), "name": "AMD Radeon Graphics", "usage": 0.0, "on_taskbar": False,
          "temp": 38.0, "power": 6.0, "vram": (0.88, 15.0), "vram_shared": True}]}
+
+
+def test_the_list_never_opens_a_card_the_user_turned_off(q_app):
+    """Review #1 (decided): usage, tips and battery all off on a bottom bar = no card, list or not."""
+    from PyQt6.QtCore import QPointF, QTimer
+    from PyQt6.QtGui import QEnterEvent
+    from PyQt6.QtWidgets import QWidget
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    off = _hover_fake(CARDS, **GPU_ON)
+    assert not off._hover_hardware_wanted()
+    assert off._hover_hardware_snapshot() is None
+
+    class _Armable(NetworkSpeedWidget):
+        def __init__(self):
+            QWidget.__init__(self)
+            self.config = {"show_usage_on_hover": False, "show_hover_tips": False, **GPU_ON}
+            self.gpu_cards = CARDS
+            self._cached_layout_mode = "horizontal"
+            self.layout_manager = types.SimpleNamespace(_side_fit=None)
+            self._hover_card = None
+            self._hover_card_timer = QTimer()
+            self._hover_card_timer.setSingleShot(True)
+            self.logger = MagicMock()
+
+    w = _Armable()
+    try:
+        w.enterEvent(QEnterEvent(QPointF(1, 1), QPointF(1, 1), QPointF(1, 1)))
+        assert not w._hover_card_timer.isActive()
+    finally:
+        w._hover_card_timer.stop()
+        w.deleteLater()
+
+
+def test_a_side_bar_hiding_the_hardware_still_lists_them_with_the_card_off(q_app):
+    fake = _hover_fake(CARDS, layout="vertical", **GPU_ON)
+    fake.layout_manager._side_fit = types.SimpleNamespace(hides_hardware=True, hides_identity=False)
+    snap = fake._hover_hardware_snapshot()
+    assert fake._hover_hardware_wanted() and [g["name"] for g in snap["gpus"]] == [c.name for c in CARDS]
+    assert not any(g["on_taskbar"] for g in snap["gpus"])
 
 
 @pytest.mark.parametrize("cards, config", [
@@ -322,21 +396,29 @@ def test_gate_stays_shut_without_the_switch_two_cards_and_gpu_monitoring(q_app, 
 
 def test_list_replaces_the_single_gpu_and_vram_rows_in_a_hardware_card(q_app):
     fake = _hover_fake(CARDS, hardware_in_hover_card=True, monitor_cpu_enabled=True,
-                       monitor_ram_enabled=True, widget_display_mode="side_by_side", **ALL)
+                       monitor_ram_enabled=True, widget_display_mode="side_by_side", **GPU_ON)
     snap = fake._hover_hardware_snapshot()
     assert set(snap) == {"cpu", "ram", "gpus"}
     fake.config["hover_list_all_gpus"] = False
     assert set(fake._hover_hardware_snapshot()) == {"cpu", "ram", "gpu", "vram"}
 
 
-def test_marker_only_for_a_picked_card_and_readings_follow_their_switches(q_app):
+@pytest.mark.parametrize("mode, marked", [
+    (dict(widget_display_mode="side_by_side"), True),
+    (dict(widget_display_mode="gpu_only"), True),
+    (dict(widget_display_mode="cycle"), True),             # Auto-Cycle paints the GPU in one phase
+    (dict(widget_display_mode="network_only"), False),     # nothing on the bar to point at
+    (dict(widget_display_mode="cpu_only", monitor_cpu_enabled=True), False),
+    (dict(widget_display_mode="side_by_side", widget_display_order=["network", "cpu", "none"],
+          monitor_cpu_enabled=True), False),               # a side_by_side order without a GPU slot
+    (dict(widget_display_mode="side_by_side", hardware_in_hover_card=True), False),   # moved to the card
+])
+def test_marker_only_for_a_picked_card_the_taskbar_actually_paints(q_app, mode, marked):
     picked = (CARDS[0], CARDS[1]._replace(picked=True))
-    snap = _hover_fake(picked, monitor_gpu_enabled=True)._hover_hardware_snapshot()
-    assert [g["on_taskbar"] for g in snap["gpus"]] == [False, True]
+    snap = _hover_fake(picked, monitor_gpu_enabled=True, show_usage_on_hover=True,
+                       **mode)._hover_hardware_snapshot()
+    assert [g["on_taskbar"] for g in snap["gpus"]] == [False, marked]
     assert all(set(g) == {"key", "name", "usage", "on_taskbar"} for g in snap["gpus"])
-    # Hardware moved into the card: the taskbar paints no GPU, so no card is "on taskbar".
-    in_card = _hover_fake(picked, monitor_gpu_enabled=True, hardware_in_hover_card=True)
-    assert [g["on_taskbar"] for g in in_card._hover_hardware_snapshot()["gpus"]] == [False, False]
 
 
 def test_a_card_set_change_rebuilds_the_open_card(q_app):
@@ -346,9 +428,43 @@ def test_a_card_set_change_rebuilds_the_open_card(q_app):
     fake._hover_card, fake._hover_hw_refreshed = card, 0.0
     fake._show_usage_hover_card = MagicMock()
     fake._hide_usage_hover_card = MagicMock()
+    fake._show_usage_hover_card.side_effect = lambda **k: setattr(fake, "_hover_card", MagicMock())
     fake._refresh_hover_hardware()
-    fake._show_usage_hover_card.assert_called_once_with(pinned=False)
+    fake._show_usage_hover_card.assert_called_once_with(pinned=False, rebuild_of=card)
     fake._hide_usage_hover_card.assert_not_called()
+
+
+def test_a_rebuild_that_bails_closes_the_frozen_card(q_app):
+    """Review #3: menu open / a drag / a fullscreen app - the rebuild does nothing; the old card,
+    whose rows can no longer update, must not stay up."""
+    fake = _hover_fake(CARDS, **ALL)
+    card = MagicMock(has_hardware=True)
+    card.update_hardware.return_value = False
+    fake._hover_card, fake._hover_hw_refreshed = card, 0.0
+    fake._show_usage_hover_card = MagicMock()          # bails: self._hover_card stays the old card
+    fake._hide_usage_hover_card = MagicMock()
+    fake._refresh_hover_hardware()
+    fake._hide_usage_hover_card.assert_called_once()
+
+
+def test_a_rebuild_keeps_the_pin_hint_without_counting_a_show(q_app):
+    """A rebuild is the same card for the user: its footer stays as it was and the pin-hint counter
+    (a config write) is not bumped once per rebuild."""
+    from netspeedtray.views.widget.main import NetworkSpeedWidget as W
+    fake = types.SimpleNamespace(
+        _is_context_menu_visible=False, _dragging=False, isVisible=lambda: True,
+        config={"show_usage_on_hover": False},
+        i18n=EN, logger=MagicMock(), _hover_card=None, _hover_hardware_wanted=lambda: False,
+        _hover_hint_text=lambda: "hint", _pin_hint_text=MagicMock(return_value="counted"),
+        _hover_card_edge=lambda: None, frameGeometry=lambda: None, screen=lambda: None,
+        _retire_pin_hint=MagicMock())
+    with patch("netspeedtray.views.usage_flyout.UsageFlyout") as flyout:
+        for old_hint, expected in ((True, EN.HOVER_CARD_PIN_HINT), (False, None)):
+            W._show_usage_hover_card(fake, rebuild_of=MagicMock(pin_hint_visible=old_hint))
+            assert flyout.call_args.kwargs["pin_hint"] == expected
+        fake._pin_hint_text.assert_not_called()
+        W._show_usage_hover_card(fake)                      # a fresh hover still counts
+        fake._pin_hint_text.assert_called_once()
 
 
 # --- 8. the card ---------------------------------------------------------------------------------
@@ -463,7 +579,9 @@ def test_settings_toggle_round_trips_beside_the_picker(page, monkeypatch):
     monkeypatch.setattr(gpu_adapters, "enumerate_adapters", lambda: [RTX, twin, BRD])
     page.load_settings({"monitor_gpu_enabled": True})
     assert not page._gpu_adapter_card.isVisibleTo(page) and page._hover_gpus_card.isVisibleTo(page)
-    # One GPU: hidden, like the picker.
+    # One GPU: hidden - even with a saved pick that keeps the picker listed (no Settings change at all).
     monkeypatch.setattr(gpu_adapters, "enumerate_adapters", lambda: [RTX, BRD])
     page.load_settings({"monitor_gpu_enabled": True})
     assert not page._hover_gpus_card.isVisibleTo(page)
+    page.load_settings({"monitor_gpu_enabled": True, "gpu_adapter": "AMD Radeon(TM) Graphics"})
+    assert page._gpu_adapter_card.isVisibleTo(page) and not page._hover_gpus_card.isVisibleTo(page)
