@@ -260,11 +260,19 @@ Holder = Tuple[int, str, str]                     # (pid, process name, why it h
 
 
 def _install_holders(install_dir: str, wait_pid: Optional[int] = None,
-                     exited_at: Optional[float] = None) -> List[Holder]:
+                     exited_at: Optional[float] = None,
+                     started_at: Optional[float] = None) -> List[Holder]:
     """Processes that keep ``install_dir`` from being renamed: any whose executable or working
     directory is inside it, plus - when its working directory cannot be read - any child of the
-    previous instance (``wait_pid``) created before that instance exited (``exited_at``, epoch
-    seconds; the bound keeps a recycled PID's new children out). This process is never one.
+    previous instance (``wait_pid``) created during that instance's lifetime (``started_at`` <=
+    created <= ``exited_at``, epoch seconds). This process is never one.
+
+    Both bounds matter because Windows never updates a process's parent PID after the parent dies,
+    and PIDs are reused: long-lived system processes (csrss, wininit, winlogon) report parents
+    that died at boot. Had the previous instance been given one of those PIDs, they would look
+    like its orphans - and every update would wait out the whole bound. Created BEFORE the
+    previous instance started means not its child. Without ``started_at`` (its creation time
+    could not be read) the orphan rule is off entirely; the CWD/exe rules still apply.
 
     psutil is imported lazily (it ships in every build; this module otherwise stays stdlib-only).
     Without it, or on any failure, the answer is "none known" - the rename retry still applies."""
@@ -298,12 +306,26 @@ def _install_holders(install_dir: str, wait_pid: Optional[int] = None,
                 cwd = None
             if cwd and _is_within(cwd, install_dir):
                 out.append((pid, name, "working directory is inside it"))
-            elif (cwd is None and wait_pid and info.get("ppid") == wait_pid
+            elif (cwd is None and wait_pid and started_at is not None
+                  and info.get("ppid") == wait_pid
+                  and started_at <= (info.get("create_time") or 0)
                   and (exited_at is None or (info.get("create_time") or 0) <= exited_at)):
                 out.append((pid, name, "left running by the previous version"))
         except Exception:
             continue
     return out
+
+
+def _process_create_time(pid: Optional[int]) -> Optional[float]:
+    """When ``pid`` was created (epoch seconds), or None if it is gone or cannot be read. Read
+    while the previous instance is still alive, it bounds which processes can be its orphans."""
+    if not pid:
+        return None
+    try:
+        import psutil
+        return float(psutil.Process(pid).create_time())
+    except Exception:
+        return None
 
 
 def _describe_holders(holders: List[Holder]) -> str:
@@ -312,7 +334,8 @@ def _describe_holders(holders: List[Holder]) -> str:
 
 def _wait_for_install_holders(install_dir: str, wait_pid: Optional[int] = None,
                               exited_at: Optional[float] = None,
-                              timeout: float = _HOLDER_WAIT_SEC) -> List[Holder]:
+                              timeout: float = _HOLDER_WAIT_SEC,
+                              started_at: Optional[float] = None) -> List[Holder]:
     """Wait (bounded) until nothing holds ``install_dir``. Returns what still holds it on timeout,
     else []. Never kills anything: an orphaned child of the previous version finishes on its own in
     seconds, and anything else (a browser started from the old app, a terminal sitting in the
@@ -320,7 +343,7 @@ def _wait_for_install_holders(install_dir: str, wait_pid: Optional[int] = None,
     deadline = time.monotonic() + timeout
     seen: Optional[set] = None
     while True:
-        holders = _install_holders(install_dir, wait_pid, exited_at)
+        holders = _install_holders(install_dir, wait_pid, exited_at, started_at)
         if not holders:
             if seen:
                 logger.info("Nothing holds the install folder any more.")
@@ -964,6 +987,9 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
     logger.info("Apply-update requested: install=%s staged=%s pid=%s",
                 install_dir, staged_dir, wait_pid)
 
+    # Before the wait: once it has exited its creation time is gone, and without it the orphan
+    # rule in _install_holders stays off (a stale parent PID must not match - review M1).
+    started_at = _process_create_time(wait_pid)
     if wait_pid and not _wait_for_exit(wait_pid):
         logger.warning("The previous instance did not exit; refusing to swap.")
         _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
@@ -980,7 +1006,7 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
     # The previous instance has gone, but a child it spawned may still sit in the folder (its CWD
     # is inherited). Wait for those - bounded - before the rename; whatever is left after that,
     # the rename's own retry and the restore-and-explain fallback below still cover.
-    _wait_for_install_holders(install_dir, wait_pid, exited_at)
+    _wait_for_install_holders(install_dir, wait_pid, exited_at, started_at=started_at)
 
     try:
         backup = swap(install_dir, staged_dir)
@@ -1021,7 +1047,8 @@ _STAGED_MARKER_NAME = "staged_update.json"
 
 # A recorded folder younger than this is deferred, never deleted: the marker is written the
 # moment the handoff COMMITS, and the applier then runs FROM that folder for up to ~30 s of
-# pid-wait plus the whole folder swap. A duplicate launch in that window (the user restarting
+# pid-wait, ~30 s more waiting for processes still in the install folder (_HOLDER_WAIT_SEC), a
+# rename retry of up to ~20 s (_SWAP_RETRY_SEC) and the whole folder swap - under two minutes. A duplicate launch in that window (the user restarting
 # the app they just watched vanish) must not gut it (review C1). Generous on purpose - a
 # deferred folder is only untidy for one more launch; a gutted one becomes a broken install
 # with its backup deleted.

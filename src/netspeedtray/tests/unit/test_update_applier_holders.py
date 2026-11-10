@@ -60,7 +60,7 @@ def test_holders_are_processes_running_from_or_sitting_in_the_install(tmp_path, 
     (install / "_internal").mkdir(parents=True)
     other = tmp_path / "elsewhere"
     other.mkdir()
-    wait_pid, exited_at = 4208, 1000.0
+    wait_pid, started_at, exited_at = 4208, 500.0, 1000.0
     _fake_psutil(monkeypatch, [
         _FakeProc(os.getpid(), cwd=str(install)),                        # the applier itself: never
         _FakeProc(0), _FakeProc(4),                                       # Idle / System: never
@@ -78,10 +78,49 @@ def test_holders_are_processes_running_from_or_sitting_in_the_install(tmp_path, 
         # An orphan of the previous version whose CWD is readable and elsewhere does not block.
         _FakeProc(18, name="nvidia-smi.exe", ppid=wait_pid, create_time=999.0, cwd=str(other)),
     ])
-    got = {pid: why for pid, _name, why in ua._install_holders(str(install), wait_pid, exited_at)}
+    got = {pid: why for pid, _name, why in
+           ua._install_holders(str(install), wait_pid, exited_at, started_at)}
     assert got == {10: "runs from it", 11: "working directory is inside it",
                    12: "working directory is inside it",
                    14: "left running by the previous version"}
+
+
+def test_a_stale_parent_pid_is_not_an_orphan_of_the_previous_version(tmp_path, monkeypatch):
+    """Review M1: Windows never rewrites a process's parent PID after the parent dies, and PIDs are
+    reused - csrss/wininit/winlogon report parents that died at boot. If the old app was given such
+    a PID, those system processes (CWD unreadable) must not look like its orphans, or every update
+    waits out the whole bound. Created before the old app started = not its child."""
+    install = tmp_path / "NetSpeedTray"
+    install.mkdir()
+    wait_pid, started_at, exited_at = 740, 5000.0, 9000.0
+    _fake_psutil(monkeypatch, [
+        _FakeProc(600, name="csrss.exe", ppid=wait_pid, create_time=100.0,       # booted long ago
+                  cwd_error=_AccessDenied()),
+        _FakeProc(601, name="powershell.exe", ppid=wait_pid, create_time=6000.0,
+                  cwd_error=_AccessDenied()),                                      # a real orphan
+    ])
+    got = [pid for pid, _n, _w in
+           ua._install_holders(str(install), wait_pid, exited_at, started_at=started_at)]
+    assert got == [601]
+    # The old app's creation time could not be read: the orphan rule is off altogether.
+    assert ua._install_holders(str(install), wait_pid, exited_at, started_at=None) == []
+
+
+def test_apply_update_reads_the_old_apps_creation_time_before_waiting(tmp_path, monkeypatch):
+    install = _make(tmp_path / "Apps", "NetSpeedTray", "old")
+    staged = _make(tmp_path / "staging", "NetSpeedTray-9.9.9", "new")
+    order, seen = [], []
+    monkeypatch.setattr(ua, "_process_create_time",
+                        lambda pid: order.append("create_time") or 1234.0, raising=False)
+    monkeypatch.setattr(ua, "_wait_for_exit",
+                        lambda pid, timeout=None: order.append("wait") or True)
+    monkeypatch.setattr(ua, "relaunch", lambda exe: True)
+    monkeypatch.setattr(ua, "_install_holders",
+                        lambda inst, wait_pid=None, exited_at=None, started_at=None:
+                        seen.append(started_at) or [], raising=False)
+    assert ua.apply_update(str(install), 4208, str(staged)) == 0
+    assert order == ["create_time", "wait"]
+    assert seen == [1234.0]
 
 
 def test_a_sibling_with_the_same_prefix_is_not_inside(tmp_path, monkeypatch):
@@ -104,7 +143,7 @@ def test_waits_until_a_left_behind_child_exits(tmp_path, monkeypatch):
     monkeypatch.setattr(ua, "_HOLDER_POLL_SEC", 0.01, raising=False)
     calls = []
 
-    def holders(install, wait_pid=None, exited_at=None):
+    def holders(install, wait_pid=None, exited_at=None, started_at=None):
         calls.append(wait_pid)
         return [(548, "powershell.exe", "working directory is inside it")] if len(calls) < 5 else []
     monkeypatch.setattr(ua, "_install_holders", holders, raising=False)
@@ -195,7 +234,7 @@ def test_apply_update_waits_for_the_holders_of_the_previous_version(tmp_path, mo
     release_at = time.monotonic() + 0.5
     seen = []
 
-    def holders(inst, wait_pid=None, exited_at=None):
+    def holders(inst, wait_pid=None, exited_at=None, started_at=None):
         seen.append((wait_pid, exited_at is not None))
         return ([(548, "powershell.exe", "working directory is inside it")]
                 if time.monotonic() < release_at else [])
@@ -245,7 +284,10 @@ def test_open_external_starts_in_the_system_folder(monkeypatch):
     assert helpers.neutral_cwd() and os.path.isdir(helpers.neutral_cwd())
 
 
-def test_open_external_falls_back_to_webbrowser_for_a_url(monkeypatch):
+def test_open_external_never_falls_back_to_a_child_in_the_inherited_cwd(monkeypatch):
+    """Review L3: webbrowser's other candidates are browsers started as plain children in the
+    app's CWD - the process that holds the install folder. On Windows a failed startfile is
+    logged, not retried that way."""
     from netspeedtray.utils import helpers
     import webbrowser
 
@@ -256,8 +298,23 @@ def test_open_external_falls_back_to_webbrowser_for_a_url(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
     helpers.open_external("https://example.invalid/x")
-    helpers.open_external(r"C:\some\folder")                 # a folder never goes to a browser
-    assert opened == ["https://example.invalid/x"]
+    helpers.open_external(r"C:\some\folder")
+    assert opened == []
+
+
+def test_neutral_cwd_falls_back_past_an_empty_or_bogus_systemroot(tmp_path, monkeypatch):
+    """Review L4: an empty SystemRoot counts as missing; then %windir%, then GetSystemDirectoryW."""
+    from netspeedtray.utils import helpers
+    win = tmp_path / "Win"
+    (win / "System32").mkdir(parents=True)
+    monkeypatch.setenv("SystemRoot", "")
+    monkeypatch.setenv("windir", str(win))
+    assert helpers.neutral_cwd() == str(win / "System32")
+    monkeypatch.setenv("SystemRoot", str(tmp_path / "nope"))
+    monkeypatch.setenv("windir", "  ")
+    if sys.platform == "win32":
+        got = helpers.neutral_cwd()                         # from GetSystemDirectoryW
+        assert got and os.path.isdir(got) and got.lower().endswith("system32")
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="cmd.exe")
