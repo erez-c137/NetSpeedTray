@@ -485,6 +485,15 @@ class SystemEventHandler(QObject):
         """The window last judged a fullscreen obstruction (0 if none yet)."""
         return self._fs_hwnd
 
+    def forget_fullscreen(self) -> None:
+        """The widget's latch gave up a cover that left the foreground (no-foreground-timeout, #503):
+        drop the poll's copy too. Otherwise is_fullscreen_active() stays True while the widget shows -
+        burial recovery and the hover card stand down - and, with no edge left, the cover coming back
+        would not hide the widget until the 1 s tick. While the foreground stays NULL the poll is
+        quiet (no information, nothing latched); the cover returning is a fresh edge and hides at once."""
+        self._was_fullscreen = False
+        self._fs_hwnd = 0
+
     def _connect_color_scheme_signal(self) -> None:
         """Connect to Qt's native colorSchemeChanged signal.
 

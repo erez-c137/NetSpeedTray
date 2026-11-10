@@ -624,6 +624,9 @@ class NetworkSpeedWidget(QWidget):
                         # a window kept "covering" after it left the foreground. Names its class.
                         self.logger.info("Fullscreen gate: released a hold on a cover with no foreground (%s)",
                                          _window_log_desc(latch.probe_hwnd))
+                        handler = getattr(self, "system_event_handler", None)
+                        if handler is not None and hasattr(handler, "forget_fullscreen"):
+                            handler.forget_fullscreen()
 
             if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)

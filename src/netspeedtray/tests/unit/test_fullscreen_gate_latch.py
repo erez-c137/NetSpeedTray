@@ -190,6 +190,23 @@ def test_a_cover_that_left_the_foreground_cannot_hold_the_widget_hidden(gate):
     # ...and it reaches the INFO file log (DEBUG never does), naming the window's class, not its title.
     info = [c.args for c in w.logger.info.call_args_list if "Fullscreen gate" in c.args[0]]
     assert len(info) == 1 and info[0][1].startswith("class=")
+    # ...and the poll forgets the cover too, or burial recovery and the hover card would stand down
+    # for a fullscreen app that is no longer there (#504 review M1).
+    w.system_event_handler.forget_fullscreen.assert_called_once()
+
+
+def test_a_gap_in_readings_restarts_the_hold(gate):
+    """Readings far apart (the gate was not consulted: taskbar hidden, a menu open) must not count
+    the gap toward the hold - one NULL before the gap and one after is not 1.5 s of NULL."""
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)
+    gate.refresh(w, 0)
+    gate.advance(FullscreenLatch.NO_INFO_MAX_GAP_S + 1)
+    gate.refresh(w, 0)                    # first reading after the gap: the hold starts here
+    assert _shows(w) == []
+    gate.advance(HOLD_S / 2)
+    gate.refresh(w, 0)
+    assert _shows(w) == []
 
 
 def test_a_real_foreground_reading_restarts_the_hold(gate):
@@ -294,6 +311,24 @@ def test_poll_exit_when_the_fullscreen_window_closes_under_a_null_foreground(han
     _run(_win32_world(0, visible=set()), handler._poll_fullscreen)    # Java gone, nothing foreground
     refresh.assert_called_once()
     assert handler.is_fullscreen_active() is False
+
+
+def test_poll_after_forget_fullscreen_is_quiet_on_null_and_hides_on_the_cover_returning(handler):
+    """After the widget's latch released on a no-foreground timeout: the poll stays quiet while the
+    foreground is NULL, reports nothing fullscreen, and the cover coming back is a fresh edge that
+    hides at once (rc.7's ~250 ms), not after the 1 s tick."""
+    hide, refresh = MagicMock(), MagicMock()
+    handler.immediate_hide_requested.connect(hide)
+    handler.foreground_app_changed.connect(refresh)
+    _run(_win32_world(JAVA, visible={JAVA}), handler._poll_fullscreen)
+    _run(_win32_world(0, visible={JAVA}), handler._poll_fullscreen)
+    handler.forget_fullscreen()
+    assert handler.is_fullscreen_active() is False
+    _run(_win32_world(0, visible={JAVA}), handler._poll_fullscreen)
+    refresh.assert_not_called()
+    assert hide.call_count == 1
+    _run(_win32_world(JAVA, visible={JAVA}), handler._poll_fullscreen)
+    assert hide.call_count == 2 and handler.is_fullscreen_active() is True
 
 
 @pytest.mark.parametrize("visible,cloaked", [(set(), False), ({INVISIBLE_FS}, True)],

@@ -34,6 +34,10 @@ class FullscreenLatch:
     """See the module docstring. ``judge`` is called by the widget's visibility gate."""
 
     # ``reason`` values of a reading that just released the latch (the widget may show).
+    # Readings further apart than this (the taskbar hidden, a menu open, a drag - the gate was not
+    # consulted) restart the no-information hold instead of counting the gap toward it.
+    NO_INFO_MAX_GAP_S = 2.5
+
     RELEASE_REASONS = frozenset({"desktop-foreground", "exit-confirmed", "cover-gone",
                                  "no-foreground-timeout"})
 
@@ -49,6 +53,7 @@ class FullscreenLatch:
         self.cover_hwnd = 0
         self._exit_first_at: Optional[float] = None
         self._no_info_since: Optional[float] = None
+        self._last_no_info_at: Optional[float] = None
         # Set by judge(): True while an uncovered reading waits for its confirmation, so the caller
         # schedules a re-check instead of waiting for the 1 s tick.
         self.recheck_wanted = False
@@ -79,11 +84,13 @@ class FullscreenLatch:
             self._no_info_since = None
         elif self.covered and self.cover_hwnd:
             now = self._clock()
-            if self._no_info_since is None:
+            if (self._no_info_since is None or self._last_no_info_at is None
+                    or now - self._last_no_info_at > self.NO_INFO_MAX_GAP_S):
                 self._no_info_since = now
             elif (now - self._no_info_since) * 1000.0 >= self.hold_ms:
                 self.probe_hwnd = self.cover_hwnd
                 return self._release("no-foreground-timeout")
+            self._last_no_info_at = now
             probe = self.cover_hwnd   # no information from the foreground: is the cover still there?
         else:
             self.reason, self.probe_hwnd = "no-information", foreground
