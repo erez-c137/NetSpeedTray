@@ -143,8 +143,14 @@ def dump(data: dict) -> str:
     return "{\n" + ",\n".join(lines) + "\n}\n"
 
 
-def test_automatic_matches_the_pre_picker_golden(q_app):
+@pytest.mark.parametrize("laptop", [False, True], ids=["desktop", "laptop"])
+def test_automatic_matches_the_pre_picker_golden(q_app, monkeypatch, laptop):
+    """On a laptop the hybrid scenarios go through the 2.2.1 Optimus gate; the golden still holds -
+    pinned both ways so CI never depends on whether the runner has a battery."""
     import netspeedtray.core.monitor_thread as mt
+    from netspeedtray.utils import power_utils
+    monkeypatch.setattr(power_utils, "battery_presence", lambda: laptop)
+    monkeypatch.setattr(power_utils, "platform_is_mobile", lambda: laptop)
     golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
     current = run_all(mt.StatsMonitorThread, mt)
     assert set(current) == set(golden)
