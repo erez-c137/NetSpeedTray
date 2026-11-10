@@ -177,6 +177,8 @@ def test_pinned_card_takes_a_real_click_and_never_takes_focus(tmp_path):
     assert unpinned["transparent"] and unpinned["hit"] != "card" and not unpinned["clicked"], unpinned
     # The foreground is a desktop-wide state the person at the PC (or another window) can move during
     # the click: a change to another process's window cannot be blamed on the card, so it is
-    # inconclusive rather than a failure. Every other assertion above has already held.
+    # inconclusive rather than a failure. Every other assertion above has already held. On CI nobody
+    # is at the desktop, so a change there is the card's doing and fails rather than skipping green.
     if not pinned["foreground_unchanged"]:
+        assert not os.environ.get("CI"), f"foreground changed on an unattended CI desktop: {pinned}"
         pytest.skip("inconclusive: foreground changed by another window")

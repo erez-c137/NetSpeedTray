@@ -31,6 +31,11 @@ os.environ["LOCALAPPDATA"] = os.path.join(_SESSION_PROFILE, "Local")
 # TerminateProcess children elsewhere) run their writers in fresh interpreters that never load this
 # file, so they keep the real pragmas and real fsync. The v7->v8 migrator still forces FULL on its own
 # build connection (migrate_v8.py) - left as is. No test asserts the pragma's value.
+# One side effect IS observable: setting the pragma makes connect() read the schema at once, so a WAL
+# database gets its -wal/-shm files at connect time, a locked database waits out the busy timeout
+# there (the "locked" error is swallowed below), and a non-database file fails there too (swallowed;
+# the first real query still raises). A test that times connect() on a locked file, or expects no
+# sidecars right after a bare connect(), must set NST_TEST_REAL_FSYNC=1 or open its own handle.
 # NST_TEST_REAL_FSYNC=1 turns all of this off (to time or debug a run with the product's pragmas).
 _REAL_FSYNC = os.environ.get("NST_TEST_REAL_FSYNC") == "1"
 
