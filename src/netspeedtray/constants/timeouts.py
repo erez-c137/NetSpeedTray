@@ -47,6 +47,14 @@ class TimeoutConstants:
     # for the 1s state-watcher tick (a visible ~1s lag). Cheap: short-circuits
     # before any taskbar query unless the foreground window is actually fullscreen.
     FULLSCREEN_POLL_INTERVAL_MS: Final[int] = 250
+    # Leaving fullscreen needs two agreeing "not covered" readings at least this far apart (#503):
+    # one stray foreground reading must not flash the widget over a fullscreen app. Entering
+    # fullscreen (hide) stays immediate.
+    FULLSCREEN_EXIT_CONFIRM_MS: Final[int] = 250
+    # ...and a foreground that tells us nothing (NULL, closed, invisible, cloaked) keeps a fullscreen
+    # hide for at most this long while the covering window still looks drawn - so a cover that is
+    # not really in front (a shell surface during Show desktop) can't hold the widget hidden.
+    FULLSCREEN_NO_FOREGROUND_HOLD_MS: Final[int] = 1500
     # Burial recovery (#314, #238): the minimum spacing of the widget's Z-order checks when
     # EVENT_OBJECT_REORDER / foreground changes arrive in a burst. The first change is checked
     # at once; the rest of a burst collapses into one check at the end of the window.

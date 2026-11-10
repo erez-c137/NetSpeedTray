@@ -80,8 +80,9 @@ ALSO
 *A release candidate, for testers. It's a manual download from the release page - the in-app
 updater, WinGet and the Store never offer prereleases.*
 
-One fix, found by rehearsing a real 2.1.7 updating itself to 2.2: the portable version's in-app
-update could fail to swap its folder and fall back to copying by hand.
+Two fixes: the portable version's in-app update could fail to swap its folder (found by
+rehearsing a real 2.1.7 updating itself to 2.2), and the widget could flash over a fullscreen app
+or blink out on the desktop every few seconds.
 
 ### Fixed
 
@@ -100,10 +101,33 @@ update could fail to swap its folder and fall back to copying by hand.
   block a later update. Found in a VM rehearsal of 2.1.7 -> rc.7 (the installer path passed every
   check).*
 
+- **The widget no longer flashes over fullscreen apps, or blinks out on the desktop.** With
+  "Keep visible in fullscreen" off, the widget could reappear over a fullscreen video for half a
+  second every ~24 s, and with nothing fullscreen it could vanish for a moment on the same beat.
+  A single stray reading of which window is in front no longer changes whether the widget shows.
+  Thanks to @kamal63442 for the instrumented captures. ([#503], [#504])
+
+  *Under the hood: the fullscreen check had no memory. Every 250 ms poll and every foreground
+  event judged one window on the spot, and a NULL foreground, a window that had already closed,
+  or an invisible or DWM-cloaked monitor-sized window all read as "not covered" - or, for the
+  invisible/cloaked window, as an instant fullscreen hide. A latch now holds the decision: hiding
+  stays immediate for a visible, uncloaked window covering the monitor; NULL, closed, invisible
+  or cloaked foregrounds keep the previous decision (re-checking the covering window, so closing
+  a fullscreen app with nothing taking focus still brings the widget back, and the hold gives up
+  after about 1.5 s so a cover that has left the foreground can't keep the widget hidden); and
+  showing again needs two "not covered" readings at least 250 ms apart, so leaving fullscreen into
+  a normal window takes 250-500 ms instead of up to 250 ms (the desktop is still instant when it
+  takes the foreground, as with Win+D). The refresh judges the live foreground, not the one a
+  debounced event stored, and the copies on other taskbars follow the same rules. Each fullscreen
+  hide or show writes a DEBUG log line with the reason, window class and process id (no titles),
+  and a hold that gives up writes one INFO line naming the window class.*
+
 - A test that drew different random data on every run and could fail on a rare draw. ([#501])
 
 [#499]: https://github.com/erez-c137/NetSpeedTray/pull/499
 [#501]: https://github.com/erez-c137/NetSpeedTray/pull/501
+[#503]: https://github.com/erez-c137/NetSpeedTray/issues/503
+[#504]: https://github.com/erez-c137/NetSpeedTray/pull/504
 
 ---
 

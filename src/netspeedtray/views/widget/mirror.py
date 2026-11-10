@@ -51,12 +51,14 @@ from PyQt6.QtGui import QColor, QContextMenuEvent, QMouseEvent, QPainter, QPaint
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from netspeedtray import constants
+from netspeedtray.core.fullscreen_gate import FullscreenLatch
 from netspeedtray.core.position_manager import (PositionManager, WindowState, _GWLP_HWNDPARENT,
                                                 _GetWindowLongPtr, _SetWindowLongPtr)
 from netspeedtray.utils import taskbar_utils
 from netspeedtray.utils.config import stable_pseudonym
 from netspeedtray.utils.helpers import effective_display_mode
-from netspeedtray.utils.taskbar_utils import dock_signature, is_taskbar_obstructed, is_taskbar_visible
+from netspeedtray.utils.taskbar_utils import (dock_signature, is_taskbar_obstructed, is_taskbar_visible,
+                                             is_window_on_screen)
 from netspeedtray.utils.widget_paint import render_widget
 from netspeedtray.utils.widget_renderer import WidgetRenderer
 from netspeedtray.views.widget.layout import WidgetLayoutManager
@@ -145,6 +147,8 @@ class MirrorWidget(QWidget):
         self._dock_sig_seen: Optional[tuple] = None
         self._tb = taskbar_info                      # the taskbar this mirror was last handed
         self._obstructed: bool = False               # a fullscreen window on ITS monitor
+        self._fs_latch = FullscreenLatch()            # ...decided through its own latch (#503)
+        self.fs_recheck_wanted: bool = False         # an unconfirmed fullscreen exit: re-tick soon
         self._layout_mode: str = self._mode_for(taskbar_info)
         self._identity_sig_seen = self._main_identity_signature()
 
@@ -268,7 +272,10 @@ class MirrorWidget(QWidget):
             return
         main = self._main
         if getattr(main, "_is_context_menu_visible", False):
-            return   # the menu is modal and may sit over us: move nothing until it closes (#200)
+            # The menu is modal and may sit over us: move nothing until it closes (#200). No re-check
+            # while it is open either - a stale flag would re-arm the 250 ms tick for nothing.
+            self.fs_recheck_wanted = False
+            return
         try:
             if self.owner_lost():
                 # Our owner taskbar is gone but we survived: unlink before anything else touches us.
@@ -277,7 +284,14 @@ class MirrorWidget(QWidget):
             self._layout_mode = self._mode_for(tb)
             # Judged against THIS mirror's taskbar and monitor (is_taskbar_obstructed compares the
             # foreground window's monitor with the taskbar's), never the main widget's (§3.4).
-            self._obstructed = bool(tb.hwnd) and is_taskbar_obstructed(tb, fg_hwnd)
+            # Through this mirror's own latch, as the main widget (#503): a foreground that is not
+            # on screen says nothing, covered is immediate, uncovered needs two readings.
+            latch = _mirror_latch(self)
+            self._obstructed = bool(tb.hwnd) and latch.judge(
+                fg_hwnd, on_screen=is_window_on_screen,
+                obstructs=lambda h: is_taskbar_obstructed(tb, h),
+                is_desktop=lambda h: _window_class(h) in constants.shell.shell.DESKTOP_WINDOW_CLASSES)
+            self.fs_recheck_wanted = bool(tb.hwnd) and latch.recheck_wanted
             keep_visible = main.config.get("keep_visible_fullscreen",
                                            constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN)
             # #24 for THIS bar (rc.5 #373): attach / detach / re-check first, as main's _execute_refresh
@@ -485,6 +499,15 @@ def _window_class(hwnd: int) -> str:
     return ""
 
 
+def _mirror_latch(mirror: Any) -> FullscreenLatch:
+    """The mirror's fullscreen latch, created on first use (a stand-in ``self`` gets one too)."""
+    latch = getattr(mirror, "_fs_latch", None)
+    if not isinstance(latch, FullscreenLatch):
+        latch = FullscreenLatch()
+        mirror._fs_latch = latch
+    return latch
+
+
 def _fullscreen_monitor(hwnd: int) -> int:
     """The HMONITOR a true-fullscreen ``hwnd`` covers (window rect == monitor rect), else 0. The
     cheap test SystemEventHandler._is_fullscreen_obstruction starts with; no taskbar query."""
@@ -528,6 +551,12 @@ class MirrorManager(QObject):
         self._fs_timer = QTimer(self)
         self._fs_timer.setInterval(constants.timeouts.FULLSCREEN_POLL_INTERVAL_MS)
         self._fs_timer.timeout.connect(self._poll_fullscreen)
+        # The confirming second reading of a mirror's fullscreen exit (#503), one per pending exit.
+        self._fs_recheck_timer = QTimer(self)
+        self._fs_recheck_timer.setSingleShot(True)
+        self._fs_recheck_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._fs_recheck_timer.setInterval(constants.timeouts.FULLSCREEN_EXIT_CONFIRM_MS)
+        self._fs_recheck_timer.timeout.connect(self.tick)
 
     # --- lifecycle -------------------------------------------------------------------------------------
     def start(self) -> None:
@@ -567,6 +596,7 @@ class MirrorManager(QObject):
         self._shut = True
         self._tick_timer.stop()
         self._fs_timer.stop()
+        self._fs_recheck_timer.stop()
         for signal, slot in self._connections:
             try:
                 signal.disconnect(slot)
@@ -688,13 +718,22 @@ class MirrorManager(QObject):
         try:
             taskbars = self._taskbars()
             targets = self.reconcile(taskbars)
-            fg = fg_hwnd or int(self._foreground() or 0)
+            # The LIVE foreground (#503): a debounced foreground event's hwnd is 250 ms old and may
+            # be closed by now. The passed one is used only if the live read fails.
+            try:
+                fg = int(self._foreground() or 0)
+            except Exception:
+                fg = int(fg_hwnd or 0)
+            recheck = False
             for key, mirror in list(self.mirrors.items()):
                 tb = targets.get(key)
                 if tb is not None:
                     mirror.refresh(tb, fg)
+                    recheck = recheck or getattr(mirror, "fs_recheck_wanted", False) is True
                 if getattr(mirror, "dead", False):
                     self._destroy(key)   # rebuilt on the next tick if its taskbar is still there
+            if recheck and not self._shut and not self._fs_recheck_timer.isActive():
+                self._fs_recheck_timer.start()
         except Exception as e:
             logger.error("Mirror tick failed: %s", e, exc_info=True)
 
