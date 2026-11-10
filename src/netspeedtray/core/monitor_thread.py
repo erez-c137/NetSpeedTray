@@ -1671,11 +1671,14 @@ class StatsMonitorThread(QThread):
         """Run a short-lived helper (nvidia-smi) and return its stdout, like check_output - but the
         process is held where ``stop()`` can kill it, so a quit never waits out (or orphans) a slow
         one. Raises on a non-zero exit, a timeout (the child is killed), or a kill from stop()."""
+        # Not in the app's folder (the inherited CWD): a child sitting there blocks a portable
+        # update from renaming the folder for as long as it lives (helpers.neutral_cwd).
+        from netspeedtray.utils.helpers import neutral_cwd
         with self._child_lock:
             if not self._is_running:
                 raise RuntimeError("stopping")
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                    stdin=subprocess.DEVNULL, encoding="utf-8",
+                                    stdin=subprocess.DEVNULL, encoding="utf-8", cwd=neutral_cwd(),
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self._child = proc
         try:

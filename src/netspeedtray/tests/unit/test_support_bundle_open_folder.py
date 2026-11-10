@@ -57,14 +57,17 @@ def test_ok_does_not_open_explorer(q_app, monkeypatch, tmp_path):
 ])
 def test_reveal_launches_explorer_by_absolute_path_with_the_path_quoted(monkeypatch, path):
     calls = []
-    monkeypatch.setattr(subprocess, "Popen", lambda args: calls.append(args))
+    monkeypatch.setattr(subprocess, "Popen", lambda args, **kw: calls.append((args, kw)))
     monkeypatch.setenv("SystemRoot", r"C:\Windows")
     helpers.reveal_in_explorer(path)
-    assert calls == ['"C:\\Windows\\explorer.exe" /select,"' + os.path.normpath(path) + '"']
+    # Started in the system folder, not the app's: a long-lived Explorer sitting in the install
+    # folder would block a portable update from renaming it (helpers.neutral_cwd).
+    assert calls == [('"C:\\Windows\\explorer.exe" /select,"' + os.path.normpath(path) + '"',
+                      {"cwd": helpers.neutral_cwd()})]
 
 
 def test_reveal_never_raises(monkeypatch):
-    def boom(_args):
+    def boom(_args, **_kw):
         raise OSError("no explorer")
     monkeypatch.setattr(subprocess, "Popen", boom)
     helpers.reveal_in_explorer("x.zip")

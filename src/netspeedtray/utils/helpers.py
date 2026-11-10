@@ -687,6 +687,41 @@ def calculate_monotone_cubic_interpolation(x_coords: List[float], y_coords: List
     return interp_x, interp_y
 
 
+def neutral_cwd() -> Optional[str]:
+    """A working directory for processes the app starts: the Windows system folder.
+
+    The app chdir's into its own folder at startup (monitor.py), and a child inherits that CWD -
+    which Windows holds open for the child's whole life, so the portable updater cannot rename the
+    folder while any child is alive, even after the app itself has exited (2.1.7's PowerShell probe
+    did exactly that in the 2.2.0-rc.7 rehearsal). A browser or Explorer window the app opens can
+    live for hours. Starting them in the system folder keeps the install folder free. None (inherit,
+    the old behaviour) only if the folder somehow does not exist."""
+    sys_dir = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+    return sys_dir if os.path.isdir(sys_dir) else None
+
+
+def open_external(target: str) -> None:
+    """Open a URL or folder with its default handler (``webbrowser.open`` / ``os.startfile``), in
+    ``neutral_cwd()`` rather than the app's folder. Never raises."""
+    try:
+        if sys.platform == "win32":
+            cwd = neutral_cwd()
+            if cwd:
+                os.startfile(target, cwd=cwd)          # type: ignore[attr-defined, call-arg]
+            else:
+                os.startfile(target)                   # type: ignore[attr-defined]
+            return
+    except Exception as e:
+        logging.getLogger("NetSpeedTray.helpers").debug("open_external(%r) failed: %s", target, e)
+        if not str(target).lower().startswith(("http://", "https://")):
+            return
+    try:
+        import webbrowser
+        webbrowser.open(target)
+    except Exception as e:
+        logging.getLogger("NetSpeedTray.helpers").debug("webbrowser.open(%r) failed: %s", target, e)
+
+
 def reveal_in_explorer(path: str) -> None:
     """Open File Explorer on the folder holding ``path``, with the file selected. Never raises.
 
@@ -702,6 +737,6 @@ def reveal_in_explorer(path: str) -> None:
         import subprocess
         explorer = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "explorer.exe")
         target = os.path.normpath(str(path)).replace('"', "")
-        subprocess.Popen(f'"{explorer}" /select,"{target}"')
+        subprocess.Popen(f'"{explorer}" /select,"{target}"', cwd=neutral_cwd())
     except Exception as e:
         logging.getLogger("NetSpeedTray.helpers").debug("reveal_in_explorer failed: %s", e)
