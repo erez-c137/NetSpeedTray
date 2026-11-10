@@ -129,14 +129,50 @@ def test_one_normal_reading_does_not_show_two_apart_do(gate):
     assert _shows(w) == []                                 # a single blip cannot show it
     gate.timer.singleShot.assert_called_once()             # ...but the confirmation is scheduled
     assert gate.timer.singleShot.call_args.args[0] == constants.timeouts.FULLSCREEN_EXIT_CONFIRM_MS
-    gate.advance(CONFIRM_S - 0.001)
+    gate.advance(CONFIRM_S - 0.010)
     gate.refresh(w, NORMAL)                                 # too soon: still unconfirmed
     assert _shows(w) == []
-    gate.advance(0.001)
+    gate.advance(0.010)
     gate.advance(CONFIRM_S)
     gate.refresh(w, NORMAL)
     assert len(_shows(w)) == 1
     assert w.shown["v"] is True
+
+
+def test_a_confirming_timer_a_hair_early_still_confirms(gate):
+    """The precise re-check timer can fire a millisecond early against time.monotonic: that must not
+    cost a second 250 ms round."""
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)
+    gate.refresh(w, NORMAL)
+    gate.advance(CONFIRM_S - 0.001)
+    gate.refresh(w, NORMAL)
+    assert w.shown["v"] is True
+
+
+def test_a_hold_on_no_information_asks_for_a_prompt_recheck(gate):
+    """While the latch holds on a NULL foreground it schedules the re-check timer, so the hold releases
+    when it runs out instead of at the next 1 s tick; a steady fullscreen app asks for nothing."""
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)
+    gate.refresh(w, JAVA)
+    gate.timer.singleShot.assert_not_called()
+    gate.refresh(w, 0)
+    assert w._fs_latch.recheck_wanted is True
+    gate.timer.singleShot.assert_called_once()
+
+
+def test_forget_fullscreen_runs_even_while_yielding_to_app_buttons(gate):
+    """The hold gives up while #24 hides the widget for app buttons: the poll must still forget the
+    cover, or burial recovery and the hover card stay off after the yield ends."""
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)
+    w.position_manager.is_yielding_to_apps.return_value = True
+    gate.refresh(w, 0)
+    gate.advance(HOLD_S + 0.1)
+    gate.refresh(w, 0)
+    assert w._fs_latch.reason == "no-foreground-timeout"
+    w.system_event_handler.forget_fullscreen.assert_called_once()
 
 
 def test_a_fullscreen_reading_in_between_restarts_the_confirmation(gate):
@@ -419,6 +455,18 @@ def test_mirror_keeps_its_fullscreen_hide_on_a_null_foreground(mirror_host):
     h.advance(CONFIRM_S)
     h.refresh(0)
     assert h.shown["v"] is True
+
+
+def test_mirror_drops_its_recheck_while_the_menu_is_open(mirror_host):
+    """Mid exit-confirmation when the main context menu opens: the mirror must not keep asking for the
+    250 ms re-check (a stale flag re-armed it four times a second until the menu closed)."""
+    h = mirror_host
+    h.refresh(JAVA)
+    h.refresh(NORMAL)
+    assert h.m.fs_recheck_wanted is True
+    h.m._main._is_context_menu_visible = True
+    h.refresh(NORMAL)
+    assert h.m.fs_recheck_wanted is False
 
 
 def test_mirror_exit_needs_two_readings_apart(mirror_host):

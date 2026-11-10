@@ -607,6 +607,17 @@ class NetworkSpeedWidget(QWidget):
                 fs_covered = (taskbar_shown and not keep_visible
                               and _judge_fullscreen(self, taskbar_info, hwnd))
                 should_be_visible = taskbar_shown and not fs_covered
+                latch = _fullscreen_latch(self)
+                if taskbar_shown and not keep_visible and latch.reason == "no-foreground-timeout":
+                    # Rare, and the one case a support bundle should show (the file log is INFO): a
+                    # window kept "covering" after it left the foreground. Names its class. The poll
+                    # forgets it too - even while #24 yields - or burial recovery and the hover card
+                    # would stand down for a fullscreen app that is no longer in front.
+                    self.logger.info("Fullscreen gate: released a hold on a cover with no foreground (%s)",
+                                     _window_log_desc(latch.probe_hwnd))
+                    handler = getattr(self, "system_event_handler", None)
+                    if handler is not None and hasattr(handler, "forget_fullscreen"):
+                        handler.forget_fullscreen()
                 # #24: a native horizontal Win11 bar whose app buttons reach the widget - it steps
                 # aside on this same hide path (never moves, #200). ANDed: neither this nor the
                 # fullscreen hide / keep_visible_fullscreen overrides the other. ``is True``: a stand-in
@@ -614,19 +625,10 @@ class NetworkSpeedWidget(QWidget):
                 if self.position_manager.is_yielding_to_apps() is True:
                     should_be_visible = False
                 elif (taskbar_shown and not keep_visible and self.isVisible() != should_be_visible
-                      and (fs_covered or _fullscreen_latch(self).reason in FullscreenLatch.RELEASE_REASONS)):
-                    latch = _fullscreen_latch(self)
+                      and (fs_covered or latch.reason in FullscreenLatch.RELEASE_REASONS)):
                     self.logger.debug("Fullscreen gate: %s widget (reason=%s, %s)",
                                       "hiding" if fs_covered else "showing", latch.reason,
                                       _window_log_desc(latch.probe_hwnd))
-                    if latch.reason == "no-foreground-timeout":
-                        # Rare, and the one case a support bundle should show (the file log is INFO):
-                        # a window kept "covering" after it left the foreground. Names its class.
-                        self.logger.info("Fullscreen gate: released a hold on a cover with no foreground (%s)",
-                                         _window_log_desc(latch.probe_hwnd))
-                        handler = getattr(self, "system_event_handler", None)
-                        if handler is not None and hasattr(handler, "forget_fullscreen"):
-                            handler.forget_fullscreen()
 
             if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)

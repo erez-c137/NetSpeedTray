@@ -37,6 +37,9 @@ class FullscreenLatch:
     # Readings further apart than this (the taskbar hidden, a menu open, a drag - the gate was not
     # consulted) restart the no-information hold instead of counting the gap toward it.
     NO_INFO_MAX_GAP_S = 2.5
+    # The confirming re-check is a precise timer that can still fire a hair early against
+    # time.monotonic; without slack that costs a second 250 ms round.
+    TIMER_SLACK_MS = 2
 
     RELEASE_REASONS = frozenset({"desktop-foreground", "exit-confirmed", "cover-gone",
                                  "no-foreground-timeout"})
@@ -100,6 +103,9 @@ class FullscreenLatch:
         if on_screen(probe) and obstructs(probe):
             self.reason = "covered" if not self.covered else "still-covered"
             self.covered, self.cover_hwnd, self._exit_first_at = True, probe, None
+            # Held on no information: re-check soon, so the hold releases when it runs out rather
+            # than at whatever reading comes next (the 1 s tick).
+            self.recheck_wanted = probe != foreground
             return True
         if not self.covered:
             self.reason = "not-covered"
@@ -112,7 +118,7 @@ class FullscreenLatch:
             self._exit_first_at = now
             self.reason, self.recheck_wanted = "exit-unconfirmed", True
             return True
-        if (now - self._exit_first_at) * 1000.0 < self.confirm_ms:
+        if (now - self._exit_first_at) * 1000.0 < self.confirm_ms - self.TIMER_SLACK_MS:
             self.reason, self.recheck_wanted = "exit-unconfirmed", True
             return True
         return self._release("exit-confirmed" if probe == foreground else "cover-gone")

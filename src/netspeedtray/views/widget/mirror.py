@@ -272,7 +272,10 @@ class MirrorWidget(QWidget):
             return
         main = self._main
         if getattr(main, "_is_context_menu_visible", False):
-            return   # the menu is modal and may sit over us: move nothing until it closes (#200)
+            # The menu is modal and may sit over us: move nothing until it closes (#200). No re-check
+            # while it is open either - a stale flag would re-arm the 250 ms tick for nothing.
+            self.fs_recheck_wanted = False
+            return
         try:
             if self.owner_lost():
                 # Our owner taskbar is gone but we survived: unlink before anything else touches us.
