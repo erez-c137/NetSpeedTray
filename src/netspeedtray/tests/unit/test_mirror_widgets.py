@@ -350,6 +350,41 @@ def test_foreground_change_tells_every_mirror_after_the_tick():
     mgr.shutdown()
 
 
+def test_tick_judges_the_live_foreground_not_the_stored_hwnd():
+    """#503: the debounced foreground event's hwnd is 250 ms old (maybe closed). Mirrors are judged
+    against the live foreground; the passed one only when the live read fails."""
+    live = {"fg": 77}
+
+    def foreground():
+        if live["fg"] is None:
+            raise RuntimeError("GetForegroundWindow failed")
+        return live["fg"]
+    main = SimpleNamespace(docked_taskbar=lambda: (100, "PRIMARY"))
+    mgr = MirrorManager(main, taskbars_provider=lambda: [_tb(100, "PRIMARY", True), _tb(200, "B")],
+                        mirror_factory=_FakeMirror, foreground_provider=foreground, window_class=_classes)
+    mgr._on_foreground(0xDEAD)
+    assert mgr.mirrors["B"].refreshed[-1][1] == 77
+    live["fg"] = None
+    mgr.tick(0xBEEF)
+    assert mgr.mirrors["B"].refreshed[-1][1] == 0xBEEF
+    mgr.shutdown()
+
+
+def test_an_unconfirmed_mirror_exit_schedules_one_recheck():
+    """#503: a mirror waiting to confirm a fullscreen exit gets its second reading from a single-shot
+    re-tick FULLSCREEN_EXIT_CONFIRM_MS later, not the 1 s tick."""
+    class _Pending(_FakeMirror):
+        fs_recheck_wanted = True
+    main = SimpleNamespace(docked_taskbar=lambda: (100, "PRIMARY"))
+    mgr = MirrorManager(main, taskbars_provider=lambda: [_tb(100, "PRIMARY", True), _tb(200, "B")],
+                        mirror_factory=_Pending, foreground_provider=lambda: 0, window_class=_classes)
+    mgr.tick()
+    assert mgr._fs_recheck_timer.isActive()
+    assert mgr._fs_recheck_timer.interval() == constants.timeouts.FULLSCREEN_EXIT_CONFIRM_MS
+    mgr.shutdown()
+    assert not mgr._fs_recheck_timer.isActive()
+
+
 # --- 3. a mirror's refresh ------------------------------------------------------------------------
 
 def _refresh_host(keep_visible=False, visible=False, menu=False):

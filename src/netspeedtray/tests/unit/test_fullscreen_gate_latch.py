@@ -13,13 +13,13 @@ DWM-cloaked monitor-sized window counted as a real fullscreen cover. These pin t
   foreground is a deliberate exit and shows at once); a closed fullscreen app with nothing taking the
   foreground still releases.
 """
-import time
 import types
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from netspeedtray import constants
+from netspeedtray.core.fullscreen_gate import FullscreenLatch
 from netspeedtray.views.widget import main as widget_main
 
 TB_HWND = 0x1000
@@ -51,9 +51,11 @@ def gate(monkeypatch):
                         lambda h: "WorkerW" if h == DESKTOP else "SunAwtFrame")
     timer = MagicMock()
     monkeypatch.setattr(widget_main, "QTimer", timer)
+    clock = {"t": 1000.0}   # the latch's monotonic clock, frozen: no test depends on wall time
 
     def make(visible):
         w = MagicMock()
+        w._fs_latch = FullscreenLatch(clock=lambda: clock["t"])
         w.config = {"preferred_monitor": None, "free_move": True, "keep_visible_fullscreen": False}
         w._is_context_menu_visible = False
         w._dragging = False
@@ -71,7 +73,10 @@ def gate(monkeypatch):
         world["fg"] = fg
         widget_main.NetworkSpeedWidget._execute_refresh(w, stored_hwnd)
 
-    return types.SimpleNamespace(world=world, make=make, refresh=refresh, timer=timer)
+    def advance(seconds):
+        clock["t"] += seconds
+
+    return types.SimpleNamespace(world=world, make=make, refresh=refresh, timer=timer, advance=advance)
 
 
 def _shows(w):
@@ -121,9 +126,11 @@ def test_one_normal_reading_does_not_show_two_apart_do(gate):
     assert _shows(w) == []                                 # a single blip cannot show it
     gate.timer.singleShot.assert_called_once()             # ...but the confirmation is scheduled
     assert gate.timer.singleShot.call_args.args[0] == constants.timeouts.FULLSCREEN_EXIT_CONFIRM_MS
+    gate.advance(CONFIRM_S - 0.001)
     gate.refresh(w, NORMAL)                                 # too soon: still unconfirmed
     assert _shows(w) == []
-    time.sleep(CONFIRM_S + 0.03)
+    gate.advance(0.001)
+    gate.advance(CONFIRM_S)
     gate.refresh(w, NORMAL)
     assert len(_shows(w)) == 1
     assert w.shown["v"] is True
@@ -134,7 +141,7 @@ def test_a_fullscreen_reading_in_between_restarts_the_confirmation(gate):
     gate.refresh(w, JAVA)
     gate.refresh(w, NORMAL)
     gate.refresh(w, JAVA)
-    time.sleep(CONFIRM_S + 0.03)
+    gate.advance(CONFIRM_S)
     gate.refresh(w, NORMAL)      # a first reading again, not a confirmation
     assert _shows(w) == []
 
@@ -156,7 +163,7 @@ def test_fullscreen_app_closing_with_a_null_foreground_still_shows(gate):
     gate.world["covering"].discard(JAVA)
     gate.refresh(w, 0)
     assert _shows(w) == []
-    time.sleep(CONFIRM_S + 0.03)
+    gate.advance(CONFIRM_S)
     gate.refresh(w, 0)
     assert len(_shows(w)) == 1
 
@@ -297,13 +304,18 @@ def test_is_taskbar_obstructed_still_sees_a_real_fullscreen_window():
         assert tu.is_taskbar_obstructed(tb, JAVA) is True
 
 
-def test_mirror_keeps_its_fullscreen_hide_on_a_null_foreground(monkeypatch):
+@pytest.fixture
+def mirror_host(monkeypatch):
+    """A stand-in ``self`` for MirrorWidget.refresh with a frozen-clock latch."""
     from netspeedtray.views.widget import mirror as mirror_mod
-    covering = {JAVA}
+    world = {"covering": {JAVA}, "on_screen": {JAVA, NORMAL, DESKTOP}}
     monkeypatch.setattr(mirror_mod, "is_taskbar_visible", lambda tb: True)
-    monkeypatch.setattr(mirror_mod, "is_taskbar_obstructed", lambda tb, h: h in covering)
-    monkeypatch.setattr(mirror_mod, "is_window_on_screen", lambda h: h in covering, raising=False)
+    monkeypatch.setattr(mirror_mod, "is_taskbar_obstructed", lambda tb, h: h in world["covering"])
+    monkeypatch.setattr(mirror_mod, "is_window_on_screen", lambda h: h in world["on_screen"], raising=False)
+    monkeypatch.setattr(mirror_mod, "_window_class", lambda h: "WorkerW" if h == DESKTOP else "SunAwtFrame")
+    clock = {"t": 1000.0}
     m = MagicMock()
+    m._fs_latch = FullscreenLatch(clock=lambda: clock["t"])
     m.dead = False
     m.native_alive.return_value = True
     m.owner_lost.return_value = False
@@ -313,12 +325,63 @@ def test_mirror_keeps_its_fullscreen_hide_on_a_null_foreground(monkeypatch):
     m.setVisible.side_effect = lambda v: shown.update(v=v)
     m.position_manager.is_yielding_to_apps.return_value = False
     m._obstructed = False
-    m._cover_hwnd = 0
     tb = types.SimpleNamespace(hwnd=TB_HWND)
-    mirror_mod.MirrorWidget.refresh(m, tb, JAVA)
-    assert shown["v"] is False
-    mirror_mod.MirrorWidget.refresh(m, tb, 0)      # NULL hand-off: no information
-    assert shown["v"] is False
-    covering.discard(JAVA)                          # the fullscreen app closed
-    mirror_mod.MirrorWidget.refresh(m, tb, 0)
-    assert shown["v"] is True
+
+    def refresh(fg):
+        mirror_mod.MirrorWidget.refresh(m, tb, fg)
+
+    def advance(seconds):
+        clock["t"] += seconds
+    return types.SimpleNamespace(m=m, shown=shown, world=world, refresh=refresh, advance=advance)
+
+
+def test_mirror_keeps_its_fullscreen_hide_on_a_null_foreground(mirror_host):
+    h = mirror_host
+    h.refresh(JAVA)
+    assert h.shown["v"] is False
+    h.refresh(0)                                    # NULL hand-off: no information
+    assert h.shown["v"] is False
+    h.world["covering"].discard(JAVA)               # the fullscreen app closed
+    h.world["on_screen"].discard(JAVA)
+    h.refresh(0)
+    assert h.shown["v"] is False and h.m.fs_recheck_wanted is True
+    h.advance(CONFIRM_S)
+    h.refresh(0)
+    assert h.shown["v"] is True
+
+
+def test_mirror_exit_needs_two_readings_apart(mirror_host):
+    """A mirror, like the main widget, does not show on one not-covered reading."""
+    h = mirror_host
+    h.refresh(JAVA)
+    h.refresh(NORMAL)
+    assert h.shown["v"] is False                    # a single blip cannot show it
+    assert h.m.fs_recheck_wanted is True            # ...the manager re-ticks to confirm
+    h.refresh(JAVA)                                 # covered again: the exit starts over
+    h.advance(CONFIRM_S)
+    h.refresh(NORMAL)
+    assert h.shown["v"] is False
+    h.advance(CONFIRM_S)
+    h.refresh(NORMAL)
+    assert h.shown["v"] is True and h.m.fs_recheck_wanted is False
+
+
+def test_mirror_desktop_foreground_shows_at_once(mirror_host):
+    h = mirror_host
+    h.refresh(JAVA)
+    h.refresh(DESKTOP)
+    assert h.shown["v"] is True
+
+
+def test_note_covered_with_no_window_is_ignored():
+    """An immediate hide with no known window must not latch 'covered by nothing': that could never
+    be re-checked and would hold the widget hidden until some real foreground came along."""
+    latch = FullscreenLatch()
+    latch.note_covered(0)
+    assert latch.covered is False and latch.cover_hwnd == 0
+    on = {NORMAL}
+    assert latch.judge(0, on_screen=lambda x: x in on, obstructs=lambda x: False,
+                       is_desktop=lambda x: False) is False
+    latch.note_covered(JAVA)                        # a real window still latches...
+    latch.note_covered(0)                           # ...and a later 0 keeps that window
+    assert latch.covered is True and latch.cover_hwnd == JAVA

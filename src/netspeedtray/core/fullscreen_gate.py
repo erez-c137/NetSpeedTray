@@ -49,9 +49,14 @@ class FullscreenLatch:
         self.probe_hwnd = 0
 
     def note_covered(self, hwnd: int) -> None:
-        """The immediate fullscreen hide fired for ``hwnd`` (already judged covering)."""
+        """The immediate fullscreen hide fired for ``hwnd`` (already judged covering). Ignored when
+        no window is known: a latch covered by nothing could never be re-checked, so it would hold
+        the widget hidden until some real foreground came along."""
+        hwnd = int(hwnd or 0) or self.cover_hwnd
+        if not hwnd:
+            return
         self.covered = True
-        self.cover_hwnd = int(hwnd or 0) or self.cover_hwnd
+        self.cover_hwnd = hwnd
         self._exit_first_at = None
         self.recheck_wanted = False
 
