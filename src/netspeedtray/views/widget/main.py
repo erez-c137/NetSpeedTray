@@ -247,6 +247,12 @@ class NetworkSpeedWidget(QWidget):
         self._qt_scale_seen: Optional[float] = None  # Qt's device pixel ratio the size was measured at
         self.monitor_window = None  # unified Monitor (Overview / Network / Hardware), lazy
         self.update_checker: Optional[UpdateChecker] = None
+        # Automatic re-checks while running (periodic + after resume); see _run_automatic_update_check.
+        self._update_recheck_timer: Optional[QTimer] = None
+        self._update_resume_check_timer: Optional[QTimer] = None
+        self._update_dialog_open: bool = False        # never stack a second update prompt
+        self._manual_update_check: bool = False       # the result in flight answers the menu item
+        self._update_dismissed_versions: set = set()  # "Not now" this session: no automatic re-prompt
         self.app_icon: QIcon
         # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
         
@@ -421,8 +427,20 @@ class NetworkSpeedWidget(QWidget):
         # Update Checker - delayed startup check
         self.update_checker = UpdateChecker(self.config, self)
         self.update_checker.update_available.connect(self._on_update_available)
+        self.update_checker.up_to_date.connect(self._clear_manual_update_check)
+        self.update_checker.check_failed.connect(self._clear_manual_update_check)
         if self.update_checker.should_check():
             QTimer.singleShot(5000, self.update_checker.check_now)
+        # The startup check runs once; a PC that sleeps instead of rebooting keeps this instance for
+        # weeks, so re-ask periodically and after a wake (both gated by should_check's 24 h interval).
+        self._update_recheck_timer = QTimer(self)
+        self._update_recheck_timer.setInterval(constants.app.UPDATE_RECHECK_INTERVAL_MS)
+        self._update_recheck_timer.timeout.connect(lambda: self._run_automatic_update_check("periodic"))
+        self._update_recheck_timer.start()
+        self._update_resume_check_timer = QTimer(self)
+        self._update_resume_check_timer.setSingleShot(True)   # restart() coalesces the two PBT_* messages
+        self._update_resume_check_timer.setInterval(constants.app.UPDATE_RESUME_CHECK_DELAY_MS)
+        self._update_resume_check_timer.timeout.connect(lambda: self._run_automatic_update_check("resume"))
 
         # Cycle Timer (not while "Show hardware in the hover card" collapses the widget to network-only)
         if effective_display_mode(self.config) == "cycle":
@@ -2257,6 +2275,9 @@ class NetworkSpeedWidget(QWidget):
                     invalidate = getattr(self, "invalidate_latency_gateway", None)
                     if invalidate is not None:
                         invalidate()   # the router may differ after sleep
+                    schedule_update = getattr(self, "_schedule_resume_update_check", None)
+                    if schedule_update is not None:
+                        schedule_update()
         except Exception as e:
             self.logger.debug("nativeEvent power handling failed: %s", e)
         return False, 0
@@ -2802,12 +2823,63 @@ class NetworkSpeedWidget(QWidget):
             # only (the automatic startup check stays silent on those).
             self.update_checker.up_to_date.connect(self._on_up_to_date_manual, Qt.ConnectionType.SingleShotConnection)
             self.update_checker.check_failed.connect(self._on_check_failed_manual, Qt.ConnectionType.SingleShotConnection)
+            self._manual_update_check = True
             self.update_checker.check_now()
+
+    def _clear_manual_update_check(self, *_args) -> None:
+        """Any check result (up to date / failed) ends the manual request it may have answered."""
+        self._manual_update_check = False
+
+    def _schedule_resume_update_check(self) -> None:
+        """Wake from sleep: check for updates once the network is likely back (coalesced)."""
+        timer = getattr(self, "_update_resume_check_timer", None)
+        if timer is not None:
+            timer.start()
+
+    def _run_automatic_update_check(self, reason: str) -> None:
+        """Periodic / after-resume update check. Silent like the startup one: only an available,
+        non-skipped final release reaches the dialog. Never runs while a prompt is open, an update
+        is being applied, or the app is quitting; should_check() enforces the 24 h interval, the
+        user's 'check for updates' toggle and the IT policy."""
+        try:
+            checker = getattr(self, "update_checker", None)
+            if checker is None:
+                return
+            if (getattr(self, "_will_quit_app", False) or getattr(self, "_cleanup_running", False)
+                    or getattr(self, "_cleanup_done", False)):
+                return
+            if getattr(self, "_update_dialog_open", False):
+                return
+            updater = getattr(self, "_secure_updater", None)
+            if updater is not None:
+                try:
+                    if updater.is_running():
+                        return
+                except RuntimeError:   # already deleteLater'd: nothing in flight
+                    pass
+            if not checker.should_check():
+                return
+            self.logger.info("Automatic update check (%s).", reason)
+            checker.check_now()
+        except Exception as e:
+            self.logger.debug("Automatic update check (%s) failed to start: %s", reason, e)
 
     def _on_update_available(self, latest_version: str, release_url: str, body: str = "",
                              installer_url: str = "", portable_url: str = "") -> None:
-        """Handle update available - from either the automatic startup check or a manual
-        menu check (both use this single persistent handler; see check_for_updates)."""
+        """Handle update available - from either an automatic check (startup, periodic, resume) or
+        a manual menu check (all use this single persistent handler; see check_for_updates)."""
+        manual = getattr(self, "_manual_update_check", False)
+        self._manual_update_check = False
+        if getattr(self, "_update_dialog_open", False):
+            self.logger.info("Update %s found while an update prompt is open; not stacking another.",
+                             latest_version)
+            return
+        if getattr(self, "_will_quit_app", False):
+            return
+        if not manual and latest_version.lstrip("vV") in getattr(self, "_update_dismissed_versions", set()):
+            self.logger.info("Update %s was answered 'Not now' this session; not re-prompting.",
+                             latest_version)
+            return
         self._show_update_dialog(latest_version, release_url, body, installer_url, portable_url)
 
     def _on_up_to_date_manual(self) -> None:
@@ -2828,8 +2900,16 @@ class NetworkSpeedWidget(QWidget):
         from netspeedtray.views.update_dialog import UpdateDialog
         latest = latest_version.lstrip("vV")
         dlg = UpdateDialog(self.i18n, constants.app.VERSION, latest, body, parent=self)
-        dlg.exec()
+        self._update_dialog_open = True
+        try:
+            dlg.exec()   # nested event loop: timers still fire, hence the open flag
+        finally:
+            self._update_dialog_open = False
 
+        if dlg.action == UpdateDialog.ACTION_DISMISS:
+            dismissed = getattr(self, "_update_dismissed_versions", None)
+            if dismissed is not None:
+                dismissed.add(latest)
         if dlg.action == UpdateDialog.ACTION_DOWNLOAD:
             self._start_secure_update(installer_url, release_url,
                                       portable_url=portable_url, latest_version=latest)
@@ -3325,6 +3405,10 @@ class NetworkSpeedWidget(QWidget):
 
         def _update_checker() -> None:
             # A check in flight sits in urlopen for up to 10 s; it is not waited for.
+            for name in ('_update_recheck_timer', '_update_resume_check_timer'):
+                timer = getattr(self, name, None)
+                if timer is not None:
+                    timer.stop()
             if getattr(self, 'update_checker', None):
                 self.update_checker.stop()
 
