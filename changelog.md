@@ -75,6 +75,38 @@ ALSO
 
 ---
 
+## [2.2.0-rc.8] - November 10, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+One fix, found by rehearsing a real 2.1.7 updating itself to 2.2: the portable version's in-app
+update could fail to swap its folder and fall back to copying by hand.
+
+### Fixed
+
+- **Portable updates no longer fail because the folder is "in use".** Updating the portable 2.1.7
+  could stop at "could not replace its folder" when a helper the old version started was still
+  running for a few seconds. The update now waits for it, and if something really keeps the
+  folder busy, the message names it. ([#499])
+
+  *Under the hood: a folder can't be renamed while any process has it as its working directory.
+  2.1.7 changes into its install folder at startup, and its PowerShell Widgets-button probe can
+  outlive it by 5-10 s; the applier only retried the rename for 8 s. The applier (which is the new
+  version's code, so it also fixes 2.1.7 -> 2.2) now waits up to 30 s for processes running from
+  or sitting in the install folder, plus orphaned children of the old app created during its
+  lifetime, then retries the rename for 20 s with backoff; it never kills anything. 2.2 itself
+  starts nvidia-smi, the browser and Explorer in System32, so none of them can hold the folder and
+  block a later update. Found in a VM rehearsal of 2.1.7 -> rc.7 (the installer path passed every
+  check).*
+
+- A test that drew different random data on every run and could fail on a rare draw. ([#501])
+
+[#499]: https://github.com/erez-c137/NetSpeedTray/pull/499
+[#501]: https://github.com/erez-c137/NetSpeedTray/pull/501
+
+---
+
 ## [2.2.0-rc.7] - November 9, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app
