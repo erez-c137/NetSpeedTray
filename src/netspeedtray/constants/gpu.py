@@ -83,6 +83,26 @@ class GpuConstants:
     # A listed GPU's name is elided at this many logical px, so a long driver name never widens the card.
     LIST_NAME_MAX_WIDTH_PX: Final[int] = 170
 
+    # Hybrid (Optimus) laptops, 2.2.1: nvidia-smi goes through NVML, and asking a sleeping dGPU
+    # anything powers it up - so a 5 s nvidia-smi poll keeps it from ever sleeping (battery drain).
+    # On a machine with a battery, an NVIDIA GPU AND a GPU of another maker (the iGPU), nvidia-smi is only asked for
+    # temperature / power while the dGPU is already awake: its PDH engine utilization (per LUID, read
+    # every tick anyway - PDH and DXGI never wake a GPU, Task Manager reads the same counters) was
+    # above HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT within the last HYBRID_DGPU_AWAKE_HOLD_SEC. The hold
+    # rides out a game's 0 % loading-screen ticks; it is a few nvidia-smi intervals, so once the work
+    # stops the queries stop and the dGPU sleeps. Activity in the first
+    # NVIDIA_SMI_SELF_ACTIVITY_GRACE_SEC after our own nvidia-smi call does not count, so a wake that
+    # nvidia-smi itself caused can never keep the gate open.
+    HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT: Final[float] = 0.0   # strictly above
+    HYBRID_DGPU_AWAKE_HOLD_SEC: Final[float] = 15.0
+    NVIDIA_SMI_SELF_ACTIVITY_GRACE_SEC: Final[float] = 2.0
+    # nvidia-smi that keeps failing (timeout, non-zero exit) is retried after BASE * 2^(n-1) s for the
+    # n-th failure in a row, capped at MAX - never every 5 s forever. Logged once per failure streak,
+    # at the LOG_AFTER-th failure.
+    NVIDIA_SMI_BACKOFF_BASE_SEC: Final[float] = 10.0
+    NVIDIA_SMI_BACKOFF_MAX_SEC: Final[float] = 300.0
+    NVIDIA_SMI_BACKOFF_LOG_AFTER: Final[int] = 3
+
     VENDOR_NVIDIA: Final[int] = 0x10DE
     VENDOR_AMD: Final[int] = 0x1002
     VENDOR_AMD_ALT: Final[int] = 0x1022
@@ -111,6 +131,12 @@ class GpuConstants:
             raise ValueError("SHARED_BUDGET_FRACTION_OF_RAM must be in (0, 1].")
         if self.LIST_SMI_CACHE_MAX_AGE_POLLS <= 0 or self.LIST_NAME_MAX_WIDTH_PX <= 0:
             raise ValueError("LIST_SMI_CACHE_MAX_AGE_POLLS and LIST_NAME_MAX_WIDTH_PX must be positive.")
+        if self.HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT < 0 or self.HYBRID_DGPU_AWAKE_HOLD_SEC <= 0:
+            raise ValueError("HYBRID_DGPU_AWAKE_* must be non-negative / positive.")
+        if not 0 < self.NVIDIA_SMI_BACKOFF_BASE_SEC <= self.NVIDIA_SMI_BACKOFF_MAX_SEC:
+            raise ValueError("NVIDIA_SMI_BACKOFF_BASE_SEC must be in (0, NVIDIA_SMI_BACKOFF_MAX_SEC].")
+        if self.NVIDIA_SMI_BACKOFF_LOG_AFTER < 1 or self.NVIDIA_SMI_SELF_ACTIVITY_GRACE_SEC < 0:
+            raise ValueError("NVIDIA_SMI_BACKOFF_LOG_AFTER must be >= 1 and the grace non-negative.")
 
 
 # Singleton instance for easy access
