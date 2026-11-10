@@ -242,12 +242,37 @@ def trend_smooth(values: List[float], window: int, edge_window: Optional[int] = 
     return out
 
 
+def _trend_smooth_at(y: List[float], window: int, edge_window: Optional[int],
+                     positions: List[int]) -> List[float]:
+    """trend_smooth(y, window, edge_window) at ``positions`` only, operation for operation (so bit-
+    identical): _gaussian_local_linear's interior formula is _local_linear_at's whole-kernel branch."""
+    n = len(y)
+    damping = float(constants.renderer.TREND_EDGE_SLOPE_DAMPING)
+    half = _trend_half(window, n)
+    edge = constants.renderer.TREND_EDGE_WINDOW if edge_window is None else int(edge_window)
+    half_edge = _trend_half(edge, n)
+    blend = min(int(window) // 2, n - 1)
+    start = n - blend if edge < window and blend > 0 else n
+    out = []
+    for i in positions:
+        v = _local_linear_at(y, half, damping, i) if half >= 1 else y[i]
+        if i >= start:
+            w = 1.0 - (n - 1 - i) / blend
+            v = (1.0 - w) * v + w * (_local_linear_at(y, half_edge, damping, i) if half_edge >= 1 else y[i])
+        out.append(v)
+    return out
+
+
 # Bins smaller than this (strides of a few samples) are not worth their moments: the lattice sums the
 # raw kernel instead (see _gaussian_local_linear_lattice).
 _TREND_MIN_BIN = 8
 # trend_smooth_sampled searches around this many of the highest lattice points, and of the zone's local
 # maxima (3 exact samples each).
 _TREND_EXACT_PEAKS = 4
+# A graph too narrow for the lattice (2 * stride > half) takes its auto-fit from the lattice path at
+# stride half // this: measured within 1e-4 of the full smoothing's max (bit-identical ~90% of the time),
+# ~1-2 ms at 7,200 samples. half // 2 (the widest the lattice allows) read up to 1.5% low on spiky data.
+_TREND_FIT_STRIDE_DIV = 8
 
 
 @functools.lru_cache(maxsize=32)
@@ -378,9 +403,21 @@ def trend_smooth_sampled(values: List[float], window: int, stride: int,
     y = values
     n = len(y)
     b = int(stride)
+    # Drawn points too far apart for the kernel (2 * stride > half): a lattice point at this stride can
+    # miss a sample's whole bump, and nothing below can find it. That is a graph narrower than ~40 px
+    # on a long history, where the full smoothing cost 30-50 ms a series per sample (5,000-7,200
+    # samples). Few points are drawn, so compute exactly those (trend_smooth's own arithmetic, so the
+    # values are identical), and take the auto-fit from the lattice path at a stride well inside it.
+    if b > 1 and n >= 4 * b and 2 * b > _trend_half(window, n):
+        b_fit = _trend_half(window, n) // _TREND_FIT_STRIDE_DIV
+        if b_fit > 1 and n >= 4 * b_fit:
+            idx = list(range(0, n, b))
+            if idx[-1] != n - 1:
+                idx.append(n - 1)
+            return idx, _trend_smooth_at(y, window, edge_window, idx), trend_smooth_sampled(
+                y, window, b_fit, edge_window)[2]
     # The full computation when every sample is drawn, when there are too few to bin, or when the
-    # drawn points are too far apart for the kernel (2 * stride > half): then a lattice point can miss
-    # a sample's whole bump, and nothing below can find it.
+    # kernel is too short for the narrow-graph path above (half < 2 * _TREND_FIT_STRIDE_DIV: cheap).
     if b <= 1 or n < 4 * b or 2 * b > _trend_half(window, n):
         full = trend_smooth(y, window, edge_window)
         idx = list(range(0, n, max(1, b)))
@@ -1780,7 +1817,10 @@ class WidgetRenderer:
                 def make_smooth_polyline(accessor):
                     raw_y = [accessor(d) for d in history]
                     cx, cy = calculate_monotone_cubic_interpolation(raw_x, raw_y, density=5)
-                    points = [QPointF(x, base_y - (min(max(0, y), y_cap) / max_y) * h) for x, y in zip(cx, cy)]
+                    # max(0, NaN) is 0: a NaN sample draws on the baseline. An inf one is held at the top
+                    # edge (the uncapped auto-fit would put it at -inf).
+                    points = [QPointF(x, base_y - (min(max(0, y), y_cap if y != math.inf else max_y) / max_y) * h)
+                              for x, y in zip(cx, cy)]
                     return points
 
                 # Dotted line at the plan speed - only with headroom above 0%: at 0% the plan speed IS the
@@ -2010,6 +2050,12 @@ class WidgetRenderer:
         if downloads is None:
             downloads = [d.download for d in history] if series in ("both", "download") else []
         max_speed_val = max(uploads + downloads)
+        if not math.isfinite(max_speed_val):
+            # max() keeps a NaN it starts on (nothing compares greater), which made the whole axis NaN
+            # while a NaN sample sat at the oldest edge; an inf made every finite point flat. Size the
+            # axis to the finite samples (the paint paths draw a NaN point on the baseline, an inf one at
+            # the top edge).
+            max_speed_val = max((v for v in uploads + downloads if math.isfinite(v)), default=0.0)
 
         if outlier_clip and len(history) > 10:
             all_speeds = uploads + downloads

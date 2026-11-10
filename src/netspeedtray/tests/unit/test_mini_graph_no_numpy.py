@@ -434,6 +434,130 @@ def test_trend_paint_path_on_a_long_history_matches_the_full_smoothing(q_app, w,
         assert max(abs((base - pt.y()) - e) for pt, e in zip(pts, exp)) <= MAX_PX_ERROR
 
 
+# --- a NaN / inf sample never takes the graph down (#488 regression) ------------------------------------
+
+@pytest.mark.parametrize("y", [
+    [1.0, math.nan, 1.0, 1.0],              # the reported case: max(0, nan) + 2 * min(0, nan) == 0
+    [math.nan, 1.0, 1.0, 1.0, 2.0],
+    [1.0, 2.0, 2.0, math.nan],
+    [1.0, 1.0, math.nan, math.nan, 1.0, 1.0],
+    [0.0, math.inf, 0.0, 0.0, 1.0],
+    [1.0, -math.inf, 1.0, 1.0],
+    [5.0, math.inf, math.nan, 5.0, 5.0, 5.0],
+])
+def test_monotone_cubic_survives_nan_and_inf(y):
+    """The numpy spline returned NaN for a tangent beside a NaN sample and kept drawing; the pure one
+    divided 0 by 0. A NaN secant now counts as an extremum (a flat tangent), so only the segments
+    touching the bad sample are non-finite - the rest of the curve is drawn."""
+    x = [float(i) for i in range(len(y))]
+    cx, cy = calculate_monotone_cubic_interpolation(x, y, density=5)
+    assert len(cx) == len(cy) == (len(y) - 1) * 5 + 1
+    bad = {i for i, v in enumerate(y) if not math.isfinite(v)}
+    for k, v in enumerate(cy[:-1]):
+        seg = k // 5
+        if not ({seg - 1, seg, seg + 1, seg + 2} & bad):   # a segment and its tangents' secants
+            assert math.isfinite(v), (k, v)
+
+
+def test_monotone_cubic_finite_input_is_unchanged_by_the_nan_guard():
+    """Equal secants, zero secants, sign changes: the flat-tangent rule only adds NaN to it."""
+    rng = random.Random(7)
+    for _ in range(50):
+        n = rng.randint(2, 30)
+        y = [rng.choice([0.0, 1.0, rng.uniform(-3, 1e6)]) for _ in range(n)]
+        x = [float(i) for i in range(n)]
+        gx, gy = calculate_monotone_cubic_interpolation(x, y, density=5)
+        ex, ey = np_monotone_cubic(x, y, density=5)
+        assert gx == ex and gy == ey
+
+
+@pytest.mark.parametrize("style", ["detailed", "trend"])
+@pytest.mark.parametrize("n", [12, 300])                 # sparse (the spline) and dense
+@pytest.mark.parametrize("where", [0, 1, 5, -2, -1])    # the oldest sample, inside, "now"
+@pytest.mark.parametrize("bad", [math.nan, math.inf])
+def test_a_nan_or_inf_sample_still_draws_the_graph(q_app, caplog, style, n, where, bad):
+    """It vanished (ZeroDivisionError caught, an ERROR every paint) until the sample scrolled out. A
+    NaN at the oldest edge also made the auto-fit axis NaN (max() keeps a NaN it starts on)."""
+    from PyQt6.QtGui import QColor, QImage, QPainter
+    hist = [AggregatedSpeedData(upload=1.0 * MBPS + (i % 3) * 1e4, download=4.0 * MBPS + (i % 5) * 1e4,
+                                timestamp=T0 + timedelta(seconds=i)) for i in range(n)]
+    hist[where] = AggregatedSpeedData(upload=bad, download=bad, timestamp=hist[where].timestamp)
+    r = WidgetRenderer(_cfg(graph_style=style), I18nStrings("en_US"))
+    img = QImage(120, 40, QImage.Format.Format_ARGB32)
+    img.fill(QColor(0, 0, 0, 0))
+    p = QPainter(img)
+    with caplog.at_level("ERROR"):
+        r.draw_mini_graph(p, 120, 40, r.config, hist)
+    p.end()
+    assert not [rec for rec in caplog.records if rec.levelname == "ERROR"]
+    _size, _key, up, down, _ceiling = r._graph_cache[(False, "both", style)]
+    assert up and down
+    for pt in up + down:
+        assert math.isfinite(pt.x()) and math.isfinite(pt.y())
+        assert R.GRAPH_MARGIN - 1 <= pt.y() <= 40, pt.y()   # inside the graph, not off to -inf
+
+
+# --- narrow graphs on a long history: the points exactly, the cost of the lattice -----------------------
+
+def _narrow_cases(rng, count):
+    """(series, window, stride) with 2 * stride > half: graphs of 6-45 px on 600-7,200 samples."""
+    out = []
+    while len(out) < count:
+        n = rng.choice([600, 1000, 1800, 3600, 5000, 7200])
+        graph_w = rng.randint(6, 45)
+        stride, window = max(1, n // (2 * graph_w)), trend_window(n)
+        if stride > 1 and n >= 4 * stride and 2 * stride > min(window // 2, (n - 1) // 2):
+            out.append((_series(rng.choice(KINDS), n, rng), window, stride))
+    return out
+
+
+def _same(a, b):
+    return len(a) == len(b) and all(x == z or (math.isnan(x) and math.isnan(z)) for x, z in zip(a, b))
+
+
+def test_narrow_graph_draws_the_full_smoothings_own_values():
+    """2 * stride > half used to run the whole O(n * window) smoothing (30-50 ms a series per sample at
+    5,000-7,200 samples). The drawn points are now computed alone - bit-identical to it - and the
+    auto-fit comes from the lattice at a stride well inside its pinned range (measured within 1e-4)."""
+    rng = random.Random(488)
+    worst = 0.0
+    for y, window, stride in _narrow_cases(rng, 120):
+        n = len(y)
+        full = trend_smooth(y, window)
+        idx, drawn, scale = trend_smooth_sampled(y, window, stride)
+        assert idx == list(range(0, n, stride)) + ([n - 1] if (n - 1) % stride else [])
+        assert _same(drawn, [full[i] for i in idx]), (n, stride)
+        want = max(trend_scale_values(full))
+        if want > 0:
+            worst = max(worst, abs(max(scale) - want) / want)
+    assert worst <= 5e-4, worst
+
+
+def test_narrow_graph_nan_series_draws_the_same_points():
+    y = _series("noise", 5000, random.Random(3))
+    y[100] = y[2600] = math.nan
+    y[-3] = None
+    window = trend_window(5000)
+    full = trend_smooth(y, window)
+    idx, drawn, _scale = trend_smooth_sampled(y, window, 5000 // 40)
+    assert _same(drawn, [full[i] for i in idx])
+
+
+def test_narrow_graph_on_a_long_history_stays_cheap():
+    """7,200 samples (2 h) on a 20 px graph: was ~45 ms a series; now ~1-2 ms. Generous bound."""
+    import time
+    n = 7200
+    y = _series("noise", n, random.Random(11))
+    window, stride = trend_window(n), n // (2 * 20)
+    assert 2 * stride > window // 2                  # the narrow path, not the lattice
+    best = math.inf
+    for _ in range(3):
+        t = time.perf_counter()
+        trend_smooth_sampled(y, window, stride)
+        best = min(best, time.perf_counter() - t)
+    assert best < 0.015, f"{best * 1000:.1f} ms"
+
+
 # --- numpy is never loaded by the widget's graph --------------------------------------------------------
 
 _CHILD = r"""

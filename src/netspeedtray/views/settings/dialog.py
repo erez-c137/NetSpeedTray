@@ -656,12 +656,18 @@ class SettingsDialog(QDialog):
             self.move(x, y)
 
     def _schedule_settings_update(self) -> None:
-        """Starts the throttle timer to emit settings_changed."""
-        if not self._ui_setup_done or getattr(self, "_loading_page", False): return
+        """Starts the throttle timer to emit settings_changed. Not once the dialog is hidden: a dialog
+        kept alive after Cancel (a backup still running) still gets a field's editingFinished on focus
+        out, which restarted the timer _revert_live_preview had stopped and re-applied the cancelled
+        values live."""
+        if not self._ui_setup_done or getattr(self, "_loading_page", False) or not self.isVisible(): return
         self._update_timer.start()
 
     def _emit_settings_changed_throttled(self) -> None:
-        """Emits the settings_changed signal with the current configuration."""
+        """Emits the signal settings_changed with the current configuration - only while the dialog is
+        on screen (see _schedule_settings_update)."""
+        if not self.isVisible():
+            return
         current_settings = self.get_settings()
         self._update_preview(current_settings)
         self.settings_changed.emit(current_settings)

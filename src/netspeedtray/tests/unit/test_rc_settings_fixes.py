@@ -65,6 +65,9 @@ def _make(qtbot, cfg=None, ifaces=("Ethernet", "Wi-Fi")):
 
 
 def _flush(dlg):
+    # The live preview applies only while Settings is on screen (a hidden dialog never emits).
+    if not dlg.isVisible():
+        dlg.show()
     if dlg._update_timer.isActive():
         dlg._update_timer.stop()
     dlg._emit_settings_changed_throttled()
@@ -460,3 +463,26 @@ def test_half_typed_hex_keeps_the_last_valid_colour(qtbot):
     assert main.config["default_color_dark"] == "#ABCDEF"
     dlg.appearance_page.default_color_dark_input.setText("#123456")
     assert dlg.get_settings()["default_color_dark"] == "#123456"
+
+
+# --- A dialog kept alive after Cancel (backup running) never applies a preview again -----------------
+
+def test_a_hidden_dialog_never_reapplies_the_cancelled_preview(qtbot):
+    """After Cancel the dialog can stay alive, hidden, while a backup finishes. A credentials field's
+    editingFinished on focus-out used to restart the throttle _revert_live_preview had stopped, and
+    250 ms later the cancelled values were applied live again."""
+    dlg, main = _make(qtbot)
+    dlg.show()
+    field = dlg.hardware_page.lhm_username
+    field.setText("cancelled-user")
+    field.editingFinished.emit()
+    assert dlg._update_timer.isActive()                 # on screen: the preview is scheduled
+    dlg.cancel_button.click()                           # reverts, stops the timer, hides
+    assert not dlg.isVisible() and not dlg._update_timer.isActive()
+    reverted = dict(main.config)
+    calls = len(main.calls)
+    field.editingFinished.emit()                        # the focus-out that follows the hide
+    assert not dlg._update_timer.isActive()
+    dlg._update_timer.timeout.emit()                    # and if a tick lands anyway
+    dlg._emit_settings_changed_throttled()
+    assert len(main.calls) == calls and main.config == reverted

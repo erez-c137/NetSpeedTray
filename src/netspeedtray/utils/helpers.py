@@ -649,12 +649,16 @@ def calculate_monotone_cubic_interpolation(x_coords: List[float], y_coords: List
                for dxi, dyi in zip([b - a for a, b in zip(x, x[1:])], [b - a for a, b in zip(y, y[1:])])]
 
     # 2-3. Inner tangents (Fritsch-Carlson): 0 at a local extremum (secants of different signs),
-    # else the harmonic-style mean that keeps the curve from overshooting.
+    # else the harmonic-style mean that keeps the curve from overshooting. A NaN secant (a NaN sample)
+    # counts as an extremum too: `<= 0` is False for NaN, and the mean's denominator could then be
+    # max(0, nan) + 2 * min(0, nan) = 0 - numpy returned NaN there, plain floats raise
+    # ZeroDivisionError and the whole graph vanished (#488). With the product > 0 both secants share
+    # a sign and are non-zero, so the denominator cannot be 0.
     tangents = [0.0] * n
     for i in range(1, n - 1):
         m_prev = secants[i - 1]
         m_next = secants[i]
-        if m_prev * m_next <= 0:
+        if not (m_prev * m_next > 0):
             tangents[i] = 0.0
         else:
             tangents[i] = (3 * m_prev * m_next) / (max(m_next, m_prev) + 2 * min(m_next, m_prev))
