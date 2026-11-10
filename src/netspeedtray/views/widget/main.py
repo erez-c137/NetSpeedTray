@@ -250,9 +250,13 @@ class NetworkSpeedWidget(QWidget):
         # Automatic re-checks while running (periodic + after resume); see _run_automatic_update_check.
         self._update_recheck_timer: Optional[QTimer] = None
         self._update_resume_check_timer: Optional[QTimer] = None
+        self._update_offer_retry_timer: Optional[QTimer] = None
         self._update_dialog_open: bool = False        # never stack a second update prompt
         self._manual_update_check: bool = False       # the result in flight answers the menu item
-        self._update_dismissed_versions: set = set()  # "Not now" this session: no automatic re-prompt
+        self._update_auto_source: Optional[str] = None  # "periodic"/"resume" while such a check is out
+        self._update_dismissed_at: Dict[str, float] = {}  # version -> time of "Not now" (snoozes it)
+        self._pending_update_offer: Optional[tuple] = None  # a flyout offer waiting out fullscreen etc.
+        self._update_flyout = None
         self.app_icon: QIcon
         # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
         
@@ -427,13 +431,20 @@ class NetworkSpeedWidget(QWidget):
         # Update Checker - delayed startup check
         self.update_checker = UpdateChecker(self.config, self)
         self.update_checker.update_available.connect(self._on_update_available)
+        # Persistent, like update_available: the manual "up to date" / "failed" boxes show only when
+        # the result answers the menu item (_manual_update_check). Per-click SingleShot connections
+        # outlived a manual check that FOUND an update and fired on the next automatic one (#508).
+        self.update_checker.up_to_date.connect(self._on_update_check_up_to_date)
+        self.update_checker.check_failed.connect(self._on_update_check_failed)
         if self.update_checker.should_check():
             QTimer.singleShot(5000, self.update_checker.check_now)
         # The startup check runs once; a PC that sleeps instead of rebooting keeps this instance for
         # weeks, so re-ask periodically and after a wake (both gated by should_check's 24 h interval).
         try:
-            self.update_checker.up_to_date.connect(self._clear_manual_update_check)
-            self.update_checker.check_failed.connect(self._clear_manual_update_check)
+            self._update_offer_retry_timer = QTimer(self)
+            self._update_offer_retry_timer.setSingleShot(True)
+            self._update_offer_retry_timer.setInterval(constants.app.UPDATE_OFFER_RETRY_MS)
+            self._update_offer_retry_timer.timeout.connect(self._show_pending_update_offer)
             self._update_recheck_timer = QTimer(self)
             self._update_recheck_timer.setInterval(constants.app.UPDATE_RECHECK_INTERVAL_MS)
             self._update_recheck_timer.timeout.connect(lambda: self._run_automatic_update_check("periodic"))
@@ -2815,23 +2826,36 @@ class NetworkSpeedWidget(QWidget):
         from netspeedtray.core.update_checker import update_check_disabled_by_policy
         if update_check_disabled_by_policy():
             # The menu item is hidden under the policy (U1); a stale menu opened just before the
-            # policy landed must not wire the one-shot replies to a check that will never run.
+            # policy landed must not arm the manual replies for a check that will never run.
             return
         if self.update_checker:
-            # update_available is already wired to _on_update_available at construction
-            # (persistent, see __init__). Do NOT connect a second handler here: on a manual
-            # check both would fire and the update dialog shows twice - the first starts the
-            # download, the second "pops back up" over it and races the install/quit, so the
-            # installer never visibly runs. Only the up-to-date / failed messages are manual-
-            # only (the automatic startup check stays silent on those).
-            self.update_checker.up_to_date.connect(self._on_up_to_date_manual, Qt.ConnectionType.SingleShotConnection)
-            self.update_checker.check_failed.connect(self._on_check_failed_manual, Qt.ConnectionType.SingleShotConnection)
+            # update_available / up_to_date / check_failed are all wired ONCE at construction
+            # (persistent, see _setup_timers). Do NOT connect anything here: a second
+            # update_available handler showed the dialog twice (the first started the download,
+            # the second raced the install/quit), and per-click SingleShot up_to_date / failed
+            # connections outlived a manual check that found an update, so the next AUTOMATIC
+            # check popped a surprise "up to date" / "failed" box (#508 review). The flag below
+            # is what makes this result a manual one.
             self._manual_update_check = True
             self.update_checker.check_now()
 
-    def _clear_manual_update_check(self, *_args) -> None:
-        """Any check result (up to date / failed) ends the manual request it may have answered."""
+    def _take_update_check_context(self) -> Tuple[bool, Optional[str]]:
+        """Read-and-clear who asked for the result now arriving: (manual, automatic source)."""
+        manual = bool(getattr(self, "_manual_update_check", False))
+        source = getattr(self, "_update_auto_source", None)
         self._manual_update_check = False
+        self._update_auto_source = None
+        return manual, source
+
+    def _on_update_check_up_to_date(self) -> None:
+        manual, _source = self._take_update_check_context()
+        if manual:
+            self._on_up_to_date_manual()
+
+    def _on_update_check_failed(self, error: str = "") -> None:
+        manual, _source = self._take_update_check_context()
+        if manual:
+            self._on_check_failed_manual(error)
 
     def _schedule_resume_update_check(self) -> None:
         """Wake from sleep: check for updates once the network is likely back (coalesced)."""
@@ -2839,17 +2863,18 @@ class NetworkSpeedWidget(QWidget):
         if timer is not None:
             timer.start()
 
+    def _app_is_quitting(self) -> bool:
+        return bool(getattr(self, "_will_quit_app", False) or getattr(self, "_cleanup_running", False)
+                    or getattr(self, "_cleanup_done", False))
+
     def _run_automatic_update_check(self, reason: str) -> None:
-        """Periodic / after-resume update check. Silent like the startup one: only an available,
-        non-skipped final release reaches the dialog. Never runs while a prompt is open, an update
-        is being applied, or the app is quitting; should_check() enforces the 24 h interval, the
-        user's 'check for updates' toggle and the IT policy."""
+        """Periodic / after-resume update check. Silent like the startup one, and an available
+        release is offered with a non-modal flyout, never a dialog (_show_pending_update_offer).
+        Never runs while a prompt is open, an update is being applied, or the app is quitting;
+        should_check() enforces the 24 h interval, the user's toggle and the IT policy."""
         try:
             checker = getattr(self, "update_checker", None)
-            if checker is None:
-                return
-            if (getattr(self, "_will_quit_app", False) or getattr(self, "_cleanup_running", False)
-                    or getattr(self, "_cleanup_done", False)):
+            if checker is None or self._app_is_quitting():
                 return
             if getattr(self, "_update_dialog_open", False):
                 return
@@ -2863,27 +2888,101 @@ class NetworkSpeedWidget(QWidget):
             if not checker.should_check():
                 return
             self.logger.info("Automatic update check (%s).", reason)
+            if not getattr(self, "_manual_update_check", False):
+                self._update_auto_source = reason
             checker.check_now()
         except Exception as e:
             self.logger.debug("Automatic update check (%s) failed to start: %s", reason, e)
 
+    def _update_recently_dismissed(self, version: str) -> bool:
+        """'Not now' snoozes a version for UPDATE_NOT_NOW_SNOOZE_S (automatic offers only)."""
+        at = (getattr(self, "_update_dismissed_at", None) or {}).get(version.lstrip("vV"))
+        if at is None:
+            return False
+        elapsed = time.time() - at
+        return 0 <= elapsed < constants.app.UPDATE_NOT_NOW_SNOOZE_S   # a clock set back re-offers
+
     def _on_update_available(self, latest_version: str, release_url: str, body: str = "",
                              installer_url: str = "", portable_url: str = "") -> None:
-        """Handle update available - from either an automatic check (startup, periodic, resume) or
-        a manual menu check (all use this single persistent handler; see check_for_updates)."""
-        manual = getattr(self, "_manual_update_check", False)
-        self._manual_update_check = False
+        """Handle update available - from a manual menu check (dialog), the 5 s startup check
+        (dialog, unchanged) or a periodic / after-resume check (a non-modal flyout that opens the
+        dialog only when clicked). One persistent handler for all; see check_for_updates."""
+        manual, source = self._take_update_check_context()
         if getattr(self, "_update_dialog_open", False):
             self.logger.info("Update %s found while an update prompt is open; not stacking another.",
                              latest_version)
             return
-        if getattr(self, "_will_quit_app", False):
+        if self._app_is_quitting():
             return
-        if not manual and latest_version.lstrip("vV") in getattr(self, "_update_dismissed_versions", set()):
-            self.logger.info("Update %s was answered 'Not now' this session; not re-prompting.",
+        offer = (latest_version, release_url, body, installer_url, portable_url)
+        if manual:
+            self._show_update_dialog(*offer)
+            return
+        if self._update_recently_dismissed(latest_version):
+            self.logger.info("Update %s was answered 'Not now' recently; not re-offering yet.",
                              latest_version)
             return
-        self._show_update_dialog(latest_version, release_url, body, installer_url, portable_url)
+        if source is None:   # the 5 s startup check: as before
+            self._show_update_dialog(*offer)
+            return
+        self._pending_update_offer = offer
+        self._show_pending_update_offer()
+
+    def _update_offer_blocked(self) -> bool:
+        """A fullscreen app, someone's modal dialog or a nested event loop: not now, retry later."""
+        handler = getattr(self, "system_event_handler", None)
+        if handler is not None and handler.is_fullscreen_active():
+            return True
+        from PyQt6.QtCore import QThread
+        return (QApplication.activeModalWidget() is not None
+                or QThread.currentThread().loopLevel() > 1)
+
+    def _show_pending_update_offer(self) -> None:
+        """Show the waiting automatic offer as a flyout - takes no focus, auto-dismisses - or retry
+        later while _update_offer_blocked(). Replaces an earlier update flyout, never stacks."""
+        offer = getattr(self, "_pending_update_offer", None)
+        if offer is None:
+            return
+        if self._app_is_quitting() or getattr(self, "_update_dialog_open", False):
+            self._pending_update_offer = None
+            return
+        try:
+            if self._update_offer_blocked():
+                timer = getattr(self, "_update_offer_retry_timer", None)
+                if timer is not None:
+                    timer.start()
+                else:
+                    self._pending_update_offer = None   # no retry possible; the next due check re-offers
+                return
+            self._pending_update_offer = None
+            from netspeedtray.views.flyout import Flyout
+            from PyQt6 import sip
+            previous = getattr(self, "_update_flyout", None)
+            if previous is not None and not sip.isdeleted(previous):
+                previous.close()   # Qt-owned and self-deleting: replace it, never stack two
+            latest = offer[0].lstrip("vV")
+            # Existing, already-translated strings: no new locale keys.
+            flyout = Flyout(self.i18n.UPDATE_AVAILABLE_TITLE,
+                            self.i18n.UPDATE_AVAILABLE_TEXT.format(current=constants.app.VERSION,
+                                                                   latest=latest),
+                            action_text=self.i18n.WELCOME_2_0_WHATS_NEW_BUTTON,
+                            auto_dismiss_ms=constants.app.UPDATE_FLYOUT_DISMISS_MS)
+            # Deferred: the flyout closes (and deletes itself) right after action_clicked returns -
+            # the dialog's nested event loop must not run inside its button's click handler.
+            flyout.action_clicked.connect(
+                lambda o=offer: QTimer.singleShot(0, lambda: self._open_update_dialog_from_offer(o)))
+            self._update_flyout = flyout
+            geo = self.frameGeometry()
+            flyout.show_at(QPoint(geo.left(), geo.top()))
+            self.logger.info("Update %s offered (flyout).", latest)
+        except Exception as e:
+            self.logger.error("Error offering the update: %s", e, exc_info=True)
+
+    def _open_update_dialog_from_offer(self, offer: tuple) -> None:
+        """The user clicked the update flyout: now the dialog (Download / Skip / Not now)."""
+        if self._app_is_quitting() or getattr(self, "_update_dialog_open", False):
+            return
+        self._show_update_dialog(*offer)
 
     def _on_up_to_date_manual(self) -> None:
         """Show up-to-date message for manual check."""
@@ -2910,9 +3009,9 @@ class NetworkSpeedWidget(QWidget):
             self._update_dialog_open = False
 
         if dlg.action == UpdateDialog.ACTION_DISMISS:
-            dismissed = getattr(self, "_update_dismissed_versions", None)
+            dismissed = getattr(self, "_update_dismissed_at", None)
             if dismissed is not None:
-                dismissed.add(latest)
+                dismissed[latest] = time.time()   # snoozes automatic offers (UPDATE_NOT_NOW_SNOOZE_S)
         if dlg.action == UpdateDialog.ACTION_DOWNLOAD:
             self._start_secure_update(installer_url, release_url,
                                       portable_url=portable_url, latest_version=latest)
@@ -3408,7 +3507,8 @@ class NetworkSpeedWidget(QWidget):
 
         def _update_checker() -> None:
             # A check in flight sits in urlopen for up to 10 s; it is not waited for.
-            for name in ('_update_recheck_timer', '_update_resume_check_timer'):
+            self._pending_update_offer = None
+            for name in ('_update_recheck_timer', '_update_resume_check_timer', '_update_offer_retry_timer'):
                 timer = getattr(self, name, None)
                 if timer is not None:
                     timer.stop()

@@ -571,8 +571,14 @@ def _timer_fake(config):
                                  _state_watcher_timer=MagicMock(), _cycle_timer=MagicMock(),
                                  widget_state=MagicMock(), update_config=MagicMock(),
                                  _show_usage_alert=MagicMock(), _on_update_available=MagicMock(),
-                                 _execute_refresh=MagicMock())
-    with patch("netspeedtray.views.widget.main.UpdateChecker") as uc:
+                                 _execute_refresh=MagicMock(),
+                                 _on_update_check_up_to_date=MagicMock(), _on_update_check_failed=MagicMock(),
+                                 _run_automatic_update_check=MagicMock(),
+                                 _show_pending_update_offer=MagicMock())
+    # QTimer patched: a SimpleNamespace cannot parent a real one, and the timers _setup_timers makes
+    # for itself (usage alert, update re-checks) are not what these tests are about.
+    with patch("netspeedtray.views.widget.main.UpdateChecker") as uc, \
+            patch("netspeedtray.views.widget.main.QTimer"):
         uc.return_value.should_check.return_value = False
         W._setup_timers(fake)
     return fake
