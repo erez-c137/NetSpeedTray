@@ -7,7 +7,6 @@ leaves the dialog open, so a user can star *and* sponsor). All copy reuses exist
 """
 from __future__ import annotations
 
-import webbrowser
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QSize
@@ -16,6 +15,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButt
 
 from netspeedtray.utils import styles as su
 from netspeedtray.utils.dwm import apply_win11_chrome
+from netspeedtray.utils.helpers import open_external
 
 _SPONSORS_URL = "https://github.com/sponsors/erez-c137"
 _KOFI_URL = "https://ko-fi.com/erezc137"
@@ -94,7 +94,7 @@ class SupportDialog(QDialog):
             f" background: {c['subtle_fill']}; color: {c['text_primary']}; border: 1px solid {border}; }}"
             f" QPushButton:hover {{ border-color: {c['accent']}; background: {c['card_bg']}; }}")
         # Open the link but keep the dialog open, so a user can star AND tip.
-        btn.clicked.connect(lambda: webbrowser.open(url))
+        btn.clicked.connect(lambda: open_external(url))
         return btn
 
     def showEvent(self, event) -> None:  # type: ignore[override]

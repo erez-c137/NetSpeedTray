@@ -710,7 +710,8 @@ class SecureUpdater(QObject):
         ready = self._move_to_downloads(ready)
 
         try:
-            os.startfile(ready)   # type: ignore[attr-defined]  # reveal in Explorer (Windows)
+            from netspeedtray.utils.helpers import neutral_cwd
+            os.startfile(ready, cwd=neutral_cwd())   # type: ignore[attr-defined]  # reveal in Explorer
         except Exception:
             pass
         try:
@@ -864,8 +865,8 @@ class SecureUpdater(QObject):
         except Exception:
             pass
         try:
-            import webbrowser
-            webbrowser.open(self._release_url)
+            from netspeedtray.utils.helpers import open_external
+            open_external(self._release_url)
         except Exception:
             pass
         self._finish()

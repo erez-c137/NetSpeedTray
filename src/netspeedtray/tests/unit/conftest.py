@@ -73,6 +73,15 @@ def _isolate_update_marker(tmp_path, monkeypatch):
                         lambda: [str(tmp_path / "Downloads"), str(tmp_path)])
 
 
+@pytest.fixture(autouse=True)
+def _no_real_shell_launch(monkeypatch):
+    """No test may open a real browser or Explorer window on the machine running the suite:
+    ``os.startfile`` (behind ``helpers.open_external``, the guided-copy folder reveal and
+    ``webbrowser.open`` on Windows) is a no-op here. A test that checks a launch fakes it itself."""
+    if hasattr(os, "startfile"):
+        monkeypatch.setattr(os, "startfile", lambda *a, **k: None)
+
+
 class _NoLhmWebServer:
     """Stand-in for LhmHttpClient: LibreHardwareMonitor's web server is not running."""
 

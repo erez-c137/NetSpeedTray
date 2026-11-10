@@ -547,8 +547,8 @@ def test_u8_the_updater_says_why_and_keeps_the_current_version(q_app, monkeypatc
     up._active = True
     shown, opened, launched = [], [], []
     monkeypatch.setattr(ui, "_info_box", lambda parent, title, text: shown.append(text))
-    import webbrowser
-    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
+    from netspeedtray.utils import helpers
+    monkeypatch.setattr(helpers, "open_external", lambda url: opened.append(url))
     up.launching.connect(lambda: launched.append(True))
 
     up._on_untrusted("WinVerifyTrust failed (0x800B0100)")

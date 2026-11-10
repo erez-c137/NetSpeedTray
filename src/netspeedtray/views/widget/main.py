@@ -616,8 +616,8 @@ class NetworkSpeedWidget(QWidget):
             dlg = WelcomeDialog(self.i18n, parent=self)
             dlg.exec()
             if dlg.action == WelcomeDialog.ACTION_WHATS_NEW:
-                import webbrowser
-                webbrowser.open(
+                from netspeedtray.utils.helpers import open_external
+                open_external(
                     f"https://github.com/{constants.app.GITHUB_OWNER}/{constants.app.GITHUB_REPO}/releases/latest"
                 )
         except Exception as e:
@@ -2781,8 +2781,8 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Secure update failed to start: {e}", exc_info=True)
             try:
-                import webbrowser
-                webbrowser.open(release_url)
+                from netspeedtray.utils.helpers import open_external
+                open_external(release_url)
             except Exception:
                 pass
 
@@ -2819,8 +2819,8 @@ class NetworkSpeedWidget(QWidget):
             if dlg.dismissed_forever():
                 self.update_config({"temp_onboarding_dismissed": True})
             if dlg.action == TempOnboardingDialog.ACTION_GET_LHM:
-                import webbrowser
-                webbrowser.open(LHM_RELEASES_URL)
+                from netspeedtray.utils.helpers import open_external
+                open_external(LHM_RELEASES_URL)
         except Exception as e:
             self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
 
