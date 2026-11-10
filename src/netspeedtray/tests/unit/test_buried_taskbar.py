@@ -880,18 +880,24 @@ def test_first_burial_ever_still_recovers_at_once():
 # each click was charged to the backoff - the widget sat under the taskbar for 1, 2, 4 ... s.
 
 
-def _show_desktop_clicks(m, z, clock, clicks, every_s, via_taskbar=False, check_every_s=0.05):
+def _show_desktop_clicks(m, z, clock, clicks, every_s, via_taskbar=False, reburials=(),
+                         check_every_s=0.05):
     """`clicks` Show desktop clicks `every_s` apart: the foreground alternates desktop / app (first
     the taskbar, which takes the click, when `via_taskbar`), the shell buries the widget on each
-    step, and our checks run every `check_every_s`. Returns the longest stretch spent buried."""
+    step - and again at each offset in `reburials` after it, foreground unchanged - and our checks
+    run every `check_every_s`. Returns the longest stretch spent buried."""
     longest, buried_since = 0.0, None
     for i in range(clicks):
         steps = [TB, DESK if i % 2 == 0 else APP] if via_taskbar else [DESK if i % 2 == 0 else APP]
         for step in steps:
             z.foreground = step
-            _bury(z)
+            step_start = clock.t
+            pending = [0.0] + list(reburials)
             end = clock.t + (every_s / len(steps))
             while clock.t < end - 1e-9:
+                while pending and clock.t >= step_start + pending[0] - 1e-9:
+                    pending.pop(0)
+                    _bury(z)
                 if m.is_buried_behind_taskbar():
                     buried_since = clock.t if buried_since is None else buried_since
                     if m.reseat_above_taskbar():
@@ -907,44 +913,116 @@ def test_show_desktop_clicked_fast_never_leaves_the_widget_buried():
     """20 clicks in 15 s (more than BURIAL_FRESH_RATE_MAX): each burial recovers on the check that
     finds it, nothing is charged and the rate cap never trips. Fails without the fix (the widget
     stays buried for the escalating backoff once the cap trips)."""
-    with _env([TB, W]) as (m, z, _w, clock):
-        m.is_buried_behind_taskbar()
+    with _env([W, TB]) as (m, z, _w, clock):
+        assert m.is_buried_behind_taskbar() is False                     # seeds the foreground baseline
         longest = _show_desktop_clicks(m, z, clock, clicks=20, every_s=0.75)
-        assert longest <= 1.0, longest
         assert longest == 0.0, longest
         assert not m._fresh_rate_capped
-        assert m._reseat_attempts <= 1
+        assert m._reseat_attempts == 0
 
 
 def test_show_desktop_through_the_taskbar_click_is_free_inside_the_fight_window():
     """The click activates the taskbar first, then the desktop ~0.375 s / a frame apart: the second
     burial can land inside the fight window, but it came with a foreground switch - still free."""
     for every in (0.75, 0.2):
-        with _env([TB, W]) as (m, z, _w, clock):
-            m.is_buried_behind_taskbar()
+        with _env([W, TB]) as (m, z, _w, clock):
+            assert m.is_buried_behind_taskbar() is False
             longest = _show_desktop_clicks(m, z, clock, clicks=20, every_s=every, via_taskbar=True)
             assert longest == 0.0, (every, longest)
             assert not m._fresh_rate_capped
-            assert m._reseat_attempts <= 1
+            assert m._reseat_attempts == 0
 
 
-def test_periodic_reburier_on_the_desktop_still_trips_the_rate_cap():
-    """The desktop is the foreground the whole time (nothing switches): a 260-400 ms re-burier is
-    capped and decays exactly as before - the Show desktop exemption needs a switch per burial."""
-    for rebury in (0.26, 0.3, 0.4):
-        with _env([TB, W]) as (m, z, _w, clock):
-            z.foreground = DESK
+def test_show_desktop_click_that_buries_twice_is_free_both_times():
+    """One click buries the widget twice, 0.1 s apart, the foreground already settled: the second
+    burial is inside the fight window with no new switch - the switch grace keeps it free (without
+    it: charged, and the widget waits out a 1 s+ backoff)."""
+    with _env([W, TB]) as (m, z, _w, clock):
+        assert m.is_buried_behind_taskbar() is False
+        longest = _show_desktop_clicks(m, z, clock, clicks=20, every_s=0.75, reburials=(0.1,))
+        assert longest <= 0.5, longest
+        assert m._reseat_attempts == 0
+        assert not m._fresh_rate_capped
+
+
+def test_switch_grace_is_capped_per_switch():
+    """A re-burier riding one switch gets at most SHOW_DESKTOP_GRACE_REBURIALS free re-seats, and
+    only within SHOW_DESKTOP_GRACE_MS of it - then the fight rules apply again."""
+    grace = pm_mod._SHOW_DESKTOP_GRACE_REBURIALS
+    with _env([W, TB]) as (m, z, _w, clock):
+        assert m.is_buried_behind_taskbar() is False
+        z.foreground = DESK
+        _bury(z)
+        assert m.reseat_above_taskbar() is True          # the switch
+        for _ in range(grace):
+            clock.t += 0.1
             _bury(z)
-            reseats = _run_fight(m, z, clock, rebury_after_s=rebury, check_every_s=0.05,
+            assert m.reseat_above_taskbar() is True      # grace, free
+        assert m._reseat_attempts == 0
+        clock.t += 0.1
+        _bury(z)
+        assert m.reseat_above_taskbar() is True          # first charged one (delay 0)
+        assert m._reseat_attempts == 1
+        clock.t += 0.1
+        _bury(z)
+        assert m.reseat_above_taskbar() is False         # a fight: inside the 1 s window
+    with _env([W, TB]) as (m, z, _w, clock):
+        assert m.is_buried_behind_taskbar() is False
+        z.foreground = DESK
+        _bury(z)
+        assert m.reseat_above_taskbar() is True
+        clock.t += pm_mod._SHOW_DESKTOP_GRACE_S + 0.1   # grace expired
+        _bury(z)
+        assert m.reseat_above_taskbar() is True
+        assert len(m._fresh_reseat_times) == 1           # an ordinary fresh burial, counted
+
+
+def test_periodic_reburier_with_the_shell_focused_still_trips_the_rate_cap():
+    """The desktop (or the taskbar) is the foreground the whole time - nothing switches: a 260-400 ms
+    re-burier is capped and decays exactly as before; the exemption needs a switch per burial."""
+    for fg in (DESK, TB):
+        for rebury in (0.26, 0.3, 0.4):
+            with _env([TB, W]) as (m, z, _w, clock):
+                z.foreground = fg
+                _bury(z)
+                reseats = _run_fight(m, z, clock, rebury_after_s=rebury, check_every_s=0.05,
+                                     duration_s=120)
+                assert m._fresh_rate_capped, (fg, rebury)
+                assert len(reseats) <= 25, (fg, rebury, len(reseats))
+                assert reseats[-1] - reseats[-2] >= 16 - 0.1, (fg, rebury, _gaps(reseats[0], reseats))
+
+
+def test_flickering_foreground_reads_do_not_fake_a_switch():
+    """GetForegroundWindow failing on every other call (desktop in front, 300 ms re-burier): a
+    failed read must not replace the last good snapshot, or the next good read looks like a switch
+    to the desktop and every other burial goes free. The cap trips after as many re-seats as with
+    clean reads."""
+    def run(flicker):
+        with _env([TB, W]) as (m, z, win32, clock):
+            z.foreground = DESK
+            if flicker:
+                calls = {"n": 0}
+
+                def fg():
+                    calls["n"] += 1
+                    if calls["n"] % 2:
+                        raise RuntimeError("flicker")
+                    return z.foreground
+                win32.GetForegroundWindow.side_effect = fg
+            _bury(z)
+            reseats = _run_fight(m, z, clock, rebury_after_s=0.3, check_every_s=0.05,
                                  duration_s=120)
-            assert m._fresh_rate_capped, rebury
-            assert len(reseats) <= 25, (rebury, len(reseats))
-            assert reseats[-1] - reseats[-2] >= 16 - 0.1, (rebury, _gaps(reseats[0], reseats))
+            assert m._fresh_rate_capped, flicker
+            return reseats
+    clean, flicker = run(False), run(True)
+    assert len(flicker) == len(clean), (len(flicker), len(clean))
+    assert len(clean) <= 25, len(clean)
 
 
-def test_one_show_desktop_mid_fight_buys_exactly_one_free_reseat():
+def test_one_show_desktop_mid_fight_buys_one_switch_and_its_grace_only():
     """A capped fight is under way; the user clicks Show desktop once. That burial is re-seated at
-    once, uncharged - and the re-burier's next burial (no new switch) is deferred as before."""
+    once, uncharged; the re-burier then rides the switch grace at most SHOW_DESKTOP_GRACE_REBURIALS
+    times, and the next burial is deferred by the backoff as before."""
     with _env([TB, W]) as (m, z, _w, clock):
         _bury(z)
         _run_fight(m, z, clock, rebury_after_s=0.3, check_every_s=0.05, duration_s=30)
@@ -953,9 +1031,13 @@ def test_one_show_desktop_mid_fight_buys_exactly_one_free_reseat():
         z.foreground = DESK                              # Show desktop
         _bury(z)
         assert m.reseat_above_taskbar() is True          # at once, mid-backoff
+        for _ in range(pm_mod._SHOW_DESKTOP_GRACE_REBURIALS):
+            clock.t += 0.3
+            _bury(z)                                     # the re-burier, foreground unchanged
+            assert m.reseat_above_taskbar() is True      # grace
         assert m._reseat_attempts == attempts            # not charged
         clock.t += 0.3
-        _bury(z)                                         # the re-burier, foreground unchanged
+        _bury(z)
         assert m.reseat_above_taskbar() is False         # back in the backoff
         assert m._fresh_rate_capped
 
@@ -970,14 +1052,18 @@ def test_foreground_switch_between_two_apps_is_not_exempt():
         assert m._shell_foreground_switch((0, "")) is False
         m._reseat_foreground = (DESK, "WorkerW")
         assert m._shell_foreground_switch((APP, "Notepad")) is True
-        m.reset_reseat_state()
-        assert m._shell_foreground_switch((DESK, "WorkerW")) is False
+        m.reset_reseat_state()                           # the baseline survives a reset
+        assert m._reseat_foreground == (DESK, "WorkerW")
+        assert m._switch_grace_left == 0
 
 
 def test_foreground_read_failure_is_no_switch():
     with _env([TB, W]) as (m, z, win32, clock):
         win32.GetForegroundWindow.side_effect = RuntimeError("boom")
         assert m._foreground_snapshot() == (0, "")
+        _bury(z)
+        assert m.reseat_above_taskbar() is True
+        assert m._reseat_foreground is None              # nothing good to keep
 
 
 # --- Access denied (pasharm, Win10): SetWindowPos refused the insert-after window 4x in 1.6 s --

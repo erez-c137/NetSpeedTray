@@ -80,6 +80,20 @@ class TimeoutConstants:
     # A tick-only fight trips it after ~12 s, a 300 ms re-burier after ~4 s.
     BURIAL_FRESH_RATE_MAX: Final[int] = 12
     BURIAL_FRESH_RATE_WINDOW_MS: Final[int] = 15000
+    # Show desktop exemption (owner, rc.7 / rc.8: ~13 Show desktop clicks in 8 s tripped the cap above
+    # and left the widget under the taskbar for the backoff). A burial found after the foreground
+    # moved to / from the taskbar or the desktop since our last re-seat is the user's click: re-seated
+    # at once, never charged, never counted toward the cap. One click can bury the widget more than
+    # once with the foreground already settled (the taskbar takes the click, the desktop follows), so
+    # up to SHOW_DESKTOP_GRACE_REBURIALS more burials within SHOW_DESKTOP_GRACE_MS of that exempt
+    # re-seat are free too - then the fight window / cap / backoff apply again.
+    # Deliberate trade-off: a re-burier TIED to real foreground switches (say an app stealing focus
+    # from the desktop every 0.3 s) is re-seated free on each switch, plus the grace burials. It is
+    # bounded by how fast the foreground actually changes (Windows' focus-steal rules) and by the
+    # ZORDER_RECHECK_MIN_INTERVAL_MS check spacing; a re-burier that leaves the foreground alone gets
+    # nothing from this and still trips the cap exactly as before.
+    SHOW_DESKTOP_GRACE_MS: Final[int] = 1000
+    SHOW_DESKTOP_GRACE_REBURIALS: Final[int] = 2
     # The one INFO "recovered from taskbar burial" line per episode is meant for a REAL burial
     # (#327 note, rc.2 W8). The widget is also buried for a moment when it first docks (startup,
     # an Explorer restart) and when a tray icon arrives - the shell re-lays the taskbar and the
