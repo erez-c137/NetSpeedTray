@@ -473,3 +473,35 @@ class TestGpuNameRedaction:
         log = _open_zip_entry(dest, "logs/NetSpeedTray_Log.log")
         assert "GeForce" not in log and "'<gpu-1>'" in log
         assert json.loads(_open_zip_entry(dest, "config.json"))["gpu_adapter"] == "<redacted-gpu>"
+
+    def test_a_gpu_no_longer_installed_is_redacted_from_older_log_lines(
+            self, q_app, tmp_path, fake_log_dir, monkeypatch):
+        # An unplugged eGPU in Automatic: neither DXGI nor the config names it any more, but the
+        # rotated log still carries the "GPU adapters changed" line from while it was attached.
+        from netspeedtray.core import gpu_adapters
+        monkeypatch.setattr(gpu_adapters, "enumerate_adapters",
+                            lambda: [self._adapter("Intel(R) UHD Graphics 770", 0x8086)])
+        (fake_log_dir / "NetSpeedTray_Log.log.1").write_text(
+            "INFO - GPU adapters changed: ['Intel(R) UHD Graphics 770', \"NVIDIA GeForce RTX 4090 D\"]\n"
+            "INFO - Picked GPU 'AMD Radeon RX 7900 XTX' is not present; showing the busiest GPU until it is.\n",
+            encoding="utf-8")
+        (fake_log_dir / "NetSpeedTray_Log.log").write_text(
+            "INFO - unrelated NVIDIA GeForce RTX 4090 D mention\n"
+            "INFO - GPU adapters changed: [garbage\n", encoding="utf-8")
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(dest, {"language": "en_US", "gpu_adapter": ""})
+        older = _open_zip_entry(dest, "logs/NetSpeedTray_Log.log.1")
+        current = _open_zip_entry(dest, "logs/NetSpeedTray_Log.log")
+        for text in (older, current):
+            assert "GeForce" not in text and "Radeon" not in text and "UHD" not in text
+        assert "GPU adapters changed: [garbage" in current     # an unparsable line is left alone
+
+    def test_a_tiny_hand_edited_gpu_adapter_does_not_shred_the_logs(
+            self, q_app, tmp_path, fake_log_dir, monkeypatch):
+        from netspeedtray.core import gpu_adapters
+        monkeypatch.setattr(gpu_adapters, "enumerate_adapters", lambda: None)
+        (fake_log_dir / "NetSpeedTray_Log.log").write_text(
+            "INFO - Hardware monitor: connected to root/LibreHardwareMonitor\n", encoding="utf-8")
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(dest, {"language": "en_US", "gpu_adapter": "a"})
+        assert "Hardware monitor: connected" in _open_zip_entry(dest, "logs/NetSpeedTray_Log.log")

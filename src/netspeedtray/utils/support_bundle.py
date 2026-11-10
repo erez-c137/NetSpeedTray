@@ -23,6 +23,7 @@ Privacy:
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import platform
@@ -31,7 +32,7 @@ import sys
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtGui import QGuiApplication
 
@@ -223,6 +224,39 @@ def _scrub_log_text(text: str) -> str:
     return "".join(scrubbed_lines)
 
 
+# The INFO lines monitor_thread writes with GPU model names in them. Their names are harvested from the
+# logs themselves too, so a card that is gone now (an unplugged eGPU, a swapped card) is still
+# redacted from the older lines that named it.
+_LOG_GPU_LIST_RE = re.compile(r"GPU adapters changed: (\[[^\r\n]*\])")
+_LOG_PICKED_GPU_RE = re.compile(
+    r"""Picked GPU ('(?:[^'\\\r\n]|\\.)*'|"(?:[^"\\\r\n]|\\.)*") is not present""")
+# A real adapter name is never this short; a hand-edited one-letter `gpu_adapter` must not shred
+# every log line that happens to contain that letter.
+_GPU_NAME_MIN_LEN = 4
+
+
+def _gpu_names_in_logs(texts: List[str]) -> List[str]:
+    """GPU names from the "GPU adapters changed: [...]" and "Picked GPU '...'" log lines. A line
+    that does not parse as the Python literal it was logged as is skipped (never raises)."""
+    names: List[str] = []
+    for text in texts:
+        for match in _LOG_GPU_LIST_RE.finditer(text):
+            try:
+                value = ast.literal_eval(match.group(1))
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                continue
+            if isinstance(value, list):
+                names.extend(v for v in value if isinstance(v, str))
+        for match in _LOG_PICKED_GPU_RE.finditer(text):
+            try:
+                value = ast.literal_eval(match.group(1))
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                continue
+            if isinstance(value, str):
+                names.append(value)
+    return names
+
+
 def _gpu_names_to_redact(config: Dict[str, Any]) -> List[str]:
     """Every GPU model string the logs can carry: the real DXGI adapters present now plus the
     config's picked GPU (which may be a card no longer installed). Never raises - a failed
@@ -251,7 +285,7 @@ def _build_gpu_redactor(names: List[str]):
     tokens: Dict[str, str] = {}
     for name in names:
         key = str(name).strip().lower()
-        if key and key not in tokens:
+        if len(key) >= _GPU_NAME_MIN_LEN and key not in tokens:
             tokens[key] = f"<gpu-{len(tokens) + 1}>"
     if not tokens:
         return lambda text: text
@@ -307,8 +341,14 @@ def build_support_bundle(
     sanitized_config = _sanitize_config(config)
     system_info = _collect_system_info(config)
 
-    log_files = _list_log_files()
-    redact_gpu_names = _build_gpu_redactor(_gpu_names_to_redact(config))
+    log_texts: List[Tuple[str, str]] = []
+    for log_path in _list_log_files():
+        try:
+            log_texts.append((log_path.name, log_path.read_text(encoding="utf-8", errors="replace")))
+        except OSError as e:
+            logger.warning("Could not read log %s: %s", log_path.name, e)
+    redact_gpu_names = _build_gpu_redactor(
+        _gpu_names_to_redact(config) + _gpu_names_in_logs([text for _, text in log_texts]))
 
     with zipfile.ZipFile(destination_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         # 1. System info
@@ -321,14 +361,9 @@ def build_support_bundle(
         )
 
         # 3. Log files (each scrubbed through ObfuscatingFormatter again)
-        for log_path in log_files:
-            try:
-                raw = log_path.read_text(encoding="utf-8", errors="replace")
-            except OSError as e:
-                logger.warning("Could not read log %s: %s", log_path.name, e)
-                continue
+        for log_name, raw in log_texts:
             scrubbed = _scrub_log_text(redact_gpu_names(raw))
-            zf.writestr(f"logs/{log_path.name}", scrubbed)
+            zf.writestr(f"logs/{log_name}", scrubbed)
 
         # 4. Manifest
         manifest = (
@@ -365,6 +400,6 @@ def build_support_bundle(
 
     logger.info(
         "Support bundle built: %s (%d log files included)",
-        destination_zip.name, len(log_files),
+        destination_zip.name, len(log_texts),
     )
     return destination_zip
