@@ -371,6 +371,7 @@ def per_monitor(monkeypatch):
     """Two monitors: a fullscreen window (hwnd 9) sits on the monitor of taskbar 200 only."""
     monkeypatch.setattr(mirror_mod, "is_taskbar_visible", lambda tb: tb.hwnd != 300)  # 300 auto-hidden
     monkeypatch.setattr(mirror_mod, "is_taskbar_obstructed", lambda tb, fg: fg == 9 and tb.hwnd == 200)
+    monkeypatch.setattr(mirror_mod, "is_window_on_screen", lambda h: bool(h))   # fake hwnds are "drawn"
 
     def no_bare_lookup(*a, **k):
         raise AssertionError("a mirror must never fetch a taskbar itself")

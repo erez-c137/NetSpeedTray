@@ -1,0 +1,324 @@
+"""
+#503: the widget flashed over a fullscreen app (and blinked out on a plain desktop) every ~24 s.
+
+The fullscreen hide was re-decided from ONE foreground reading on every refresh, and anything that was
+not a covering window read as "not covered": a NULL foreground during an activation hand-off, the
+stale hwnd a debounced foreground event carried (possibly closed by then), and an invisible or
+DWM-cloaked monitor-sized window counted as a real fullscreen cover. These pin the latch:
+
+- a foreground that is not on screen is no information - the decision holds;
+- the refresh judges the LIVE foreground, not the stored hwnd;
+- an invisible / cloaked monitor-sized window hides nothing;
+- leaving fullscreen needs two agreeing readings FULLSCREEN_EXIT_CONFIRM_MS apart (the desktop in the
+  foreground is a deliberate exit and shows at once); a closed fullscreen app with nothing taking the
+  foreground still releases.
+"""
+import time
+import types
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from netspeedtray import constants
+from netspeedtray.views.widget import main as widget_main
+
+TB_HWND = 0x1000
+JAVA = 0x4F0C86        # the fullscreen SunAwtFrame
+NORMAL = 0x2222        # an ordinary visible window
+INVISIBLE_FS = 0x3333  # a monitor-sized window that is not drawn (invisible / cloaked)
+DESKTOP = 0x4444       # WorkerW
+DEAD = 0xDEAD          # a window already destroyed
+
+CONFIRM_S = constants.timeouts.FULLSCREEN_EXIT_CONFIRM_MS / 1000.0
+
+
+# --- the widget's visibility gate ------------------------------------------------------------------
+
+@pytest.fixture
+def gate(monkeypatch):
+    """Drive NetworkSpeedWidget._execute_refresh against a scripted world. ``world`` holds the live
+    foreground and which windows are drawn; ``obstructs`` mimics the pre-#503 is_taskbar_obstructed
+    (rect == monitor only, no visibility test), so a test can show the gate itself copes."""
+    world = {"fg": 0, "on_screen": {JAVA, NORMAL, DESKTOP}, "covering": {JAVA, INVISIBLE_FS}}
+    monkeypatch.setattr(widget_main, "get_taskbar_info",
+                        lambda preferred_screen_name=None: types.SimpleNamespace(hwnd=TB_HWND))
+    monkeypatch.setattr(widget_main, "is_taskbar_visible", lambda tb: True)
+    monkeypatch.setattr(widget_main, "is_taskbar_obstructed", lambda tb, h: h in world["covering"])
+    monkeypatch.setattr(widget_main, "is_window_on_screen", lambda h: h in world["on_screen"],
+                        raising=False)
+    monkeypatch.setattr(widget_main.win32gui, "GetForegroundWindow", lambda: world["fg"])
+    monkeypatch.setattr(widget_main.win32gui, "GetClassName",
+                        lambda h: "WorkerW" if h == DESKTOP else "SunAwtFrame")
+    timer = MagicMock()
+    monkeypatch.setattr(widget_main, "QTimer", timer)
+
+    def make(visible):
+        w = MagicMock()
+        w.config = {"preferred_monitor": None, "free_move": True, "keep_visible_fullscreen": False}
+        w._is_context_menu_visible = False
+        w._dragging = False
+        w._taskbar_lost_count = 0
+        shown = {"v": visible}
+        w.isVisible.side_effect = lambda: shown["v"]
+        w.setVisible.side_effect = lambda v: shown.update(v=v)
+        w.position_manager.refresh_float_state.return_value = None
+        w.position_manager.is_yielding_to_apps.return_value = False
+        w.position_manager.is_free_float_active.return_value = False
+        w.shown = shown
+        return w
+
+    def refresh(w, fg, stored_hwnd=0):
+        world["fg"] = fg
+        widget_main.NetworkSpeedWidget._execute_refresh(w, stored_hwnd)
+
+    return types.SimpleNamespace(world=world, make=make, refresh=refresh, timer=timer)
+
+
+def _shows(w):
+    return [c for c in w.setVisible.call_args_list if c.args == (True,)]
+
+
+def _hides(w):
+    return [c for c in w.setVisible.call_args_list if c.args == (False,)]
+
+
+def test_null_foreground_between_fullscreen_readings_does_not_show(gate):
+    """Java -> NULL -> Java: the NULL hand-off is no information, the widget stays hidden."""
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)
+    assert w.shown["v"] is False
+    for fg in (0, JAVA, 0, 0, JAVA):
+        gate.refresh(w, fg)
+    assert _shows(w) == []
+
+
+def test_refresh_judges_the_live_foreground_not_a_closed_stored_hwnd(gate):
+    """The debounced event hands over the hwnd that was foreground 250 ms ago - already closed. The
+    live foreground is still the fullscreen app, so nothing may show."""
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)
+    gate.refresh(w, JAVA, stored_hwnd=DEAD)
+    gate.refresh(w, JAVA, stored_hwnd=NORMAL)   # stale but alive: still the live one that counts
+    assert _shows(w) == []
+    assert w.shown["v"] is False
+
+
+def test_invisible_monitor_sized_foreground_does_not_hide_on_the_desktop(gate):
+    """No fullscreen app: normal -> an invisible monitor-sized window -> normal never hides."""
+    w = gate.make(visible=True)
+    for fg in (NORMAL, INVISIBLE_FS, NORMAL, INVISIBLE_FS, 0, NORMAL):
+        gate.refresh(w, fg)
+    assert _hides(w) == []
+    assert w.shown["v"] is True
+
+
+def test_one_normal_reading_does_not_show_two_apart_do(gate):
+    """Leaving fullscreen for a real window: the first reading only arms a re-check; the second,
+    FULLSCREEN_EXIT_CONFIRM_MS later, shows the widget."""
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)
+    gate.refresh(w, NORMAL)
+    assert _shows(w) == []                                 # a single blip cannot show it
+    gate.timer.singleShot.assert_called_once()             # ...but the confirmation is scheduled
+    assert gate.timer.singleShot.call_args.args[0] == constants.timeouts.FULLSCREEN_EXIT_CONFIRM_MS
+    gate.refresh(w, NORMAL)                                 # too soon: still unconfirmed
+    assert _shows(w) == []
+    time.sleep(CONFIRM_S + 0.03)
+    gate.refresh(w, NORMAL)
+    assert len(_shows(w)) == 1
+    assert w.shown["v"] is True
+
+
+def test_a_fullscreen_reading_in_between_restarts_the_confirmation(gate):
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)
+    gate.refresh(w, NORMAL)
+    gate.refresh(w, JAVA)
+    time.sleep(CONFIRM_S + 0.03)
+    gate.refresh(w, NORMAL)      # a first reading again, not a confirmation
+    assert _shows(w) == []
+
+
+def test_desktop_in_the_foreground_shows_at_once(gate):
+    """Win+D / Show desktop: a deliberate exit, no confirmation wait."""
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)
+    gate.refresh(w, DESKTOP)
+    assert len(_shows(w)) == 1
+
+
+def test_fullscreen_app_closing_with_a_null_foreground_still_shows(gate):
+    """Nothing takes the foreground after the fullscreen app closes: the latch re-judges the window
+    that covered, finds it gone, and releases after the usual confirmation."""
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)
+    gate.world["on_screen"].discard(JAVA)
+    gate.world["covering"].discard(JAVA)
+    gate.refresh(w, 0)
+    assert _shows(w) == []
+    time.sleep(CONFIRM_S + 0.03)
+    gate.refresh(w, 0)
+    assert len(_shows(w)) == 1
+
+
+def test_immediate_hide_latches_so_a_null_reading_cannot_undo_it(gate):
+    """The hook's immediate hide, then a refresh that only sees a NULL foreground: still hidden."""
+    w = gate.make(visible=True)
+    gate.world["fg"] = JAVA
+    widget_main.NetworkSpeedWidget._on_immediate_hide_requested(w)
+    assert w.shown["v"] is False
+    gate.refresh(w, 0)
+    assert _shows(w) == []
+
+
+def test_fullscreen_visibility_changes_are_logged_and_nothing_else(gate):
+    """A DEBUG line for each fullscreen hide / show (reason, class, pid - never a title); an
+    ordinary show that the fullscreen gate did not cause is not logged as one."""
+    def gate_lines(w):
+        return [c.args for c in w.logger.debug.call_args_list if "Fullscreen gate" in c.args[0]]
+    w = gate.make(visible=False)
+    gate.refresh(w, NORMAL)                       # first show at startup: not a fullscreen event
+    assert w.shown["v"] is True and gate_lines(w) == []
+    gate.refresh(w, JAVA)
+    gate.refresh(w, DESKTOP)
+    lines = gate_lines(w)
+    assert [l[1] for l in lines] == ["hiding", "showing"]
+    assert [l[2] for l in lines] == ["covered", "desktop-foreground"]
+    assert all(l[3].startswith("class=") and "pid=" in l[3] for l in lines)
+
+
+def test_keep_visible_fullscreen_still_wins(gate):
+    w = gate.make(visible=True)
+    w.config["keep_visible_fullscreen"] = True
+    gate.refresh(w, JAVA)
+    assert _hides(w) == []
+
+
+# --- the event handler (hook + 250 ms poll) --------------------------------------------------------
+
+@pytest.fixture
+def handler(q_app):
+    from netspeedtray.core import system_events as se
+    with patch("netspeedtray.core.system_events.WinEventHook"):
+        h = se.SystemEventHandler()
+    yield h
+    h.stop()
+
+
+def _win32_world(fg, visible, cloaked=False):
+    """win32 patches for the handler: every window is monitor-sized on the taskbar's monitor."""
+    return [
+        patch("win32gui.GetForegroundWindow", return_value=fg),
+        patch("win32gui.IsWindow", side_effect=lambda h: bool(h) and h != DEAD),
+        patch("win32gui.IsWindowVisible", side_effect=lambda h: h in visible),
+        patch("netspeedtray.utils.dwm.is_cloaked", return_value=cloaked, create=True),
+        patch("win32gui.GetClassName", return_value="SunAwtFrame"),
+        patch("win32gui.GetWindowRect", return_value=(0, 0, 1920, 1200)),
+        patch("win32api.MonitorFromWindow", return_value=1),
+        patch("win32api.GetMonitorInfo", return_value={"Monitor": (0, 0, 1920, 1200)}),
+        patch("netspeedtray.core.system_events.get_taskbar_info"),
+        # The pre-#503 obstruction test: rect == monitor, nothing about visibility.
+        patch("netspeedtray.core.system_events.is_taskbar_obstructed", side_effect=lambda tb, h: bool(h)),
+    ]
+
+
+def _run(patches, fn):
+    for p in patches:
+        p.start()
+    try:
+        fn()
+    finally:
+        for p in reversed(patches):
+            p.stop()
+
+
+def test_poll_null_foreground_keeps_the_fullscreen_state(handler):
+    """Java -> NULL -> Java on the 250 ms poll: no exit edge (which would refresh the widget)."""
+    hide, refresh = MagicMock(), MagicMock()
+    handler.immediate_hide_requested.connect(hide)
+    handler.foreground_app_changed.connect(refresh)
+    for fg in (JAVA, 0, JAVA, 0):
+        _run(_win32_world(fg, visible={JAVA}), handler._poll_fullscreen)
+    hide.assert_called_once()          # the one real enter edge
+    refresh.assert_not_called()
+    assert handler.is_fullscreen_active() is True
+
+
+def test_poll_exit_when_the_fullscreen_window_closes_under_a_null_foreground(handler):
+    refresh = MagicMock()
+    handler.foreground_app_changed.connect(refresh)
+    _run(_win32_world(JAVA, visible={JAVA}), handler._poll_fullscreen)
+    _run(_win32_world(0, visible=set()), handler._poll_fullscreen)    # Java gone, nothing foreground
+    refresh.assert_called_once()
+    assert handler.is_fullscreen_active() is False
+
+
+@pytest.mark.parametrize("visible,cloaked", [(set(), False), ({INVISIBLE_FS}, True)],
+                         ids=["invisible", "cloaked"])
+def test_invisible_or_cloaked_monitor_sized_foreground_hides_nothing(handler, visible, cloaked):
+    hide = MagicMock()
+    handler.immediate_hide_requested.connect(hide)
+    _run(_win32_world(INVISIBLE_FS, visible=visible, cloaked=cloaked),
+         lambda: handler._on_foreground_change_immediate(INVISIBLE_FS))
+    _run(_win32_world(INVISIBLE_FS, visible=visible, cloaked=cloaked), handler._poll_fullscreen)
+    hide.assert_not_called()
+
+
+# --- is_taskbar_obstructed and the mirrors ---------------------------------------------------------
+
+@pytest.mark.parametrize("visible,cloaked", [(False, False), (True, True)], ids=["invisible", "cloaked"])
+def test_is_taskbar_obstructed_ignores_windows_that_are_not_drawn(visible, cloaked):
+    from netspeedtray.utils import taskbar_utils as tu
+    tb = types.SimpleNamespace(hwnd=TB_HWND)
+    with patch("win32gui.IsWindow", return_value=True), \
+            patch("win32gui.IsWindowVisible", return_value=visible), \
+            patch("netspeedtray.utils.dwm.is_cloaked", return_value=cloaked, create=True), \
+            patch("win32process.GetWindowThreadProcessId", return_value=(1, 999999)), \
+            patch("win32gui.GetClassName", return_value="SunAwtFrame"), \
+            patch.object(tu, "get_process_name_from_hwnd", return_value="java.exe"), \
+            patch("win32api.MonitorFromWindow", return_value=1), \
+            patch("win32gui.GetWindowRect", return_value=(0, 0, 1920, 1200)), \
+            patch("win32api.GetMonitorInfo", return_value={"Monitor": (0, 0, 1920, 1200)}):
+        assert tu.is_taskbar_obstructed(tb, INVISIBLE_FS) is False
+
+
+def test_is_taskbar_obstructed_still_sees_a_real_fullscreen_window():
+    from netspeedtray.utils import taskbar_utils as tu
+    tb = types.SimpleNamespace(hwnd=TB_HWND)
+    with patch("win32gui.IsWindow", return_value=True), \
+            patch("win32gui.IsWindowVisible", return_value=True), \
+            patch("netspeedtray.utils.dwm.is_cloaked", return_value=False, create=True), \
+            patch("win32process.GetWindowThreadProcessId", return_value=(1, 999999)), \
+            patch("win32gui.GetClassName", return_value="SunAwtFrame"), \
+            patch.object(tu, "get_process_name_from_hwnd", return_value="java.exe"), \
+            patch("win32api.MonitorFromWindow", return_value=1), \
+            patch("win32gui.GetWindowRect", return_value=(0, 0, 1920, 1200)), \
+            patch("win32api.GetMonitorInfo", return_value={"Monitor": (0, 0, 1920, 1200)}):
+        assert tu.is_taskbar_obstructed(tb, JAVA) is True
+
+
+def test_mirror_keeps_its_fullscreen_hide_on_a_null_foreground(monkeypatch):
+    from netspeedtray.views.widget import mirror as mirror_mod
+    covering = {JAVA}
+    monkeypatch.setattr(mirror_mod, "is_taskbar_visible", lambda tb: True)
+    monkeypatch.setattr(mirror_mod, "is_taskbar_obstructed", lambda tb, h: h in covering)
+    monkeypatch.setattr(mirror_mod, "is_window_on_screen", lambda h: h in covering, raising=False)
+    m = MagicMock()
+    m.dead = False
+    m.native_alive.return_value = True
+    m.owner_lost.return_value = False
+    m._main = types.SimpleNamespace(config={"keep_visible_fullscreen": False}, _is_context_menu_visible=False)
+    shown = {"v": True}
+    m.isVisible.side_effect = lambda: shown["v"]
+    m.setVisible.side_effect = lambda v: shown.update(v=v)
+    m.position_manager.is_yielding_to_apps.return_value = False
+    m._obstructed = False
+    m._cover_hwnd = 0
+    tb = types.SimpleNamespace(hwnd=TB_HWND)
+    mirror_mod.MirrorWidget.refresh(m, tb, JAVA)
+    assert shown["v"] is False
+    mirror_mod.MirrorWidget.refresh(m, tb, 0)      # NULL hand-off: no information
+    assert shown["v"] is False
+    covering.discard(JAVA)                          # the fullscreen app closed
+    mirror_mod.MirrorWidget.refresh(m, tb, 0)
+    assert shown["v"] is True

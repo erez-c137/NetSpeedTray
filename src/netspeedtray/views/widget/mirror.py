@@ -56,7 +56,8 @@ from netspeedtray.core.position_manager import (PositionManager, WindowState, _G
 from netspeedtray.utils import taskbar_utils
 from netspeedtray.utils.config import stable_pseudonym
 from netspeedtray.utils.helpers import effective_display_mode
-from netspeedtray.utils.taskbar_utils import dock_signature, is_taskbar_obstructed, is_taskbar_visible
+from netspeedtray.utils.taskbar_utils import (dock_signature, is_taskbar_obstructed, is_taskbar_visible,
+                                             is_window_on_screen)
 from netspeedtray.utils.widget_paint import render_widget
 from netspeedtray.utils.widget_renderer import WidgetRenderer
 from netspeedtray.views.widget.layout import WidgetLayoutManager
@@ -145,6 +146,7 @@ class MirrorWidget(QWidget):
         self._dock_sig_seen: Optional[tuple] = None
         self._tb = taskbar_info                      # the taskbar this mirror was last handed
         self._obstructed: bool = False               # a fullscreen window on ITS monitor
+        self._cover_hwnd: int = 0                    # ...and which one (re-judged on a no-info reading)
         self._layout_mode: str = self._mode_for(taskbar_info)
         self._identity_sig_seen = self._main_identity_signature()
 
@@ -277,7 +279,16 @@ class MirrorWidget(QWidget):
             self._layout_mode = self._mode_for(tb)
             # Judged against THIS mirror's taskbar and monitor (is_taskbar_obstructed compares the
             # foreground window's monitor with the taskbar's), never the main widget's (§3.4).
-            self._obstructed = bool(tb.hwnd) and is_taskbar_obstructed(tb, fg_hwnd)
+            # A foreground that is not on screen (NULL, closed, invisible, cloaked) says nothing
+            # (#503): keep the state, re-judging the covering window itself while covered.
+            if is_window_on_screen(fg_hwnd):
+                probe = fg_hwnd
+            elif self._obstructed:
+                probe = getattr(self, "_cover_hwnd", 0)
+            else:
+                probe = 0
+            self._obstructed = bool(tb.hwnd) and bool(probe) and is_taskbar_obstructed(tb, probe)
+            self._cover_hwnd = probe if self._obstructed else 0
             keep_visible = main.config.get("keep_visible_fullscreen",
                                            constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN)
             # #24 for THIS bar (rc.5 #373): attach / detach / re-check first, as main's _execute_refresh

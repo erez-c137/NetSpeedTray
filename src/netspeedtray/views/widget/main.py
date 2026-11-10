@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 import win32api
 import win32con
 import win32gui
+import win32process
 from win32con import MONITOR_DEFAULTTONEAREST
 from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QTimer, Qt
 from PyQt6.QtGui import (
@@ -37,8 +38,9 @@ from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.core.input_handler import InputHandler
 from netspeedtray.utils.taskbar_utils import (
     get_taskbar_info, is_taskbar_obstructed, is_taskbar_visible,
-    get_process_name_from_hwnd, dock_signature
+    get_process_name_from_hwnd, dock_signature, is_window_on_screen
 )
+from netspeedtray.core.fullscreen_gate import FullscreenLatch
 
 from netspeedtray.utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
 from netspeedtray.utils.widget_paint import WidgetMetrics, render_widget, split_network_phases
@@ -147,6 +149,51 @@ def widget_qt_scale(widget: Any) -> Optional[float]:
         return round(float(fn()), 3) if callable(fn) else None
     except Exception:
         return None
+
+
+def _fullscreen_latch(widget: Any) -> FullscreenLatch:
+    """The widget's fullscreen latch (#503), created on first use (a stand-in ``self`` in the tests
+    gets its own the same way)."""
+    latch = getattr(widget, "_fs_latch", None)
+    if not isinstance(latch, FullscreenLatch):
+        latch = FullscreenLatch()
+        widget._fs_latch = latch
+    return latch
+
+
+def _is_desktop_window(hwnd: int) -> bool:
+    try:
+        return win32gui.GetClassName(hwnd) in constants.shell.shell.DESKTOP_WINDOW_CLASSES
+    except Exception:
+        return False
+
+
+def _window_log_desc(hwnd: int) -> str:
+    """Class and pid of ``hwnd`` for the debug log - never its title (privacy)."""
+    try:
+        cls = win32gui.GetClassName(hwnd) if hwnd and win32gui.IsWindow(hwnd) else "-"
+        pid = win32process.GetWindowThreadProcessId(hwnd)[1] if cls != "-" else 0
+        return f"class={cls} pid={pid}"
+    except Exception:
+        return "class=? pid=?"
+
+
+def _judge_fullscreen(widget: Any, taskbar_info: Any, hwnd_hint: int) -> bool:
+    """One fullscreen reading for the visibility gate, through the widget's latch. Judged against the
+    LIVE foreground window: a debounced foreground event carries the hwnd that was foreground 250 ms
+    ago, possibly closed by now (#503). ``hwnd_hint`` is used only when the live read fails."""
+    try:
+        fg = int(win32gui.GetForegroundWindow() or 0)
+    except Exception:
+        fg = int(hwnd_hint or 0)
+    latch = _fullscreen_latch(widget)
+    covered = latch.judge(fg, on_screen=is_window_on_screen,
+                          obstructs=lambda h: is_taskbar_obstructed(taskbar_info, h),
+                          is_desktop=_is_desktop_window)
+    if latch.recheck_wanted and getattr(widget, "_fs_recheck_pending", False) is not True:
+        widget._fs_recheck_pending = True
+        QTimer.singleShot(latch.confirm_ms, Qt.TimerType.PreciseTimer, widget._fullscreen_recheck)
+    return covered
 
 
 class NetworkSpeedWidget(QWidget):
@@ -474,7 +521,23 @@ class NetworkSpeedWidget(QWidget):
             return
         if self.position_manager and self.position_manager.is_free_float_active():
             return
+        # Latch it (#503): the refresh that follows must not undo this hide on a stray reading.
+        try:
+            fg = int(win32gui.GetForegroundWindow() or 0)
+            if not is_window_on_screen(fg):   # the hand-off moved on: latch the window that was judged
+                fg = int(self.system_event_handler.fullscreen_hwnd())
+        except Exception:
+            fg = 0
+        _fullscreen_latch(self).note_covered(fg)
+        if self.isVisible():
+            self.logger.debug("Fullscreen gate: hiding widget (reason=immediate, %s)", _window_log_desc(fg))
         self.setVisible(False)
+
+    def _fullscreen_recheck(self) -> None:
+        """The confirming second reading for a fullscreen exit (#503), FULLSCREEN_EXIT_CONFIRM_MS
+        after the first, so a real exit shows the widget without waiting for the 1 s tick."""
+        self._fs_recheck_pending = False
+        self._execute_refresh()
 
     def _execute_refresh(self, hwnd: int = 0) -> None:
         """
@@ -538,13 +601,24 @@ class NetworkSpeedWidget(QWidget):
                 # checks are judged against the (irrelevant) primary taskbar - so just keep it shown.
                 should_be_visible = True
             else:
-                should_be_visible = is_taskbar_visible(taskbar_info) and (keep_visible or not is_taskbar_obstructed(taskbar_info, hwnd))
+                taskbar_shown = is_taskbar_visible(taskbar_info)
+                # Through the latch (#503): one stray foreground reading can neither show the widget
+                # over a fullscreen app nor hide it on the desktop.
+                fs_covered = (taskbar_shown and not keep_visible
+                              and _judge_fullscreen(self, taskbar_info, hwnd))
+                should_be_visible = taskbar_shown and not fs_covered
                 # #24: a native horizontal Win11 bar whose app buttons reach the widget - it steps
                 # aside on this same hide path (never moves, #200). ANDed: neither this nor the
                 # fullscreen hide / keep_visible_fullscreen overrides the other. ``is True``: a stand-in
                 # position manager without the yield never hides the widget.
                 if self.position_manager.is_yielding_to_apps() is True:
                     should_be_visible = False
+                elif (taskbar_shown and not keep_visible and self.isVisible() != should_be_visible
+                      and (fs_covered or _fullscreen_latch(self).reason in FullscreenLatch.RELEASE_REASONS)):
+                    latch = _fullscreen_latch(self)
+                    self.logger.debug("Fullscreen gate: %s widget (reason=%s, %s)",
+                                      "hiding" if fs_covered else "showing", latch.reason,
+                                      _window_log_desc(latch.probe_hwnd))
 
             if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)
