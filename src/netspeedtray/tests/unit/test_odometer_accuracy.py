@@ -519,6 +519,72 @@ def test_a_clean_quit_keeps_the_snapshot_so_the_next_launch_recovers(tmp_path, q
             s2.cleanup()
 
 
+def _loaded_session(tmp_path, config):
+    s = _session(tmp_path, config)
+    assert s.db_worker.ready.wait(10)
+    deadline = time.monotonic() + 10
+    while not s._try_load_usage():
+        assert time.monotonic() < deadline, "odometer never loaded"
+        time.sleep(0.02)
+    return s
+
+
+def test_a_kill_after_a_route_wait_reconcile_never_recovers_the_window_twice(tmp_path, q_app):
+    """Auto mode, no route at launch (sign-in with Wi-Fi still connecting). When the route appears
+    the reconcile adds the closed window WITHOUT counters (live polls moved past the launch
+    counters), and the held bytes follow the same way. A persist at that moment used to write the
+    new total beside the OLD snapshot; a kill before the next persist then made the next launch
+    recover the same window again. The stored total and snapshot must never disagree: such a persist
+    deletes the snapshot (an under-count of the unsaved tail at worst, never a double count)."""
+    config = constants.config.defaults.DEFAULT_CONFIG.copy()
+    config["interface_mode"] = "auto"
+    config["update_rate"] = 1.0
+    lookup = MagicMock(return_value="Wi-Fi")
+
+    with patch("netspeedtray.core.controller.get_primary_interface_name", lookup),             patch("netspeedtray.core.usage_snapshot.psutil.boot_time", return_value=BOOT):
+        # Session 1: counts and quits cleanly - snapshot Wi-Fi (4,000 / 6,000), total 3,000 / 5,000.
+        s1 = _loaded_session(tmp_path, config)
+        c1 = StatsController(config=config, widget_state=s1)
+        c1.set_view(MagicMock())
+        try:
+            _poll(c1, {"Wi-Fi": NetIO(1_000, 1_000)}, 1000.0)
+            _poll(c1, {"Wi-Fi": NetIO(4_000, 6_000)}, 1001.0)
+        finally:
+            c1.cleanup()
+            s1.cleanup()
+
+        # Session 2: launches with no route; 1 MB / 2 MB moved while the app was closed.
+        lookup.return_value = None
+        s2 = _loaded_session(tmp_path, config)
+        c2 = StatsController(config=config, widget_state=s2)
+        c2.set_view(MagicMock())
+        try:
+            _poll(c2, {"Wi-Fi": NetIO(1_004_000, 2_006_000)}, 5000.0)   # launch, no route
+            _poll(c2, {"Wi-Fi": NetIO(1_005_000, 2_008_000)}, 5001.0)   # held
+            s2._usage_last_persist = 0.0                                # the route takes >= 30 s
+            lookup.return_value = "Wi-Fi"
+            _poll(c2, {"Wi-Fi": NetIO(1_006_000, 2_010_000)}, 5020.0)   # reconcile + held + live
+            assert s2.get_usage_this_period() == (1_005_000.0, 2_009_000.0)
+        finally:
+            # Killed: no final persist. What the worker already had queued still lands.
+            with patch.object(WidgetState, "persist_usage_final", lambda self: None):
+                s2.cleanup()
+
+        # Session 3: same boot, nothing moved since. The closed window must not be added again.
+        s3 = _loaded_session(tmp_path, config)
+        c3 = StatsController(config=config, widget_state=s3)
+        c3.set_view(MagicMock())
+        try:
+            _poll(c3, {"Wi-Fi": NetIO(1_006_000, 2_010_000)}, 9000.0)
+            up, down = s3.get_usage_this_period()
+            assert up <= 1_005_000.0 and down <= 2_009_000.0, "the closed window was recovered twice"
+            # Exactly what the reconcile persist saved: the old total + the recovered window.
+            assert (up, down) == (1_003_000.0, 2_005_000.0)
+        finally:
+            c3.cleanup()
+            s3.cleanup()
+
+
 def test_mutating_the_counters_passed_to_the_odometer_does_not_change_its_snapshot():
     """The odometer keeps its own copy of the counters its total pairs with: whatever the caller
     later does to the dict it handed over (clear it, re-fill it) must not reach the persist."""
@@ -578,12 +644,32 @@ def test_unencodable_snapshot_deletes_the_stored_one_instead_of_leaving_it_stale
 
 
 def test_no_counters_seen_yet_leaves_the_stored_snapshot_untouched():
+    """Nothing added and no counters (the polls held while auto mode waits for a route): the total
+    still matches the stored snapshot, which must survive so the next launch can recover from it."""
     conn, persist = _usage_db()
     conn.execute("INSERT INTO metadata VALUES (?, 'kept')", (constants.network.usage.SNAPSHOT_METADATA_KEY,))
     s = _fake_widget_state()
-    WidgetState.add_usage_bytes(s, 1.0, 1.0)            # no counters fed
+    WidgetState.add_usage_bytes(s, 0.0, 0.0)            # no counters fed, nothing added
     persist(s.db_worker.enqueue_task.call_args[0][1])
     assert _stored_snapshot(conn) == "kept"
+
+
+def test_bytes_without_counters_delete_the_stored_snapshot_until_counters_pair():
+    """Bytes added with no counters to pair (launch reconcile / held backlog after a route wait) move
+    the total past the stored snapshot: a persist then deletes it, never keeps it beside the new
+    total (a kill before the next persist would recover the same window twice). Once counters pair,
+    persists carry them again."""
+    conn, persist = _usage_db()
+    conn.execute("INSERT INTO metadata VALUES (?, 'kept')", (constants.network.usage.SNAPSHOT_METADATA_KEY,))
+    s = _fake_widget_state()
+    WidgetState.add_usage_bytes(s, 1.0, 1.0)            # no counters fed, bytes added
+    persist(s.db_worker.enqueue_task.call_args[0][1])
+    assert _stored_snapshot(conn) is None
+    s._usage_last_persist = 0.0
+    with patch("netspeedtray.core.usage_snapshot.psutil.boot_time", return_value=BOOT):
+        WidgetState.add_usage_bytes(s, 2.0, 2.0, counters={"Wi-Fi": NetIO(7, 8)}, sampled_at=3.0)
+    persist(s.db_worker.enqueue_task.call_args[0][1])
+    assert json.loads(_stored_snapshot(conn))["counters"] == {"Wi-Fi": [7, 8]}
 
 
 def _may30() -> float:

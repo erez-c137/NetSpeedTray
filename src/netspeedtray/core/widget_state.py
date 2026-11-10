@@ -181,6 +181,9 @@ class WidgetState(QObject):
         # TO (persisted with it, in the same transaction), and the snapshot loaded from the previous
         # session - read once at load, so this session's own persists can never feed it back.
         self._usage_live_counters: Optional[Dict[str, Any]] = None
+        # True once bytes were added with no counters while none are paired (_usage_live_counters
+        # None): the total has moved past the STORED snapshot, so a persist must delete it.
+        self._usage_snapshot_stale = False
         self._usage_live_sampled_at: Optional[float] = None
         self._usage_live_primary: Optional[str] = None
         self._usage_launch_snapshot: Dict[str, Any] = {}
@@ -819,8 +822,15 @@ class WidgetState(QObject):
                 # (e.g. on a read) - the anchor never exceeds the cumulative.
                 u["anchor_up"] += up
                 u["anchor_down"] += down
+        if counters is None and (up or down) and self._usage_live_counters is None:
+            # Bytes with no counters to pair (the launch reconcile and the held backlog after a
+            # route wait): the total now includes bytes beyond the STORED snapshot, and keeping that
+            # snapshot beside it would let a kill before the next counters persist make the next
+            # launch recover the same window again. Until counters pair, a persist deletes it.
+            self._usage_snapshot_stale = True
         if counters is not None:
             # Only now does the total include these counters' bytes - pair them from here on.
+            self._usage_snapshot_stale = False
             self._usage_live_counters = counters
             self._usage_live_sampled_at = sampled_at if sampled_at is not None else time.time()
             self._usage_live_primary = primary
@@ -842,11 +852,12 @@ class WidgetState(QObject):
             return
         self.db_worker.enqueue_task("persist_usage", WidgetState._usage_payload(
             self._usage, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary),
-            WidgetState._encode_left_periods(WidgetState._usage_left_periods(self))))
+            WidgetState._encode_left_periods(WidgetState._usage_left_periods(self)),
+            clear_snapshot=getattr(self, "_usage_snapshot_stale", False)))
 
     @staticmethod
     def _usage_payload(u: Dict[str, Any], live: Optional[Tuple[Any, Any, Any]],
-                       memory: Optional[str] = None) -> Tuple[Any, ...]:
+                       memory: Optional[str] = None, clear_snapshot: bool = False) -> Tuple[Any, ...]:
         """The persist_usage tuple for odometer ``u`` paired with ``live`` = (counters, sampled_at,
         primary) - the NIC counters that total accounts up to, or counters None - and ``memory``, the
         encoded re-key memory ("" deletes it, None leaves it untouched)."""
@@ -862,6 +873,9 @@ class WidgetState(QObject):
                 # to advance past the STORED snapshot, so it must go - leaving it would make the next
                 # same-boot launch re-add bytes this total already holds.
                 snapshot_json = usage_snapshot.CLEAR_SNAPSHOT
+        elif clear_snapshot:
+            # No counters, but the total already includes bytes past the stored snapshot.
+            snapshot_json = usage_snapshot.CLEAR_SNAPSHOT
         # 7th element: the counter snapshot, written in the SAME transaction as the total;
         # CLEAR_SNAPSHOT deletes the stored one; None (no counters seen yet) leaves it untouched.
         return (u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
@@ -887,7 +901,8 @@ class WidgetState(QObject):
                 kept["cumulative_down"] += max(0.0, down)
             if_failed = WidgetState._usage_payload(
                 kept, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary),
-                WidgetState._encode_left_periods(WidgetState._usage_left_periods(self)))
+                WidgetState._encode_left_periods(WidgetState._usage_left_periods(self)),
+                clear_snapshot=getattr(self, "_usage_snapshot_stale", False))
         self.db_worker.enqueue_task("persist_usage_after_delete", {
             "if_reset": WidgetState._usage_payload(reset, post[2], ""),
             "if_failed": if_failed})
