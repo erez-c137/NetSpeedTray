@@ -141,6 +141,41 @@ def hover_hint_text(i18n, config: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def hover_gpu_list_wanted(config: Dict[str, Any], cards: Any) -> bool:
+    """The hover card lists every GPU (#236): the switch is on, GPU monitoring is on and the last poll
+    found two or more GPUs. Its own gate - on a bottom bar the card opens for the list alone."""
+    try:
+        return (bool(config.get("hover_list_all_gpus", constants.config.defaults.DEFAULT_HOVER_LIST_ALL_GPUS))
+                and bool(config.get("monitor_gpu_enabled", False)) and len(cards or ()) >= 2)
+    except (AttributeError, TypeError):
+        return False
+
+
+def hover_gpu_rows(config: Dict[str, Any], cards: Any, bar_shows_gpu: bool = True) -> List[Dict[str, Any]]:
+    """The hover card's per-GPU rows (usage_flyout ``hardware["gpus"]``), only the readings the user
+    turned on - the same switches as the single GPU/VRAM rows they replace. The "on taskbar" marker
+    only when a GPU is picked AND the taskbar paints the GPU (``bar_shows_gpu``): Automatic mixes
+    cards (busiest utilization, the preferred card's sensors), so naming one card as "the taskbar's"
+    would not be true - and with the hardware moved into the card there is no taskbar GPU to name."""
+    temps = bool(config.get("show_hardware_temps", False))
+    power = bool(config.get("show_hardware_power", False))
+    vram = bool(config.get("monitor_vram_enabled", False))
+    rows = []
+    for c in cards or ():
+        row: Dict[str, Any] = {"key": c.luid, "name": c.name, "usage": c.util,
+                               "on_taskbar": bool(c.picked) and bar_shows_gpu}
+        if temps:
+            row["temp"] = c.temp
+        if power:
+            row["power"] = c.power
+        if vram:
+            row["vram"] = (c.vram_used_gib, c.vram_total_gib)
+            if c.vram_shared:
+                row["vram_shared"] = True
+        rows.append(row)
+    return rows
+
+
 def widget_qt_scale(widget: Any) -> Optional[float]:
     """Qt's device pixel ratio for ``widget``'s window right now, rounded (None when it can't be read).
     What the font metrics the layout measures with follow - not always in step with the OS scale."""
@@ -301,6 +336,9 @@ class NetworkSpeedWidget(QWidget):
         # True when vram_used/vram_total are an integrated GPU's shared system memory (set by the
         # controller from the stats dict's 'vram_is_shared').
         self.vram_is_shared: bool = False
+        # Every GPU of a multi-GPU PC (monitor_thread.GpuCard), for the hover card's list (#236). Set
+        # by the controller on every hardware poll; () with one GPU, GPU monitoring off or the list off.
+        self.gpu_cards: tuple = ()
         
         # Cycling State
         self._cycle_index: int = 0
@@ -1818,6 +1856,8 @@ class NetworkSpeedWidget(QWidget):
         the enabled CPU/GPU/memory live."""
         if hardware_in_hover_card_active(self.config):
             return True
+        if hover_gpu_list_wanted(self.config, getattr(self, "gpu_cards", ())):
+            return True
         fit = self._side_bar_fit()
         return bool(fit is not None and (fit.hides_hardware or fit.hides_identity))
 
@@ -1859,6 +1899,19 @@ class NetworkSpeedWidget(QWidget):
                 hw["vram"] = (self.vram_used, self.vram_total)
                 if getattr(self, "vram_is_shared", False):
                     hw["vram_shared"] = True
+        cards = getattr(self, "gpu_cards", ())
+        if hover_gpu_list_wanted(cfg, cards):
+            # Every GPU, each with its own usage/temperature/power/memory - in place of the single
+            # GPU/VRAM rows (the taskbar's figure is one of them, or in Automatic the highest usage).
+            for key in ("gpu", "vram", "vram_shared"):
+                hw.pop(key, None)
+            hw["gpus"] = hover_gpu_rows(cfg, cards, bar_shows_gpu=not in_card and not (
+                fit is not None and fit.hides_hardware))
+            if cfg.get("show_hardware_temps", False):
+                from netspeedtray.utils.helpers import temperature_unit
+                unit = temperature_unit(cfg)
+                if unit != constants.hardware.temperature.CELSIUS:
+                    hw["temp_unit"] = unit
         if fit is not None and fit.hides_identity:
             band, _color, _solid = self._identity_presentation()
             parts = [p for p in (self._identity_ssid_text(), band) if p]
@@ -1882,7 +1935,10 @@ class NetworkSpeedWidget(QWidget):
                 # only freeze on their last values - close the card (the next hover rebuilds it).
                 self._hide_usage_hover_card()
                 return
-            card.update_hardware(snapshot)
+            if card.update_hardware(snapshot) is False:
+                # A GPU came or went (or the pick changed): the card needs other rows - rebuilt and
+                # swapped, the new one shown before the old one hides; a pinned card stays pinned.
+                self._show_usage_hover_card(pinned=bool(getattr(self, "_hover_card_pinned", False)))
         except Exception as e:
             self.logger.debug("hover card hardware refresh failed: %s", e)
 

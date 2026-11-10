@@ -72,6 +72,8 @@
     "GPU_ADAPTER_LABEL": "表示する GPU",
     "GPU_ADAPTER_DESCRIPTION": "温度と電力は、そのセンサーがこの GPU のメーカーのものである場合にのみ表示されます。",
     "GPU_ADAPTER_AUTO": "自動 (最も負荷の高い GPU)",
+    "HOVER_LIST_ALL_GPUS_LABEL": "ウィジェットにカーソルを合わせたときにすべての GPU を表示",
+    "GPU_ON_TASKBAR_MARKER": "タスクバーに表示",
     "TEMPERATURE_UNIT_LABEL": "温度の単位",
     "TEMPERATURE_UNIT_CELSIUS": "摂氏 (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "華氏 (°F)",
