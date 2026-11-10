@@ -470,6 +470,70 @@ def test_restart_recovery_through_the_real_database_worker(tmp_path, q_app):
             s3.cleanup()
 
 
+def test_a_clean_quit_keeps_the_snapshot_so_the_next_launch_recovers(tmp_path, q_app):
+    """The REAL shutdown order (views/widget/main.py): controller.cleanup() runs BEFORE
+    widget_state.cleanup(), whose final persist writes the counter snapshot. The controller used to
+    clear its counters dict in place - the very dict the odometer held as its snapshot - so every
+    clean quit stored `"counters": {}` and the next launch logged "nothing recovered (no snapshot)".
+    Only a hard-killed run (no cleanup) ever recovered the closed-app window."""
+    config = constants.config.defaults.DEFAULT_CONFIG.copy()
+    config["interface_mode"] = "all_physical"
+    config["update_rate"] = 1.0
+    db = tmp_path / "speed_history.db"
+
+    with patch("netspeedtray.core.usage_snapshot.psutil.boot_time", return_value=BOOT):
+        s1 = _session(tmp_path, config)
+        try:
+            assert s1.db_worker.ready.wait(10)
+            deadline = time.monotonic() + 10
+            while not s1._try_load_usage():
+                assert time.monotonic() < deadline, "odometer never loaded"
+                time.sleep(0.02)
+            c1 = StatsController(config=config, widget_state=s1)
+            c1.set_view(MagicMock())
+            _poll(c1, {"Wi-Fi": NetIO(1_000, 1_000)}, 1000.0)
+            _poll(c1, {"Wi-Fi": NetIO(4_000, 6_000)}, 1001.0)            # +3,000 / +5,000 live
+        finally:
+            c1.cleanup()                              # the quit path: controller first...
+            s1.cleanup()                              # ...then the final odometer persist
+
+        ro = sqlite3.connect(sqlite_ro_uri(db), uri=True)
+        try:
+            row = ro.execute("SELECT value FROM metadata WHERE key = ?",
+                             (constants.network.usage.SNAPSHOT_METADATA_KEY,)).fetchone()
+        finally:
+            ro.close()
+        assert row is not None
+        assert json.loads(row[0])["counters"] == {"Wi-Fi": [4_000, 6_000]}
+
+        s2 = _session(tmp_path, config)
+        try:
+            assert s2.db_worker.ready.wait(10)
+            c2 = StatsController(config=config, widget_state=s2)
+            # 1 MB up / 2 MB down moved while the app was closed (sleep, shutdown gap, an update).
+            _poll(c2, {"Wi-Fi": NetIO(1_004_000, 2_006_000)}, 5000.0)
+            # Exactly the live bytes + the closed window - nothing counted twice.
+            assert s2.get_usage_this_period() == (1_003_000.0, 2_005_000.0)
+        finally:
+            c2.cleanup()
+            s2.cleanup()
+
+
+def test_mutating_the_counters_passed_to_the_odometer_does_not_change_its_snapshot():
+    """The odometer keeps its own copy of the counters its total pairs with: whatever the caller
+    later does to the dict it handed over (clear it, re-fill it) must not reach the persist."""
+    s = _fake_widget_state()
+    passed = {"Wi-Fi": NetIO(111, 222)}
+    with patch("netspeedtray.core.usage_snapshot.psutil.boot_time", return_value=BOOT):
+        WidgetState.add_usage_bytes(s, 10.0, 20.0, counters=passed, sampled_at=1234.5)
+        passed.clear()
+        passed["Ethernet"] = NetIO(9, 9)
+        WidgetState.persist_usage_final(s)
+    task, payload = s.db_worker.enqueue_task.call_args[0]
+    assert task == "persist_usage"
+    assert json.loads(payload[6])["counters"] == {"Wi-Fi": [111, 222]}
+
+
 # --- PR #348 review ------------------------------------------------------------------------
 
 def _usage_db():

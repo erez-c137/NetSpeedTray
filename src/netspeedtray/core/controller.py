@@ -884,4 +884,8 @@ class StatsController(QObject):
             except (TypeError, RuntimeError):
                 pass
             self.view = None
-        self.last_interface_counters.clear()
+        # REBIND, never clear in place: the odometer holds the last poll's counters dict as its
+        # launch-recovery snapshot, and the final persist runs AFTER this (widget_state.cleanup).
+        # Clearing the shared dict persisted `"counters": {}`, so every launch after a clean exit
+        # recovered nothing for the closed-app window.
+        self.last_interface_counters = {}

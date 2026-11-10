@@ -753,12 +753,16 @@ class WidgetState(QObject):
         `counters` are the raw NIC counters the total now accounts up to (sampled at wall time
         `sampled_at`; `primary` is the auto-mode interface they were metered on); they are persisted
         with the total so the next launch in the same boot can recover what moves while the app is
-        closed. Kept by reference - serialized only on persist.
+        closed. Copied on entry (shallow: the per-interface psutil values are immutable tuples) and
+        serialized only on persist, so a caller that later mutates its dict - the controller used
+        to clear it at shutdown, before the final persist - cannot change the stored snapshot.
 
         `window_start` is the wall time the measurement window began (the previous sample, or the
         launch snapshot). Bytes are charged to the period in which their window BEGAN: a standby
         gap or a closed-app window spanning the reset day lands in the period it started in, never
         all in the new one (which could fire an early overage alert)."""
+        if counters is not None:
+            counters = dict(counters)
         if getattr(self, "_usage_reset_pending", False):
             # Traffic after a reset request: if the reset lands, these bytes are the new total.
             post = self._usage_post_reset
