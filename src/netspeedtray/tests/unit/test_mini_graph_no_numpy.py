@@ -471,6 +471,19 @@ def test_monotone_cubic_finite_input_is_unchanged_by_the_nan_guard():
         assert gx == ex and gy == ey
 
 
+def test_a_nan_does_not_scramble_the_outlier_clip():
+    """Detailed's outlier clip takes the 95th percentile of the sorted samples; sorted() with a NaN in
+    the list does not sort ([8e6] * 5 + [nan] + [1e6] * 14 comes back unchanged), so the "95th
+    percentile" was an idle 1 MB/s and the axis was clipped below a real 5-sample burst."""
+    up = [8e6] * 5 + [math.nan] + [1e6] * 14
+    hist = [AggregatedSpeedData(upload=u, download=1e6, timestamp=T0 + timedelta(seconds=i))
+            for i, u in enumerate(up)]
+    cfg = RenderConfig.from_dict(_cfg(graph_fixed_scale=False))
+    max_y, ceiling = WidgetRenderer._network_graph_scale(hist, cfg)
+    assert ceiling is None
+    assert max_y == pytest.approx(8e6 * R.GRAPH_Y_AXIS_PADDING_FACTOR)   # sized to the burst, not clipped
+
+
 @pytest.mark.parametrize("style", ["detailed", "trend"])
 @pytest.mark.parametrize("n", [12, 300])                 # sparse (the spline) and dense
 @pytest.mark.parametrize("where", [0, 1, 5, -2, -1])    # the oldest sample, inside, "now"

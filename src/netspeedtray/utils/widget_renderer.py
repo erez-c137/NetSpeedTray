@@ -2058,9 +2058,11 @@ class WidgetRenderer:
             max_speed_val = max((v for v in uploads + downloads if math.isfinite(v)), default=0.0)
 
         if outlier_clip and len(history) > 10:
-            all_speeds = uploads + downloads
-            all_speeds_sorted = sorted(all_speeds)
-            percentile_95 = all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
+            # Finite samples only: sorted() with a NaN in the list does not sort (every comparison with
+            # it is False), so the "95th percentile" could be any sample and clip the axis far too low.
+            all_speeds_sorted = sorted(v for v in uploads + downloads if math.isfinite(v))
+            percentile_95 = (all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
+                             if all_speeds_sorted else 0.0)
             if percentile_95 > 0 and max_speed_val > percentile_95 * 3.0:
                 max_speed_val = percentile_95
 

@@ -67,6 +67,7 @@ def _make(qtbot, cfg=None, ifaces=("Ethernet", "Wi-Fi")):
 def _flush(dlg):
     # The live preview applies only while Settings is on screen (a hidden dialog never emits).
     if not dlg.isVisible():
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)   # never a real window
         dlg.show()
     if dlg._update_timer.isActive():
         dlg._update_timer.stop()
