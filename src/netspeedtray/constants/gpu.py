@@ -85,17 +85,18 @@ class GpuConstants:
 
     # Hybrid (Optimus) laptops, 2.2.1: nvidia-smi goes through NVML, and asking a sleeping dGPU
     # anything powers it up - so a 5 s nvidia-smi poll keeps it from ever sleeping (battery drain).
-    # On a machine with a battery, an NVIDIA GPU AND a GPU of another maker (the iGPU), nvidia-smi is only asked for
-    # temperature / power while the dGPU is already awake: its PDH engine utilization (per LUID, read
-    # every tick anyway - PDH and DXGI never wake a GPU, Task Manager reads the same counters) was
-    # above HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT within the last HYBRID_DGPU_AWAKE_HOLD_SEC. The hold
-    # rides out a game's 0 % loading-screen ticks; it is a few nvidia-smi intervals, so once the work
-    # stops the queries stop and the dGPU sleeps. Activity in the first
-    # NVIDIA_SMI_SELF_ACTIVITY_GRACE_SEC after our own nvidia-smi call does not count, so a wake that
-    # nvidia-smi itself caused can never keep the gate open.
+    # On a laptop (battery, mobile platform role) with an NVIDIA GPU AND a GPU of another maker (the
+    # iGPU), nvidia-smi is only asked for temperature / power while the dGPU is already awake: its PDH
+    # engine utilization (per LUID, read every tick anyway - PDH and DXGI never wake a GPU, Task
+    # Manager reads the same counters) was above HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT within the hold:
+    # HYBRID_DGPU_AWAKE_HOLD_SEC, or HYBRID_DGPU_AWAKE_HOLD_WINDOWS PDH sample windows when the update
+    # rate is slow (Power Saver's 10 s). The hold rides out a game's 0 % loading-screen ticks; once
+    # the work stops the queries stop and the dGPU sleeps. A sample whose window holds our own
+    # nvidia-smi call never counts (see StatsMonitorThread._nvidia_awake), so a wake nvidia-smi itself
+    # caused can never keep the gate open, at any update rate.
     HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT: Final[float] = 0.0   # strictly above
     HYBRID_DGPU_AWAKE_HOLD_SEC: Final[float] = 15.0
-    NVIDIA_SMI_SELF_ACTIVITY_GRACE_SEC: Final[float] = 2.0
+    HYBRID_DGPU_AWAKE_HOLD_WINDOWS: Final[float] = 3.0
     # nvidia-smi that keeps failing (timeout, non-zero exit) is retried after BASE * 2^(n-1) s for the
     # n-th failure in a row, capped at MAX - never every 5 s forever. Logged once per failure streak,
     # at the LOG_AFTER-th failure.
@@ -135,8 +136,9 @@ class GpuConstants:
             raise ValueError("HYBRID_DGPU_AWAKE_* must be non-negative / positive.")
         if not 0 < self.NVIDIA_SMI_BACKOFF_BASE_SEC <= self.NVIDIA_SMI_BACKOFF_MAX_SEC:
             raise ValueError("NVIDIA_SMI_BACKOFF_BASE_SEC must be in (0, NVIDIA_SMI_BACKOFF_MAX_SEC].")
-        if self.NVIDIA_SMI_BACKOFF_LOG_AFTER < 1 or self.NVIDIA_SMI_SELF_ACTIVITY_GRACE_SEC < 0:
-            raise ValueError("NVIDIA_SMI_BACKOFF_LOG_AFTER must be >= 1 and the grace non-negative.")
+        if self.NVIDIA_SMI_BACKOFF_LOG_AFTER < 1 or self.HYBRID_DGPU_AWAKE_HOLD_WINDOWS < 2:
+            # Fewer than 2 windows: one ambiguous sample between two clean ones would close the gate.
+            raise ValueError("NVIDIA_SMI_BACKOFF_LOG_AFTER must be >= 1, HYBRID_DGPU_AWAKE_HOLD_WINDOWS >= 2.")
 
 
 # Singleton instance for easy access
