@@ -75,6 +75,13 @@ class AppConstants:
     UPDATE_RECHECK_INTERVAL_MS: Final[int] = 3 * 60 * 60 * 1000
     # After a wake from sleep the network is often not back yet; wait this long before the check.
     UPDATE_RESUME_CHECK_DELAY_MS: Final[int] = 60_000
+    # A periodic / after-resume check offers an update with a non-modal flyout (never a dialog the
+    # user did not ask for); it stays this long. While a fullscreen app, a modal dialog or a nested
+    # event loop is up, the offer waits and is retried this often.
+    UPDATE_FLYOUT_DISMISS_MS: Final[int] = 30_000
+    UPDATE_OFFER_RETRY_MS: Final[int] = 60_000
+    # "Not now" in the update dialog snoozes that version's automatic offers this long (seconds).
+    UPDATE_NOT_NOW_SNOOZE_S: Final[int] = 3 * 24 * 60 * 60
     # How long after the event loop starts the crash log's fault handler stays on (netspeedtray/
     # crash_log.py): long enough to cover the widget's first show and stats ticks, short enough
     # that handled access violations later in the run are never logged as crashes.
