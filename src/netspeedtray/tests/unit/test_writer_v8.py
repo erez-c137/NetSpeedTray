@@ -968,3 +968,54 @@ def test_failure_episode_on_its_own():
     assert rec[0][1] == "Thing failed: nope"
     assert rec[2][1] == "Thing still failing: 3 failures over 60 s (latest: nope)"
     assert rec[3][1] == "Thing recovered after 3 failure(s) over 90 s"
+
+
+def test_a_different_error_mid_episode_is_logged_once_at_error():
+    rec = []
+
+    class L:
+        def __getattr__(self, level):
+            return lambda msg, *a: rec.append((level, msg % a))
+    t = [0.0]
+    ep = W.FailureEpisode(L(), "Thing", repeat_warn_s=10_000, clock=lambda: t[0])
+    full = sqlite3.OperationalError("database or disk is full")
+    io = sqlite3.OperationalError("disk I/O error")
+    for exc in (full, full, io, io, full, io, sqlite3.DatabaseError("database disk image is malformed")):
+        ep.failed(exc)
+        t[0] += 10
+    errors = [m for lvl, m in rec if lvl == "error"]
+    assert errors == [
+        "Thing failed: database or disk is full",
+        "Thing failing with a different error (failure 3, 20 s in): OperationalError: disk I/O error",
+        "Thing failing with a different error (failure 7, 60 s in): "
+        "DatabaseError: database disk image is malformed",
+    ]
+    assert [lvl for lvl, _ in rec].count("debug") == 4
+    ep.succeeded()
+    rec.clear()
+    ep.failed(io)   # a new episode starts fresh: its first error is logged again
+    assert rec == [("error", "Thing failed: disk I/O error")]
+
+
+def test_end_session_while_still_failing_warns_with_the_unsaved_rows(conn, caplog):
+    log = logging.getLogger("test.writer_v8.exit")
+    w = _writer(conn, log=log)
+    w.start_session(NOW)
+    _disk_full(conn)
+    for i in range(3):
+        w.add_net_sample(W.NetSample(NOW + 1 + i, 1000, {"nic": (5, 6)}))
+        assert not w.flush(NOW + 1 + i)
+    with caplog.at_level(logging.WARNING, logger=log.name):
+        w.end_session(NOW + 10)
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == ["v8 writer: 3 buffered rows not saved at exit after 4 failure(s)."]
+
+
+def test_a_clean_end_session_logs_no_unsaved_rows_warning(conn, caplog):
+    log = logging.getLogger("test.writer_v8.exit_ok")
+    w = _writer(conn, log=log)
+    w.start_session(NOW)
+    w.add_net_sample(W.NetSample(NOW + 1, 1000, {"nic": (5, 6)}))
+    with caplog.at_level(logging.WARNING, logger=log.name):
+        w.end_session(NOW + 10)
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

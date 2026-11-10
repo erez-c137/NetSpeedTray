@@ -190,6 +190,8 @@ class FailureEpisode:
     ``repeat_warn_s``; the first success afterwards logs one INFO "... recovered after N failures over
     X s". Not thread-safe: keep one per owning object, used only on that object's thread."""
 
+    _MAX_DISTINCT = 5   # distinct errors logged at ERROR per episode (a message that varies cannot flood)
+
     def __init__(self, logger_: logging.Logger, what: str, *, repeat_warn_s: float = 600.0,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self.logger = logger_
@@ -199,6 +201,7 @@ class FailureEpisode:
         self.failures = 0
         self._started = 0.0
         self._last_warn = 0.0
+        self._seen: set = set()   # (type, str) of each error already logged at ERROR this episode
 
     @property
     def active(self) -> bool:
@@ -207,9 +210,17 @@ class FailureEpisode:
     def failed(self, exc: BaseException, first_msg: Optional[str] = None) -> None:
         now = self._clock()
         self.failures += 1
+        sig = (type(exc).__name__, str(exc))
         if self.failures == 1:
             self._started = self._last_warn = now
+            self._seen = {sig}
             self.logger.error(first_msg or (self.what + " failed: %s"), exc)
+        elif sig not in self._seen and len(self._seen) < self._MAX_DISTINCT:
+            # A DIFFERENT error mid-episode ("disk is full" -> "disk I/O error" / "malformed") is
+            # news for triage: once at ERROR right away, then counted like the rest.
+            self._seen.add(sig)
+            self.logger.error("%s failing with a different error (failure %d, %.0f s in): %s: %s",
+                              self.what, self.failures, now - self._started, sig[0], exc)
         elif now - self._last_warn >= self.repeat_warn_s:
             self._last_warn = now
             self.logger.warning("%s still failing: %d failures over %.0f s (latest: %s)",
@@ -385,7 +396,9 @@ class WriterV8:
         """Clean exit: flush what is buffered, then close the session row."""
         self._check_thread()
         now = int(time.time() if now_ts is None else now_ts)
-        self.flush(now)
+        if not self.flush(now):
+            self.logger.warning("v8 writer: %d buffered rows not saved at exit after %d failure(s).",
+                                self.pending_rows(), self._persist_episode.failures)
         if self.session_id is None:
             return
         self._begin()
