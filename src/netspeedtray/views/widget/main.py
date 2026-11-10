@@ -151,6 +151,32 @@ def hover_gpu_list_wanted(config: Dict[str, Any], cards: Any) -> bool:
         return False
 
 
+def hover_gpu_list_shown(config: Dict[str, Any], cards: Any, fit: Any = None) -> bool:
+    """The list goes into a hover card the user already gets (#236 review): it never opens the card on
+    its own. So: the card is on (usage / tips / battery - NetworkSpeedWidget._hover_card_enabled), or
+    its hardware section already opens without them ("Show hardware only when hovering", or a side
+    bar that hides the hardware)."""
+    if not hover_gpu_list_wanted(config, cards):
+        return False
+    return (hardware_in_hover_card_active(config) or bool(fit is not None and fit.hides_hardware)
+            or NetworkSpeedWidget._hover_card_enabled(config))
+
+
+def taskbar_paints_gpu(config: Dict[str, Any], fit: Any = None) -> bool:
+    """Whether the taskbar widget paints a GPU reading at all - what the "on taskbar" marker claims.
+    Not in network-only (the user's own, or the one "Show hardware only when hovering" forces), not
+    when a side bar hides the hardware, not when the mode has no GPU slot (cpu_only, a side_by_side
+    order without it). Auto-Cycle paints the GPU in one of its phases, so it counts."""
+    if fit is not None and fit.hides_hardware:
+        return False
+    mode = effective_display_mode(config)
+    if mode == "network_only":
+        return False
+    from netspeedtray.utils.widget_paint import side_hardware_stats
+    from netspeedtray.utils.widget_renderer import RenderConfig
+    return "GPU" in side_hardware_stats(RenderConfig.from_dict(config), mode)
+
+
 def hover_gpu_rows(config: Dict[str, Any], cards: Any, bar_shows_gpu: bool = True) -> List[Dict[str, Any]]:
     """The hover card's per-GPU rows (usage_flyout ``hardware["gpus"]``), only the readings the user
     turned on - the same switches as the single GPU/VRAM rows they replace. The "on taskbar" marker
@@ -1586,9 +1612,10 @@ class NetworkSpeedWidget(QWidget):
             pass
         self.dismiss_hover_card()
 
-    def _show_usage_hover_card(self, pinned: bool = False) -> None:
+    def _show_usage_hover_card(self, pinned: bool = False, rebuild_of: Optional[Any] = None) -> None:
         """Build and show the usage card just above the widget (never under the taskbar). ``pinned``
-        opens it already pinned (a click/tap, not a hover)."""
+        opens it already pinned (a click/tap, not a hover). ``rebuild_of``: the open card this one
+        replaces - it keeps that card's pin-hint footer as it is, without counting another show."""
         if self._is_context_menu_visible or self._dragging or not self.isVisible():
             return
         # Don't pop an always-on-top card over a fullscreen app, even when the widget itself is
@@ -1615,7 +1642,13 @@ class NetworkSpeedWidget(QWidget):
                            else None)
             # "Click the widget to keep this open" footer: on a card opened by hover only (a pinned
             # card is already open), for the first few such cards.
-            pin_hint = None if pinned else self._pin_hint_text()
+            if pinned:
+                pin_hint = None
+            elif rebuild_of is not None:
+                pin_hint = (self.i18n.HOVER_CARD_PIN_HINT
+                            if getattr(rebuild_of, "pin_hint_visible", False) else None)
+            else:
+                pin_hint = self._pin_hint_text()
             card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, power=power,
                                history_note=note, hardware=hardware, month_label=month_label,
                                pin_hint=pin_hint)
@@ -1856,9 +1889,9 @@ class NetworkSpeedWidget(QWidget):
         the enabled CPU/GPU/memory live."""
         if hardware_in_hover_card_active(self.config):
             return True
-        if hover_gpu_list_wanted(self.config, getattr(self, "gpu_cards", ())):
-            return True
         fit = self._side_bar_fit()
+        if hover_gpu_list_shown(self.config, getattr(self, "gpu_cards", ()), fit):
+            return True
         return bool(fit is not None and (fit.hides_hardware or fit.hides_identity))
 
     def _hover_hardware_snapshot(self) -> Optional[dict]:
@@ -1900,13 +1933,12 @@ class NetworkSpeedWidget(QWidget):
                 if getattr(self, "vram_is_shared", False):
                     hw["vram_shared"] = True
         cards = getattr(self, "gpu_cards", ())
-        if hover_gpu_list_wanted(cfg, cards):
+        if hover_gpu_list_shown(cfg, cards, fit):
             # Every GPU, each with its own usage/temperature/power/memory - in place of the single
             # GPU/VRAM rows (the taskbar's figure is one of them, or in Automatic the highest usage).
             for key in ("gpu", "vram", "vram_shared"):
                 hw.pop(key, None)
-            hw["gpus"] = hover_gpu_rows(cfg, cards, bar_shows_gpu=not in_card and not (
-                fit is not None and fit.hides_hardware))
+            hw["gpus"] = hover_gpu_rows(cfg, cards, bar_shows_gpu=taskbar_paints_gpu(cfg, fit))
             if cfg.get("show_hardware_temps", False):
                 from netspeedtray.utils.helpers import temperature_unit
                 unit = temperature_unit(cfg)
@@ -1938,7 +1970,12 @@ class NetworkSpeedWidget(QWidget):
             if card.update_hardware(snapshot) is False:
                 # A GPU came or went (or the pick changed): the card needs other rows - rebuilt and
                 # swapped, the new one shown before the old one hides; a pinned card stays pinned.
-                self._show_usage_hover_card(pinned=bool(getattr(self, "_hover_card_pinned", False)))
+                self._show_usage_hover_card(pinned=bool(getattr(self, "_hover_card_pinned", False)),
+                                            rebuild_of=card)
+                if self._hover_card is card:
+                    # The rebuild bailed (menu open, a drag, a fullscreen app): never leave the old
+                    # card up frozen on its last values.
+                    self._hide_usage_hover_card()
         except Exception as e:
             self.logger.debug("hover card hardware refresh failed: %s", e)
 

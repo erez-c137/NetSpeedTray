@@ -490,8 +490,9 @@ class HardwarePage(QWidget):
         self.gpu_adapter.setCurrentIndex(idx)
         su.keep_combo_face(self.gpu_adapter)
         self._gpu_adapter_card.setVisible(len(names) >= 2 or bool(saved))
-        # The list counts cards, not names: two identical cards are listed as #1 and #2.
-        self._hover_gpus_card.setVisible(len(real) >= 2 or bool(saved))
+        # The list counts cards, not names: two identical cards are listed as #1 and #2. Not kept up
+        # for a saved pick like the picker is - with one GPU there is no list to switch.
+        self._hover_gpus_card.setVisible(len(real) >= 2)
 
     def _throttle_c(self) -> int:
         """The throttle slider's value as stored: whole Celsius, 0 = off."""

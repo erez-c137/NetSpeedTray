@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QGraphicsDropShadowEffect, QProgressBar,
 )
 
+from netspeedtray import constants
 from netspeedtray.utils import styles as su, helpers
 from netspeedtray.constants.styles import styles as tokens
 
@@ -309,7 +310,7 @@ class UsageFlyout(QWidget):
     _HW_REFS = {"pct": "100%", "temp": "100°C", "power": "250.0 W", "mem": "99.9 / 99.9 GB"}
     # (The "temp" reference follows the display unit - helpers.temperature_reference(hover=True).)
     # A listed GPU's name (#236) is elided at this width, so a long driver name never widens the card.
-    _GPU_NAME_MAX_W = 170
+    _GPU_NAME_MAX_W = constants.gpu.LIST_NAME_MAX_WIDTH_PX
 
     @staticmethod
     def _temp_unit(hardware: dict) -> str:

@@ -846,7 +846,7 @@ class StatsMonitorThread(QThread):
         sensors = LhmSnapshot(gpus=tuple(groups)) if groups else None
         nvidia = [a for a in real if a.vendor_id == constants.gpu.VENDOR_NVIDIA]
         now = time.monotonic()
-        fresh_window = 3 * self._NVIDIA_POLL_INTERVAL_SEC
+        fresh_window = constants.gpu.LIST_SMI_CACHE_MAX_AGE_POLLS * self._NVIDIA_POLL_INTERVAL_SEC
         auto_smi_fresh = (selected is None and len(nvidia) == 1 and self._nvidia_last_poll > 0.0
                           and now - self._nvidia_last_poll <= fresh_window)
         mib = 1024.0 * 1024.0
@@ -859,14 +859,16 @@ class StatsMonitorThread(QThread):
                 util = max(constants.gpu.UTIL_MIN_PERCENT,
                            min(constants.gpu.UTIL_MAX_PERCENT, utils.get(a.luid, 0.0)))
 
-            # Memory: an iGPU's shared usage when PDH has it, else its own dedicated usage.
+            # Memory: an iGPU's shared usage (no shared reading: "—" - its tiny dedicated carve-out
+            # would read as a misleading "VRAM 0.0 / 0.1 GB"); any other GPU's own dedicated usage.
             used = total = None
-            shared = False
-            mine_shared = [v for inst, v in (shared_mib or {}).items()
-                           if gpu_adapters.pdh_instance_luid(inst) == a.luid]
-            if integrated and mine_shared:
-                used, shared = sum(mine_shared), True
-                total = a.shared_system_bytes / mib if a.shared_system_bytes > 0 else self._half_ram_mib()
+            shared = integrated
+            if integrated:
+                mine_shared = [v for inst, v in (shared_mib or {}).items()
+                               if gpu_adapters.pdh_instance_luid(inst) == a.luid]
+                if mine_shared:
+                    used = sum(mine_shared)
+                    total = a.shared_system_bytes / mib if a.shared_system_bytes > 0 else self._half_ram_mib()
             elif dedicated_mib is not None:
                 mine = [v for inst, v in dedicated_mib.items() if gpu_adapters.pdh_instance_luid(inst) == a.luid]
                 if mine:
@@ -1752,6 +1754,10 @@ class StatsMonitorThread(QThread):
 
                 # 3. GPU / VRAM (Optional - skipped entirely in RDP sessions). VRAM alone still needs
                 # the PDH GPU poll; temperature / power / utilization are only asked for with the GPU on.
+                list_gpus = _collect_gpu and not _in_rdp and bool(self.config.get(
+                    'hover_list_all_gpus', constants.config.defaults.DEFAULT_HOVER_LIST_ALL_GPUS))
+                if not list_gpus:
+                    stats['gpu_cards'] = ()   # GPU collection or the list switched off: clear it
                 if (_collect_gpu or _collect_vram) and not _in_rdp:
                     try:
                         include_temp = _collect_gpu and (
@@ -1777,11 +1783,11 @@ class StatsMonitorThread(QThread):
                             stats['vram_is_shared'] = True
                         # Every GPU of a multi-GPU PC, for the hover card's list (#236): built from
                         # this poll's reads, live display only - the controller never persists it.
-                        if _collect_gpu and self.config.get(
-                                'hover_list_all_gpus', constants.config.defaults.DEFAULT_HOVER_LIST_ALL_GPUS):
+                        # () = no list (one GPU). A failed poll sends no key at all, so a transient
+                        # PDH/driver error keeps the list the card already shows.
+                        if list_gpus:
                             cards = self._gpu_cards(include_temp, include_power)
-                            if len(cards) >= 2:
-                                stats['gpu_cards'] = cards
+                            stats['gpu_cards'] = cards if len(cards) >= 2 else ()
                     except Exception as gpu_err:
                         self.logger.warning("GPU polling error (skipped, not counted against circuit breaker): %s", gpu_err)
 
