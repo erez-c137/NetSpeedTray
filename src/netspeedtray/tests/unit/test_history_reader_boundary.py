@@ -17,6 +17,7 @@ The fixture is written the way production writes it - persist batches through ``
 its real maintenance roll-up - and the stray rows go in through the same persist path afterwards.
 """
 import random
+import shutil
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -73,13 +74,26 @@ STRAYS = {
 }
 
 
-@pytest.fixture(params=sorted(STRAYS))
-def clean_and_stray(request, q_app, tmp_path):
+@pytest.fixture(scope="module")
+def built_template(q_app, tmp_path_factory):
+    """One ``_build`` per module (it costs seconds); every test gets its own copy of the folder, so a
+    test that writes (a stray row, a mid-read roll-up) never changes another test's database."""
     now = datetime.now()
-    clean_dir, stray_dir = tmp_path / "clean", tmp_path / "stray"
-    for d in (clean_dir, stray_dir):
-        d.mkdir()
-        _build(d, now)
+    d = tmp_path_factory.mktemp("boundary_template")
+    _build(d, now)
+    return d, now
+
+
+def _copy_of(template: Path, dest: Path) -> Path:
+    shutil.copytree(template, dest)      # the whole folder: the db and any -wal / -shm beside it
+    return dest
+
+
+@pytest.fixture(params=sorted(STRAYS))
+def clean_and_stray(request, built_template, tmp_path):
+    template, now = built_template
+    clean_dir = _copy_of(template, tmp_path / "clean")
+    stray_dir = _copy_of(template, tmp_path / "stray")
     stray_ts = STRAYS[request.param](now)
     _add_stray(stray_dir, stray_ts)
     clean, stray = _state(clean_dir), _state(stray_dir)
@@ -198,9 +212,8 @@ class _MaintenanceMidRead:
 
 
 @pytest.fixture
-def db_dir(q_app, tmp_path):
-    _build(tmp_path, datetime.now())
-    return tmp_path
+def db_dir(built_template, tmp_path):
+    return _copy_of(built_template[0], tmp_path / "db")
 
 
 def _reader(db_dir: Path, interfere: bool):

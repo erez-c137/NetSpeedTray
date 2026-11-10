@@ -347,13 +347,20 @@ def test_backup_matches_the_worker_backup_pattern(v7, tmp_path, monkeypatch):
 # recover(): every state of the journal state machine
 # --------------------------------------------------------------------------------------------
 
-@pytest.fixture
-def built(tmp_path):
-    """A v7 live file and a verified .v8tmp beside it - the moment the journal is written."""
-    src = tmp_path / "src"
-    src.mkdir()
+@pytest.fixture(scope="module")
+def _migrated_src(tmp_path_factory):
+    """One real v7 build + migration per module (deterministic: NOW is fixed). Read only: every test
+    copies the two files it needs into its own folder below."""
+    src = tmp_path_factory.mktemp("migrated_src")
     db = _make_v7(src)
     M.migrate(db, now=NOW)                    # produces a v8 live + v7 bak in src
+    return src
+
+
+@pytest.fixture
+def built(tmp_path, _migrated_src):
+    """A v7 live file and a verified .v8tmp beside it - the moment the journal is written."""
+    src = _migrated_src
     d = tmp_path / "d"
     d.mkdir()
     shutil.copy2(src / f"{DB}.bak.v7_20261019_120000", d / DB)          # live = v7

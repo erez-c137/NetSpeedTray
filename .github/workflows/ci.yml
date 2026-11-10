@@ -1,12 +1,14 @@
 name: CI
 
-# Runs the unit-test suite on every branch push and on pull requests targeting
-# main. Mirrors the test step in release.yml so a green CI here means the tag
-# build's tests will pass too. Pushing the locale/contributor PRs (which come
-# from forks) is covered by the pull_request trigger.
+# Runs the unit-test suite on pull requests targeting main and on pushes to main. A PR branch used to
+# run twice per push (once for the push, once for the pull_request merge ref - different refs, so the
+# concurrency group did not dedupe them); the pull_request run is the one that matters, because it
+# tests the merge with main. Forks' locale/contributor PRs are covered by the same trigger.
+# Mirrors the test step in release.yml so a green CI here means the tag build's tests will pass too
+# (release.yml runs the same tests, serially, in one step).
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -19,6 +21,11 @@ permissions:
   contents: read
 
 jobs:
+  # The main lane: everything except the native-desktop tests. Serial for now: run in other orders
+  # (pytest -n), the suite can hit an order-dependent access violation that already exists on main
+  # (test_app_overlap_yield followed by Settings dialog builds; see the Phase A PR). Switch this step
+  # to `-n auto` once that is fixed - it is already xdist-ready (unique registry names, the native
+  # group kept on one worker by tests/conftest.py).
   test:
     runs-on: windows-latest
 
@@ -30,6 +37,10 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            dev-requirements.txt
 
       - name: Install dependencies
         run: |
@@ -38,12 +49,46 @@ jobs:
           pip install -r requirements.txt
           pip install -r dev-requirements.txt
 
-      - name: Run unit tests
+      - name: Run unit tests (all but native_desktop)
         env:
-          # Run the PyQt6 GUI tests headless + deterministically (conftest.py also
-          # sets this via setdefault; this makes the CI environment explicit).
+          # Run the PyQt6 GUI tests headless + deterministically (conftest.py also sets this via
+          # setdefault; this makes the CI environment explicit).
           QT_QPA_PLATFORM: offscreen
           QT_SCALE_FACTOR: "1"
         run: |
           .\.venv\Scripts\Activate.ps1
-          python -m pytest -v
+          python -m pytest -v -m "not native_desktop" --durations=25
+
+  # The native lane: tests that show real windows on the runner's desktop or read its foreground /
+  # hit-test state (their child processes run on Qt's "windows" platform). One at a time, so no test's
+  # window can move another's foreground; a separate job so it runs alongside the main lane.
+  native:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            dev-requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\Activate.ps1
+          pip install -r requirements.txt
+          pip install -r dev-requirements.txt
+
+      - name: Run native-desktop tests (serial)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_SCALE_FACTOR: "1"
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          python -m pytest -v -n 0 -m native_desktop --durations=10

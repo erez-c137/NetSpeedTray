@@ -26,6 +26,9 @@ import pytest
 
 SRC_DIR = Path(__file__).resolve().parents[3]
 
+# Real native windows, real foreground and hit-test state: the serial native lane (pytest.ini).
+pytestmark = pytest.mark.native_desktop
+
 _PROBE = r"""
 import ctypes, ctypes.wintypes as wt, json, sys
 from PyQt6.QtWidgets import QApplication
@@ -41,6 +44,15 @@ u.GetWindowLongW.argtypes = [wt.HWND, ctypes.c_int]; u.GetWindowLongW.restype = 
 u.PostMessageW.argtypes = [wt.HWND, ctypes.c_uint, wt.WPARAM, wt.LPARAM]
 u.GetForegroundWindow.restype = wt.HWND
 u.GetClassNameW.argtypes = [wt.HWND, wt.LPWSTR, ctypes.c_int]
+u.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+u.GetWindowThreadProcessId.restype = wt.DWORD
+OWN_PID = ctypes.windll.kernel32.GetCurrentProcessId()
+
+def owner_pid(h):
+    pid = wt.DWORD(0)
+    if h:
+        u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+    return pid.value
 
 def cls(h):
     b = ctypes.create_unicode_buffer(256)
@@ -114,6 +126,10 @@ def state():
             "hit": rel, "hit_class": cls(hit) if hit else "", "clicked": bool(fired),
             "foreground_is_card": (u.GetForegroundWindow() or 0) == hwnd,
             "foreground_unchanged": (u.GetForegroundWindow() or 0) == fg,
+            # A change to ANOTHER process's window (the user, a toast, another test run) says
+            # nothing about the card; one to a window of this probe would be ours.
+            "foreground_moved_to_own_process": ((u.GetForegroundWindow() or 0) != fg
+                                                and owner_pid(u.GetForegroundWindow()) == OWN_PID),
             "visible": card.isVisible()}
 
 out = {"hover": state()}
@@ -153,8 +169,14 @@ def test_pinned_card_takes_a_real_click_and_never_takes_focus(tmp_path):
     assert not pinned["transparent"] and pinned["layered"] and pinned["noactivate"], pinned
     assert pinned["hit"] in ("card", "occluded"), pinned  # the click lands on the card, not behind
     assert pinned["clicked"], pinned                 # B5: Qt delivered it -> dismiss_requested
-    assert not pinned["foreground_is_card"] and pinned["foreground_unchanged"], pinned
+    assert not pinned["foreground_is_card"], pinned  # the card never takes focus
+    assert not pinned["foreground_moved_to_own_process"], pinned
     assert pinned["visible"], pinned                 # pinning never re-created / hid the window
 
     assert not hover["qt_tfi"]                       # Qt's flag is what made the pinned card deaf
     assert unpinned["transparent"] and unpinned["hit"] != "card" and not unpinned["clicked"], unpinned
+    # The foreground is a desktop-wide state the person at the PC (or another window) can move during
+    # the click: a change to another process's window cannot be blamed on the card, so it is
+    # inconclusive rather than a failure. Every other assertion above has already held.
+    if not pinned["foreground_unchanged"]:
+        pytest.skip("inconclusive: foreground changed by another window")

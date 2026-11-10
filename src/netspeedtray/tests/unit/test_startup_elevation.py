@@ -8,7 +8,9 @@ carry the flags.
 These use a real HKCU compatibility value for a made-up exe path, removed afterwards.
 """
 import logging
+import os
 import sys
+import uuid
 import winreg
 from unittest.mock import patch
 
@@ -20,17 +22,24 @@ from netspeedtray.core.startup_manager import StartupManager, get_compat_layers
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows registry")
 
 _LAYERS = r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"
-_FAKE_EXE = r"C:\nst-test-308\NetSpeedTray.exe"
 
 
 @pytest.fixture
 def flagged_exe():
+    # A made-up exe path unique to this process and test: the value lives in the shared HKCU key, so
+    # two suites running at once (parallel workers, an agent's run next to safe-merge) never set or
+    # delete each other's value. Only this AppCompatFlags\Layers value is touched - never the Run key.
+    fake_exe = rf"C:\nst-test-308-{os.getpid()}-{uuid.uuid4().hex[:8]}\NetSpeedTray.exe"
     key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, _LAYERS)
-    winreg.SetValueEx(key, _FAKE_EXE, 0, winreg.REG_SZ, "~ RUNASADMIN")
-    winreg.CloseKey(key)
-    yield _FAKE_EXE
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _LAYERS, 0, winreg.KEY_SET_VALUE) as key:
-        winreg.DeleteValue(key, _FAKE_EXE)
+    try:
+        winreg.SetValueEx(key, fake_exe, 0, winreg.REG_SZ, "~ RUNASADMIN")
+    finally:
+        winreg.CloseKey(key)
+    try:
+        yield fake_exe
+    finally:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _LAYERS, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, fake_exe)
 
 
 def test_reads_the_run_as_admin_flag(flagged_exe):

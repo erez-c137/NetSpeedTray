@@ -16,6 +16,7 @@ and drawing the tray menu, the hover card and a notice flyout, the mapped font f
 (Windows 10: Segoe UI and Segoe MDL2 Assets in place of the first two.) Until rc.7 the menu alone
 loaded all of Segoe UI in every language, and every family in the CJK and Bengali ones.
 """
+import functools
 import json
 import os
 import subprocess
@@ -27,7 +28,9 @@ import pytest
 from netspeedtray.constants.i18n import I18nStrings
 
 SRC = Path(__file__).resolve().parents[3]
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows fonts (DirectWrite)")
+# Shows the real Monitor, Settings and font picker on the native platform: the serial native lane.
+pytestmark = [pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows fonts (DirectWrite)"),
+              pytest.mark.native_desktop]
 
 # The UI face each language adds to the base pair (widget face + icon face).
 LANGUAGE_FACE = {"he_IL": "Segoe UI", "ja_JP": "Yu Gothic UI", "ko_KR": "Malgun Gothic",
@@ -132,6 +135,13 @@ def _probe(lang: str, *ssids: str) -> dict:
                          text=True, encoding="utf-8", timeout=180)
     assert res.returncode == 0, res.stderr[-2000:]
     return json.loads(res.stdout.strip().splitlines()[-1])
+
+
+@functools.lru_cache(maxsize=None)
+def _installed_faces() -> tuple:
+    """Which of the probed faces this PC has (en_US probe). Installed fonts don't change during a run,
+    so one probe per test process answers every _assert_only_shown_faces call (it was one each)."""
+    return tuple(sorted(_probe("en_US")["installed"].items()))
 
 
 def _families_of(files, families) -> dict:
@@ -278,9 +288,20 @@ out["picker"] = files()
 picker.reject(); picker.deleteLater()
 # Settings closed: once it is destroyed and Qt's font database reset (utils/font_release), every face
 # it or the picker mapped is unmapped again - back to the Monitor-closed set.
-w.settings_dialog.close()
 from netspeedtray import constants as _c
-pump(_c.timeouts.FONT_RELEASE_DELAY_MS / 1000.0 + 1.5)
+from netspeedtray.utils import font_release as _fr
+_released = []                                              # the scheduled release, once it has run
+_orig_release = _fr.release_font_database
+_fr.release_font_database = lambda: (_released.append(1), _orig_release())[1]
+w.settings_dialog.close()
+# Wait for that release (plus a settle for the unmapping), never longer than the fixed wait this
+# replaced: a release that never comes reads exactly as before.
+import time as _t
+_deadline = _t.monotonic() + _c.timeouts.FONT_RELEASE_DELAY_MS / 1000.0 + 1.5
+while _t.monotonic() < _deadline and not _released:
+    pump(0.05)
+if _released:
+    pump(max(0.0, min(0.5, _deadline - _t.monotonic())))
 out["settings_closed"] = files()
 print(json.dumps(out), flush=True)
 os._exit(0)
@@ -331,7 +352,7 @@ def test_system_text_in_another_script_loads_only_its_face(lang, tmp_path):
 
 
 def _assert_only_shown_faces(lang, out, more, optional=frozenset()) -> None:
-    installed = _probe("en_US")["installed"]
+    installed = dict(_installed_faces())
     if not installed["Segoe UI Variable"] or not installed["Segoe Fluent Icons"]:
         pytest.skip("the Windows 11 fonts are not installed here")
     extra = LANGUAGE_FACE.get(lang)
