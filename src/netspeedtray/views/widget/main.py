@@ -427,20 +427,23 @@ class NetworkSpeedWidget(QWidget):
         # Update Checker - delayed startup check
         self.update_checker = UpdateChecker(self.config, self)
         self.update_checker.update_available.connect(self._on_update_available)
-        self.update_checker.up_to_date.connect(self._clear_manual_update_check)
-        self.update_checker.check_failed.connect(self._clear_manual_update_check)
         if self.update_checker.should_check():
             QTimer.singleShot(5000, self.update_checker.check_now)
         # The startup check runs once; a PC that sleeps instead of rebooting keeps this instance for
         # weeks, so re-ask periodically and after a wake (both gated by should_check's 24 h interval).
-        self._update_recheck_timer = QTimer(self)
-        self._update_recheck_timer.setInterval(constants.app.UPDATE_RECHECK_INTERVAL_MS)
-        self._update_recheck_timer.timeout.connect(lambda: self._run_automatic_update_check("periodic"))
-        self._update_recheck_timer.start()
-        self._update_resume_check_timer = QTimer(self)
-        self._update_resume_check_timer.setSingleShot(True)   # restart() coalesces the two PBT_* messages
-        self._update_resume_check_timer.setInterval(constants.app.UPDATE_RESUME_CHECK_DELAY_MS)
-        self._update_resume_check_timer.timeout.connect(lambda: self._run_automatic_update_check("resume"))
+        try:
+            self.update_checker.up_to_date.connect(self._clear_manual_update_check)
+            self.update_checker.check_failed.connect(self._clear_manual_update_check)
+            self._update_recheck_timer = QTimer(self)
+            self._update_recheck_timer.setInterval(constants.app.UPDATE_RECHECK_INTERVAL_MS)
+            self._update_recheck_timer.timeout.connect(lambda: self._run_automatic_update_check("periodic"))
+            self._update_recheck_timer.start()
+            self._update_resume_check_timer = QTimer(self)
+            self._update_resume_check_timer.setSingleShot(True)   # start() again coalesces both PBT_* messages
+            self._update_resume_check_timer.setInterval(constants.app.UPDATE_RESUME_CHECK_DELAY_MS)
+            self._update_resume_check_timer.timeout.connect(lambda: self._run_automatic_update_check("resume"))
+        except Exception as e:
+            self.logger.error(f"Could not start the update re-check timers: {e}", exc_info=True)
 
         # Cycle Timer (not while "Show hardware in the hover card" collapses the widget to network-only)
         if effective_display_mode(self.config) == "cycle":
