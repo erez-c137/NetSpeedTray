@@ -619,6 +619,11 @@ class NetworkSpeedWidget(QWidget):
                     self.logger.debug("Fullscreen gate: %s widget (reason=%s, %s)",
                                       "hiding" if fs_covered else "showing", latch.reason,
                                       _window_log_desc(latch.probe_hwnd))
+                    if latch.reason == "no-foreground-timeout":
+                        # Rare, and the one case a support bundle should show (the file log is INFO):
+                        # a window kept "covering" after it left the foreground. Names its class.
+                        self.logger.info("Fullscreen gate: released a hold on a cover with no foreground (%s)",
+                                         _window_log_desc(latch.probe_hwnd))
 
             if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)

@@ -11,7 +11,9 @@ DWM-cloaked monitor-sized window counted as a real fullscreen cover. These pin t
 - an invisible / cloaked monitor-sized window hides nothing;
 - leaving fullscreen needs two agreeing readings FULLSCREEN_EXIT_CONFIRM_MS apart (the desktop in the
   foreground is a deliberate exit and shows at once); a closed fullscreen app with nothing taking the
-  foreground still releases.
+  foreground still releases;
+- that hold is bounded: a cover that still looks drawn but has left the foreground (a shell surface
+  during Show desktop) cannot keep the widget hidden past FULLSCREEN_NO_FOREGROUND_HOLD_MS.
 """
 import types
 from unittest.mock import MagicMock, patch
@@ -30,6 +32,7 @@ DESKTOP = 0x4444       # WorkerW
 DEAD = 0xDEAD          # a window already destroyed
 
 CONFIRM_S = constants.timeouts.FULLSCREEN_EXIT_CONFIRM_MS / 1000.0
+HOLD_S = constants.timeouts.FULLSCREEN_NO_FOREGROUND_HOLD_MS / 1000.0
 
 
 # --- the widget's visibility gate ------------------------------------------------------------------
@@ -166,6 +169,39 @@ def test_fullscreen_app_closing_with_a_null_foreground_still_shows(gate):
     gate.advance(CONFIRM_S)
     gate.refresh(w, 0)
     assert len(_shows(w)) == 1
+
+
+def test_a_cover_that_left_the_foreground_cannot_hold_the_widget_hidden(gate):
+    """Show desktop from the taskbar (owner's smoke test, 2026-11-10): a monitor-sized surface took the
+    foreground, then the foreground went NULL with that surface still drawn and monitor-sized. Without
+    a bound the latch kept re-judging it as covering and the widget stayed hidden until a desktop click.
+    Short NULL hand-offs still hold (the #503 flash); a long one releases."""
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)                 # the surface (any drawn monitor-sized window) covers
+    assert w.shown["v"] is False
+    for _ in range(4):                    # NULL for under the hold, ticking: still hidden
+        gate.refresh(w, 0)
+        gate.advance(HOLD_S / 5)
+    assert _shows(w) == []
+    gate.advance(HOLD_S)                  # NULL past the hold: the 1 s tick shows the widget
+    gate.refresh(w, 0)
+    assert w.shown["v"] is True
+    assert w._fs_latch.reason == "no-foreground-timeout"
+    # ...and it reaches the INFO file log (DEBUG never does), naming the window's class, not its title.
+    info = [c.args for c in w.logger.info.call_args_list if "Fullscreen gate" in c.args[0]]
+    assert len(info) == 1 and info[0][1].startswith("class=")
+
+
+def test_a_real_foreground_reading_restarts_the_hold(gate):
+    """Java -> NULL (most of the hold) -> Java -> NULL (most of it again): never released - the
+    hold counts one unbroken run of no-information readings, not their total."""
+    w = gate.make(visible=True)
+    gate.refresh(w, JAVA)
+    for _ in range(3):
+        gate.refresh(w, 0)
+        gate.advance(HOLD_S * 0.9)
+        gate.refresh(w, JAVA)
+    assert _shows(w) == []
 
 
 def test_immediate_hide_latches_so_a_null_reading_cannot_undo_it(gate):

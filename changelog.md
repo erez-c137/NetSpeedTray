@@ -113,7 +113,8 @@ or blink out on the desktop every few seconds.
   invisible/cloaked window, as an instant fullscreen hide. A latch now holds the decision: hiding
   stays immediate for a visible, uncloaked window covering the monitor; NULL, closed, invisible
   or cloaked foregrounds keep the previous decision (re-checking the covering window, so closing
-  a fullscreen app with nothing taking focus still brings the widget back); and showing again
+  a fullscreen app with nothing taking focus still brings the widget back, and the hold gives up
+  after 1.5 s so a cover that has left the foreground can't keep the widget hidden); and showing again
   needs two "not covered" readings at least 250 ms apart, so leaving fullscreen into a normal
   window takes 250-500 ms instead of up to 250 ms (the desktop and Win+D are still instant). The
   refresh judges the live foreground, not the one a debounced event stored, and the copies on

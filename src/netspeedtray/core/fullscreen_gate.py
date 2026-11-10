@@ -11,7 +11,10 @@ the other way round, an invisible monitor-sized window hid it on a plain desktop
 
 - a reading from a foreground that is not on screen (NULL, dead, invisible, DWM-cloaked) is no
   information - the latch holds, except that while covered it re-judges the window that covered, so a
-  fullscreen app closing with nothing taking the foreground still releases it;
+  fullscreen app closing with nothing taking the foreground still releases it. That hold is bounded:
+  after ``hold_ms`` of nothing but no-information readings the latch releases even if the window that
+  covered still looks drawn and monitor-sized (a shell surface during Show desktop left the widget
+  hidden until a desktop click in testing), so a bad cover can cost at most a short absence;
 - covered is immediate (a real, drawn covering window hides the widget at once);
 - uncovered needs confirmation: two agreeing readings at least ``confirm_ms`` apart, or the desktop
   itself in the foreground (Win+D / Show desktop), which is a deliberate exit.
@@ -31,16 +34,21 @@ class FullscreenLatch:
     """See the module docstring. ``judge`` is called by the widget's visibility gate."""
 
     # ``reason`` values of a reading that just released the latch (the widget may show).
-    RELEASE_REASONS = frozenset({"desktop-foreground", "exit-confirmed", "cover-gone"})
+    RELEASE_REASONS = frozenset({"desktop-foreground", "exit-confirmed", "cover-gone",
+                                 "no-foreground-timeout"})
 
     def __init__(self, confirm_ms: Optional[int] = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 hold_ms: Optional[int] = None) -> None:
         self.confirm_ms = (constants.timeouts.FULLSCREEN_EXIT_CONFIRM_MS
                            if confirm_ms is None else int(confirm_ms))
+        self.hold_ms = (constants.timeouts.FULLSCREEN_NO_FOREGROUND_HOLD_MS
+                        if hold_ms is None else int(hold_ms))
         self._clock = clock
         self.covered = False
         self.cover_hwnd = 0
         self._exit_first_at: Optional[float] = None
+        self._no_info_since: Optional[float] = None
         # Set by judge(): True while an uncovered reading waits for its confirmation, so the caller
         # schedules a re-check instead of waiting for the 1 s tick.
         self.recheck_wanted = False
@@ -58,6 +66,7 @@ class FullscreenLatch:
         self.covered = True
         self.cover_hwnd = hwnd
         self._exit_first_at = None
+        self._no_info_since = None
         self.recheck_wanted = False
 
     def judge(self, foreground: int, *, on_screen: Callable[[int], bool],
@@ -67,7 +76,14 @@ class FullscreenLatch:
         foreground = int(foreground or 0)
         if on_screen(foreground):
             probe = foreground
+            self._no_info_since = None
         elif self.covered and self.cover_hwnd:
+            now = self._clock()
+            if self._no_info_since is None:
+                self._no_info_since = now
+            elif (now - self._no_info_since) * 1000.0 >= self.hold_ms:
+                self.probe_hwnd = self.cover_hwnd
+                return self._release("no-foreground-timeout")
             probe = self.cover_hwnd   # no information from the foreground: is the cover still there?
         else:
             self.reason, self.probe_hwnd = "no-information", foreground
@@ -96,5 +112,6 @@ class FullscreenLatch:
 
     def _release(self, reason: str) -> bool:
         self.covered, self.cover_hwnd, self._exit_first_at = False, 0, None
+        self._no_info_since = None
         self.reason = reason
         return False
