@@ -4,8 +4,9 @@ powers it up - so the Automatic readout's 5 s nvidia-smi poll kept the dGPU awak
 
 On a hybrid laptop (battery + NVIDIA + a GPU of another maker) nvidia-smi is asked for temperature /
 power only while the dGPU is already awake by its own PDH engine utilization (PDH never wakes a GPU);
-asleep, they read "—". The VRAM total is a one-shot there, then DXGI's. Desktops are unchanged. A
-failing nvidia-smi backs off exponentially instead of retrying every 5 s forever.
+asleep, they read "—". The VRAM total is never a reason to call there (owner decision 2026-11-11:
+zero wakes at app start) - DXGI's until an awake-time query brings nvidia-smi's. Desktops are
+unchanged. A failing nvidia-smi backs off exponentially instead of retrying every 5 s forever.
 """
 import subprocess
 import time as _time
@@ -60,8 +61,9 @@ def clock(monkeypatch):
     return c
 
 
-def _thread(adapters, battery, monkeypatch, smi=SMI, mobile=True):
+def _thread(adapters, battery, monkeypatch, smi=SMI, mobile=True, ac=1):
     monkeypatch.setattr(gpu_adapters, "enumerate_adapters", lambda: list(adapters))
+    monkeypatch.setattr(power_utils, "ac_line_status", lambda: ac)
     monkeypatch.setattr(power_utils, "battery_presence", lambda: battery)
     monkeypatch.setattr(power_utils, "platform_is_mobile", lambda: mobile)
     t = StatsMonitorThread(interval=1.0)
@@ -109,19 +111,21 @@ def _spawn_times(t, clock, utils):
 def test_hybrid_idle_dgpu_no_nvidia_smi_spawns(q_app, monkeypatch, clock, igpu):
     t = _thread([igpu, RTX, BRD], True, monkeypatch)
     spawns = _spawn_times(t, clock, [IGPU_BUSY] * 120)
-    # One query at startup for the VRAM total (the pre-2.2.1 Automatic contract, golden-pinned),
-    # then nothing for two minutes: the dGPU is left asleep.
-    assert spawns == [0]
+    # Owner decision 2026-11-11: ZERO wakes - not even one at app start for the VRAM total.
+    assert spawns == []
     r = _tick(t, clock, IGPU_BUSY)
     assert (r.temp, r.power) == (None, None)        # asleep: "—", not a frozen reading
-    assert r.vram_total == 8188.0                    # the one-shot's total stays
+    assert r.vram_total == DXGI_TOTAL_MIB            # DXGI's total until nvidia-smi runs anyway
+    # The dGPU wakes on its own: the awake-time query brings nvidia-smi's own total, and it stays.
+    _spawn_times(t, clock, [DGPU_BUSY] * 2 + [IGPU_BUSY] * 30)
+    assert _tick(t, clock, IGPU_BUSY).vram_total == 8188.0
 
 
 def test_hybrid_idle_with_failing_nvidia_smi_takes_the_total_from_dxgi(q_app, monkeypatch, clock):
     t = _thread([UHD, RTX, BRD], True, monkeypatch)
     t._run_child.side_effect = subprocess.CalledProcessError(9, "nvidia-smi")
     spawns = _spawn_times(t, clock, [IGPU_BUSY] * 600)
-    assert spawns == [0]                             # the total is never its own reason to wake it again
+    assert spawns == []                              # the total is never its own reason to wake it
     r = _tick(t, clock, IGPU_BUSY)
     assert r.vram_total == DXGI_TOTAL_MIB
 
@@ -157,12 +161,21 @@ def test_our_own_wake_never_keeps_the_gate_open_at_any_update_rate(q_app, monkey
         return SMI
     t._run_child = MagicMock(side_effect=run_child)
     prev = None
+    for _ in range(3):                     # a short job on the dGPU: the only real reason to call
+        _tick(t, clock, DGPU_BUSY)
+        clock.t += interval - 1.0
+    calls_from_the_job = len(calls)
+    assert calls_from_the_job >= 1
     for _ in range(int(600 / interval)):
         blip = bool(calls) and prev is not None and prev <= calls[-1] < clock.t
         prev = clock.t
         _tick(t, clock, DGPU_BUSY if blip else IGPU_BUSY)
         clock.t += interval - 1.0          # _tick advances 1 s
-    assert len(calls) == 1                 # the startup one-shot only
+    # After the job: at most the calls the hold allows, then none - our own call never re-opens it.
+    hold = max(constants.gpu.HYBRID_DGPU_AWAKE_HOLD_SEC, constants.gpu.HYBRID_DGPU_AWAKE_HOLD_WINDOWS * interval)
+    assert len(calls) <= calls_from_the_job + hold / 5.0 + 1
+    late = [c for c in calls if c > calls[0] + 3 * interval + hold + interval]
+    assert late == []
 
 
 @pytest.mark.parametrize("interval", [1.0, 2.0, 5.0, 10.0])
@@ -298,6 +311,41 @@ def test_no_utilization_to_judge_by_fails_open_and_logs_once(q_app, monkeypatch,
     assert len(logs) == 1
 
 
+def _blind_spawns(t, clock, seconds):
+    t._gpu_util_counter = None           # no \GPU Engine counter: nothing to judge "awake" by
+    spawns = []
+    for i in range(seconds):
+        before = t._run_child.call_count
+        with patch("win32pdh.CollectQueryData"),              patch("win32pdh.GetFormattedCounterArray", side_effect=[{_inst(NV_LUID): 100 * MIB}, {}]),              patch.object(mt.psutil, "virtual_memory", return_value=types.SimpleNamespace(total=32 * GIB)),              patch.object(StatsMonitorThread, "_init_ohm_wmi"):
+            r = t._poll_gpu_hybrid(include_temp=True, include_power=True)
+        clock.t += 1.0
+        if t._run_child.call_count > before:
+            spawns.append(i)
+    return spawns, r
+
+
+@pytest.mark.parametrize("ac, expected", [
+    (1, list(range(0, 91, 5))),           # on AC: every 5 s, as before
+    (0, [0, 30, 60, 90]),                 # on battery: every 30 s (owner decision 2026-11-11)
+    (255, list(range(0, 91, 5))),         # unknown power source: as on AC
+    (None, list(range(0, 91, 5))),        # unreadable: as on AC
+], ids=["ac", "battery", "unknown", "unreadable"])
+def test_the_blind_fallback_polls_slower_on_battery(q_app, monkeypatch, clock, ac, expected):
+    t = _thread([UHD, RTX, BRD], True, monkeypatch, ac=ac)
+    spawns, r = _blind_spawns(t, clock, 91)
+    assert spawns == expected
+    assert r.temp == 52.0                 # readings never go blank in between
+    nv = next(c for c in t._gpu_cards(True, True) if c.luid == RTX.luid)
+    assert (nv.temp, nv.power) == (r.temp, r.power)   # the hover list keeps the slower cache too
+
+
+def test_the_blind_fallback_follows_a_plug_in(q_app, monkeypatch, clock):
+    t = _thread([UHD, RTX, BRD], True, monkeypatch, ac=0)
+    assert _blind_spawns(t, clock, 31)[0] == [0, 30]
+    monkeypatch.setattr(power_utils, "ac_line_status", lambda: 1)
+    assert _blind_spawns(t, clock, 11)[0] == [4, 9]   # 5 s after the last call, then every 5 s
+
+
 # --- review of #500: the hover list never shows what the taskbar does not -----------------------
 
 def test_the_list_follows_the_taskbar_at_startup_and_after_the_gate_closes(q_app, monkeypatch, clock):
@@ -308,7 +356,7 @@ def test_the_list_follows_the_taskbar_at_startup_and_after_the_gate_closes(q_app
         nv = next(c for c in t._gpu_cards(True, True) if c.luid == RTX.luid)
         rows.append((r.temp, r.power, nv.temp, nv.power))
     assert all((a is None) == (c is None) and (b is None) == (d is None) for a, b, c, d in rows)
-    assert rows[0][2] is None                 # the startup one-shot's reading is not shown anywhere
+    assert rows[0][2] is None and t._run_child.call_count >= 1   # nothing before the dGPU woke
     assert any(row[0] == 52.0 for row in rows) and rows[-1] == (None, None, None, None)
 
 
@@ -333,8 +381,8 @@ def test_a_sleeping_hybrid_dgpu_is_not_no_sensor(q_app, monkeypatch, clock):
 def test_a_hybrid_whose_nvidia_smi_fails_still_gets_the_notice(q_app, monkeypatch, clock):
     t = _thread([UHD, RTX, BRD], True, monkeypatch)
     t._run_child.side_effect = subprocess.CalledProcessError(9, "nvidia-smi")
-    for _ in range(6):
-        _tick(t, clock, IGPU_BUSY)
+    for util in [DGPU_BUSY] * 2 + [IGPU_BUSY] * 30:   # it failed when the dGPU was awake
+        _tick(t, clock, util)
     assert _notice(t, {"gpu_temp": None}) == 1
 
 
