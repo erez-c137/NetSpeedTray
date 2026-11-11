@@ -355,7 +355,16 @@ def _hw_rows_width(config: RenderConfig, fm: Any, stats: List[str], memory_below
     mem_col = (fm.horizontalAdvance("  ") + mem_label + mem_num) if (any_mem and inline) else 0
     below = (label_col + mem_label + mem_num) if (any_mem and not inline) else 0
     stat_col = (label_col + pct_col + suffix_col + mem_col) if stat_rows else 0
-    return max(stat_col, below, memory_only_row_width(fm, mem_num) if mem_only else 0)
+    return max(stat_col, below, memory_only_row_width(fm, mem_num, _lone_memory_label(stats)) if mem_only else 0)
+
+
+def _lone_memory_label(stats: List[str]) -> Optional[str]:
+    """The word a memory-only row sizes its label cell for when it is the only row of its segment
+    (draw_hardware_stats: RAM alone or VRAM alone), else None - the shared "VRAM " cell."""
+    if len(stats) == 1 and stats[0] in MEMORY_ONLY_LABELS:
+        return (constants.renderer.MEMORY_LABEL_RAM if stats[0] == "RAM"
+                else constants.renderer.MEMORY_LABEL_VRAM)
+    return None
 
 
 def _hw_details_enabled(config: RenderConfig, stats: List[str]) -> bool:

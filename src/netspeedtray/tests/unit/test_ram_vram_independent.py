@@ -156,6 +156,52 @@ def test_memory_only_row_reads_na_until_measured(q_app):
     assert drawn.count(EN.DEFAULT_TEXT) >= 2 and {"RAM", "VRAM"} <= set(drawn), drawn
 
 
+def _row_cells(cfg, **kw):
+    """(x of each string drawn, segment width) for one draw_hardware_stats call."""
+    renderer = WidgetRenderer(cfg, EN)
+    xs = {}
+    real = wr.draw_text
+
+    def spy(painter, x, y, text, *a, **k):
+        xs[str(text)] = x
+        return real(painter, x, y, text, *a, **k)
+    img = QImage(400, 48, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(QColor(0, 0, 0, 0))
+    p = QPainter(img)
+    try:
+        with patch.object(wr, "draw_text", spy):
+            renderer.draw_hardware_stats(p, None, None, 400, 48, renderer.config, layout_mode="horizontal", **kw)
+    finally:
+        p.end()
+    return xs, renderer.get_last_text_rect().width(), renderer.metrics
+
+
+@pytest.mark.parametrize("word, kw", [
+    ("RAM", dict(ram_info=(9.2, 16.0), ram_only=True)),
+    ("VRAM", dict(vram_info=(3.1, 8.0), vram_only=True)),
+])
+def test_a_lone_memory_row_sizes_its_label_cell_for_its_own_word(q_app, word, kw):
+    """RAM alone (or VRAM alone): no wide shared "VRAM " cell between the word and its number - the
+    cell is the word's own, from the fixed label string; the layout reserves the same."""
+    from netspeedtray.utils.widget_renderer import memory_only_row_width
+    xs, seg, fm = _row_cells(_config({}), **kw)
+    t = 16.0 if word == "RAM" else 8.0
+    num_col = fm.horizontalAdvance(f"{t:.1f}/{t:.1f}G")
+    margin = constants.renderer.TEXT_MARGIN
+    assert xs[word] == margin
+    assert seg == memory_only_row_width(fm, num_col, word) + margin
+    assert seg == fm.horizontalAdvance(word + " ") + num_col + margin
+
+
+def test_stacked_memory_rows_share_the_label_cell_so_they_line_up(q_app):
+    from netspeedtray.utils.helpers import memory_label_width
+    xs, seg, fm = _row_cells(_config({}), ram_info=(9.2, 16.0), vram_info=(3.1, 8.0),
+                             ram_only=True, vram_only=True)
+    assert xs["RAM"] == xs["VRAM"]                                    # labels aligned
+    num_col = fm.horizontalAdvance("16.0/16.0G")
+    assert seg == memory_label_width(fm) + num_col + constants.renderer.TEXT_MARGIN
+
+
 @pytest.mark.parametrize("thickness", [48, 32])
 def test_side_bar_cycle_shows_memory_alone_as_a_compact_percent(q_app, thickness):
     """A side taskbar too narrow for "RAM 9.2/16.0G": the compact row is the word over (or beside)
@@ -388,12 +434,18 @@ def _cfg(**kw):
     return c
 
 
-def test_controller_records_ram_and_vram_on_their_own_switches(q_app):
+def test_controller_records_ram_on_its_own_switch_and_never_vram(q_app):
+    """RAM is recorded without CPU monitoring. VRAM is shown, not recorded: nothing reads a VRAM
+    history yet, so a row per second would only cost battery and disk I/O (2.2.1 decision)."""
     ws = MagicMock()
-    StatsController(_cfg(monitor_ram_enabled=True, monitor_vram_enabled=True), ws).handle_stats(
-        {"ram_used": 4.0, "ram_total": 16.0, "vram_used": 2.0, "vram_total": 8.0, "gpu_present": False})
+    ctl = StatsController(_cfg(monitor_ram_enabled=True, monitor_vram_enabled=True), ws)
+    vram = []
+    ctl.vram_info_updated.connect(lambda u, t: vram.append((u, t)))
+    ctl.handle_stats({"ram_used": 4.0, "ram_total": 16.0, "vram_used": 2.0, "vram_total": 8.0,
+                      "gpu_present": False})
     calls = {c.args[0]: (c.args[1], c.kwargs.get("persist")) for c in ws.add_hardware_stat.call_args_list}
-    assert calls == {"ram": (25.0, True), "vram": (25.0, True)}
+    assert calls == {"ram": (25.0, True)}
+    assert vram == [(2.0, 8.0)]                  # ... while the widget still gets every reading
 
 
 def test_hover_card_lists_memory_without_a_usage_row(q_app):
@@ -409,15 +461,9 @@ def test_hover_card_lists_memory_without_a_usage_row(q_app):
         card.deleteLater()
 
 
-def test_controller_skips_vram_history_without_a_total(q_app):
-    ws = MagicMock()
-    StatsController(_cfg(monitor_vram_enabled=True), ws).handle_stats({"vram_used": 2.0})
-    ws.add_hardware_stat.assert_not_called()
-
-
-def test_ram_and_vram_alone_reach_the_history_db(q_app, tmp_path, monkeypatch):
-    """The real write path: RAM-only and VRAM-only polls land in hw_raw as the 'ram' / 'vram' metrics
-    (unit percent) and read back through the summary the Monitor uses."""
+def test_ram_alone_reaches_the_history_db_and_vram_writes_nothing(q_app, tmp_path, monkeypatch):
+    """The real write path: RAM-only polls land in hw_raw as the 'ram' metric (unit percent) and read
+    back through the summary the Monitor uses; VRAM-only polls leave no 'vram' metric at all."""
     from datetime import datetime, timedelta
     import sqlite3
     import netspeedtray.core.widget_state as wsm
@@ -444,13 +490,13 @@ def test_ram_and_vram_alone_reach_the_history_db(q_app, tmp_path, monkeypatch):
         ram = state.summarize_hardware("ram", now - timedelta(hours=1), now, poll_interval=1.0)
         vram = state.summarize_hardware("vram", now - timedelta(hours=1), now, poll_interval=1.0)
         assert ram.count == 2 and ram.avg == pytest.approx(37.5)
-        assert vram.count == 2 and vram.avg == pytest.approx(50.0)
+        assert vram.count == 0
         conn = sqlite3.connect(sqlite_ro_uri(state._db_path), uri=True)
         try:
             units = dict(conn.execute(f"SELECT name, unit FROM {METRICS} WHERE name IN ('ram', 'vram')"))
         finally:
             conn.close()
-        assert units == {"ram": "percent", "vram": "percent"}
+        assert units == {"ram": "percent"}
     finally:
         state.cleanup()
 
