@@ -214,11 +214,12 @@ def test_startup_starts_the_sampler_at_each_preset(monkeypatch, rate):
 
 @pytest.mark.parametrize("rate", PRESETS)
 def test_history_buffers_size_from_each_preset(rate):
-    """The renderer's sample budget divides by the preset directly."""
+    """The renderer's sample budget divides by the preset - by 1 s at the 0.5 s preset, whose
+    samples merge into one graph point per second (#456, test_half_second_rate.py)."""
     from netspeedtray.utils.widget_renderer import RenderConfig
     rc = RenderConfig.from_dict({**constants.config.defaults.DEFAULT_CONFIG,
                                  "update_rate": rate, "history_minutes": 30})
-    assert rc.max_samples == int(1800 / rate)
+    assert rc.max_samples == int(1800 / max(rate, 1.0))
 
 
 # --- the Settings slider ----------------------------------------------------------------------

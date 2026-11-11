@@ -41,7 +41,7 @@ from netspeedtray.core.db.history_reader import (
 from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
 from netspeedtray.core.db.writer_v8 import NetSample
 from netspeedtray.utils.helpers import get_app_data_path
-from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
+from netspeedtray.utils.timer_utils import graph_sample_seconds, resolve_poll_interval_seconds
 
 logger = logging.getLogger("NetSpeedTray.WidgetState")
 
@@ -118,6 +118,9 @@ class WidgetState(QObject):
         self.cpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
         self.gpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
         self.ram_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
+        # Per-series open bucket while the update rate is faster than GRAPH_MIN_SAMPLE_SECONDS (0.5 s,
+        # #456): series -> (wall-clock second, sample count, per-field sums). See _append_graph_point.
+        self._graph_buckets: Dict[str, Tuple[int, int, Tuple[float, ...]]] = {}
         
         # Batching lists for database writes (schema v8): one NetSample per poll (exact byte deltas
         # over the measured interval - writer_v8), and hardware samples.
@@ -388,7 +391,37 @@ class WidgetState(QObject):
             total_up = sum(speeds[0] for speeds in speed_data.values())
             total_down = sum(speeds[1] for speeds in speed_data.values())
             
-        self.aggregated_history.append(AggregatedSpeedData(upload=total_up, download=total_down, timestamp=_now))
+        self._append_graph_point("net", self.aggregated_history, _now, (total_up, total_down),
+                                 lambda v, ts: AggregatedSpeedData(upload=v[0], download=v[1], timestamp=ts))
+
+    def _append_graph_point(self, key: str, series: Deque[Any], now: datetime, values: Tuple[float, ...],
+                            make: Any) -> None:
+        """Append one sample to an in-memory graph series - at most one point per wall-clock second.
+
+        At 1 s and slower every sample is its own point, exactly as before. At the 0.5 s preset (#456)
+        the samples of one wall-clock second (``int(timestamp)``, the second the DB's net_raw merge
+        keys on) become ONE point: the plain average of their values (rates / percentages), stamped
+        with the newest sample's time. The open second is shown, not held back: its first sample
+        appends the point and a later sample in the same second replaces that point with the running
+        average, so the graph's right edge is never more than one poll old and a closed second's
+        point is final. The graph so keeps the 1 s window length, the 5000-point budget and the same
+        smoothing cost, while the widget's numbers (not drawn from these series) update every 0.5 s."""
+        rate = self.config.get("update_rate", 1.0)
+        if resolve_poll_interval_seconds(rate) >= graph_sample_seconds(rate):   # 1 s and slower
+            series.append(make(values, now))
+            return
+        second = int(now.timestamp())
+        if not hasattr(self, "_graph_buckets"):
+            self._graph_buckets = {}
+        bucket = self._graph_buckets.get(key)
+        if bucket is not None and bucket[0] == second and series:
+            n = bucket[1] + 1
+            sums = tuple(a + float(b) for a, b in zip(bucket[2], values))
+            self._graph_buckets[key] = (second, n, sums)
+            series[-1] = make(tuple(x / n for x in sums), now)
+        else:
+            self._graph_buckets[key] = (second, 1, tuple(float(v) for v in values))
+            series.append(make(values, now))
 
     def add_net_sample(self, ts: float, dt_ms: float, byte_deltas: Dict[str, Tuple[float, float]],
                        counters: Optional[Dict[str, Any]] = None,
@@ -420,14 +453,11 @@ class WidgetState(QObject):
         writes nothing to disk - the caller (StatsController, via hardware_persist_allowed) passes it
         when the user has hardware recording off or isn't monitoring that metric."""
         _now = now or datetime.now()
-        snapshot = HardwareStatSnapshot(value=value, timestamp=_now)
 
-        if stat_type == 'cpu':
-            self.cpu_history.append(snapshot)
-        elif stat_type == 'gpu':
-            self.gpu_history.append(snapshot)
-        elif stat_type == 'ram':
-            self.ram_history.append(snapshot)
+        graphed = {'cpu': self.cpu_history, 'gpu': self.gpu_history, 'ram': self.ram_history}.get(stat_type)
+        if graphed is not None:
+            self._append_graph_point(stat_type, graphed, _now, (value,),
+                                     lambda v, ts: HardwareStatSnapshot(value=v[0], timestamp=ts))
 
         if not persist:
             return
@@ -1364,7 +1394,9 @@ class WidgetState(QObject):
         try:
             from netspeedtray import constants
             _, max_minutes = constants.ui.history.HISTORY_MINUTES_RANGE
-            update_rate_sec = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
+            # Seconds per POINT (graph_sample_seconds): 1 s at the 0.5 s preset, whose samples merge per
+            # second (_append_graph_point) - so the buffer spans the same time at 0.5 s as at 1 s.
+            update_rate_sec = graph_sample_seconds(self.config.get("update_rate", 1.0))
             points = int(round((max_minutes * 60) / update_rate_sec))
             return max(10, min(points, 5000))
         except Exception as e:
@@ -1377,6 +1409,8 @@ class WidgetState(QObject):
         self.logger.debug("Applying new configuration to WidgetState...")
         old_poll = self._poll_ms()
         self.config = config.copy()
+        if self._poll_ms() != old_poll:
+            getattr(self, "_graph_buckets", {}).clear()   # the next sample opens a fresh point
         if not self._read_only and self._poll_ms() != old_poll:
             # Only the writer's gap threshold depends on it; stored bytes never do.
             self.db_worker.enqueue_task("set_poll_ms", self._poll_ms())

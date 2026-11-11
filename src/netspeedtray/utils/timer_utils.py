@@ -50,6 +50,15 @@ def snap_update_rate(update_rate: object) -> float:
     return float(min(UpdateMode.PRESETS, key=lambda preset: abs(preset - rate)))
 
 
+def graph_sample_seconds(update_rate: object) -> float:
+    """Seconds per point of the in-memory graph series (mini graph, Monitor session view): the
+    effective poll interval, but never below ``constants.renderer.GRAPH_MIN_SAMPLE_SECONDS`` - at the
+    0.5 s preset WidgetState merges each wall-clock second's samples into one point. Every sizing of
+    those series (the buffer, the renderer's window) divides by this, not by the poll interval."""
+    return max(resolve_poll_interval_seconds(update_rate),
+               float(constants.renderer.GRAPH_MIN_SAMPLE_SECONDS))
+
+
 def resolve_poll_interval_seconds(update_rate: object) -> float:
     """
     The EFFECTIVE sampling interval in seconds for a live config value: the value clamped into

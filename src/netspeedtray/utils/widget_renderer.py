@@ -21,7 +21,7 @@ from netspeedtray.utils.helpers import (has_dedicated_vram, format_speed, calcul
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath, QFontDatabase
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
-from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
+from netspeedtray.utils.timer_utils import graph_sample_seconds
 from netspeedtray.utils import hardware_vendors
 from netspeedtray.utils import color_scheme
 from netspeedtray.utils.font_runs import (WidgetFontMetrics, draw_text, draw_text_centered, set_text_language,
@@ -641,7 +641,9 @@ class RenderConfig:
             opacity = float(opacity_raw) / 100.0 if opacity_raw is not None else (constants.config.defaults.DEFAULT_GRAPH_OPACITY / 100.0)
             
             hist_mins = int(config.get('history_minutes', constants.config.defaults.DEFAULT_HISTORY_MINUTES))
-            rate = resolve_poll_interval_seconds(
+            # Seconds per graph POINT: the poll interval, or 1 s at the 0.5 s preset (WidgetState
+            # merges each second's samples), so the window is history_minutes long at every rate.
+            rate = graph_sample_seconds(
                 config.get('update_rate', constants.config.defaults.DEFAULT_UPDATE_RATE))
             max_samples = int((hist_mins * 60) / rate)
 
