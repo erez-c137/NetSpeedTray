@@ -69,6 +69,21 @@ def test_bengali_stays_english_where_matplotlib_does_not_shape(monkeypatch):
     assert mpl_fonts.graph_i18n(I18nStrings("bn_BD")).language == "en_US"
 
 
+@pytest.mark.parametrize("fmt,bn,en", [
+    ("%a %d", "শনি ১৭", "Sat 17"),
+    ("%b %Y", "অক্টো ২০২৬", "Oct 2026"),
+    ("%Y-%m-%d", "২০২৬-১০-১৭", "2026-10-17"),
+    ("%a %H:%M", "শনি 14:05", "Sat 14:05"),     # a clock time stays Western
+])
+def test_date_ticks_write_calendar_numbers_in_bengali_digits(q_app, fmt, bn, en):
+    """The time-axis formatter gets the GRAPH's language: bn_BD only where the graph is Bengali, en_US
+    on the English fallback - which keeps every digit Western."""
+    from netspeedtray.views.graph.time_axis import _calendar_digits, localized_strftime
+    dt = datetime(2026, 10, 17, 14, 5)
+    assert localized_strftime(dt, _calendar_digits(dt, fmt, "bn_BD"), "bn_BD") == bn
+    assert localized_strftime(dt, _calendar_digits(dt, fmt, "en_US"), "en_US") == en
+
+
 def test_bengali_graph_font_is_nirmala_ui(shaping):
     import matplotlib as mpl
     font = mpl_fonts.pick_cjk_font("bn_BD")
@@ -108,6 +123,9 @@ def test_rendered_bengali_graph_draws_bengali_text(monkeypatch, shaping):
     assert any(_BENGALI.search(t) for t in texts)
     numeric = [t for t in texts if re.fullmatch(r"[0-9.,\s]+", t)]
     assert numeric, texts                                       # the y-axis ticks: Western digits
+    # The date ticks are calendar labels: the day numbers in Bengali digits ("শনি ১৭").
+    dates = [t.get_text() for t in r.ax_upload.get_xticklabels() if t.get_text().strip()]
+    assert dates and all(re.search("[০-৯]", t) and not re.search("[0-9]", t) for t in dates), dates
     path = _nirmala_path()
     if path:
         from matplotlib import ft2font
