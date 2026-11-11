@@ -46,7 +46,7 @@ class TimelineSelector(QWidget):
         self._btn.setStyleSheet(
             f"QToolButton {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
             f" border: 1px solid {c['card_stroke']}; border-radius: {r}px;"
-            f" padding: 4px {su.MENU_CHEVRON_PADDING}px 4px 12px; text-align: left; }}"
+            f" {su.menu_button_padding()} text-align: left; }}"
             f" QToolButton:hover {{ border-color: {c['accent']}; }}"
             f" QToolButton:focus {{ border-color: {c['accent']}; }}"
             + su.menu_chevron_qss())   # the Fluent chevron reads it as a pulldown
