@@ -566,7 +566,7 @@
     "BAND_DISPLAY_LABEL": "Visualizzazione banda",
     "BAND_DISPLAY_SUB": "Solo avviso mantiene il widget pulito e mostra 2.4G in rosso solo quando serve.",
     "BAND_DISPLAY_ALWAYS": "Sempre",
-    "BAND_DISPLAY_COLORED": "Con colori (2.4G / 5G / 6G)",
+    "BAND_DISPLAY_COLORED": "Con colori (2.4G / 5G)",
     "BAND_DISPLAY_ALERT_ONLY": "Solo avviso (avvisa su 2,4 GHz)",
     "IDENTITY_MODE_LABEL": "Mostra",
     "IDENTITY_MODE_SUB": "Legge il nome della rete Wi-Fi connessa senza cercare reti nelle vicinanze.",

@@ -1,10 +1,10 @@
 """"Network identity" settings section (Network page, v2.1).
 
 Surfaces the Wi-Fi band / network indicator on the taskbar widget:
-  • show_network_identity - the header toggle; shows the band tag (2.4G/5G/6G) on the widget. The band
+  • show_network_identity - the header toggle; shows the estimated band tag (2.4G/5G) on the widget. The band
     is read locally with no Location permission; the SSID uses the connected-profile API, without a Wi-Fi scan.
-  • band_display - how the band presents: Always (neutral), Color-coded (2.4G amber / 5G green /
-    6G blue), or Alert only (show a red 2.4G ONLY when you've dropped to the slow band; clean otherwise).
+  • band_display - how the band presents: Always (neutral), Color-coded (2.4G amber / 5G green),
+    or Alert only (show a red 2.4G ONLY when you've dropped to the slow band; clean otherwise).
 """
 from typing import Any, Callable, Dict
 
@@ -24,7 +24,7 @@ class NetworkIdentitySettings(QWidget):
     ]
     _MODES = [
         ("always", "BAND_DISPLAY_ALWAYS", "Always"),
-        ("colored", "BAND_DISPLAY_COLORED", "Color-coded (2.4G / 5G / 6G)"),
+        ("colored", "BAND_DISPLAY_COLORED", "Color-coded (2.4G / 5G)"),
         ("alert_only", "BAND_DISPLAY_ALERT_ONLY", "Alert only (warn on 2.4 GHz)"),
     ]
 

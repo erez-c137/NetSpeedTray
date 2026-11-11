@@ -566,7 +566,7 @@
     "BAND_DISPLAY_LABEL": "Sáv megjelenítése",
     "BAND_DISPLAY_SUB": "A csak riasztás mód letisztultan tartja a widgetet, és csak akkor jelenít meg piros 2,4G jelzést, amikor annak jelentősége van.",
     "BAND_DISPLAY_ALWAYS": "Mindig",
-    "BAND_DISPLAY_COLORED": "Színkódolt (2,4 GHz / 5 GHz / 6 GHz)",
+    "BAND_DISPLAY_COLORED": "Színkódolt (2,4 GHz / 5 GHz)",
     "BAND_DISPLAY_ALERT_ONLY": "Csak riasztás (figyelmeztetés 2,4GHz-en)",
     "IDENTITY_MODE_LABEL": "Megjelenítés",
     "IDENTITY_MODE_SUB": "A csatlakoztatott Wi-Fi neve a közeli hálózatok keresése nélkül olvasható ki.",

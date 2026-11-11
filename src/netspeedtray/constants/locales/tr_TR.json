@@ -566,7 +566,7 @@
     "BAND_DISPLAY_LABEL": "Bant gösterimi",
     "BAND_DISPLAY_SUB": "Yalnızca uyarı seçeneği widget'ı sade tutar ve yalnızca gerektiğinde kırmızı 2.4G uyarısı gösterir.",
     "BAND_DISPLAY_ALWAYS": "Her zaman",
-    "BAND_DISPLAY_COLORED": "Renk Kodlu (2.4G / 5G / 6G)",
+    "BAND_DISPLAY_COLORED": "Renk Kodlu (2.4G / 5G)",
     "BAND_DISPLAY_ALERT_ONLY": "Yalnızca uyarı (warn on 2.4 GHz)",
     "IDENTITY_MODE_LABEL": "Göster",
     "IDENTITY_MODE_SUB": "Yakındaki ağları taramadan bağlı Wi-Fi ağının adını okur.",

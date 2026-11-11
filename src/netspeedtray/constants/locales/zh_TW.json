@@ -566,7 +566,7 @@
     "BAND_DISPLAY_LABEL": "頻段顯示",
     "BAND_DISPLAY_SUB": "「只在需要時提醒」可保持小工具簡潔，只在使用 2.4G 時才顯示紅色警示。",
     "BAND_DISPLAY_ALWAYS": "永遠顯示",
-    "BAND_DISPLAY_COLORED": "彩色標示 (2.4G / 5G / 6G)",
+    "BAND_DISPLAY_COLORED": "彩色標示 (2.4G / 5G)",
     "BAND_DISPLAY_ALERT_ONLY": "只在需要時提醒 (2.4 GHz 時警示)",
     "IDENTITY_MODE_LABEL": "顯示內容",
     "IDENTITY_MODE_SUB": "讀取目前已連線的 Wi-Fi 名稱，不掃描附近網路。",

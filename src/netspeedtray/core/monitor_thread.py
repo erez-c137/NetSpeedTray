@@ -224,6 +224,9 @@ class StatsMonitorThread(QThread):
         self._lhm_notice_emitted: bool = False  # One-time notification flag
         self._lhm_check_polls: int = 0  # Count polls before emitting notice
         self._network_identity_monitor = NetworkIdentityMonitor()
+        self._last_emitted_network_identity = None
+        self._network_identity_update_requested = threading.Event()
+        self._network_identity_update_lock = threading.Lock()
         self._com_initialized = False
         self._last_link_stats_poll: float = 0.0  # monotonic ts of the last net_if_stats sub-poll (v8 link history)
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
@@ -1580,12 +1583,7 @@ class StatsMonitorThread(QThread):
                             self.logger.debug("net_if_stats failed: %s", e)
 
                 # The event-driven cache does no Windows work on unchanged ticks.
-                # Send cached values too, so resuming a paused widget cannot miss an update.
-                if self.config.get('show_network_identity', False):
-                    stats['network_identity'] = self._network_identity_monitor.read(
-                        self.config.get('identity_mode', 'band'))
-                else:
-                    self._network_identity_monitor.close()
+                self._collect_network_identity(stats)
 
                 # Monitor-window override forces hardware collection even with the widget's flags off.
                 _force_hw = self._force_hardware_collection
@@ -1655,6 +1653,9 @@ class StatsMonitorThread(QThread):
                     self._error_notified = False
 
             except Exception as e:
+                # A later collector may fail after identity collection but before stats_ready.
+                # Resend on recovery so that a changed identity or resume request is not lost.
+                self._last_emitted_network_identity = None
                 self.consecutive_errors += 1
                 self.logger.error("Error fetching stats (consecutive=%d): %s", self.consecutive_errors, e)
 
@@ -1713,8 +1714,35 @@ class StatsMonitorThread(QThread):
             try:
                 import pythoncom
                 pythoncom.CoUninitialize()
+            except Exception as e:
+                self.logger.debug("Monitor COM cleanup failed: %s", e)
             finally:
                 self._com_initialized = False
+
+    def request_network_identity_update(self) -> None:
+        """Ask the worker to resend its current identity after the live view resumes."""
+        with self._network_identity_update_lock:
+            self._network_identity_update_requested.set()
+
+    def _collect_network_identity(self, stats: Dict[str, Any]) -> None:
+        """Emit changed identities and one requested refresh, keeping WinRT on this worker."""
+        if not self.config.get('show_network_identity', False):
+            self._network_identity_monitor.close()
+            self._last_emitted_network_identity = None
+            return
+        # Consume before reading so a resume request arriving during the query is retained.
+        with self._network_identity_update_lock:
+            force_update = self._network_identity_update_requested.is_set()
+            self._network_identity_update_requested.clear()
+        try:
+            identity = self._network_identity_monitor.read(self.config.get('identity_mode', 'band'))
+        except Exception:
+            if force_update:
+                self.request_network_identity_update()
+            raise
+        if force_update or identity != self._last_emitted_network_identity:
+            stats['network_identity'] = identity
+            self._last_emitted_network_identity = identity
 
     def _run_child(self, argv, timeout: float) -> str:
         """Run a short-lived helper (nvidia-smi) and return its stdout, like check_output - but the

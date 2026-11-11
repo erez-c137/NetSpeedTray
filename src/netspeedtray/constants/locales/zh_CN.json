@@ -566,7 +566,7 @@
     "BAND_DISPLAY_LABEL": "频段显示",
     "BAND_DISPLAY_SUB": "'仅提醒'模式保持界面简洁，仅在连接 2.4G 时显示红色提示。",
     "BAND_DISPLAY_ALWAYS": "始终显示",
-    "BAND_DISPLAY_COLORED": "颜色区分 (2.4G / 5G / 6G)",
+    "BAND_DISPLAY_COLORED": "颜色区分 (2.4G / 5G)",
     "BAND_DISPLAY_ALERT_ONLY": "仅提醒",
     "IDENTITY_MODE_LABEL": "显示内容",
     "IDENTITY_MODE_SUB": "读取当前已连接的 Wi-Fi 名称，不扫描附近网络。",

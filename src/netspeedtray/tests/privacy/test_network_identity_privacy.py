@@ -116,7 +116,11 @@ def test_missing_details_or_empty_name_is_safe(windows, details):
 
 def test_missing_winrt_never_calls_native_ssid_api(windows, monkeypatch):
     monkeypatch.setattr(nu, "_get_network_information", Mock(side_effect=ImportError("missing")))
-    assert nu.get_connected_network_identity() == nu.NetworkIdentity()
+    fallback_identity = nu.NetworkIdentity(band="5G", is_wireless=True, connected=True)
+    fallback = Mock(return_value=fallback_identity)
+    monkeypatch.setattr(nu, "_native_band_identity", fallback)
+    assert nu.get_connected_network_identity() == fallback_identity
+    fallback.assert_called_once_with()
     windows[1].assert_not_called()
 
 

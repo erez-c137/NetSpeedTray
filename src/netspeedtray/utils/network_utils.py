@@ -190,6 +190,16 @@ class _GUID(ctypes.Structure):
                 ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
 
 
+class _WLAN_INTERFACE_INFO(ctypes.Structure):
+    _fields_ = [("InterfaceGuid", _GUID),
+                ("strInterfaceDescription", ctypes.c_uint16 * 256),
+                ("isState", ctypes.c_uint32)]
+
+
+class _WLAN_INTERFACE_INFO_LIST_HEADER(ctypes.Structure):
+    _fields_ = [("dwNumberOfItems", ctypes.c_uint32), ("dwIndex", ctypes.c_uint32)]
+
+
 # SSID display (v2.1 item 2). SSIDs can be up to 32 chars; cap the on-widget length and ellipsize so a
 # long name can't blow out the taskbar. The width reserve tracks the ACTUAL (truncated) string, so a
 # short SSID stays tight - only a network change (rare) re-lays out.
@@ -317,6 +327,47 @@ def _get_wifi_band(adapter_id) -> Optional[str]:
     return None
 
 
+def _native_band_identity() -> NetworkIdentity:
+    """Keep the band available when WinRT fails, without reading a native SSID.
+
+    WlanEnumInterfaces exposes connection state and adapter GUIDs. The existing
+    channel-only reader then reads the first connected adapter's band.
+    """
+    handle = wintypes.HANDLE()
+    interfaces_ptr = ctypes.c_void_p()
+    opened = False
+    try:
+        wlanapi = ctypes.windll.wlanapi
+        negotiated = wintypes.DWORD()
+        if wlanapi.WlanOpenHandle(2, None, ctypes.byref(negotiated), ctypes.byref(handle)) != 0:
+            return _wired_identity()
+        opened = True
+        rc = wlanapi.WlanEnumInterfaces(handle, None, ctypes.byref(interfaces_ptr))
+        if rc != 0 or not interfaces_ptr:
+            return _wired_identity()
+        header = ctypes.cast(interfaces_ptr, ctypes.POINTER(_WLAN_INTERFACE_INFO_LIST_HEADER)).contents
+        address = interfaces_ptr.value + ctypes.sizeof(_WLAN_INTERFACE_INFO_LIST_HEADER)
+        interfaces = (_WLAN_INTERFACE_INFO * header.dwNumberOfItems).from_address(address)
+        for interface in interfaces:
+            if interface.isState == 1:  # wlan_interface_state_connected
+                adapter_id = UUID(bytes_le=bytes(interface.InterfaceGuid))
+                return NetworkIdentity(band=_get_wifi_band(adapter_id), is_wireless=True, connected=True)
+    except Exception as e:
+        logger.debug("Native Wi-Fi band unavailable: %s", e)
+    finally:
+        if interfaces_ptr:
+            try:
+                wlanapi.WlanFreeMemory(interfaces_ptr)
+            except Exception:
+                pass
+        if opened:
+            try:
+                wlanapi.WlanCloseHandle(handle, None)
+            except Exception:
+                pass
+    return _wired_identity()
+
+
 def get_connected_network_identity(*, include_ssid: bool = True,
                                    include_band: bool = True) -> NetworkIdentity:
     """Read a fresh connected profile without any location-gated Wi-Fi API.
@@ -332,7 +383,7 @@ def get_connected_network_identity(*, include_ssid: bool = True,
         profile = _get_connected_wifi_profile(_get_network_information())
     except Exception as e:
         logger.debug("Connected Wi-Fi profile unavailable: %s", e)
-        return _wired_identity()
+        return _native_band_identity() if include_band else _wired_identity()
     if profile is None:
         return _wired_identity()
 

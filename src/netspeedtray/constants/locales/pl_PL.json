@@ -566,7 +566,7 @@
     "BAND_DISPLAY_LABEL": "Wyświetlanie pasma",
     "BAND_DISPLAY_SUB": "Tryb 'Tylko ostrzeżenie' nie zaśmieca widżetu i pokazuje czerwone 2.4G tylko wtedy, gdy ma to znaczenie.",
     "BAND_DISPLAY_ALWAYS": "Zawsze",
-    "BAND_DISPLAY_COLORED": "Oznaczone kolorami (2.4G / 5G / 6G)",
+    "BAND_DISPLAY_COLORED": "Oznaczone kolorami (2.4G / 5G)",
     "BAND_DISPLAY_ALERT_ONLY": "Tylko ostrzeżenie (przy 2,4 GHz)",
     "IDENTITY_MODE_LABEL": "Pokaż",
     "IDENTITY_MODE_SUB": "Odczytuje nazwę połączonej sieci Wi-Fi bez skanowania pobliskich sieci.",

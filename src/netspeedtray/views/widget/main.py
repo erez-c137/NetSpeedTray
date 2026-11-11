@@ -958,6 +958,9 @@ class NetworkSpeedWidget(QWidget):
         self.logger.info("Resuming widget updates")
         self.is_paused = False
         self._paused_histories = None
+        monitor = getattr(self, "monitor_thread", None)
+        if monitor is not None:
+            monitor.request_network_identity_update()
         self.update()
 
 

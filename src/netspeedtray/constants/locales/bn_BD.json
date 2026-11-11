@@ -566,7 +566,7 @@
     "BAND_DISPLAY_LABEL": "ব্যান্ড প্রদর্শন",
     "BAND_DISPLAY_SUB": "'শুধুমাত্র সতর্কতা' উইজেটকে পরিচ্ছন্ন রাখে এবং কেবল প্রয়োজনের সময় লাল রঙের 2.4G দেখায়।",
     "BAND_DISPLAY_ALWAYS": "সর্বদা",
-    "BAND_DISPLAY_COLORED": "কালার-কোডেড (2.4G / 5G / 6G)",
+    "BAND_DISPLAY_COLORED": "কালার-কোডেড (2.4G / 5G)",
     "BAND_DISPLAY_ALERT_ONLY": "শুধুমাত্র সতর্কতা (2.4 GHz-এ সতর্ক করুন)",
     "IDENTITY_MODE_LABEL": "দেখান",
     "IDENTITY_MODE_SUB": "আশেপাশের নেটওয়ার্ক স্ক্যান না করেই সংযুক্ত Wi-Fi-এর নাম পড়ুন।",
