@@ -283,6 +283,7 @@ def thread(q_app, monkeypatch):
     t._lhm_http = MagicMock()
     t._lhm_http.get_snapshot.return_value = None
     t._gpu_adapters = [RTX, BRD]
+    t._monkeypatch = monkeypatch
     return t
 
 
@@ -319,6 +320,75 @@ def test_vram_alone_uses_a_cached_nvidia_smi_total(thread):
     r = _poll_mem(thread, memory_only=True)
     thread._run_child.assert_not_called()
     assert r.vram_total == pytest.approx(12282.0)
+
+
+# --- review (#2): a VRAM total from DXGI for every vendor when VRAM is shown alone -------------------
+
+RX = AdapterInfo("AMD Radeon RX 6600", 0x1002, (0, 0xAB01), 8 * GIB, int(8 * GIB), False)
+ARC = AdapterInfo("Intel(R) Arc(TM) A770", 0x8086, (0, 0xAB01), 16 * GIB, int(8 * GIB), False)
+UHD = AdapterInfo("Intel(R) UHD Graphics 770", 0x8086, (0, 0xD9C1), 128 * 2 ** 20, int(8 * GIB), False)
+IGPU_I = "luid_0x00000000_0x0000D9C1_phys_0"
+
+
+def _no_smi_thread(thread, adapters, picked=""):
+    # A re-enumeration (PDH LUIDs differ from the DXGI list) must see the same machine.
+    thread._monkeypatch.setattr(gpu_adapters, "enumerate_adapters", lambda: list(adapters))
+    thread._nvidia_smi_path = None
+    thread._gpu_adapters = list(adapters)
+    thread.config = {"gpu_adapter": picked}
+    thread._gpu_query, thread._gpu_vram_counter, thread._gpu_shared_counter = 123, 2, 3
+    return thread
+
+
+@pytest.mark.parametrize("adapters, total_mib", [
+    ([RX, BRD], 8 * 1024), ([ARC, BRD], 16 * 1024), ([UHD, RX, BRD], 8 * 1024),
+    ([RTX, BRD], 12 * 1024),                       # NVIDIA without nvidia-smi
+], ids=["amd", "intel_arc", "hybrid_intel_amd", "nvidia_no_smi"])
+def test_vram_alone_gets_its_total_from_dxgi_on_every_vendor(thread, adapters, total_mib):
+    t = _no_smi_thread(thread, adapters)
+    t._gpu_util_counter = None
+    r = _poll_mem(t, memory_only=True)
+    assert r.vram_used == pytest.approx(3000.0) and r.vram_total == pytest.approx(total_mib)
+    assert not r.vram_is_shared
+
+
+def test_vram_alone_on_an_integrated_gpu_keeps_its_shared_reading(thread):
+    t = _no_smi_thread(thread, [UHD, BRD])
+    t._gpu_util_counter = None
+    with patch("win32pdh.CollectQueryData"), patch("win32pdh.GetFormattedCounterArray",
+                                                   side_effect=[{IGPU_I: 0.0}, {IGPU_I: 900 * MIB}]):
+        r = t._poll_gpu_hybrid(include_temp=False, include_power=False, memory_only=True)
+    assert r.vram_is_shared and r.vram_used == pytest.approx(900.0)
+    assert r.vram_total == pytest.approx(8 * 1024)              # its shared budget, as before
+
+
+def test_amd_with_the_gpu_monitored_keeps_the_golden_reading(thread):
+    """Automatic with GPU monitoring is pinned by test_gpu_automatic_golden (used-only on AMD); a
+    picked AMD card reads used/total from its own DXGI size (#236), with the GPU on or off."""
+    t = _no_smi_thread(thread, [RX, BRD])
+    t._gpu_util_counter = 1
+    assert _poll_mem(t, memory_only=False).vram_total is None
+    t.config = {"gpu_adapter": RX.name}
+    for util_counter, memory_only in ((1, False), (None, True)):
+        t._gpu_util_counter = util_counter
+        r = _poll_mem(t, memory_only=memory_only)
+        assert r.vram_used == pytest.approx(3000.0) and r.vram_total == pytest.approx(8 * 1024)
+
+
+@pytest.mark.parametrize("thickness", [48, 32])
+def test_amd_vram_alone_shows_a_percent_on_a_side_bar(thread, thickness):
+    """End to end: the AMD poll's total reaches the compact side-bar row as "VRAM / 36%" (3000 MiB of
+    8 GiB), not a permanent N/A."""
+    t = _no_smi_thread(thread, [RX, BRD])
+    t._gpu_util_counter = None
+    r = _poll_mem(t, memory_only=True)
+    cfg = _config(dict(CYCLE, **VRAM))
+    w, h, nw = _size(cfg, RIGHT, thickness, 1.0, False, totals=(16.0, r.vram_total / 1024.0))
+    met = WidgetMetrics(upload_mbps=1.0, download_mbps=2.0, vram_used=r.vram_used / 1024.0,
+                        vram_total=r.vram_total / 1024.0)
+    drawn, _a = _paint(cfg, w, h, nw, "vertical", "gpu_only", metrics=met)
+    assert "VRAM" in drawn and any(t.rstrip("%") == "36" for t in drawn), drawn   # 36.6% shown as 36
+    assert EN.DEFAULT_TEXT not in drawn
 
 
 @pytest.mark.parametrize("want_util", [False, True])
