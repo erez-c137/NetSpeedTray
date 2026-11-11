@@ -28,6 +28,8 @@ import pytest
 if sys.platform != "win32":
     pytest.skip("the kill test drives Windows TerminateProcess", allow_module_level=True)
 
+pytestmark = pytest.mark.slow   # real child processes, killed and relaunched (pytest.ini)
+
 from netspeedtray.core.db import schema_v8 as S
 from netspeedtray.core.db import writer_v8 as W
 from netspeedtray.tests.integration import writer_v8_child as C
@@ -41,8 +43,19 @@ _BOOT = ("import sys; sys.path.insert(0, {src!r}); "
          "from netspeedtray.tests.integration.writer_v8_child import main; sys.exit(main(sys.argv[1:]))")
 
 
+# The REAL interpreter, not the venv's python.exe: on Windows that is a launcher stub that starts the
+# base interpreter as a SUSPENDED child, then resumes it. A kill that lands in between (the random
+# kills below can) terminates only the launcher and leaves the real interpreter suspended forever -
+# orphaned writer_v8_child processes were found days later on the maintainer's PC. Launched directly,
+# with __PYVENV_LAUNCHER__ naming the venv's exe, the child is ONE process that still uses the venv
+# (as tests/unit/test_quit_bounded.py does), so the kill reaches the process doing the work.
+_PY = getattr(sys, "_base_executable", None) or sys.executable
+
+
 def _env(killpoint=None, hooks=False):
     env = {k: v for k, v in os.environ.items() if not k.startswith("NST_")}
+    if _PY != sys.executable:
+        env["__PYVENV_LAUNCHER__"] = sys.executable
     if killpoint or hooks:
         env["NST_TEST_HOOKS"] = "1"
     if killpoint:
@@ -51,7 +64,7 @@ def _env(killpoint=None, hooks=False):
 
 
 def _child(mode, directory, killpoint=None, hooks=False):
-    return subprocess.run([sys.executable, "-I", "-c", _BOOT.format(src=SRC), mode, str(directory), str(NOW)],
+    return subprocess.run([_PY, "-I", "-c", _BOOT.format(src=SRC), mode, str(directory), str(NOW)],
                           env=_env(killpoint, hooks), capture_output=True, text=True, timeout=180)
 
 
@@ -197,11 +210,16 @@ def test_kill_mid_rollup_then_relaunch(point, db, tmp_path):
 def test_kill_maintenance_at_a_random_moment(seed, db, tmp_path):
     d, manifest = db
     rng = random.Random(seed)
-    proc = subprocess.Popen([sys.executable, "-I", "-c", _BOOT.format(src=SRC), "maintain", str(d), str(NOW)],
+    proc = subprocess.Popen([_PY, "-I", "-c", _BOOT.format(src=SRC), "maintain", str(d), str(NOW)],
                             env=_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(rng.uniform(0.08, 0.4))   # child start ~0.2 s, the pass ~0.15 s
-    proc.kill()                       # Popen.kill on Windows IS TerminateProcess(handle, 1)
-    proc.wait(timeout=60)
+    try:
+        time.sleep(rng.uniform(0.08, 0.4))   # child start ~0.2 s, the pass ~0.15 s
+        proc.kill()                       # Popen.kill on Windows IS TerminateProcess(handle, 1)
+        proc.wait(timeout=60)
+    finally:
+        if proc.poll() is None:           # never leave a child behind, whatever failed above
+            proc.kill()
+            proc.wait(timeout=10)
     c = _snapshot(d, tmp_path, "killed")
     _assert_complete(c, manifest)
     c.close()

@@ -617,8 +617,10 @@ conn = sqlite3.connect(str(path), isolation_level=None)
 create_v8_schema(conn)
 conn.execute("INSERT INTO metrics (metric_id, name, entity, unit) VALUES (1, 'battery_drain', '', 'watt')")
 now = int(time.time())
+conn.execute("BEGIN")                     # one transaction: 120 autocommits were 120 fsyncs (~12 s)
 for k in range(120):
     conn.execute("INSERT INTO hw_raw (ts, metric_id, value) VALUES (?, 1, ?)", (now - 120 + k, 5.0 + (k % 7) * 0.5))
+conn.execute("COMMIT")
 state = SimpleNamespace(db_worker=object(), history_reader=V8HistoryReader(lambda: conn, lambda: path))
 widget = SimpleNamespace(
     widget_state=SimpleNamespace(summarize_hardware=lambda *a, **k: WidgetState.summarize_hardware(state, *a, **k)),
