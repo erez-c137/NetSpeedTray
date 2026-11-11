@@ -314,3 +314,86 @@ def test_a_half_imported_win32com_client_is_not_handed_out(monkeypatch):
     # A finished import takes the fast path, no lock.
     with com_utils._lock:
         assert com_utils.win32com_client() is half
+
+
+# --- a physical adapter's default route first (owner decision on the #486 review) -------------------
+
+_PHYS, _VIRT = "physical", "virtual"
+
+
+def test_a_full_tunnel_vpn_route_does_not_become_the_gateway():
+    """Wi-Fi (luid 10, metric 25+0) and a full-tunnel VPN with its own 0.0.0.0/0 through a tunnel
+    next hop at a LOWER effective metric (luid 20, 1+0): Windows routes through the VPN, but the
+    "gateway" hop must stay the LAN router - loss there means your Wi-Fi/LAN, not the internet."""
+    tbl = _table([(AF_INET, 0, "192.168.1.1", 0, 10), (AF_INET, 0, "10.8.0.1", 0, 20)])
+    lib = _FakeLib(tbl, ifaces={10: (25, True), 20: (1, True)})
+    kinds = lambda: {10: _PHYS, 20: _VIRT}
+    assert LP._iphlp_default_gateway(lib, kinds) == "192.168.1.1"
+    route = LP._iphlp_default_route(lib, kinds)
+    assert (route.next_hop, route.luid) == ("192.168.1.1", 10)
+    # Windows' own pick (no classification) is the VPN - what the PR did before this change.
+    assert LP._iphlp_default_gateway(lib, lambda: {}) == "10.8.0.1"
+
+
+def test_among_physical_routes_the_lowest_metric_wins():
+    tbl = _table([(AF_INET, 0, "192.168.1.1", 0, 10), (AF_INET, 0, "192.168.0.1", 0, 11),
+                  (AF_INET, 0, "10.8.0.1", 0, 20)])
+    lib = _FakeLib(tbl, ifaces={10: (50, True), 11: (35, True), 20: (1, True)})
+    assert LP._iphlp_default_gateway(lib, lambda: {10: _PHYS, 11: _PHYS, 20: _VIRT}) == "192.168.0.1"
+
+
+def test_no_connected_physical_route_falls_back_to_the_route_windows_uses():
+    tbl = _table([(AF_INET, 0, "192.168.1.1", 0, 10), (AF_INET, 0, "10.8.0.1", 0, 20),
+                  (AF_INET, 0, "10.9.0.1", 0, 21)])
+    lib = _FakeLib(tbl, ifaces={10: (25, False), 20: (5, True), 21: (1, True)})
+    assert LP._iphlp_default_gateway(lib, lambda: {10: _PHYS, 20: _VIRT, 21: _VIRT}) == "10.9.0.1"
+    # Only virtual routes, or an unreadable adapter table: Windows' pick as well.
+    lib = _FakeLib(tbl, ifaces={10: (25, True), 20: (5, True), 21: (1, True)})
+    assert LP._iphlp_default_gateway(lib, lambda: {20: _VIRT, 21: _VIRT}) == "10.9.0.1"
+
+    def _broken():
+        raise OSError("GetIfTable2")
+    assert LP._iphlp_default_gateway(lib, _broken) == "10.9.0.1"
+
+
+def test_a_single_default_route_never_reads_the_adapter_table():
+    lib = _FakeLib(_table([(AF_INET, 0, "10.8.0.1", 0, 20)]))
+    assert LP._iphlp_default_gateway(lib, lambda: pytest.fail("adapter table read")) == "10.8.0.1"
+
+
+def test_check_connection_details_follow_the_physical_route_not_the_vpn(monkeypatch):
+    """The adapter the sheet describes is the one whose route the probe pings."""
+    def nic(desc, ip, gw, idx):
+        return types.SimpleNamespace(Description=desc, IPAddress=(ip,), DefaultIPGateway=(gw,),
+                                     DNSServerSearchOrder=(gw,), InterfaceIndex=idx)
+    nics = [nic("WireGuard Tunnel", "10.8.0.2", "10.8.0.1", 30), nic("Wi-Fi", "192.168.1.30", "192.168.1.1", 12)]
+    fake = types.ModuleType("wmi")
+    fake.WMI = lambda: types.SimpleNamespace(
+        Win32_NetworkAdapterConfiguration=lambda IPEnabled=True: list(nics))
+    monkeypatch.setitem(sys.modules, "wmi", fake)
+    tbl = _table([(AF_INET, 0, "10.8.0.1", 0, 20), (AF_INET, 0, "192.168.1.1", 0, 10)])
+    tbl.Table[0].InterfaceIndex = 30
+    rows = (LP._MIB_IPFORWARD_ROW2 * 2).from_address(ctypes.addressof(tbl.Table))
+    rows[1].InterfaceIndex = 12
+    lib = _FakeLib(tbl, ifaces={10: (25, True), 20: (1, True)})
+    monkeypatch.setattr(LP, "_route_api", lambda: lib)
+    monkeypatch.setattr(LP, "_adapter_kinds_by_luid", lambda: {10: _PHYS, 20: _VIRT})
+    assert LP.default_gateway_ip() == "192.168.1.1"
+    d = LP.network_details()
+    assert (d.adapter, d.gateway, d.ipv4) == ("Wi-Fi", "192.168.1.1", ("192.168.1.30",))
+
+
+def test_the_adapter_kinds_come_from_the_shared_classifier(monkeypatch):
+    from netspeedtray.utils import interface_classifier as IC
+    monkeypatch.setattr(IC, "read_os_adapters", lambda: {
+        "Wi-Fi": IC.AdapterInfo("Wi-Fi", "Intel Wi-Fi 6", 71, True, luid=10),
+        "Tailscale": IC.AdapterInfo("Tailscale", "Tailscale Tunnel", 53, False, luid=20),
+        "Ghost": IC.AdapterInfo("Ghost", "", 6, True),               # no luid: left out
+    })
+    assert LP._adapter_kinds_by_luid() == {10: _PHYS, 20: _VIRT}
+
+
+def test_the_real_adapter_table_carries_luids():
+    from netspeedtray.utils.interface_classifier import read_os_adapters
+    infos = list(read_os_adapters().values())
+    assert not infos or any(i.luid for i in infos)
