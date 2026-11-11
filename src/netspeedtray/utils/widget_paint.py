@@ -194,15 +194,17 @@ def side_by_side_keys(display_order: List[str], cpu_enabled: bool, gpu_enabled: 
     return keys
 
 
-def stacked_segment_height(key: str, line_height: int, ram_enabled: bool, vram_enabled: bool) -> int:
+def stacked_segment_height(key: str, line_height: int, ram_enabled: bool, vram_enabled: bool,
+                           row_gap: int = constants.renderer.TWO_ROW_GAP_PX) -> int:
     """Height of one side_by_side segment when a side taskbar stacks the segments top-to-bottom.
 
-    Matches what the renderer paints: the network readout is two rows + 1px (draw_network_speeds);
+    Matches what the renderer paints: the network readout is two rows + ``row_gap`` (the user's
+    ``line_spacing``, draw_network_speeds);
     CPU and GPU are one row each, plus a row of its own for the RAM/VRAM, stacked CPU+GPU included
     (draw_hardware_stats, memory_below). Worst case, so a reading that arrives later never clips.
     """
     if key == "network":
-        return line_height * 2 + 1
+        return line_height * 2 + row_gap
     if key == "hardware":
         return line_height * (2 + (1 if ram_enabled else 0) + (1 if vram_enabled else 0))
     has_memory = ram_enabled if key == "cpu" else vram_enabled
@@ -426,7 +428,7 @@ def side_compact_height(config: RenderConfig, fit: SideBarFit, line_height: int)
     show (every Auto-Cycle phase), with today's 4 x TEXT_MARGIN padding."""
     pad = 4 * constants.renderer.TEXT_MARGIN
     mode = config.widget_display_mode
-    net_band = (2 * line_height if fit.tier == TIER_CLASSIC
+    net_band = (2 * line_height + _line_spacing_delta(config) if fit.tier == TIER_CLASSIC
                 else _rows_band(compact_network_rows(config, fit), line_height))
     if mode in _HARDWARE_MODES:
         return _hw_band(config, fit, side_hardware_stats(config, mode), line_height) + pad
@@ -439,11 +441,20 @@ def side_compact_height(config: RenderConfig, fit: SideBarFit, line_height: int)
     return net_band + pad   # network_only / side_by_side (its hardware is in the hover card)
 
 
+def _line_spacing_delta(config: RenderConfig) -> int:
+    """How far the user's ``line_spacing`` moves the classic two-row readout from the default gap
+    (0 at the default, so the side-bar heights below stay exactly what they were). Hardware-only
+    modes paint no network readout - their rows have no gap - so their height doesn't move."""
+    if config.widget_display_mode in _HARDWARE_MODES:
+        return 0
+    return config.line_spacing - constants.renderer.TWO_ROW_GAP_PX
+
+
 def side_classic_height(config: RenderConfig, line_height: int) -> int:
     """Today's (T0) side-taskbar widget height: two text rows + padding; separate upload/download
     graphs stack two such panels (network_only); side_by_side stacks a band per segment."""
     margin = constants.renderer.TEXT_MARGIN
-    height = line_height * 2 + margin * 4
+    height = line_height * 2 + _line_spacing_delta(config) + margin * 4
     mode = config.widget_display_mode
     if split_active(config) and mode == "network_only":
         height = 2 * height + constants.renderer.GRAPH_SPLIT_GAP
@@ -452,7 +463,8 @@ def side_classic_height(config: RenderConfig, line_height: int) -> int:
                                  config.monitor_gpu_enabled, getattr(config, "stack_hardware_stats", False))
         if len(keys) > 1:
             height = (sum(stacked_segment_height(k, line_height, config.monitor_ram_enabled,
-                                                 config.monitor_vram_enabled) for k in keys)
+                                                 config.monitor_vram_enabled, config.line_spacing)
+                          for k in keys)
                       + constants.layout.WIDGET_SEGMENT_GAP_STACKED_PX * (len(keys) - 1) + margin * 4)
     return height
 
@@ -572,7 +584,8 @@ def _draw_stacked(painter: QPainter, renderer: WidgetRenderer, width: int, heigh
     (network over CPU/GPU), each centered in the band the layout reserved for it. For the same reason
     the RAM/VRAM goes on a row of its own instead of inline after stacked CPU+GPU."""
     line_height = renderer.metrics.height()
-    bands = [stacked_segment_height(k, line_height, config.monitor_ram_enabled, config.monitor_vram_enabled)
+    bands = [stacked_segment_height(k, line_height, config.monitor_ram_enabled, config.monitor_vram_enabled,
+                                    config.line_spacing)
              for k in keys]
     gap = constants.layout.WIDGET_SEGMENT_GAP_STACKED_PX
     y = max(0, (height - sum(bands) - gap * (len(bands) - 1)) // 2)
@@ -711,19 +724,22 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
     finally:
         renderer._pause_cue = False
         painter.restore()
-    renderer.pause_glyph_rects = _pause_glyph_rects(rect, renderer)
+    renderer.pause_glyph_rects = _pause_glyph_rects(rect, renderer, config.line_spacing)
     _draw_pause_glyphs(painter, renderer.pause_glyph_rects, QColor(renderer.default_color))
 
 
-def _pause_glyph_rects(rect: QRect, renderer: WidgetRenderer) -> List[QRectF]:
+def _pause_glyph_rects(rect: QRect, renderer: WidgetRenderer,
+                       row_gap: int = constants.renderer.TWO_ROW_GAP_PX) -> List[QRectF]:
     """Where the pause glyph goes: one per arrow column (the stacked rows' cells merged, so it is
-    centered across both rows), else the left margin when the content leaves room, else nowhere."""
+    centered across both rows), else the left margin when the content leaves room, else nowhere.
+    ``row_gap`` is the user's ``line_spacing`` - how far apart one readout's two rows are painted."""
     r = constants.renderer
     columns: List[QRectF] = []
     # Merge only the rows of ONE stacked readout (same column, adjacent rows). Split-graph panels
     # stacked on a side bar share the column but sit either side of the divider: each gets its own
-    # glyph in its own row, so a merged glyph never straddles the divider.
-    adjacent = constants.renderer.TWO_ROW_GAP_PX + 1.0
+    # glyph in its own row, so a merged glyph never straddles the divider. The widest line_spacing
+    # (+4) still leaves the rows well inside the panels' ~12 px split.
+    adjacent = max(row_gap, constants.renderer.TWO_ROW_GAP_PX) + 1.0
     for cell in renderer._pause_slots:
         for i, col in enumerate(columns):
             if (abs(col.left() - cell.left()) <= 1.0

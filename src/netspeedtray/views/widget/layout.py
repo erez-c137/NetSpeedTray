@@ -1,4 +1,5 @@
 
+import dataclasses
 import logging
 import math
 from typing import TYPE_CHECKING, Dict, Any, Optional
@@ -11,7 +12,7 @@ from netspeedtray import constants
 from netspeedtray.utils.taskbar_utils import (is_small_taskbar, get_taskbar_info, horizontal_taskbar_strip,
                                               vertical_taskbar_strip, dock_signature)
 from netspeedtray.utils.helpers import (memory_label_width, effective_display_mode, hw_suffix_reference,
-                                        temperature_unit)
+                                        temperature_unit, line_spacing_px)
 
 
 if TYPE_CHECKING:
@@ -32,6 +33,9 @@ class WidgetLayoutManager:
         self._arrow_font: Optional[QFont] = None
         # widget_paint.SideBarFit of the last side-taskbar sizing (None on a TOP/BOTTOM bar).
         self._side_fit = None
+        # The network rows' gap a horizontal taskbar strip leaves room for (``_docked_rows``), or
+        # None when the widget isn't docked to one - the paint path then uses the user's line_spacing.
+        self.docked_row_gap: Optional[int] = None
 
     def setup_window_properties(self) -> None:
         """Set Qt window flags and attributes for proper Windows integration."""
@@ -128,6 +132,7 @@ class WidgetLayoutManager:
                 hide_card()
             except Exception:
                 pass
+        self.docked_row_gap = None      # set again below only when sized to a horizontal strip
         try:
             # #188: when the preferred monitor is a taskbar-less display we free-float on, there's no
             # taskbar to size against - render a normal compact horizontal readout with a font-derived
@@ -420,7 +425,12 @@ class WidgetLayoutManager:
                 if float_screen is not None:
                     # No taskbar to match on a taskbar-less display: font-derived height in LOGICAL px, so
                     # Qt scales it correctly on that screen regardless of the primary monitor's DPI (#188).
-                    calculated_height = self.metrics.height() * 2 + (margin * 4)
+                    # The network rows' line_spacing doesn't apply to the hardware-only modes (no gap).
+                    # "- 1" is not an off-by-one: this height never counted the default 1 px gap
+                    # (2*line_height + 4*margin), so only a change from the default moves it.
+                    rows = (self.metrics.height() * 2 if display_mode in ["cpu_only", "gpu_only", "combined"]
+                            else self._two_row_height() - 1)
+                    calculated_height = rows + (margin * 4)
                 else:
                     # Visible taskbar height for horizontal docking (#104/PR #110), with a #221
                     # fallback + two-row floor so a work area Windows doesn't inset for the taskbar
@@ -534,7 +544,7 @@ class WidgetLayoutManager:
           trusts, and the same ``<= 0`` guard ``position_manager`` already uses to POSITION the
           widget. This only brings the sizing into line with the positioning already happening.
         - Part B (floor): the renderer always stacks two rows (``draw_network_speeds``:
-          ``total_height = 2*line_height + 1``), so any docked height below that crops the glyphs.
+          ``total_height = 2*line_height + line_spacing``), so any docked height below that crops the glyphs.
           Floor to the two-row content (+1px for the ``int()`` rounding in ``top_y``) so text can
           never crop, without the generous margin pad the free-float/side branches use.
 
@@ -542,6 +552,10 @@ class WidgetLayoutManager:
         taskbar window's height, the same value the position code centres in. When the floor makes
         the widget taller than a thin strip, ``PositionCalculator._clamp_into_strip`` sits it flush
         with the screen edge the bar is on, so the overhang is the minimum and faces the desktop.
+
+        A wider ``line_spacing`` gives way to the strip rather than outgrow it: the gap actually
+        painted (``docked_row_gap``) is the widest one, up to the user's, whose floor is no taller
+        than the strip - or than the default gap's floor, when the font alone needs more.
         """
         if edge in (constants.TaskbarEdge.TOP, constants.TaskbarEdge.BOTTOM):
             _, visible_tb_height = horizontal_taskbar_strip(taskbar_info, edge, dpi_scale)
@@ -550,7 +564,34 @@ class WidgetLayoutManager:
 
         if visible_tb_height <= 0:                      # Part A (#221)
             visible_tb_height = taskbar_info.height
-        return max(visible_tb_height, self._two_row_floor(visible_tb_height))   # Part B (#221/#322)
+        self.docked_row_gap, floor = self._docked_rows(visible_tb_height)
+        return max(visible_tb_height, floor)   # Part B (#221/#322)
+
+    def _docked_rows(self, strip: float) -> "tuple[int, int]":
+        """(gap, two-row floor) for a horizontal ``strip``: the user's ``line_spacing``, narrowed until
+        its floor is no taller than the strip (or than the default gap's floor, if that is taller
+        already). A gap at or below the default never grows the floor, so it is kept as is. A wider
+        one ends up exactly as tall as the default: its floor is never below the default's (the
+        rows only move outward) and, once narrowed, never above ``limit``."""
+        gap, default = self._row_gap(), constants.renderer.TWO_ROW_GAP_PX
+        if gap <= default:
+            return gap, self._two_row_floor(strip, gap)
+        limit = max(math.ceil(strip), self._two_row_floor(strip, default))
+        while gap > default and not self._floor_within(limit, gap):
+            gap -= 1
+        return gap, limit
+
+    def _floor_within(self, limit: int, gap: int) -> bool:
+        """``_two_row_floor(strip, gap) <= limit``, where ``limit`` is at least the default gap's floor,
+        checked at the one height ``limit``: a wider gap only moves the rows outward, so no height
+        the default rows didn't fit (below their floor) can fit these."""
+        if self._old_two_row_floor(gap) <= limit:
+            return True
+        try:
+            return self._rows_fit_check(gap)(limit)
+        except Exception as e:
+            self.logger.debug("Thin-strip fit check failed (%s); narrowing the row gap.", e)
+            return False
 
     def _ink_reference(self) -> "tuple[list, list]":
         """(text strings, arrow glyphs) the docked readout can paint: the fixed hardware/number
@@ -590,22 +631,24 @@ class WidgetLayoutManager:
         # The icon box spans baseline-(size-1)..baseline; its antialiased stroke spills a row each way.
         return max(above, constants.renderer.HW_ICON_SIZE_PX), max(below, 1)
 
-    def _row_baselines(self, height: int) -> "tuple[int, ...]":
+    def _row_baselines(self, height: int, gap: Optional[int] = None) -> "tuple[int, ...]":
         """The baselines the renderer paints at in a ``height`` px widget: the network rows
         (``draw_network_speeds``: box ``2*line_height + gap`` centred) and the hardware rows
-        (``draw_hardware_stats``: ``2*line_height``, no gap)."""
-        line_h, asc, gap = self.metrics.height(), self.metrics.ascent(), constants.renderer.TWO_ROW_GAP_PX
+        (``draw_hardware_stats``: ``2*line_height``, no gap). ``gap`` defaults to ``_row_gap()``."""
+        line_h, asc = self.metrics.height(), self.metrics.ascent()
+        gap = self._row_gap() if gap is None else gap
         net = int((height - (2 * line_h + gap)) / 2 + asc)
         hw = int((height - 2 * line_h) / 2 + asc)
         return net, net + line_h + gap, hw, hw + line_h
 
-    def _two_rows_fit(self, height: int, ink_above: int, ink_below: int) -> bool:
+    def _two_rows_fit(self, height: int, ink_above: int, ink_below: int, gap: Optional[int] = None) -> bool:
         """100% metrics model: would every glyph stay inside ``height`` px (1 px clear on top)?"""
-        b = self._row_baselines(height)
+        b = self._row_baselines(height, gap)
         return (min(b) - ink_above >= constants.renderer.INK_FIT_TOP_MARGIN_PX
                 and max(b) + ink_below <= height - 1)
 
-    def _paint_fits(self, height: int, scale: float, strings: list, arrows: list) -> bool:
+    def _paint_fits(self, height: int, scale: float, strings: list, arrows: list,
+                    gap: Optional[int] = None) -> bool:
         """Paint every reference glyph at every row baseline into a ``height`` px band at device pixel
         ratio ``scale`` - the same text engine and hinting the widget paints with - and check that no
         pixel lands outside the band (1 device px clear on top). Exact where a metrics model is not:
@@ -627,7 +670,7 @@ class WidgetLayoutManager:
             p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
             p.setPen(QPen(QColor(255, 255, 255), 1))
             p.translate(0, pad)
-            for y in self._row_baselines(height):
+            for y in self._row_baselines(height, gap):
                 x = 0
                 p.setFont(font)
                 for s in strings:
@@ -653,8 +696,9 @@ class WidgetLayoutManager:
         margin = constants.renderer.INK_FIT_TOP_MARGIN_PX
         return rows[0] >= band_top + margin and rows[-1] <= band_bottom
 
-    def _two_row_floor(self, strip: float) -> int:
-        """The smallest docked height (>= the strip) at which both rows paint uncropped (#221/#322).
+    def _two_row_floor(self, strip: float, gap: Optional[int] = None) -> int:
+        """The smallest docked height (>= the strip) at which both rows paint uncropped (#221/#322),
+        with the network rows ``gap`` px apart (default: the user's ``line_spacing``).
 
         #221 floored at ``metrics.height()*2 + 2`` - the font's line boxes - which on Win11's 32 px
         "Small" taskbar made a 9 pt widget 34 px and hung 2 px off the bar, although the INK of the two
@@ -664,23 +708,60 @@ class WidgetLayoutManager:
         "Fits" is decided by painting the reference glyphs at every standard display scale
         (``_paint_fits``), since hinting at 125/150% moves ink by a device row that a 96 DPI metrics
         model can't see. Without the font object (unit tests that set only ``metrics``) the 100%
-        metrics model is used.
+        metrics model is used. The old floor grows with a wider ``line_spacing`` (+1 px clear) but
+        never drops below the ``*2 + 2`` above: the hardware rows are painted without a gap, so a
+        negative spacing must not let them crop.
         """
-        old_floor = self.metrics.height() * 2 + 2
+        gap = self._row_gap() if gap is None else gap
+        old_floor = self._old_two_row_floor(gap)
         start = max(1, math.ceil(strip))
         if start >= old_floor:
             return old_floor
         try:
-            if self._font is None:
-                above, below = self._ink_extents()
-                fits = lambda h: self._two_rows_fit(h, above, below)   # noqa: E731
-            else:
-                strings, arrows = self._ink_reference()
-                fits = lambda h: all(self._paint_fits(h, s, strings, arrows)   # noqa: E731
-                                     for s in constants.renderer.INK_FIT_SCALES)
+            fits = self._rows_fit_check(gap)
             for h in range(start, old_floor):
                 if fits(h):
                     return h
         except Exception as e:
             self.logger.debug("Thin-strip fit check failed (%s); keeping the two-row floor.", e)
         return old_floor
+
+    def _old_two_row_floor(self, gap: int) -> int:
+        """The line-box floor (#221) for rows ``gap`` px apart, never below the default gap's."""
+        line_h = self.metrics.height()
+        return max(line_h * 2 + gap, line_h * 2 + constants.renderer.TWO_ROW_GAP_PX) + 1
+
+    def _rows_fit_check(self, gap: int):
+        """``fits(h)``: do both rows, ``gap`` px apart, paint uncropped at height ``h``? Painted at
+        every standard display scale with the font object, else the 100% metrics model."""
+        if self._font is None:
+            above, below = self._ink_extents()
+            return lambda h: self._two_rows_fit(h, above, below, gap)
+        strings, arrows = self._ink_reference()
+        return lambda h: all(self._paint_fits(h, s, strings, arrows, gap)
+                             for s in constants.renderer.INK_FIT_SCALES)
+
+    def paint_config(self, config):
+        """The ``RenderConfig`` to paint with: ``config`` itself, or a copy with the narrower gap a
+        horizontal taskbar strip left room for (``docked_row_gap``), so the rows are painted the
+        way the widget was sized. Never wider than the configured gap."""
+        gap = self.docked_row_gap
+        if gap is None or gap >= config.line_spacing:
+            return config
+        return dataclasses.replace(config, line_spacing=gap)
+
+    def _row_gap(self) -> int:
+        """The user's gap between the two network rows (``line_spacing``, default 1 = the old
+        ``TWO_ROW_GAP_PX``); ``draw_network_speeds`` paints with the same value - both read it
+        through ``line_spacing_px``, so a missing or non-integer value is the default in both."""
+        try:
+            return line_spacing_px(self.widget.config.get("line_spacing"))
+        except Exception:
+            return constants.config.defaults.DEFAULT_LINE_SPACING
+
+    def _two_row_height(self) -> int:
+        """Height of the stacked upload/download readout: ``2*line_height + line_spacing``.
+
+        Mirrors ``total_height`` in ``draw_network_speeds``.
+        """
+        return self.metrics.height() * 2 + self._row_gap()
