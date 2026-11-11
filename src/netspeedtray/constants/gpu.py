@@ -76,6 +76,13 @@ class GpuConstants:
     ADAPTER_RECHECK_SEC: Final[float] = 5.0
     ADAPTER_RECHECK_MAX: Final[int] = 6
 
+    # The hover card's per-GPU list (#236, 2.2.1). It never runs nvidia-smi: it reuses the Automatic
+    # poll's cached reading, and only while that is recent - at most this many nvidia-smi sub-cadence
+    # intervals old (a cache nvidia-smi stopped refreshing is not shown as a live reading).
+    LIST_SMI_CACHE_MAX_AGE_POLLS: Final[float] = 3.0
+    # A listed GPU's name is elided at this many logical px, so a long driver name never widens the card.
+    LIST_NAME_MAX_WIDTH_PX: Final[int] = 170
+
     VENDOR_NVIDIA: Final[int] = 0x10DE
     VENDOR_AMD: Final[int] = 0x1002
     VENDOR_AMD_ALT: Final[int] = 0x1022
@@ -102,6 +109,8 @@ class GpuConstants:
             raise ValueError("SHARED_USAGE_FALLBACK_MIN_MIB must not be negative.")
         if not 0 < self.SHARED_BUDGET_FRACTION_OF_RAM <= 1:
             raise ValueError("SHARED_BUDGET_FRACTION_OF_RAM must be in (0, 1].")
+        if self.LIST_SMI_CACHE_MAX_AGE_POLLS <= 0 or self.LIST_NAME_MAX_WIDTH_PX <= 0:
+            raise ValueError("LIST_SMI_CACHE_MAX_AGE_POLLS and LIST_NAME_MAX_WIDTH_PX must be positive.")
 
 
 # Singleton instance for easy access

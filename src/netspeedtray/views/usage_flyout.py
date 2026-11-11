@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from typing import Optional, Tuple
 
 from PyQt6.QtCore import Qt, QRect, pyqtSignal
@@ -24,6 +25,7 @@ from PyQt6.QtWidgets import (
     QGraphicsDropShadowEffect, QProgressBar,
 )
 
+from netspeedtray import constants
 from netspeedtray.utils import styles as su, helpers
 from netspeedtray.constants.styles import styles as tokens
 
@@ -151,6 +153,7 @@ class UsageFlyout(QWidget):
 
         # --- Hardware the side taskbar has no room for (live while the card is open) ---
         self._hw_values: dict = {}
+        self._gpu_list_sig: Optional[tuple] = None   # the GPU list's rows as built (#236)
         if hardware:
             self._hardware_section(body, hardware)
             sections += 1
@@ -307,6 +310,8 @@ class UsageFlyout(QWidget):
     # Widest value each column can show, so a live update never makes the card jump in width.
     _HW_REFS = {"pct": "100%", "temp": "100°C", "power": "250.0 W", "mem": "99.9 / 99.9 GB"}
     # (The "temp" reference follows the display unit - helpers.temperature_reference(hover=True).)
+    # A listed GPU's name (#236) is elided at this width, so a long driver name never widens the card.
+    _GPU_NAME_MAX_W = constants.gpu.LIST_NAME_MAX_WIDTH_PX
 
     @staticmethod
     def _temp_unit(hardware: dict) -> str:
@@ -326,10 +331,16 @@ class UsageFlyout(QWidget):
         widths = {k: fm.horizontalAdvance(helpers.format_percent(100, self._i18n) if k == "pct" else v)
                   for k, v in refs.items()}
         # Temperature / power columns only when a stat carries them (the widget's own toggles).
+        gpus = hardware.get("gpus") or []
         stat_cols = ["pct"] + [c for c in ("temp", "power")
-                               if any(c in (hardware.get(k) or {}) for k in ("cpu", "gpu"))]
+                               if any(c in (hardware.get(k) or {}) for k in ("cpu", "gpu"))
+                               or any(c in g for g in gpus)]
         row = 0
         for key, label in self._HW_ROWS:
+            if key == "gpu" and gpus:
+                # Every GPU in the GPU row's place (#236); the single GPU/VRAM rows are not sent then.
+                row = self._gpu_list_rows(grid, row, gpus, stat_cols, widths)
+                continue
             if key not in hardware:
                 continue
             if key == "vram" and hardware.get("vram_shared"):
@@ -359,17 +370,87 @@ class UsageFlyout(QWidget):
         body.addLayout(grid)
         self.update_hardware(hardware)
 
+    def _gpu_list_rows(self, grid: QGridLayout, row: int, gpus: list, stat_cols: list, widths: dict) -> int:
+        """One row per GPU - its name (in its own face when the UI face lacks a character of it,
+        elided at _GPU_NAME_MAX_W), then the same value columns as the CPU row - and, with VRAM on, a
+        memory row under it. Keyed by the card's LUID for update_hardware. Returns the next row."""
+        for g in gpus:
+            gid = g.get("key")
+            cell = QWidget()
+            cell.setStyleSheet("background: transparent;")
+            box = QHBoxLayout(cell)
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(tokens.SPACE_S)
+            name = str(g.get("name") or "GPU")
+            name_lbl = self._label("", tokens.TYPE_BODY_STRONG, self._c["text_primary"])
+            # Windows' text (a Han adapter name) in its own face, no font fallback list (rc.7).
+            # Two identical cards are "Name #1" / "Name #2" (gpu_adapters.numbered_display_names): only
+            # the name is elided, the number always stays visible - else both read "NVIDIA GeForce RT…".
+            number = re.search(r" #\d+$", name)
+            su.set_elided_text_in_face(name_lbl, name, self._GPU_NAME_MAX_W,
+                                       keep_suffix=number.group(0) if number else "")
+            name_lbl.setAccessibleName(name)
+            box.addWidget(name_lbl)
+            self._hw_values[("gpus", gid, "name")] = name_lbl
+            if g.get("on_taskbar"):
+                box.addWidget(self._label(self._tr("GPU_ON_TASKBAR_MARKER", "on taskbar"),
+                                          tokens.TYPE_CAPTION, self._c["accent"]))
+            box.addStretch(1)
+            grid.addWidget(cell, row, 0)
+            for i, col in enumerate(stat_cols):
+                lbl = self._label("", tokens.TYPE_BODY, self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
+                lbl.setMinimumWidth(widths[col])
+                lbl.setAccessibleName(name)
+                grid.addWidget(lbl, row, 1 + i)
+                if col == "pct" or col in g:
+                    self._hw_values[("gpus", gid, col)] = lbl
+            row += 1
+            if "vram" in g:
+                label = (self._tr("VRAM_SHARED_LABEL", "VRAM (shared)") if g.get("vram_shared") else "VRAM")
+                sub = self._label(label, tokens.TYPE_BODY, self._c["text_secondary"])
+                sub.setContentsMargins(tokens.SPACE_M, 0, 0, 0)   # under its card's name
+                grid.addWidget(sub, row, 0)
+                lbl = self._label("", tokens.TYPE_BODY, self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
+                lbl.setMinimumWidth(widths["mem"])
+                lbl.setAccessibleName(f"{name} {label}")
+                grid.addWidget(lbl, row, 1, 1, len(stat_cols))
+                self._hw_values[("gpus", gid, "mem")] = lbl
+                row += 1
+        self._gpu_list_sig = self._gpu_sig(gpus)
+        return row
+
+    @staticmethod
+    def _gpu_sig(gpus: Optional[list]) -> Optional[tuple]:
+        """What the GPU list's rows are built from - the cards, their names, the marker and which
+        readings each carries. Values are not part of it: they update in place."""
+        if not gpus:
+            return None
+        return tuple((g.get("key"), g.get("name"), bool(g.get("on_taskbar")), bool(g.get("vram_shared")),
+                      tuple(k for k in ("temp", "power", "vram") if k in g)) for g in gpus)
+
     @property
     def has_hardware(self) -> bool:
         return bool(self._hw_values)
 
-    def update_hardware(self, hardware: Optional[dict]) -> None:
+    @property
+    def lists_gpus(self) -> bool:
+        """The card lists every GPU (#236) - and nothing else in its hardware section: a list that
+        goes away then leaves the rest of the card (usage, tips, battery) to rebuild, not to close."""
+        return (getattr(self, "_gpu_list_sig", None) is not None
+                and all(k[0] == "gpus" for k in self._hw_values))
+
+    def update_hardware(self, hardware: Optional[dict]) -> Optional[bool]:
         """Refresh the hardware rows in place (the card stays up while the pointer rests on the widget).
         Keys: cpu/gpu -> {usage, temp, power}; ram/vram -> (used_gb, total_gb); vram_shared -> True
         when the VRAM is an integrated GPU's shared memory; temp_unit -> "fahrenheit" (absent = Celsius; the
-        temps are Celsius; rc.2 F8); identity -> str. A missing reading shows an em dash, never a made-up 0."""
+        temps are Celsius; rc.2 F8); identity -> str; gpus -> one dict per GPU (#236): key (its LUID),
+        name, usage, temp, power, vram, vram_shared, on_taskbar. A missing reading shows an em dash, never a
+        made-up 0. Returns False - nothing updated - when the GPU list needs other rows (a GPU came or
+        went, the pick moved): the caller rebuilds."""
         if not hardware or not self._hw_values:
-            return
+            return None
+        if self._gpu_sig(hardware.get("gpus")) != getattr(self, "_gpu_list_sig", None):
+            return False
         dash = "—"
 
         def num(v: object) -> Optional[float]:
@@ -394,20 +475,36 @@ class UsageFlyout(QWidget):
                 self._hw_values[(key, "power")].setText(
                     f"{helpers.format_decimal(power, self._i18n, 1)} W" if power is not None else dash)
         gb = self._tr("GB_UNIT", "GB")
+
+        def mem_text(mem: object) -> str:
+            used, total = (num(mem[0]), num(mem[1])) if isinstance(mem, (tuple, list)) and len(mem) == 2 \
+                else (None, None)
+            if used is None:
+                return dash
+            if total:
+                return (f"{helpers.format_decimal(used, self._i18n, 1)} / "
+                        f"{helpers.format_decimal(total, self._i18n, 1)} {gb}")
+            return f"{helpers.format_decimal(used, self._i18n, 1)} {gb}"
+
         for key in ("ram", "vram"):
             mem = hardware.get(key)
             if mem is None or (key, "mem") not in self._hw_values:
                 continue
-            used, total = (num(mem[0]), num(mem[1])) if isinstance(mem, (tuple, list)) and len(mem) == 2 \
-                else (None, None)
-            if used is None:
-                text = dash
-            elif total:
-                text = (f"{helpers.format_decimal(used, self._i18n, 1)} / "
-                        f"{helpers.format_decimal(total, self._i18n, 1)} {gb}")
-            else:
-                text = f"{helpers.format_decimal(used, self._i18n, 1)} {gb}"
-            self._hw_values[(key, "mem")].setText(text)
+            self._hw_values[(key, "mem")].setText(mem_text(mem))
+        for g in hardware.get("gpus") or []:
+            gid = g.get("key")
+            usage, temp, power = num(g.get("usage")), num(g.get("temp")), num(g.get("power"))
+            if ("gpus", gid, "pct") in self._hw_values:
+                self._hw_values[("gpus", gid, "pct")].setText(
+                    helpers.format_percent(int(round(usage)), self._i18n) if usage is not None else dash)
+            if ("gpus", gid, "temp") in self._hw_values:
+                self._hw_values[("gpus", gid, "temp")].setText(
+                    helpers.format_temperature(temp, self._temp_unit(hardware)) if temp is not None else dash)
+            if ("gpus", gid, "power") in self._hw_values:
+                self._hw_values[("gpus", gid, "power")].setText(
+                    f"{helpers.format_decimal(power, self._i18n, 1)} W" if power is not None else dash)
+            if ("gpus", gid, "mem") in self._hw_values:
+                self._hw_values[("gpus", gid, "mem")].setText(mem_text(g.get("vram")))
         if ("vram", "label") in self._hw_values and "vram" in hardware:
             # The card can stay up across a poll that changes what the VRAM reading is.
             self._hw_values[("vram", "label")].setText(
@@ -415,6 +512,7 @@ class UsageFlyout(QWidget):
         if ("identity", "text") in self._hw_values:
             # The Wi-Fi name (我的网络) in its own face when the UI face lacks it (styles.set_text_in_face).
             su.set_text_in_face(self._hw_values[("identity", "text")], str(hardware.get("identity") or dash))
+        return True
 
     # ----------------------------------------------------------------- battery
 
