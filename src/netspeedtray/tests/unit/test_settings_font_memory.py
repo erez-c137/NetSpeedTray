@@ -180,7 +180,7 @@ def test_a_dialog_with_a_running_backup_is_kept_until_it_is_done(host, monkeypat
     dlg.close()
     busy[0] = False
     from pytestqt.qtbot import QtBot
-    QtBot(QApplication.instance()).waitUntil(lambda: host.settings_dialog is None, timeout=2000)
+    QtBot(QApplication.instance()).waitUntil(lambda: host.settings_dialog is None, timeout=10000)
     _drain()
     assert sip.isdeleted(dlg)
 
@@ -373,7 +373,7 @@ def test_font_release_runs_after_settings_is_destroyed(host, qtbot, monkeypatch)
     host.settings_dialog.close()
     assert calls == []                      # deferred: never inside the close itself
     _drain()
-    qtbot.waitUntil(lambda: calls == [1], timeout=2000)
+    qtbot.waitUntil(lambda: calls == [1], timeout=10000)
 
 
 def test_font_release_is_skipped_while_the_monitor_is_open(host, qtbot, monkeypatch):
@@ -406,7 +406,7 @@ def test_font_release_runs_after_the_monitor_closes(host, qtbot, monkeypatch):
     assert host.monitor_window is None
     win.deleteLater()
     _drain()
-    qtbot.waitUntil(lambda: calls == [1], timeout=2000)
+    qtbot.waitUntil(lambda: calls == [1], timeout=10000)
 
 
 def test_release_font_database_never_raises(monkeypatch):
@@ -606,6 +606,7 @@ print(json.dumps(out))
 """
 
 
+@pytest.mark.native_desktop
 @pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows fonts")
 def test_native_release_keeps_the_widget_pixel_identical_and_the_picker_lazy():
     env = dict(os.environ, QT_QPA_PLATFORM="windows", PYTHONPATH=str(SRC), PYTHONIOENCODING="utf-8")

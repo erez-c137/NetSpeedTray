@@ -643,7 +643,10 @@ def refresh(monkeypatch):
                         lambda preferred_screen_name=None: types.SimpleNamespace(hwnd=HWND))
     monkeypatch.setattr(widget_main, "is_taskbar_visible", lambda tb: True)
     monkeypatch.setattr(widget_main, "is_taskbar_obstructed", lambda tb, hwnd: state["obstructed"])
-    monkeypatch.setattr(widget_main.win32gui, "GetForegroundWindow", lambda: 0)
+    # A real (stand-in) foreground window: a NULL foreground is "no information" to the fullscreen
+    # gate since #503, so it could not report the obstruction these tests set up.
+    monkeypatch.setattr(widget_main.win32gui, "GetForegroundWindow", lambda: 0x77)
+    monkeypatch.setattr(widget_main, "is_window_on_screen", lambda h: bool(h))
 
     def run(yielded, keep_visible=False, obstructed=False, visible=True):
         state["obstructed"] = obstructed

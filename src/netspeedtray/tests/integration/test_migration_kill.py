@@ -28,6 +28,8 @@ import pytest
 if sys.platform != "win32":
     pytest.skip("the kill test drives Windows TerminateProcess", allow_module_level=True)
 
+pytestmark = pytest.mark.slow   # real child processes, killed and relaunched (pytest.ini)
+
 from netspeedtray.core.db import migrate_v8 as M
 from netspeedtray.core.db import schema_v8 as S
 from netspeedtray.tests.integration import v7_fixture as F
@@ -42,8 +44,19 @@ _FIX = ("import sys; sys.path.insert(0, {src!r}); "
         "from netspeedtray.tests.integration import v7_fixture as F; F.{fn}(sys.argv[1])")
 
 
+# The REAL interpreter, not the venv's python.exe: on Windows that is a launcher stub that starts the
+# base interpreter as a SUSPENDED child, then resumes it. A kill that lands in between (the random
+# kills below can) terminates only the launcher and leaves the real interpreter suspended forever -
+# orphaned writer_v8_child processes were found days later on the maintainer's PC. Launched directly,
+# with __PYVENV_LAUNCHER__ naming the venv's exe, the child is ONE process that still uses the venv
+# (as tests/unit/test_quit_bounded.py does), so the kill reaches the process doing the work.
+_PY = getattr(sys, "_base_executable", None) or sys.executable
+
+
 def _env(killpoint=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith("NST_")}
+    if _PY != sys.executable:
+        env["__PYVENV_LAUNCHER__"] = sys.executable
     env["QT_QPA_PLATFORM"] = "offscreen"
     if killpoint:
         env["NST_TEST_HOOKS"] = "1"
@@ -54,12 +67,12 @@ def _env(killpoint=None):
 def _migrator(directory, *extra, killpoint=None, timeout=120):
     # -I: isolated (no PYTHONPATH / user site / cwd on sys.path) - the source path is inserted
     # explicitly, the same way a frozen build would find its own package.
-    return subprocess.run([sys.executable, "-I", "-c", _BOOT.format(src=SRC), str(directory), *extra],
+    return subprocess.run([_PY, "-I", "-c", _BOOT.format(src=SRC), str(directory), *extra],
                           env=_env(killpoint), capture_output=True, text=True, timeout=timeout)
 
 
 def _fixture_child(fn, arg):
-    p = subprocess.run([sys.executable, "-I", "-c", _FIX.format(src=SRC, fn=fn), str(arg)],
+    p = subprocess.run([_PY, "-I", "-c", _FIX.format(src=SRC, fn=fn), str(arg)],
                        env=_env(), capture_output=True, text=True, timeout=120)
     assert p.returncode == KILLED, f"fixture child did not self-terminate: {p.returncode}\n{p.stderr}"
 
@@ -313,17 +326,22 @@ def test_kill_at_a_random_moment_then_relaunch(seed, hot_db, hot_template, tmp_p
     for attempt in range(6):
         out_path = tmp_path / f"random_attempt{attempt}.log"
         out = open(out_path, "w", encoding="utf-8")
-        proc = subprocess.Popen([sys.executable, "-I", "-c", _BOOT.format(src=SRC), str(hot_db)],
+        proc = subprocess.Popen([_PY, "-I", "-c", _BOOT.format(src=SRC), str(hot_db)],
                                 env=_env(), stdout=out, stderr=subprocess.STDOUT)
         t = time.perf_counter()
         try:
-            rc = proc.wait(timeout=delay)     # returns early only if the child finished first
-            took = time.perf_counter() - t
-        except subprocess.TimeoutExpired:
-            proc.kill()                       # Popen.kill on Windows IS TerminateProcess(handle, 1)
-            rc = proc.wait(timeout=60)
-            took = time.perf_counter() - t    # it finished just as the kill was due
-        out.close()
+            try:
+                rc = proc.wait(timeout=delay)     # returns early only if the child finished first
+                took = time.perf_counter() - t
+            except subprocess.TimeoutExpired:
+                proc.kill()                       # Popen.kill on Windows IS TerminateProcess(handle, 1)
+                rc = proc.wait(timeout=60)
+                took = time.perf_counter() - t    # it finished just as the kill was due
+        finally:
+            if proc.poll() is None:               # never leave a child behind, whatever failed above
+                proc.kill()
+                proc.wait(timeout=10)
+            out.close()
         if rc == 1:
             break
         log = out_path.read_text(encoding="utf-8", errors="replace")

@@ -122,6 +122,7 @@ class StatsController(QObject):
         self._launch_reconciled: bool = False
         # Auto mode: the last primary the routing lookup actually found (see _aggregate_for_odometer).
         self._last_known_primary: Optional[str] = None
+        self._primary_logged = False   # the first resolution logs "Primary network interface: X"
         # Auto mode before ANY primary was found this session (an autostart at sign-in, Wi-Fi still
         # connecting): every interface's exact deltas, summed, plus the wall time the first of those
         # windows began. Charged to the primary once it first resolves (_flush_unrouted_backlog).
@@ -829,10 +830,16 @@ class StatsController(QObject):
             # adapters to personal/site labels and this INFO line ships in support
             # bundles (v2.1.5 item 7). Same hash ObfuscatingFormatter uses to scrub
             # historical lines, so old and new lines still correlate (#263).
-            self.logger.info(
-                "Primary network interface changed: %s -> %s",
-                stable_pseudonym(previous), stable_pseudonym(self.primary_interface),
-            )
+            if previous is None and not getattr(self, "_primary_logged", False):
+                # The first resolution at startup is not a change: no "None -> X". Only the FIRST
+                # one - a later None -> X (link back up) is a real change and keeps its wording.
+                self.logger.info("Primary network interface: %s", stable_pseudonym(self.primary_interface))
+            else:
+                self.logger.info(
+                    "Primary network interface changed: %s -> %s",
+                    stable_pseudonym(previous), stable_pseudonym(self.primary_interface),
+                )
+            self._primary_logged = True
             try:
                 self.primary_interface_changed.emit()
             except Exception:
@@ -884,4 +891,8 @@ class StatsController(QObject):
             except (TypeError, RuntimeError):
                 pass
             self.view = None
-        self.last_interface_counters.clear()
+        # REBIND, never clear in place: the odometer holds the last poll's counters dict as its
+        # launch-recovery snapshot, and the final persist runs AFTER this (widget_state.cleanup).
+        # Clearing the shared dict persisted `"counters": {}`, so every launch after a clean exit
+        # recovered nothing for the closed-app window.
+        self.last_interface_counters = {}
