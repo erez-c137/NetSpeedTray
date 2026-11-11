@@ -145,9 +145,13 @@ class OverlapContext:
     # False: the user turned "Hide while app buttons cover the widget" off (2.2.1 item 6). The widget is
     # never hidden, but the full-bar fallback still runs: a crowded left-aligned bar moves it to the
     # tray spot when that spot is clear, instead of leaving it on the app buttons. PositionManager sends
-    # such a context only while there IS a second spot (or the fallback holds one); otherwise the yield
-    # stays detached and inert, as before.
+    # such a context only while there IS a second spot (or the fallback holds one), or - on the primary
+    # bar - while it is left-aligned with Widgets on and no Widgets box is known yet (nothing else probes
+    # that bar's layout then); otherwise the yield stays detached and inert, as before.
     may_hide: bool = True
+    # The weather text's extent was known when ``tray_spot_clear`` was judged (False: unknown, which
+    # also reads as not clear). Hiding off only: one unknown reading never drops the tray-spot hold.
+    tray_spot_text_known: bool = True
 
 
 def group_span(group_rect, dpi: float, x_origin: float = 0.0) -> Optional[Span]:
@@ -284,6 +288,7 @@ class AppOverlapYield(QObject):
         self._retreated = False
         self._step_clear_since: Optional[float] = None
         self._spot_gone_since: Optional[float] = None   # first retreated reading with no second spot
+        self._text_unknown_since: Optional[float] = None  # hiding off: first held reading, text unknown
         self._may_hide = True                    # OverlapContext.may_hide at the last attach / sync
         self._relayout_burst_at = -1e9           # when a layout change last armed the follow-up burst
         self._probe_timer = self._timer(0, self._fire_probe)
@@ -329,6 +334,7 @@ class AppOverlapYield(QObject):
         self._retreated = False
         self._step_clear_since = None
         self._spot_gone_since = None
+        self._text_unknown_since = None
         self._model = None
         self._model_known = False
         self._changes = 0
@@ -385,6 +391,7 @@ class AppOverlapYield(QObject):
             # The fallback's pending confirmations were timed against the old scale's readings.
             self._step_clear_since = None
             self._spot_gone_since = None
+            self._text_unknown_since = None
             self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
             self._schedule(0)
             return
@@ -454,6 +461,7 @@ class AppOverlapYield(QObject):
         self._retreated = False
         self._step_clear_since = None
         self._spot_gone_since = None
+        self._text_unknown_since = None
         self._model = None
         self._model_known = False
         self._changes = 0
@@ -746,7 +754,21 @@ class AppOverlapYield(QObject):
         self._spot_gone_since = None
         if span is None:
             return False
+        if ctx.tray_spot_text_known:
+            self._text_unknown_since = None
         if not ctx.tray_spot_clear:
+            if (not ctx.may_hide and self._retreated and not ctx.tray_spot_text_known
+                    and (self._text_unknown_since is None
+                         or (at - self._text_unknown_since) * 1000.0 < self._state.confirm_ms - 0.5)):
+                # Hiding off, held at the tray spot, and where the weather text ends is unknown for a
+                # moment: letting go would put the widget ON the app buttons until the next reading
+                # brings it back. Hold through one such reading; a second one APP_YIELD_SHOW_CONFIRM_MS
+                # later lets go (as for a vanished second spot).
+                if self._text_unknown_since is None:
+                    self._text_unknown_since = at
+                self._schedule(max(0, int(self._state.confirm_ms - (at - self._text_unknown_since) * 1000.0)))
+                return False
+            self._text_unknown_since = None
             # The tray spot would draw over the weather text (or where that text ends is unknown): no
             # fallback - the caller judges the stepped spot, so the yield steps the widget aside.
             changed = self._retreated

@@ -1922,12 +1922,14 @@ class _OffRig(Rig):
 
     def __init__(self, *a, **kw):
         self.may_hide = False
+        self.text_known = True
         super().__init__(*a, **kw)
 
     def _ctx(self):
         ctx = super()._ctx()
         if isinstance(ctx, OverlapContext):
-            return OverlapContext(**{**ctx.__dict__, "may_hide": self.may_hide})
+            return OverlapContext(**{**ctx.__dict__, "may_hide": self.may_hide,
+                                     "tray_spot_text_known": self.text_known})
         return ctx
 
 
@@ -2104,3 +2106,89 @@ def test_a_probe_landing_before_the_tick_after_turning_hiding_off_shows_the_widg
     assert not r.y.yielded and r.changes == 2        # the gate re-ran: shown without waiting for the tick
     r.y.sync()
     assert not r.y.yielded and r.changes == 2
+
+
+# --- #522 review: hiding off on a primary bar whose Widgets box nothing has probed ---------------------
+# With hiding off and the yield detached, nothing probed the primary bar's layout (the tray-less refresh
+# skips it; the #200 probe stops for good once its nudge was shown), so the widget never learned the
+# Widgets button: it sat ON it, and the full-bar fallback never ran.
+
+def _pm_unprobed_left_bar(align=0, widgets=True, primary=True):
+    pm, tb, widget = _pm_full_left_bar(hide=False)
+    tb.widgets_extent = None                         # no layout probe has landed for this bar
+    tb.widgets_rect = None                           # the #200 probe is off (nudge already shown)
+    tb.is_primary = primary
+    patches = _left_bar_patches(widgets=widgets)
+    patches.enter_context(patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=align))
+    return pm, tb, widget, patches
+
+
+def test_hiding_off_nudge_shown_primary_left_bar_learns_the_widgets_button_and_falls_back(layout, q_app):
+    pm, tb, _w, patches = _pm_unprobed_left_bar()
+    with patches:
+        assert pm.get_calculated_position().x == 1676        # ON the Widgets button (1530..1690)
+        pm.sync_app_overlap(tb)
+        assert pm._app_yield.attached_hwnd == HWND           # watched: its probe learns the layout
+        pm._app_yield._probe_timer.stop()
+        pm._app_yield._fire_probe()
+        layout.land(left_aligned(20))
+        pm._app_yield._poll_probe()
+        assert pm.is_yielding_to_apps() is False and not pm.is_widgets_fallback_active()
+        box = taskbar_utils.taskbar_layout_snapshot(HWND)[1]
+        assert box is not None and box[0] == 1530 and box[2] == 1690
+        tb.widgets_extent = box                              # the next tick's TaskbarInfo
+        pm.sync_app_overlap(tb)
+        x = pm.get_calculated_position().x
+        assert x == 1372 and x + WIDGET_W <= 1530            # left of the Widgets button
+        pm._app_yield.note_foreground_change()               # ...and the full-bar fallback works
+        pm._app_yield._probe_timer.stop()
+        pm._app_yield._fire_probe()
+        layout.land(left_aligned(28, overflow=True))
+        pm._app_yield._poll_probe()
+        assert pm.is_widgets_fallback_active() is True and pm.is_yielding_to_apps() is False
+        assert pm.get_calculated_position().x == 1676
+    pm.stop_app_overlap()
+
+
+@pytest.mark.parametrize("kw", [dict(align=1), dict(widgets=False), dict(primary=False)])
+def test_hiding_off_unprobed_bar_without_a_widgets_button_beside_the_tray_stays_detached(layout, q_app, kw):
+    """Centred (the button is at the far left), Widgets off, or a non-primary bar (the tray-less refresh
+    probes those): nothing to learn - detached, no probe."""
+    pm, tb, _w, patches = _pm_unprobed_left_bar(**kw)
+    with patches:
+        assert "setting" in pm._app_overlap_context()
+        pm.sync_app_overlap(tb)
+    assert pm._app_yield.attached_hwnd == 0 and not pm._app_yield._probe_timer.isActive()
+    assert layout.requests == []
+
+
+def test_hiding_off_the_tray_spot_hold_survives_one_unknown_text_reading(off_rig):
+    r = off_rig()
+    r.start(left_aligned(28, overflow=True))
+    assert r.y.retreated
+    r.widget_x = TRAY_SPOT[0]
+    r.tray_spot_clear, r.text_known = False, False   # the weather text's extent: unknown for a moment
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, overflow=True), advance=1.0)
+    assert r.y.retreated and r.changes == 1          # held, not dropped onto the app buttons
+    r.tray_spot_clear, r.text_known = True, True
+    r.probe(left_aligned(28, overflow=True), advance=0.5)
+    assert r.y.retreated and r.changes == 1
+    r.tray_spot_clear, r.text_known = False, False   # unknown twice, confirm_ms apart: let go
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, overflow=True), advance=1.0)
+    assert r.y.retreated
+    r.probe(left_aligned(28, overflow=True), advance=1.0)
+    assert not r.y.retreated and not r.y.yielded and r.changes == 2
+
+
+def test_hiding_on_an_unknown_text_reading_still_steps_aside_at_once(off_rig):
+    r = off_rig()
+    r.may_hide = True
+    r.start(left_aligned(28, overflow=True))
+    assert r.y.retreated
+    r.widget_x = TRAY_SPOT[0]
+    r.tray_spot_clear, r.text_known = False, False
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, overflow=True), advance=1.0)
+    assert not r.y.retreated and r.y.yielded         # unchanged: hiding beats colliding
