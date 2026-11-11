@@ -1302,7 +1302,10 @@ class StatsMonitorThread(QThread):
                 tool = ns.rsplit("\\", 1)[-1]  # LibreHardwareMonitor / OpenHardwareMonitor
                 probe_errors.append(f"{tool}: {e}")
                 self.logger.debug("Hardware monitor: %s probe failed: %s", ns, e)
-        # Nothing connected across all namespaces. Surface ONE actionable line, once.
+        # Nothing connected across all namespaces. A source that worked earlier is still (or newly)
+        # lost: SourceOutage reports a folded outage that outlasts its quiet window (no-op otherwise).
+        self._ohm_outage.failed("no LibreHardwareMonitor/OpenHardwareMonitor WMI namespace answered")
+        # Surface ONE actionable line, once.
         if not self._ohm_guidance_logged:
             self._ohm_guidance_logged = True
             kind = "empty" if saw_empty_namespace else "none"

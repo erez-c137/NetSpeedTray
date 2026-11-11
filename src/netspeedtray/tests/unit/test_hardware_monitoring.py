@@ -417,6 +417,43 @@ class TestHardwareMonitoring:
         assert len(info_lines("lost the LibreHardwareMonitor/OpenHardwareMonitor WMI")) == 1
         assert len(info_lines("WMI source is back after")) == 1
 
+    def test_wmi_source_lost_for_good_right_after_a_flap_still_reaches_info(self, monitor_thread):
+        """A WMI outage that starts within the quiet window of a reported one is DEBUG; if it then
+        never ends, the failing re-probes must still report it once the window passes - otherwise
+        the log's last INFO about the source is "is back" while it has been gone for hours."""
+        import netspeedtray.core.monitor_thread as mt
+        log = MagicMock()
+        monitor_thread.logger = log
+        monitor_thread._ohm_outage.logger = log
+        now = [1000.0]
+        monitor_thread._ohm_outage._clock = lambda: now[0]
+        monitor_thread._ohm_guidance_logged = True
+        monitor_thread._wmi = MagicMock()
+        monitor_thread._wmi.ExecQuery.return_value = []
+        sensor = MagicMock(Value=55.0)
+        state = {"up": True}
+
+        def query(_q):
+            if not state["up"]:
+                raise Exception("RPC server is unavailable")
+            return [sensor]
+        ohm = MagicMock()
+        ohm.ExecQuery.side_effect = query
+        with patch('win32com.client.GetObject', return_value=ohm), patch.object(mt, 'win32pdh', None):
+            monitor_thread._poll_cpu_temperature()          # connected
+            state["up"] = False
+            monitor_thread._poll_cpu_temperature()          # lost: INFO
+            now[0] += 30
+            state["up"] = True
+            monitor_thread._poll_cpu_temperature()          # back: INFO
+            now[0] += 30
+            state["up"] = False
+            for _ in range(80):                             # lost again (DEBUG), for good
+                monitor_thread._poll_cpu_temperature()
+                now[0] += 10
+        infos = [c.args[0] % c.args[1:] for c in log.info.call_args_list if c.args]
+        assert len([s for s in infos if "WMI source is still lost after" in s]) == 1, infos
+
     # ------------------------------------------------------------------
     # CPU temperature polling
     # ------------------------------------------------------------------
