@@ -75,7 +75,6 @@
     "TEMPERATURE_UNIT_LABEL": "Единица температуры",
     "TEMPERATURE_UNIT_CELSIUS": "Цельсий (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Фаренгейт (°F)",
-    "HARDWARE_NEEDS_CPU_TOOLTIP": "Включите мониторинг ЦП, чтобы использовать этот параметр",
     "HARDWARE_NEEDS_GPU_TOOLTIP": "Включите мониторинг видеокарты, чтобы использовать этот параметр",
     "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP": "Включите показ RAM или VRAM, чтобы использовать этот параметр",
     "HARDWARE_LABEL_STYLE_ICONS": "Значки",

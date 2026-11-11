@@ -28,13 +28,15 @@ logger = logging.getLogger("NetSpeedTray.StatsController")
 # Which monitoring switches a persisted hardware stat_type depends on. A stat is written to the history
 # DB only when the user's "Record hardware history" toggle is on AND every switch listed here is on -
 # i.e. only for metrics the user actually chose to monitor. The Monitor window forces collection of
-# everything while it is open (live tiles); that is display, not consent to record. RAM rides the CPU
-# line (Settings greys RAM out with CPU off), hence both. Stats not listed here (the latency series)
-# are not hardware and have their own switch, latency_enabled.
+# everything while it is open (live tiles); that is display, not consent to record. RAM and VRAM have
+# their own switches and show without CPU / GPU monitoring (2.2.1), so each is recorded on its own
+# switch alone (before 2.2.1 RAM also needed CPU monitoring, and VRAM was never recorded). Stats not
+# listed here (the latency series) are not hardware and have their own switch, latency_enabled.
 _HW_PERSIST_REQUIRES: Dict[str, Tuple[str, ...]] = {
     "cpu": ("monitor_cpu_enabled",),
     "gpu": ("monitor_gpu_enabled",),
-    "ram": ("monitor_cpu_enabled", "monitor_ram_enabled"),
+    "ram": ("monitor_ram_enabled",),
+    "vram": ("monitor_vram_enabled",),
     "cpu_temp": ("monitor_cpu_enabled", "show_hardware_temps"),
     "gpu_temp": ("monitor_gpu_enabled", "show_hardware_temps"),
     "cpu_power": ("monitor_cpu_enabled", "show_hardware_power"),
@@ -286,6 +288,11 @@ class StatsController(QObject):
                     except Exception:
                         pass
                 self.vram_info_updated.emit(stats['vram_used'], v_total_val)
+                # VRAM% history (2.2.1), like RAM's: only with a known total - an AMD card in Automatic
+                # reports used-only - and the hw_* tiers take it as the 'vram' metric (unit percent).
+                if self.widget_state and v_total is not None and float(v_total) > 0:
+                    self.widget_state.add_hardware_stat('vram', (float(vram_used) / float(v_total)) * 100.0,
+                                                        persist=_keep('vram'))
 
         # Power history, OUTSIDE the CPU/GPU gate above (#323 review 3): with the PR's own
         # defaults (CPU/GPU/power-stats off) a battery-only poll reaches this block alone,

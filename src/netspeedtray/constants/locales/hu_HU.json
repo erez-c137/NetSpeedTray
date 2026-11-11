@@ -75,7 +75,6 @@
     "TEMPERATURE_UNIT_LABEL": "Hőmérséklet mértékegysége",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",
-    "HARDWARE_NEEDS_CPU_TOOLTIP": "Ehhez kapcsold be a CPU-figyelést",
     "HARDWARE_NEEDS_GPU_TOOLTIP": "Ehhez kapcsold be a GPU-figyelést",
     "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP": "Ehhez kapcsold be a RAM- vagy VRAM-használat megjelenítését",
     "HARDWARE_LABEL_STYLE_ICONS": "Ikonok",

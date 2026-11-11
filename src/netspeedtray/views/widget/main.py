@@ -51,7 +51,7 @@ from netspeedtray.core.startup_manager import StartupManager, is_process_elevate
 from netspeedtray.core.config_controller import ConfigController
 from netspeedtray.core.update_checker import UpdateChecker
 from netspeedtray.core import shutdown_channel
-from netspeedtray.utils.helpers import effective_display_mode, hardware_in_hover_card_active
+from netspeedtray.utils.helpers import effective_display_mode, hardware_in_hover_card_active, hardware_slots
 
 # Display modes whose taskbar widget paints a CPU (and RAM) / GPU (and VRAM) reading - a new value
 # for one of them is worth a repaint. Read through effective_display_mode, so with "Show hardware in
@@ -1074,6 +1074,7 @@ class NetworkSpeedWidget(QWidget):
             return
         self.vram_used = used
         self.vram_total = total if total >= 0 else None
+        self._refresh_hover_hardware()   # VRAM can be the card's only GPU-side row (2.2.1)
         if self._bar_shows(_GPU_BAR_MODES):
             self.update()
 
@@ -1092,8 +1093,10 @@ class NetworkSpeedWidget(QWidget):
             # Separate upload/download graphs: each direction is a phase of its own, so the widget
             # keeps its size instead of widening every phase to two panels.
             modes = split_network_phases(bool(self.config.get("swap_upload_download", False)))
-        if self.config.get("monitor_cpu_enabled", False): modes.append("cpu_only")
-        if self.config.get("monitor_gpu_enabled", False): modes.append("gpu_only")
+        # A phase per hardware SLOT (2.2.1): cpu_only is CPU or RAM alone, gpu_only GPU or VRAM alone.
+        cpu_slot, gpu_slot = hardware_slots(self.config)
+        if cpu_slot: modes.append("cpu_only")
+        if gpu_slot: modes.append("gpu_only")
 
         if not modes: return
 
@@ -1840,6 +1843,8 @@ class NetworkSpeedWidget(QWidget):
             stats = side_hardware_stats(rc, mode)
             temps = bool(cfg.get("show_hardware_temps", False))
             power = bool(cfg.get("show_hardware_power", False))
+            # stats names each slot: 'CPU'/'GPU' with its usage monitor on, 'RAM'/'VRAM' for memory
+            # shown on its own (2.2.1) - then the card lists the memory without a usage row.
             for key, usage, temp, watts in (("cpu", self.cpu_usage, self.cpu_temp, self.cpu_power),
                                             ("gpu", self.gpu_usage, self.gpu_temp, self.gpu_power)):
                 if key.upper() in stats:
@@ -1853,9 +1858,9 @@ class NetworkSpeedWidget(QWidget):
                     if power:
                         stat["power"] = watts
                     hw[key] = stat
-            if "CPU" in stats and cfg.get("monitor_ram_enabled", False):
+            if ("CPU" in stats or "RAM" in stats) and cfg.get("monitor_ram_enabled", False):
                 hw["ram"] = (self.ram_used, self.ram_total)
-            if "GPU" in stats and cfg.get("monitor_vram_enabled", False):
+            if ("GPU" in stats or "VRAM" in stats) and cfg.get("monitor_vram_enabled", False):
                 hw["vram"] = (self.vram_used, self.vram_total)
                 if getattr(self, "vram_is_shared", False):
                     hw["vram_shared"] = True

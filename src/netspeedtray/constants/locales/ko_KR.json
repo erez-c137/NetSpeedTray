@@ -75,7 +75,6 @@
     "TEMPERATURE_UNIT_LABEL": "온도 단위",
     "TEMPERATURE_UNIT_CELSIUS": "섭씨 (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "화씨 (°F)",
-    "HARDWARE_NEEDS_CPU_TOOLTIP": "사용하려면 CPU 모니터링을 켜세요",
     "HARDWARE_NEEDS_GPU_TOOLTIP": "사용하려면 GPU 모니터링을 켜세요",
     "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP": "사용하려면 RAM 또는 VRAM 사용량 표시를 켜세요",
     "HARDWARE_LABEL_STYLE_ICONS": "아이콘",

@@ -75,7 +75,6 @@
     "TEMPERATURE_UNIT_LABEL": "温度の単位",
     "TEMPERATURE_UNIT_CELSIUS": "摂氏 (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "華氏 (°F)",
-    "HARDWARE_NEEDS_CPU_TOOLTIP": "使用するには CPU の監視をオンにしてください",
     "HARDWARE_NEEDS_GPU_TOOLTIP": "使用するには GPU の監視をオンにしてください",
     "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP": "使用するには RAM または VRAM 使用量の表示をオンにしてください",
     "HARDWARE_LABEL_STYLE_ICONS": "アイコン",
