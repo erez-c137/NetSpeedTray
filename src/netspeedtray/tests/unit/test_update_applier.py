@@ -443,10 +443,14 @@ def test_a_partially_swept_folder_is_retried_until_gone(tmp_path, monkeypatch, m
 
 @pytest.fixture
 def restart_spy(monkeypatch, tmp_path):
-    launched, told = [], []
+    class _Told(list):
+        offered: list
+    launched, told = [], _Told()
     monkeypatch.setattr(ua, "relaunch", lambda exe: launched.append(exe) or True)
+    told.offered = []      # per notice: did it send the user to the staged copy?
     monkeypatch.setattr(ua, "_notify_not_applied", raising=False, value=
-                        lambda reason, staged, install: told.append((reason, staged, install)))
+                        lambda reason, staged, install, offer_staged=True:
+                        told.append((reason, staged, install)) or told.offered.append(offer_staged))
     monkeypatch.setattr(ua, "_marker_path", lambda: str(tmp_path / "appdata" / "m.json"))
     return launched, told
 
@@ -537,6 +541,43 @@ def test_a_staged_copy_damaged_after_staging_is_refused_and_the_app_restarted(
     assert not list(tmp_path.glob("*" + ua._BACKUP_SUFFIX + "*")), "nothing was renamed aside"
     assert launched == [os.path.join(str(install), ua.APP_EXE)], "the app must not just vanish"
     assert len(told) == 1 and "file check" in told[0][0]
+    # ...and the notice must NOT send the user to copy the refused copy over their install by
+    # hand: that would install the broken (or altered) app the check just stopped.
+    assert told.offered == [False]
+
+
+def test_other_refusals_still_offer_the_staged_copy(tmp_path, restart_spy):
+    """Only a copy that failed its own file check is withheld; a refusal about the install folder
+    (here: a user's file in it) still points to the good staged copy for the guided update."""
+    launched, told = restart_spy
+    install = _make_install(tmp_path)
+    (install / "my-notes.txt").write_text("mine", encoding="utf-8")
+    assert ua.apply_update(str(install), None, str(_make_staged(tmp_path))) == 3
+    assert told.offered == [True]
+
+
+def test_the_notice_for_a_failed_file_check_offers_nothing_to_copy():
+    from netspeedtray.constants.i18n import I18nStrings
+    from netspeedtray.core.update_notice import build_update_not_applied
+    en = I18nStrings("en_US")
+    title, text = build_update_not_applied(en, "file changed: _internal/x.dll", r"C:\staged",
+                                           r"D:\app", "9.9.9", offer_staged=False)
+    assert "file changed" in text
+    assert r"C:\staged" not in text and r"D:\app" not in text and "9.9.9" not in text
+    assert title != en.UPDATE_PORTABLE_READY_TITLE
+
+
+def test_the_notice_for_a_failed_file_check_does_not_open_the_folder(monkeypatch):
+    import netspeedtray.core.update_notice as un
+    opened, boxes = [], []
+    monkeypatch.setattr(un.os, "startfile", lambda p: opened.append(p), raising=False)
+    monkeypatch.setattr(un.sys, "platform", "win32")
+    import ctypes
+    monkeypatch.setattr(ctypes.windll.user32, "MessageBoxW", lambda *a: boxes.append(a) or 1)
+    un.show_update_not_applied("bad", r"C:\staged", r"D:\app", offer_staged=False)
+    assert opened == [] and len(boxes) == 1
+    un.show_update_not_applied("other", r"C:\staged", r"D:\app")
+    assert opened == [r"C:\staged"]
 
 
 def test_a_frozen_staged_copy_without_a_manifest_is_refused(tmp_path, restart_spy, monkeypatch):
