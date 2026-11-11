@@ -2929,9 +2929,16 @@ class NetworkSpeedWidget(QWidget):
         self._show_pending_update_offer()
 
     def _update_offer_blocked(self) -> bool:
-        """A fullscreen app, someone's modal dialog or a nested event loop: not now, retry later."""
+        """A fullscreen app, someone's modal dialog, a nested event loop, or nobody at the screen
+        (locked, screen saver, idle - the shell's notification state): not now, retry later."""
         handler = getattr(self, "system_event_handler", None)
         if handler is not None and handler.is_fullscreen_active():
+            return True
+        latch = getattr(self, "_fs_latch", None)
+        if isinstance(latch, FullscreenLatch) and latch.covered:
+            return True   # the widget's own fullscreen decision (#503) can lag the poll's on exit
+        from netspeedtray.utils.user_presence import notice_would_go_unseen
+        if notice_would_go_unseen(constants.app.UPDATE_OFFER_MAX_IDLE_S):
             return True
         from PyQt6.QtCore import QThread
         return (QApplication.activeModalWidget() is not None

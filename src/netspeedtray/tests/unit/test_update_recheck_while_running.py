@@ -22,6 +22,7 @@ import pytest
 from PyQt6.QtCore import QObject
 
 from netspeedtray import constants
+from netspeedtray.utils import user_presence
 from netspeedtray.views.widget.main import (
     NetworkSpeedWidget as W, _NativeMSG, _WM_POWERBROADCAST, _PBT_APMRESUMEAUTOMATIC,
 )
@@ -363,8 +364,81 @@ def test_offer_blocked_by_fullscreen_modal_or_nested_loop(monkeypatch, fullscree
     thread = MagicMock()
     thread.loopLevel.return_value = loop_level
     monkeypatch.setattr(QThread, "currentThread", staticmethod(lambda: thread))
+    monkeypatch.setattr(user_presence, "notice_would_go_unseen", lambda _s: False)
     fake = types.SimpleNamespace(system_event_handler=handler)
     assert W._update_offer_blocked(fake) is blocked
+
+
+# --- nobody there to see it (#508 review) ------------------------------------------------------------
+
+def _unblocked_env(monkeypatch, state=user_presence.QUNS_ACCEPTS_NOTIFICATIONS, idle=1.0):
+    from PyQt6.QtCore import QThread
+    from PyQt6.QtWidgets import QApplication
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: None))
+    thread = MagicMock()
+    thread.loopLevel.return_value = 1
+    monkeypatch.setattr(QThread, "currentThread", staticmethod(lambda: thread))
+    monkeypatch.setattr(user_presence, "notification_state", lambda: state)
+    monkeypatch.setattr(user_presence, "idle_seconds", lambda: idle)
+    handler = MagicMock()
+    handler.is_fullscreen_active.return_value = False
+    return types.SimpleNamespace(system_event_handler=handler)
+
+
+def test_offer_shows_when_someone_is_there(monkeypatch):
+    assert W._update_offer_blocked(_unblocked_env(monkeypatch)) is False
+
+
+@pytest.mark.parametrize("state", sorted(user_presence.BLOCKING_STATES))
+def test_offer_waits_while_locked_screensaver_or_shell_busy(monkeypatch, state):
+    """An unattended wake (PBT_APMRESUMEAUTOMATIC) lands on the lock screen: the 30 s flyout would
+    time out unseen and the check is not due again for 24 h. D3D fullscreen / presentation mode /
+    a fullscreen app on another monitor are invisible to the taskbar-based check."""
+    assert W._update_offer_blocked(_unblocked_env(monkeypatch, state=state)) is True
+
+
+def test_offer_waits_while_the_user_is_idle(monkeypatch):
+    fake = _unblocked_env(monkeypatch, idle=constants.app.UPDATE_OFFER_MAX_IDLE_S + 1)
+    assert W._update_offer_blocked(fake) is True
+
+
+def test_offer_presence_probes_fail_open(monkeypatch):
+    assert W._update_offer_blocked(_unblocked_env(monkeypatch, state=None, idle=None)) is False
+
+
+def test_offer_waits_while_the_widget_latch_is_covered(monkeypatch):
+    from netspeedtray.core.fullscreen_gate import FullscreenLatch
+    fake = _unblocked_env(monkeypatch)
+    fake._fs_latch = FullscreenLatch()
+    fake._fs_latch.covered = True
+    assert W._update_offer_blocked(fake) is True
+
+
+def test_idle_seconds_survives_the_tick_count_wrap(monkeypatch):
+    """GetTickCount wraps every 49.7 days; last input just before the wrap, now just after."""
+    import ctypes as _ct
+
+    class _User32:
+        @staticmethod
+        def GetLastInputInfo(ref):
+            ref._obj.dwTime = 0xFFFFFF00
+            return 1
+
+    class _Kernel32:
+        @staticmethod
+        def GetTickCount():
+            return 0x00000100
+
+    monkeypatch.setattr(_ct, "windll", types.SimpleNamespace(user32=_User32, kernel32=_Kernel32,
+                                                              shell32=None), raising=False)
+    assert user_presence.idle_seconds() == pytest.approx(0x200 / 1000.0)
+
+
+def test_presence_probes_read_the_real_api():
+    state = user_presence.notification_state()
+    assert state is None or 1 <= state <= 7
+    idle = user_presence.idle_seconds()
+    assert idle is None or idle >= 0
 
 
 def test_open_from_offer_skips_while_quitting_or_dialog_open():

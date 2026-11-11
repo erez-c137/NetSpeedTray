@@ -80,6 +80,10 @@ class AppConstants:
     # event loop is up, the offer waits and is retried this often.
     UPDATE_FLYOUT_DISMISS_MS: Final[int] = 30_000
     UPDATE_OFFER_RETRY_MS: Final[int] = 60_000
+    # ...and also while nobody is there to see it (#508 review): the session locked / a screen saver
+    # (SHQueryUserNotificationState), or no keyboard/mouse input for this long. An auto-dismissing
+    # flyout shown to an empty room - after an unattended wake, say - is an offer lost for a day.
+    UPDATE_OFFER_MAX_IDLE_S: Final[int] = 120
     # "Not now" in the update dialog snoozes that version's automatic offers this long (seconds).
     UPDATE_NOT_NOW_SNOOZE_S: Final[int] = 3 * 24 * 60 * 60
     # How long after the event loop starts the crash log's fault handler stays on (netspeedtray/
