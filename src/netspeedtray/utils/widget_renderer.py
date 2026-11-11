@@ -49,11 +49,18 @@ def compact_hw_label_width(fm, labels: List[str], style: str) -> int:
     return max(widths, default=constants.renderer.HW_ICON_SIZE_PX)
 
 
-def memory_only_row_width(fm, mem_num_col: int) -> int:
+def memory_only_label_width(fm, lone_label: Optional[str] = None) -> int:
+    """The label cell of a memory-only row. Stacked with another row it is the shared cell sized for
+    "VRAM " (memory_label_width), so RAM and VRAM line up; a row alone in its segment (RAM alone or
+    VRAM alone) sizes it for its own word, ``lone_label`` - a fixed string, never a live value."""
+    return fm.horizontalAdvance(lone_label + " ") if lone_label else memory_label_width(fm)
+
+
+def memory_only_row_width(fm, mem_num_col: int, lone_label: Optional[str] = None) -> int:
     """Width of a memory-only hardware row (draw_hardware_stats): its RAM/VRAM label cell, always
     drawn - a bare "9.2/16.0G" would not say what it is - plus the memory number column. The side-bar
     fit and the layout size from this too, so the paint and the reservation cannot drift apart."""
-    return memory_label_width(fm) + mem_num_col
+    return memory_only_label_width(fm, lone_label) + mem_num_col
 
 
 def identity_pill_width(fm, text: str) -> int:
@@ -1587,7 +1594,11 @@ class WidgetRenderer:
             mem_label_col = memory_label_width(self.metrics) if (show_mem_labels and any_mem) else 0
             inline_mem = is_compact and not memory_below
             mem_col = (sep_col + mem_label_col + mem_num_col) if (any_mem and inline_mem) else 0
-            mem_only_w = memory_only_row_width(self.metrics, mem_num_col) if mem_only_rows else 0
+            # A memory-only row alone in the segment sizes its label cell for its own word (see
+            # memory_only_label_width); stacked with another row it keeps the shared cell.
+            lone_label = rows[0]['mem_label'] if (mem_only_rows and len(rows) == 1) else None
+            mem_only_label_w = memory_only_label_width(self.metrics, lone_label)
+            mem_only_w = memory_only_row_width(self.metrics, mem_num_col, lone_label) if mem_only_rows else 0
 
             extra_rows = 0 if inline_mem else sum(1 for r in stat_rows if r['mem'])
             total_height = line_height * (len(rows) + extra_rows)
@@ -1605,8 +1616,7 @@ class WidgetRenderer:
             for r in rows:
                 if r['mem_only']:
                     mem_right = current_x + seg_w
-                    self._draw_memory_label(painter, mem_right - mem_num_col - memory_label_width(self.metrics),
-                                            y, r)
+                    self._draw_memory_label(painter, mem_right - mem_num_col - mem_only_label_w, y, r)
                     draw_text(painter, mem_right - self.metrics.horizontalAdvance(r['mem']), y, r['mem'])
                     y += line_height
                     continue
