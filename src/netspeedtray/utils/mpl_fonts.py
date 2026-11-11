@@ -29,8 +29,27 @@ _CJK_CANDIDATES: Dict[str, List[str]] = {
     "he": ["Segoe UI", "Arial", "David", "Gisha", "Tahoma", "Miriam"],
 }
 
-# Right-to-left scripts need bidi reshaping before matplotlib renders them (matplotlib has no bidi).
+# Right-to-left scripts need bidi reshaping before matplotlib renders them - on matplotlib < 3.11,
+# which has no bidi. 3.11 lays text out with libraqm (HarfBuzz + SheenBidi) and reorders it itself,
+# so pre-reordered text would come out reversed again (see matplotlib_does_bidi).
 _RTL_SCRIPTS = {"he", "ar", "fa"}
+
+_MPL_DOES_BIDI: Optional[bool] = None
+
+
+def matplotlib_does_bidi() -> bool:
+    """True when matplotlib's text layout runs the bidi algorithm itself (3.11+: libraqm). Then text
+    goes to it in logical order, exactly as Qt gets it; python-bidi's display order would be reversed
+    a second time. Cached; only called where the graph (and so matplotlib) is already loaded."""
+    global _MPL_DOES_BIDI
+    if _MPL_DOES_BIDI is None:
+        try:
+            from matplotlib import ft2font
+            _MPL_DOES_BIDI = bool(getattr(ft2font, "__libraqm_version__", None))
+        except Exception as e:  # pragma: no cover - defensive; assume the old, bidi-less layout
+            logger.debug("Could not inspect matplotlib's text layout: %s", e)
+            _MPL_DOES_BIDI = False
+    return _MPL_DOES_BIDI
 
 # Locales whose script matplotlib cannot draw legibly, so the graph's own text (axis labels, legend,
 # peak / boot captions, empty-state text, tick day/month names) falls back to en_US. matplotlib's Agg
@@ -38,7 +57,9 @@ _RTL_SCRIPTS = {"he", "ar", "fa"}
 # letter + hasant + letter and pre-base vowel signs (ি, ে, ো) land on the wrong side - worse than
 # boxes, because it looks like text and reads as nonsense (#457). Everything Qt draws around the
 # graph (tabs, buttons, the hover readout) stays in the UI language. Remove a locale from this set
-# only once matplotlib shapes its script.
+# only once matplotlib shapes its script. matplotlib 3.11 (libraqm) does: its glyph stream for Bengali
+# in Nirmala UI matches Qt's (2.2.1 dependency bump) - dropping bn_BD also needs a Bengali-capable
+# graph font (the default DejaVu Sans has no Bengali), so it stays here until that is done.
 MPL_UNSHAPED_LOCALES = frozenset({"bn_BD"})
 
 
@@ -76,12 +97,16 @@ def _script_for_language(language: Optional[str]) -> Optional[str]:
 def shape_rtl(text: str, language: Optional[str]) -> str:
     """Reshape RTL (e.g. Hebrew) text into visual order for matplotlib.
 
-    matplotlib does no bidi, so it renders Hebrew in logical order = visually reversed. For RTL
+    matplotlib < 3.11 does no bidi, so it renders Hebrew in logical order = visually reversed. For RTL
     locales this returns the bidi *display* order (via python-bidi); non-RTL locales and empty text
-    pass through unchanged. Safe to call on every label.
+    pass through unchanged. On matplotlib 3.11+ (libraqm) the text passes through unchanged as well:
+    matplotlib reorders it itself, and a pre-reordered string would read reversed. Safe to call on
+    every label.
     """
     lang = str(language or "").lower().replace("-", "_").split("_")[0]
     if not text or lang not in _RTL_SCRIPTS:
+        return text
+    if matplotlib_does_bidi():
         return text
     try:
         from bidi.algorithm import get_display

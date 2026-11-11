@@ -1,7 +1,7 @@
 # Development and testing dependencies
 -r requirements.in
 
-pyinstaller
+pyinstaller>=6.22   # 6.22 reads matplotlib 3.11's backend registry (3.11 removed the old backend list)
 pytest
 pytest-mock
 pytest-cov

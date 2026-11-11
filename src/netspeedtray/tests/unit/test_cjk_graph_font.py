@@ -101,8 +101,55 @@ def test_shape_rtl_hebrew_and_passthrough():
     assert _script_for_language("he_IL") == "he"     # Hebrew now maps to a font script
     assert shape_rtl("Download", "en_US") == "Download"   # LTR passthrough
     assert shape_rtl("", "he_IL") == ""                    # empty passthrough
+    from netspeedtray.utils.mpl_fonts import matplotlib_does_bidi
+    from bidi.algorithm import get_display
     heb = "הורדה"
     shaped = shape_rtl(heb, "he_IL")
-    assert shaped != heb and len(shaped) == len(heb)       # reshaped to visual order, same glyphs
+    # matplotlib < 3.11: reshaped to visual order; 3.11+ (libraqm) reorders itself, so logical order
+    assert shaped == (heb if matplotlib_does_bidi() else get_display(heb))
     # a non-RTL locale never reshapes even Hebrew text
     assert shape_rtl(heb, "ja_JP") == heb
+
+
+def _mpl_visual_glyphs(path, text):
+    """Glyph ids of `text` as matplotlib's Agg text layout places them, left to right."""
+    from matplotlib import _text_helpers
+    from matplotlib.ft2font import FT2Font
+    font = FT2Font(path)
+    font.set_size(24, 72)
+    try:
+        items = list(_text_helpers.layout(text, font))                   # 3.11+
+    except TypeError:
+        items = list(_text_helpers.layout(text, font, kern_mode=None))   # 3.10 (kerning-only layout)
+    gid = (lambda i: i.glyph_index) if items and hasattr(items[0], "glyph_index") else (lambda i: i.glyph_idx)
+    return [int(gid(i)) for i in sorted(items, key=lambda i: i.x)]
+
+
+def _qt_visual_glyphs(path, text):
+    """The same through Qt's text layout (HarfBuzz + Qt's bidi) - what every Qt label shows."""
+    from PyQt6.QtGui import QFont, QFontDatabase, QTextLayout
+    fid = QFontDatabase.addApplicationFont(path)
+    if fid < 0:
+        pytest.skip(f"Qt cannot load {path}")
+    font = QFont(QFontDatabase.applicationFontFamilies(fid)[0])
+    font.setPixelSize(24)
+    lay = QTextLayout(text, font)
+    lay.beginLayout()
+    line = lay.createLine()
+    lay.endLayout()
+    pairs = [(p.x(), int(g)) for run in line.glyphRuns() for g, p in zip(run.glyphIndexes(), run.positions())]
+    return [g for _, g in sorted(pairs)]
+
+
+@pytest.mark.parametrize("text", ["מהירות הורדה", " ↑ אתחול", "שיא 12.3 Mbps"])
+def test_hebrew_graph_text_reads_in_the_same_order_as_qt(q_app, text):
+    """What matplotlib DRAWS for shape_rtl(text) must be what Qt draws for the logical text. String
+    checks alone passed while matplotlib 3.11 (which does its own bidi) drew every Hebrew graph label
+    reversed: shape_rtl's python-bidi display order was reordered a second time."""
+    import matplotlib.font_manager as fm
+    from netspeedtray.utils.mpl_fonts import shape_rtl
+    try:
+        path = fm.findfont(fm.FontProperties(family="Segoe UI"), fallback_to_default=False)
+    except Exception:
+        pytest.skip("Segoe UI not installed")
+    assert _mpl_visual_glyphs(path, shape_rtl(text, "he_IL")) == _qt_visual_glyphs(path, text)
