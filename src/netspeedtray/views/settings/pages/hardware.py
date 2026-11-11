@@ -588,7 +588,9 @@ class HardwarePage(QWidget):
         self._set_card_enabled(self._ram_card, True)
         self._set_card_enabled(self._vram_card, True)
         self._set_card_enabled(self._gpu_adapter_card, gpu_on or vram_on)
-        mem_on = ram_on or vram_on
+        # The labels switch only changes memory shown BESIDE a usage row (RAM with CPU, VRAM with GPU):
+        # a memory-only row always draws its "RAM" / "VRAM" (a bare number would not say what it is).
+        mem_on = (ram_on and cpu_on) or (vram_on and gpu_on)
         self._set_card_enabled(self._mem_labels_card, mem_on)
         # A greyed card says why (rc.2 G6). Qt shows a tooltip on a disabled widget, and the card's
         # children (the dimmed toggle) carry none of their own, so hovering anywhere on it explains.
@@ -601,7 +603,16 @@ class HardwarePage(QWidget):
         self._ram_card.setToolTip("")
         self._vram_card.setToolTip("")
         self._gpu_adapter_card.setToolTip("" if (gpu_on or vram_on) else self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP)
-        self._mem_labels_card.setToolTip("" if mem_on else self.i18n.SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP)
+        self._mem_labels_card.setToolTip("" if mem_on else self._mem_labels_reason(cpu_on, gpu_on, ram_on, vram_on))
+
+    def _mem_labels_reason(self, cpu_on: bool, gpu_on: bool, ram_on: bool, vram_on: bool) -> str:
+        """Why the memory-labels card is greyed (existing strings only): no memory readout is on, or
+        each one that is on is a memory-only row (its usage monitor is off) that always shows its label."""
+        if not (ram_on or vram_on):
+            return self.i18n.SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP          # "Turn on RAM or VRAM usage..."
+        if vram_on and not ram_on:
+            return self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP                   # "Turn on GPU monitoring..."
+        return self.i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB             # "Turn on CPU or GPU monitoring..."
 
     def get_settings(self) -> Dict[str, Any]:
         return {

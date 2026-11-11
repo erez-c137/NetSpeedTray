@@ -464,8 +464,9 @@ class StatsMonitorThread(QThread):
         - Power via LHM web server → LHM/OHM WMI (all vendors) → nvidia-smi (NVIDIA) → PDH RAPL PP1 (Intel iGPU)
 
         ``memory_only`` (VRAM shown without GPU monitoring, 2.2.1): never starts nvidia-smi - not even
-        for the total VRAM. The total is then nvidia-smi's if an earlier poll already cached it, else the
-        NVIDIA card's DXGI dedicated size (what Task Manager shows), so the readout keeps its "/12.0G".
+        for the total VRAM. The total is then nvidia-smi's if an earlier poll already cached it, else
+        DXGI's dedicated size (_dxgi_vram_total, any vendor; a picked card always used its own), so the
+        readout keeps its "/12.0G" and the side bar's compact "VRAM / 57%" has a total.
         Returns: GpuPollResult named tuple
         """
         now_mono = time.monotonic()
@@ -680,13 +681,8 @@ class StatsMonitorThread(QThread):
         if selected is None:
             if vram_total is None and self._nvidia_cache_vram_total is not None:
                 vram_total = self._nvidia_cache_vram_total
-            if memory_only and vram_total is None and self._nvidia_smi_path:
-                # Where nvidia-smi would have given the total (its first card, NVIDIA's), DXGI's
-                # dedicated size of the first NVIDIA adapter stands in - no subprocess for VRAM alone.
-                nvidia = [a for a in gpu_adapters.hardware_adapters(self._gpu_adapters or [])
-                          if a.vendor_id == constants.gpu.VENDOR_NVIDIA and a.dedicated_video_bytes > 0]
-                if nvidia:
-                    vram_total = nvidia[0].dedicated_video_bytes / (1024.0 * 1024.0)
+            if memory_only and vram_total is None:
+                vram_total = self._dxgi_vram_total()
 
             # 4b. Integrated GPU: no adapter has dedicated memory, so "VRAM 0.0 GB" says nothing. Report
             # the shared system memory the iGPU actually uses instead (see _shared_vram_reading).
@@ -736,6 +732,27 @@ class StatsMonitorThread(QThread):
         return GpuPollResult(util_pct, vram_used, vram_total, temp_c, power_w,
                              vram_is_shared=vram_is_shared,
                              present=self._gpu_engine_seen or self._lhm_gpu_seen)
+
+    def _dxgi_vram_total(self) -> Optional[float]:
+        """Total VRAM (MiB) from DXGI's static adapter facts, for VRAM shown without GPU monitoring in
+        Automatic (no nvidia-smi then, and no cached total): what Task Manager shows as dedicated
+        memory. With nvidia-smi on the box, its first NVIDIA card - the card nvidia-smi's total would
+        have come from. Otherwise every discrete adapter, summed like the Automatic used value (AMD,
+        Intel Arc, NVIDIA without nvidia-smi). None without DXGI facts or a discrete adapter: an
+        integrated GPU keeps its shared-memory reading (_shared_vram_reading), a VM its used-only one.
+
+        Only for memory_only: Automatic with the GPU monitored is pinned by test_gpu_automatic_golden
+        (used-only on AMD / Intel Arc), and the widget shows that row's percent, not memory's."""
+        real = gpu_adapters.hardware_adapters(self._gpu_adapters or [])
+        if self._nvidia_smi_path:
+            nvidia = [a for a in real
+                      if a.vendor_id == constants.gpu.VENDOR_NVIDIA and a.dedicated_video_bytes > 0]
+            if nvidia:
+                return nvidia[0].dedicated_video_bytes / (1024.0 * 1024.0)
+        discrete = [a for a in real if not gpu_adapters.is_integrated(a)]
+        if not discrete:
+            return None
+        return sum(a.dedicated_video_bytes for a in discrete) / (1024.0 * 1024.0)
 
     def _shared_vram_reading(self, shared_mib: Dict[str, float],
                              dedicated_read_ok: bool) -> Optional[Tuple[float, Optional[float]]]:
