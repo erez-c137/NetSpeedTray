@@ -370,15 +370,9 @@ class AppOverlapYield(QObject):
         if int(ctx.hwnd) != self._hwnd:
             self._attach(ctx)
             return
-        if ctx.may_hide != self._may_hide:
-            # The setting flipped while a second spot keeps the yield attached. Off: a yield ends here,
-            # before the caller's visibility gate reads ``yielded`` (as detaching did). On: judge afresh.
-            self._may_hide = ctx.may_hide
-            if not ctx.may_hide and self._state.yielded:
-                self._log.info("App-button yield off: the 'Hide while app buttons cover the widget' "
-                               "setting is off.")
-            self._state.reset()
-            self._hold_until = 0.0
+        if self._note_may_hide(ctx):
+            # Off: a yield ends here, before the caller's visibility gate reads ``yielded`` (as
+            # detaching did). On: judge afresh.
             self._schedule(0)
         if self._model_known and self._model_dpi is not None and abs(ctx.dpi - self._model_dpi) > 1e-6:
             # A live display-scale change: the measured group is logical px at the OLD scale (and the
@@ -433,6 +427,21 @@ class AppOverlapYield(QObject):
             interval = t.APP_YIELD_ACTIVE_RECHECK_MS
         if (self._clock() - self._last_probe_at) * 1000.0 >= interval - t.APP_YIELD_TICK_SLACK_MS:
             self._schedule(0)
+
+    def _note_may_hide(self, ctx: OverlapContext) -> bool:
+        """The setting flipped while a second spot keeps the yield attached: forget the hiding state
+        (a yield ends at once when it went off). True when it flipped. Called by ``sync`` AND by a probe
+        that lands first - a probe judged under the new setting with the old state, and the tick then
+        resetting it, hid / showed / hid the widget within a second of turning hiding on."""
+        if ctx.may_hide == self._may_hide:
+            return False
+        self._may_hide = ctx.may_hide
+        if not ctx.may_hide and self._state.yielded:
+            self._log.info("App-button yield off: the 'Hide while app buttons cover the widget' "
+                           "setting is off.")
+        self._state.reset()
+        self._hold_until = 0.0
+        return True
 
     def _attach(self, ctx: OverlapContext) -> None:
         """A (new) taskbar. A re-created one (Explorer restart: a new HWND) keeps a yield for the hold
@@ -635,6 +644,13 @@ class AppOverlapYield(QObject):
         if ctx is None:
             self._finish()
             return
+        was_yielded = self._state.yielded
+        if self._note_may_hide(ctx) and was_yielded:
+            # Hiding went off before the tick noticed: show it now (no caller's gate follows a probe).
+            try:
+                self._on_change()
+            except Exception as e:
+                self._log.error("App-yield visibility update failed: %s", e, exc_info=True)
         span = group_span(group_rect, ctx.dpi, ctx.x_origin) if landed else None
         self._last_group_rect = group_rect
         if landed:
