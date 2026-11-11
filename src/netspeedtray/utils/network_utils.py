@@ -173,14 +173,11 @@ class NetworkIdentity:
                       or unavailable from the connected profile.
         band:         "2.4G" / "5G" / "6G" for Wi-Fi, else None. Available without Location permission.
         is_wireless:  True if the active interface is a connected WLAN adapter.
-        ssid_blocked: Legacy UI compatibility flag. The SSID-only API does not request Location
-                      access, so this reader never sets it or prompts for that permission.
         connected:    True if there is an active internet-facing interface at all.
     """
     name: Optional[str] = None
     band: Optional[str] = None
     is_wireless: bool = False
-    ssid_blocked: bool = False
     connected: bool = False
 
 
@@ -265,8 +262,7 @@ def band_from_channel(channel: int) -> Optional[str]:
 def _wired_identity() -> NetworkIdentity:
     """Fallback identity for a wired / non-Wi-Fi link: the active interface friendly name."""
     name = get_primary_interface_name()
-    return NetworkIdentity(name=name, band=None, is_wireless=False,
-                           ssid_blocked=False, connected=name is not None)
+    return NetworkIdentity(name=name, band=None, is_wireless=False, connected=name is not None)
 
 
 def _get_network_information():

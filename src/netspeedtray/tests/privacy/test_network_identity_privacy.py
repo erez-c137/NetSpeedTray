@@ -93,7 +93,7 @@ def test_ssid_error_never_triggers_location_prompt_or_legacy_fallback(windows, e
     info.get_internet_connection_profile.return_value = wifi
     result = nu.get_connected_network_identity()
     assert result.name is None and result.band == "5G"
-    assert result.is_wireless and result.connected and not result.ssid_blocked
+    assert result.is_wireless and result.connected
 
 
 def test_band_error_does_not_hide_ssid(windows):

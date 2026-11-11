@@ -262,7 +262,6 @@ class NetworkSpeedWidget(QWidget):
         self.gpu_usage: float = float('nan')
         self.network_identity: Optional[object] = None  # NetworkIdentity|None: Wi-Fi band/SSID, set by update_network_identity (v2.1)
         self._identity_reserve_sig_last: object = None  # last identity reserve signature (band-shown, ssid); re-layout on change
-        self._location_prompt_shown: bool = False  # SSID Location nudge shown at most once per session
         self._widgets_nudge_shown: bool = False  # #200 Widgets/weather overlap nudge, once per session
         self.gpu_present: bool = False  # LATCHES True once any poll detects GPU counters (never flips
         #                                 back - a GPU doesn't vanish), so the Monitor's GPU tile shows
@@ -1012,9 +1011,6 @@ class NetworkSpeedWidget(QWidget):
         self.network_identity = identity
         if not self.config.get("show_network_identity", False):
             return
-        # Compatibility with identities produced by an older location-gated reader. The current
-        # connected-profile reader does not set ssid_blocked.
-        self._maybe_prompt_location(identity)
         # The reserved identity slot depends on which band shows (alert_only flips on/off 2.4G) and on
         # the SSID text (variable width). Both change only on a network change (rare), so re-lay out on
         # that transition - keeping the widget tight - and otherwise just repaint.
@@ -2908,35 +2904,6 @@ class NetworkSpeedWidget(QWidget):
                 open_external(LHM_RELEASES_URL)
         except Exception as e:
             self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
-
-    def _maybe_prompt_location(self, identity: Optional[object]) -> None:
-        """Handle the legacy ssid_blocked flag from older identity readers.
-
-        The current connected-profile reader does not set this flag. An older source that does
-        can still show the one-time explainer in ssid/both mode.
-        """
-        try:
-            if identity is None or not getattr(identity, "ssid_blocked", False):
-                return
-            if self.config.get("identity_mode", "band") not in ("ssid", "both"):
-                return
-            if self._location_prompt_shown or self.config.get("location_onboarding_dismissed", False):
-                return
-            self._location_prompt_shown = True
-            from netspeedtray.views.location_onboarding_dialog import (
-                LocationOnboardingDialog, LOCATION_SETTINGS_URI,
-            )
-            dlg = LocationOnboardingDialog(self.i18n, self)
-            dlg.exec()
-            if dlg.dismissed_forever():
-                self.update_config({"location_onboarding_dismissed": True})
-            if dlg.action == LocationOnboardingDialog.ACTION_OPEN_LOCATION:
-                from PyQt6.QtGui import QDesktopServices
-                from PyQt6.QtCore import QUrl
-                QDesktopServices.openUrl(QUrl(LOCATION_SETTINGS_URI))
-        except Exception as e:
-            self.logger.error("Error showing location onboarding: %s", e, exc_info=True)
-
 
     def _maybe_nudge_widgets_overlap(self, taskbar_info) -> None:
         """One-time heads-up (#200): if the widget currently overlaps the Win11 Widgets/weather panel's

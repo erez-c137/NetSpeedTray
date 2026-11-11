@@ -398,7 +398,6 @@ class ConfigConstants:
         "show_network_identity": False,
         "identity_mode": "band",           # band | ssid | both (no Wi-Fi scans)
         "band_display": "always",          # always (neutral) | colored (by band) | alert_only (2.4G warning)
-        "location_onboarding_dismissed": False,  # user permanently dismissed the SSID/Location explainer
         "widgets_overlap_nudge_shown": False,  # one-time #200 nudge: widget overlaps the Widgets/weather panel
         "side_bar_no_room_notice_shown": False,  # one-time heads-up: a side taskbar's apps leave no free spot
         "app_overlap_notice_shown": False,  # one-time heads-up: the widget stepped aside for app buttons (#24)
@@ -568,7 +567,6 @@ class ConfigConstants:
         "show_network_identity": {"type": bool, "default": False},
         "identity_mode": {"type": str, "default": "band", "choices": ["band", "ssid", "both"]},
         "band_display": {"type": str, "default": "always", "choices": ["always", "colored", "alert_only"]},
-        "location_onboarding_dismissed": {"type": bool, "default": False},
         "widgets_overlap_nudge_shown": {"type": bool, "default": False},
         "side_bar_no_room_notice_shown": {"type": bool, "default": False},
         "app_overlap_notice_shown": {"type": bool, "default": False},
