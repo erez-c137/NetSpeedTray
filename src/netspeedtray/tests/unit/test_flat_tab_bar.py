@@ -7,11 +7,6 @@ from netspeedtray.views.monitor.tab_bar import FlatTabBar
 _TABS = [("overview", "Overview"), ("network", "Network"), ("hardware", "Hardware")]
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 def test_first_tab_checked_by_default(q_app):
     bar = FlatTabBar(_TABS)
     assert bar._buttons["overview"].isChecked()

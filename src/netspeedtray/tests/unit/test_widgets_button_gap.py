@@ -25,11 +25,6 @@ VM_TRAY_LEFT = 1770
 CENTRED_WIDGETS = (6, 158)         # a centred bar keeps the button at the far left
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 def _bar(edge=E.BOTTOM, dpi=1.0, widgets_extent=VM_WIDGETS, widgets_rect=None, tray=True, thick=48):
     """A Win11 top/bottom bar (no classic task list). Rect spans are LOGICAL px at 100 %, scaled to
     physical by ``dpi`` the way Windows reports them."""

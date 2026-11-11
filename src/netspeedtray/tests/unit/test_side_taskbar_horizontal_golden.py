@@ -185,11 +185,6 @@ GOLDEN = [
 ]
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 def _taskbar(edge, thick, dpi):
     tb = MagicMock()
     top = 1080 - thick if edge == E.BOTTOM else 0

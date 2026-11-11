@@ -12,12 +12,6 @@ from netspeedtray.views.monitor.overview.tab import OverviewTab
 from netspeedtray.views.monitor.overview.tiles import Sparkline, UsageTile
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 class _Snap:
     def __init__(self, value):
         self.value = value

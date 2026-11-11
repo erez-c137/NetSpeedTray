@@ -29,11 +29,6 @@ from netspeedtray.views.widget import mirror as mirror_mod
 from netspeedtray.views.widget.mirror import MirrorManager, MirrorWidget, _MirrorConfig
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _app():
-    return QApplication.instance() or QApplication([])
-
-
 def _tb(hwnd, screen, primary=False, monitor_rect=None):
     return SimpleNamespace(hwnd=hwnd, screen_name=screen, is_primary=primary, monitor_rect=monitor_rect,
                            get_edge_position=lambda: constants.TaskbarEdge.BOTTOM)

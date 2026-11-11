@@ -8,12 +8,6 @@ from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.utils.components import Win11Slider
 
 
-@pytest.fixture(scope="module")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _shown(slider) -> str:
     return (slider._value_input or slider._value_label).text()
 

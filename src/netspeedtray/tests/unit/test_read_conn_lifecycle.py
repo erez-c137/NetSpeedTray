@@ -26,12 +26,6 @@ from netspeedtray.core.db.history_reader import HistoryNotReadyError
 from netspeedtray.core.widget_state import WidgetState
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _make_state(tmp_path):
     cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
     with patch.object(QThread, "start", lambda self: None), \

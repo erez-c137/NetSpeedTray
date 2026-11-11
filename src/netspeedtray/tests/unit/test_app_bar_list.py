@@ -10,12 +10,6 @@ from netspeedtray.views.monitor.network.app_list import AppBarList, AppRow, _Act
 from netspeedtray.views.monitor.network.app_feed import AppActivityFeed
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _row(name, conn, est=0, hosts=0):
     return {"identity_key": name.casefold(), "display_name": name,
             "conn_count": conn, "established_count": est, "host_count": hosts}

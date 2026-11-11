@@ -16,12 +16,6 @@ from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.views.monitor.window import MonitorWindow
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _main_widget():
     m = MagicMock()
     m.config = {}

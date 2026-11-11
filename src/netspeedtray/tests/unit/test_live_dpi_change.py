@@ -30,11 +30,6 @@ from netspeedtray.tests.unit.test_app_overlap_yield import (  # noqa: F401  (fix
 T = constants.timeouts
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 class _FakeShcore:
     """GetDpiForMonitor with a scale the test changes live."""
 

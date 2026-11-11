@@ -54,7 +54,7 @@ from functools import lru_cache
 
 from netspeedtray import constants
 from netspeedtray.core import gpu_adapters
-from netspeedtray.core.lhm_http import LhmGpu, LhmHttpClient, LhmSensor, gpu_groups
+from netspeedtray.core.lhm_http import LhmGpu, LhmHttpClient, LhmSensor, SourceOutage, gpu_groups
 from netspeedtray.utils import secret_store
 from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.network_utils import get_connected_network_identity
@@ -209,6 +209,9 @@ class StatsMonitorThread(QThread):
         # LibreHardwareMonitor / OpenHardwareMonitor WMI object.
         # None = not yet tried, False = tried and unavailable, object = connected.
         self._wmi_ohm: Any = None
+        # One INFO line when a WMI connection that was working is dropped mid-session, one when it is
+        # back (rate-limited if it flaps) - see SourceOutage.
+        self._ohm_outage = SourceOutage(self.logger, "the LibreHardwareMonitor/OpenHardwareMonitor WMI source")
         # LHM 0.9.5+ removed its WMI provider; its built-in web server is the
         # primary sensor source. The client's short cache shares one data.json
         # response across CPU/GPU temperature and power reads in this poll.
@@ -800,6 +803,7 @@ class StatsMonitorThread(QThread):
                 self.logger.debug("LHM/OHM GPU %s error: %s", sensor_type.lower(), e)
         if "Temperature" in failed and len(failed) == len(wanted):
             self._wmi_ohm = None
+            self._ohm_outage.failed("GPU sensor query failed")
             return None
         groups = gpu_groups(rows)
         if same_as is not None:
@@ -1287,7 +1291,10 @@ class StatsMonitorThread(QThread):
                     self.logger.debug("Hardware monitor: %s exists but exposes 0 sensors.", ns)
                     continue
                 self._wmi_ohm = obj
-                self.logger.info("Hardware monitor: connected to %s (%d sensors).", ns, count)
+                # The first connection is INFO; a reconnect after a lost one is SourceOutage's
+                # "is back" line, and a re-probe after a settings change is DEBUG.
+                level = logging.INFO if self._ohm_outage.succeeded() else logging.DEBUG
+                self.logger.log(level, "Hardware monitor: connected to %s (%d sensors).", ns, count)
                 return
             except Exception as e:
                 # A missing namespace (0x8004100e WBEM_E_INVALID_NAMESPACE) is normal when
@@ -1295,7 +1302,10 @@ class StatsMonitorThread(QThread):
                 tool = ns.rsplit("\\", 1)[-1]  # LibreHardwareMonitor / OpenHardwareMonitor
                 probe_errors.append(f"{tool}: {e}")
                 self.logger.debug("Hardware monitor: %s probe failed: %s", ns, e)
-        # Nothing connected across all namespaces. Surface ONE actionable line, once.
+        # Nothing connected across all namespaces. A source that worked earlier is still (or newly)
+        # lost: SourceOutage reports a folded outage that outlasts its quiet window (no-op otherwise).
+        self._ohm_outage.failed("no LibreHardwareMonitor/OpenHardwareMonitor WMI namespace answered")
+        # Surface ONE actionable line, once.
         if not self._ohm_guidance_logged:
             self._ohm_guidance_logged = True
             kind = "empty" if saw_empty_namespace else "none"
@@ -1389,6 +1399,7 @@ class StatsMonitorThread(QThread):
             except Exception as e:
                 self.logger.debug("OHM/LHM CPU temp error: %s", e)
                 self._wmi_ohm = None
+                self._ohm_outage.failed(f"CPU temperature query failed: {type(e).__name__}")
 
         # 2. PDH Thermal Zone Information (generic ACPI; may be motherboard/ambient - #216)
         if win32pdh:

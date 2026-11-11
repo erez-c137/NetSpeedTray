@@ -15,10 +15,6 @@ from netspeedtray.views.settings.pages.interfaces import InterfacesPage
 from netspeedtray.views.settings.pages.colors import ColorsPage
 from netspeedtray import constants
 
-@pytest.fixture(scope="session")
-def q_app():
-    """Provides a QApplication instance for the test session."""
-    return QApplication.instance() or QApplication([])
 
 @pytest.fixture
 def mock_i18n():

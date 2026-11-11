@@ -25,11 +25,6 @@ from netspeedtray import constants
 from netspeedtray.constants.i18n import I18nStrings
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 def _make_dialog(config_language, i18n=None):
     """A SettingsDialog whose stored config carries `config_language`."""
     from netspeedtray.views.settings import SettingsDialog

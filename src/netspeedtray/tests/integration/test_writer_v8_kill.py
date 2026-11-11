@@ -213,7 +213,10 @@ def test_kill_maintenance_at_a_random_moment(seed, db, tmp_path):
     proc = subprocess.Popen([_PY, "-I", "-c", _BOOT.format(src=SRC), "maintain", str(d), str(NOW)],
                             env=_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        time.sleep(rng.uniform(0.08, 0.4))   # child start ~0.2 s, the pass ~0.15 s
+        # Timing assumption: _PY starts the base interpreter directly (#505: no venv launcher stub, so
+        # no extra process start-up), ~0.2 s to the pass, which takes ~0.15 s. On a slower or loaded
+        # host the kill can land before the pass or after it: coverage thins, the test cannot fail.
+        time.sleep(rng.uniform(0.08, 0.4))
         proc.kill()                       # Popen.kill on Windows IS TerminateProcess(handle, 1)
         proc.wait(timeout=60)
     finally:

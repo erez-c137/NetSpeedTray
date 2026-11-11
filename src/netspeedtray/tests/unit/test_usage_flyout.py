@@ -12,11 +12,6 @@ from PyQt6.QtWidgets import QApplication, QLabel
 from netspeedtray.views.usage_flyout import UsageFlyout
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 def _i18n():
     ns = types.SimpleNamespace()
     for k, v in {"BYTES_UNIT": "B", "KB_UNIT": "KB", "MB_UNIT": "MB",

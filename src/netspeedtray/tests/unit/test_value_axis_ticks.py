@@ -36,6 +36,8 @@ def _agg_init(self):
 
 @pytest.fixture
 def q_app(monkeypatch):
+    # Kept on purpose, despite the name: not a QApplication fixture (conftest's session app is already
+    # up) but the Agg stand-in for the Qt canvas every test here needs - it overrides conftest's q_app.
     # Per-test and undone at teardown, like every other _init_matplotlib stub in the suite.
     monkeypatch.setattr(GraphRenderer, "_init_matplotlib", _agg_init)
 

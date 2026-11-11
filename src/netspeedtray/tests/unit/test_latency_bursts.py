@@ -30,12 +30,6 @@ LAT = constants.network.latency
 _PUBLIC_ON = {"latency_public_enabled": True, "latency_public_host": ANCHOR}
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 # --- a probe driven through the REAL _run_loop on a fake clock ------------------------------------------
 
 class _Clock:

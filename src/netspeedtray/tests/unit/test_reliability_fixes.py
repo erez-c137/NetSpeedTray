@@ -20,12 +20,6 @@ from netspeedtray.core.monitor_thread import StatsMonitorThread
 from netspeedtray.core.widget_state import WidgetState
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 # --- M1: PDH handle race -----------------------------------------------------
 
 def test_update_config_flags_instead_of_closing_pdh_handles(q_app):

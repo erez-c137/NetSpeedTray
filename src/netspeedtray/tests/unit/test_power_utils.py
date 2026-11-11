@@ -147,10 +147,6 @@ def test_ceiling_admits_a_max_class_adapter():
 
 # --- UsageFlyout battery section -----------------------------------------------------
 
-@pytest.fixture(scope="session")
-def q_app():
-    return QApplication.instance() or QApplication([])
-
 
 def _i18n():
     ns = types.SimpleNamespace()

@@ -262,6 +262,14 @@ class HistoryReader(ABC):
         caller defers). Storage errors propagate; a bad snapshot only empties ``snapshot``."""
 
 
+def hardware_history_bin_seconds(start_ts: int, end_ts: int) -> int:
+    """Seconds one ``hardware_history`` point stands for, by window length: raw (<= 6 h, 1 s bins),
+    minute averages (<= 30 days), hour averages (beyond). Shared with the Stats sheet, which turns
+    a count of points into a duration ("above the throttle temperature for ...")."""
+    duration = end_ts - start_ts
+    return 1 if duration <= 6 * 3600 else (60 if duration <= 30 * 86400 else 3600)
+
+
 # network_hourly_profile: (ts, rate, weight) rows from every tier -> weighted mean rate per LOCAL clock
 # hour. SQLite's 'localtime' is the C runtime's, the same conversion datetime.fromtimestamp() makes.
 def _local_bin_sql(col: str, interval: int) -> str:
@@ -920,8 +928,7 @@ class V7HistoryReader(_ReaderBase):
             end_ts = int(_end.timestamp())
 
             # Target resolution by window length: raw (<=6h), minute (<=30d), hour (>30d).
-            duration = end_ts - start_ts
-            interval = 1 if duration <= 6 * 3600 else (60 if duration <= 30 * 86400 else 3600)
+            interval = hardware_history_bin_seconds(start_ts, end_ts)
 
             # Union ALL tiers and bin to the target interval, mirroring speed_history. A
             # recent-but-long window (e.g. 48h or a week) has its most-recent <24h only in the RAW tier
@@ -1567,8 +1574,7 @@ class V8HistoryReader(_ReaderBase):
         _end = end_time or self._now()
         _start = start_time or (_end - timedelta(hours=24))
         start_ts, end_ts = int(_start.timestamp()), int(_end.timestamp())
-        duration = end_ts - start_ts
-        interval = 1 if duration <= 6 * 3600 else (60 if duration <= 30 * 86400 else 3600)
+        interval = hardware_history_bin_seconds(start_ts, end_ts)
         bounds = self._tier_bounds(self._HW, "h")
         parts, params = [], []
         for k, col in ((0, "h.value"), (1, "h.avg_value"), (2, "h.avg_value")):

@@ -28,12 +28,6 @@ ANCHOR = "1.1.1.1"
 LAT = constants.network.latency
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture(autouse=True)
 def _no_real_network_details(monkeypatch):
     """The worker reads the connection's details over WMI (#214): never this machine's in a test."""

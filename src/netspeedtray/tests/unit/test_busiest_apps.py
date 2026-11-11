@@ -9,12 +9,6 @@ from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.views.monitor.overview.busiest_apps import BusiestAppsCard, _MAX_ROWS
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _row(name, conn, est=0, hosts=0):
     return {"identity_key": name, "display_name": name, "conn_count": conn,
             "established_count": est, "host_count": hosts}
