@@ -341,7 +341,8 @@ class WidgetLayoutManager:
 
                     # A memory-only row stacked with the other slot shares the "VRAM " label cell so
                     # they line up; alone in its segment it is sized for its own word.
-                    mem_stacked = bool(stack_hw and cpu_slot and gpu_slot)
+                    mem_stacked = bool(stack_hw and cpu_slot and gpu_slot
+                                       and "cpu" in display_order and "gpu" in display_order)
                     lone_ram = None if mem_stacked else constants.renderer.MEMORY_LABEL_RAM
                     lone_vram = None if mem_stacked else constants.renderer.MEMORY_LABEL_VRAM
                     cpu_width = 0
