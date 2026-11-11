@@ -270,7 +270,7 @@ class _DetailsCard(QFrame):
         """Fill the rows from a NetworkDetails; a field with nothing to show hides its row."""
         for field, (name, val) in self._rows.items():
             text = _detail_text(details, field)
-            val.setText(text)
+            su.set_text_in_face(val, text)   # the adapter's driver name can be a localized one
             name.setVisible(bool(text))
             val.setVisible(bool(text))
 
@@ -370,8 +370,9 @@ class ConnectionCheckSheet(QDialog):
         # The one-off internet tick - offered only while the public probe is off in Settings.
         self._public_on = bool(config.get("latency_public_enabled", False))
         host = str(config.get("latency_public_host", "1.1.1.1") or "1.1.1.1")
-        self._tick = QCheckBox(self._tr("CHECK_CONN_INCLUDE_INTERNET",
-                                        "Also check the internet (sends pings to {host})").format(host=host))
+        self._tick = QCheckBox()   # the host is the user's (an internationalized name): text in its face
+        su.set_text_in_face(self._tick, self._tr("CHECK_CONN_INCLUDE_INTERNET",
+                                                 "Also check the internet (sends pings to {host})").format(host=host))
         self._tick.setChecked(False)
         self._tick.toggled.connect(self._on_tick)
         self._hint = QLabel(self._tr(
@@ -514,7 +515,7 @@ class ConnectionCheckSheet(QDialog):
         c = self._c
         anchor_on = CC.HOP_ANCHOR in self._echoes
         self._cards[CC.HOP_ANCHOR].setVisible(anchor_on)
-        self._cards[CC.HOP_ANCHOR].address.setText(self._anchor_host or "")
+        su.set_text_in_face(self._cards[CC.HOP_ANCHOR].address, self._anchor_host or "")   # the user's host
         gw_card = self._cards[CC.HOP_GATEWAY]
         gw_card.address.setText(self._resolved_gw or "")
         for hop in self._echoes:
@@ -557,8 +558,14 @@ class ConnectionCheckSheet(QDialog):
         sub = self._c["text_secondary"]
         if self._state == "running":
             # An LTR embedding keeps "12 / 20" reading left to right in an RTL (Hebrew) layout, not "20 / 12".
+            # Only there: Yu Gothic UI, Malgun Gothic, YaHei/JhengHei UI and Nirmala UI have no glyph for
+            # the embedding marks, and Qt searched every installed family for one (Segoe UI, the Hebrew UI
+            # face, has them).
             done = len(self._echoes.get(hop, []))
-            return f"<span style='color:{sub};'>\u202a{done} / {self._total}\u202c</span>"
+            text = f"{done} / {self._total}"
+            if getattr(self._i18n, "is_rtl", False):
+                text = f"\u202a{text}\u202c"
+            return f"<span style='color:{sub};'>{text}</span>"
         if self._state == "stopped":
             return f"<span style='color:{sub};'>{self._tr('CHECK_CONN_STOPPED', 'Stopped')}</span>"
         if not st.sent:

@@ -53,6 +53,8 @@ class TestResolveLanguage:
         ("es_MX", "es_ES"), ("es_AR", "es_ES"), ("es_US", "es_ES"), ("es_CO", "es_ES"),
         ("fr_CA", "fr_FR"), ("fr_BE", "fr_FR"), ("fr_CH", "fr_FR"), ("fr_MC", "fr_FR"),
         ("nl_BE", "nl_NL"),
+        # Bengali ships as bn_BD; Indian Bengali (West Bengal) and the neutral code get it too.
+        ("bn_IN", "bn_BD"), ("bn", "bn_BD"), ("bn-IN", "bn_BD"),
     ])
     def test_regional_variants_fall_back_to_the_base_locale(self, regional, expected):
         """A Swiss German or Mexican Spanish user should get the language, not English."""
@@ -106,10 +108,16 @@ class TestReadSystemLocale:
         (1037, "he_IL"),    # Hebrew
         (2052, "zh_CN"),    # Chinese (PRC)
         (1028, "zh_TW"),    # Chinese (Taiwan)
+        (2117, "bn_BD"),    # Bengali (Bangladesh)
+        (1093, "bn_IN"),    # Bengali (India) - raw code; resolve_language maps it to bn_BD
         (1033, "en_US"),    # English (US)
     ])
     def test_lcid_is_translated_to_a_locale_code(self, lcid, expected):
-        with patch("ctypes.windll", self._fake_windll(lcid), create=True):
+        # The regional format is pinned too: an English display language falls back to a supported
+        # format locale (by design, see TestDisplayLanguageVersusRegionalFormat), so leaving the machine's real
+        # `locale.getlocale()` in play made the 1033 case fail on German regional settings.
+        with patch("ctypes.windll", self._fake_windll(lcid), create=True), \
+             patch("locale.getlocale", return_value=("en_US", "UTF-8")):
             assert I18nStrings._read_system_locale() == expected
 
     def test_unmapped_lcid_falls_through_to_the_locale_module(self):

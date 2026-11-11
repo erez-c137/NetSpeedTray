@@ -51,9 +51,18 @@ from netspeedtray.core.db import migrate_v8
 from netspeedtray.core.db import schema_v8 as S8
 from netspeedtray.core.db.schema_v8 import EXPECTED_TABLES_V8
 from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
+from netspeedtray.core.db.writer_v8 import FailureEpisode
 
 # Logger Setup
 logger = logging.getLogger("NetSpeedTray.Core.Database")
+
+
+def _usage_episode(worker: Any) -> FailureEpisode:
+    """The worker's usage-persist log episode (created here for a worker built without __init__)."""
+    ep = getattr(worker, "_usage_persist_episode", None)
+    if ep is None:
+        ep = worker._usage_persist_episode = FailureEpisode(worker.logger, "Usage counter persist")
+    return ep
 
 
 class MigrationAborted(Exception):
@@ -204,6 +213,8 @@ class DatabaseWorker(QThread):
         self.reader_version: Optional[int] = None
         self.readers_read_only = False
         self.logger = logging.getLogger(f"NetSpeedTray.{self.__class__.__name__}")
+        # One log episode per run of failed odometer writes (a full disk logged an ERROR every 30 s).
+        self._usage_persist_episode = FailureEpisode(self.logger, "Usage counter persist")
 
 
     _INIT_ATTEMPTS = 5
@@ -1217,7 +1228,9 @@ class DatabaseWorker(QThread):
                     cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
                                    (constants.network.usage.REKEY_MEMORY_METADATA_KEY, memory_json))
         except sqlite3.Error as e:
-            self.logger.error("Failed to persist usage counter: %s", e)
+            _usage_episode(self).failed(e, "Failed to persist usage counter: %s")
+            return
+        _usage_episode(self).succeeded()
 
     def _run_maintenance(self, data: Dict[str, Any], now: Optional[datetime] = None,
                          mono: Optional[float] = None) -> None:
@@ -1517,6 +1530,13 @@ class DatabaseWorker(QThread):
                             f.write(chunk[:n])
                             left -= n
                         os.fsync(f.fileno())
+                    # Zeroing stamped the file "modified now". Put its dates back: if the unlink below
+                    # fails (a scanner holding the fresh write), _age_out_backups judges the retry by
+                    # mtime and would otherwise keep the zeroed file for another full retention period.
+                    try:
+                        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+                    except OSError:
+                        pass
                 self._zeroed.add(key)
             os.unlink(path)
             self._zeroed.discard(key)

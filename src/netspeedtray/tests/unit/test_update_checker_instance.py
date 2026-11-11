@@ -130,7 +130,7 @@ def test_on_result_final_release_with_build_metadata_still_offered():
 # The GitHub fetch was the v1.3.2 regression surface and was previously untested.
 # run() is called directly (not via start()), so direct-connected slots fire in-thread.
 
-_URLOPEN = "netspeedtray.core.update_checker.urllib.request.urlopen"
+_URLOPEN = "urllib.request.urlopen"  # imported lazily inside the worker
 
 
 def _fake_resp(payload: bytes):

@@ -114,6 +114,7 @@ def test_every_settings_expander_is_keyboard_operable(qtbot, monkeypatch):
                          available_interfaces=["Ethernet", "Wi-Fi"], is_startup_enabled=False,
                          primary_interface="Wi-Fi")
     qtbot.addWidget(dlg)
+    dlg._build_all_pages()   # pages are built lazily (on first visit)
     expanders = [e for i in range(dlg.stack.count()) for e in dlg.stack.widget(i).widget().findChildren(SettingExpander)]
     assert len(expanders) >= 5
     plain = [e for e in expanders if not e._has_toggle]

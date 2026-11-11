@@ -97,6 +97,8 @@ class TestInputHandler(unittest.TestCase):
         event.buttons.return_value = button # For mouseMove check
         event.globalPosition.return_value = QPointF(float(global_x), float(global_y))
         event.type.return_value = type
+        from PyQt6.QtGui import QInputDevice
+        event.pointingDevice.return_value.type.return_value = QInputDevice.DeviceType.Mouse
         return event
 
     def test_mouse_press_left_starts_drag_prep(self):
@@ -250,6 +252,111 @@ class TestInputHandler(unittest.TestCase):
         self.mock_widget.open_monitor_window.assert_not_called()
         self.mock_widget.show_settings.assert_not_called()
         self.mock_widget.pause.assert_not_called()
+
+    # --- A lost left-button release (relu616, rc.4 on #373) ---
+
+    def _start_drag(self):
+        self.mock_position_manager.constrain_drag.side_effect = lambda p: p
+        self.handler.handle_mouse_press(self._create_mouse_event(global_x=150, global_y=150))
+        self.handler.handle_mouse_move(self._create_mouse_event(global_x=200, global_y=200))
+        self.assertTrue(self.mock_widget._dragging)
+
+    def _assert_dropped(self):
+        self.assertFalse(self.handler._is_dragging)
+        self.assertIs(self.mock_widget._dragging, False)
+        self.assertIsNone(self.handler._drag_start_pos)
+        self.mock_widget.update_config.assert_called()          # saved like a release
+        self.mock_position_manager.note_user_drop.assert_called_once()
+        self.assertFalse(self.handler._drag_watchdog.isActive())
+
+    def test_move_with_the_button_up_ends_a_drag_whose_release_was_lost(self):
+        self._start_drag()
+        self.handler.handle_mouse_move(
+            self._create_mouse_event(button=Qt.MouseButton.NoButton, global_x=210, global_y=200))
+        self._assert_dropped()
+
+    def test_hover_move_without_a_drag_does_nothing(self):
+        self.handler.handle_mouse_move(
+            self._create_mouse_event(button=Qt.MouseButton.NoButton, global_x=210, global_y=200))
+        self.mock_widget.update_config.assert_not_called()
+        self.mock_position_manager.note_user_drop.assert_not_called()
+
+    def test_end_lost_drag_drops_and_is_a_noop_without_a_drag(self):
+        self.handler.end_lost_drag("test")
+        self.mock_widget.update_config.assert_not_called()
+        self._start_drag()
+        self.handler.end_lost_drag("deactivated")
+        self._assert_dropped()
+        # The real release arriving after all must not save or note a second time.
+        self.handler.handle_mouse_release(self._create_mouse_event(type=QEvent.Type.MouseButtonRelease))
+        self.mock_position_manager.note_user_drop.assert_called_once()
+
+    def test_watchdog_ends_the_drag_once_the_button_is_up(self):
+        self._start_drag()
+        self.assertTrue(self.handler._drag_watchdog.isActive())
+        with patch.object(self.handler, "_left_button_down", return_value=False):
+            self.handler._on_drag_watchdog()          # one miss is not enough
+            self.assertTrue(self.mock_widget._dragging)
+            self.handler._on_drag_watchdog()
+        self._assert_dropped()
+
+    def test_a_touch_drag_is_not_watched(self):
+        """GetAsyncKeyState reads the physical mouse button, which a touch / pen drag may never set:
+        the watchdog would cut it ~0.5 s in. Touch still ends on the button-up move / deactivate / hide."""
+        from PyQt6.QtGui import QInputDevice
+        self.mock_position_manager.constrain_drag.side_effect = lambda p: p
+        press = self._create_mouse_event(global_x=150, global_y=150)
+        press.pointingDevice.return_value.type.return_value = QInputDevice.DeviceType.TouchScreen
+        self.handler.handle_mouse_press(press)
+        self.handler.handle_mouse_move(self._create_mouse_event(global_x=200, global_y=200))
+        self.assertTrue(self.mock_widget._dragging)
+        self.assertFalse(self.handler._drag_watchdog.isActive())
+        self.handler.end_lost_drag("hidden")
+        self._assert_dropped()
+
+    def test_left_button_down_honours_swapped_buttons(self):
+        import win32con
+        fake = MagicMock()
+        fake.GetSystemMetrics.side_effect = lambda m: 1 if m == win32con.SM_SWAPBUTTON else 0
+        fake.GetAsyncKeyState.side_effect = lambda vk: 0x8000 if vk == win32con.VK_RBUTTON else 0
+        with patch.dict("sys.modules", {"win32api": fake}):
+            self.assertTrue(self.handler._left_button_down())
+            fake.GetSystemMetrics.side_effect = lambda m: 0
+            self.assertFalse(self.handler._left_button_down())     # unswapped: VK_LBUTTON is up
+
+    def test_watchdog_never_cuts_a_long_real_drag_short(self):
+        self._start_drag()
+        with patch.object(self.handler, "_left_button_down", return_value=True):
+            for _ in range(1000):                     # ~4 minutes of 250 ms polls
+                self.handler._on_drag_watchdog()
+        self.assertTrue(self.mock_widget._dragging)
+        self.assertTrue(self.handler._is_dragging)
+        # A single misread between held reads resets, never accumulates.
+        seq = iter([False, True, False, True])
+        with patch.object(self.handler, "_left_button_down", side_effect=lambda: next(seq)):
+            for _ in range(4):
+                self.handler._on_drag_watchdog()
+        self.assertTrue(self.mock_widget._dragging)
+        self.mock_position_manager.note_user_drop.assert_not_called()
+
+
+
+def test_widget_ends_a_lost_drag_on_deactivate_and_hide():
+    """The widget's own hooks: WindowDeactivate (UAC, Win+L, Alt+Tab take the activation) and a
+    hide mid-drag both hand the drag to InputHandler.end_lost_drag."""
+    from PyQt6.QtGui import QHideEvent
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    app = QApplication.instance() or QApplication([])
+    w = NetworkSpeedWidget.__new__(NetworkSpeedWidget)
+    QWidget.__init__(w)
+    w.logger = MagicMock()
+    w.input_handler = MagicMock()
+    w._hover_card_timer = MagicMock()
+    w._hide_usage_hover_card = MagicMock()
+    w.event(QEvent(QEvent.Type.WindowDeactivate))
+    w.input_handler.end_lost_drag.assert_called_once()
+    w.hideEvent(QHideEvent())
+    assert w.input_handler.end_lost_drag.call_count == 2
 
 if __name__ == '__main__':
     unittest.main()

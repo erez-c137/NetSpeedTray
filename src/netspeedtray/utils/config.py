@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from netspeedtray.utils.helpers import get_app_data_path
-from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.utils.timer_utils import snap_update_rate
 from netspeedtray import constants
 
@@ -489,6 +488,12 @@ class ConfigManager:
             if self._migrate_to_1_4(migrated):
                 changes_made = True
 
+        # 1.5 (#332): once, for a file written before it - the white/white text pair a 2.2 prerelease
+        # seeded from 2.1.7's stuck "fixed" factory white. On a 1.5 file a white/white pair is a choice.
+        if version_parses and not loaded_is_newer and self._version_less_than(str(loaded_version), "1.5"):
+            if self._migrate_to_1_5(migrated):
+                changes_made = True
+
         # Version-based migrations (applied if loaded_version < target version)
         # Example structure for future versions:
         # if self._version_less_than(loaded_version, "2.0"):
@@ -528,7 +533,8 @@ class ConfigManager:
           has #000000 on disk (the old startup sync wrote it), and copying that would make the dark text
           black. Automatic (or missing - the old default; or not a bool, which old validation also
           reset to True) -> the white / black defaults. Fixed -> that colour on both taskbars, exactly
-          today's look (#332: a fixed #151618 stays #151618 until the user changes one).
+          today's look (#332: a fixed #151618 stays #151618 until the user changes one). Except a fixed
+          #FFFFFF or #000000, which takes the white / near-black defaults (see _migrate_to_1_5).
         - High / Low / both arrows: a custom colour is copied to both taskbars, so nobody's widget
           changes (#168). The FACTORY value, which nobody chose, becomes the theme defaults instead: the
           same on a dark taskbar, and readable on a light one (the white down arrow was invisible there).
@@ -547,7 +553,15 @@ class ConfigManager:
                 if migrated.get("color_is_automatic", True) is not False:
                     seeded = d.THEMED_COLOR_DEFAULTS[stem]
                 elif self._is_hex(migrated.get("default_color")):
-                    seeded = (migrated["default_color"],) * 2
+                    if self._is_stuck_theme_text(migrated["default_color"]):
+                        # #332: 2.1.7 turned the flag off for good the moment the colour picker was
+                        # confirmed, so a fixed white (the factory value) or black (what the old theme
+                        # sync wrote on a light taskbar) was the theme's, not a choice - copied to both
+                        # halves it painted white on a light bar or black on a dark one forever. It takes
+                        # the theme defaults instead.
+                        seeded = d.THEMED_COLOR_DEFAULTS[stem]
+                    else:
+                        seeded = (migrated["default_color"],) * 2
                 else:
                     continue
             elif stem in d.LEGACY_COLOR_KEYS:
@@ -600,6 +614,53 @@ class ConfigManager:
             wrote = True
             self.logger.info("Migrated use_separate_arrow_font -> False (the old default arrow font; 1.4)")
         return wrote
+
+    def _migrate_to_1_5(self, migrated: Dict[str, Any]) -> bool:
+        """
+        Schema 1.5 (2.2 rc.4, #332): repair the text pair a 2.2 prerelease seeded from 2.1.7's stuck flag,
+        in place. Returns True when it wrote anything. The caller runs it once, for a file older than 1.5.
+
+        2.1.7 set `color_is_automatic` to False for good the moment the colour picker was confirmed - even
+        on the factory white, or on the #000000 its theme sync had written on a light taskbar - and the
+        1.3 seeding copied a fixed colour to both taskbars: white text on a light bar, or black on a dark
+        one, forever. _migrate_color_scheme now seeds those as the theme defaults; this covers a file that
+        already went through the old seeding (rc.2 / rc.3, schema 1.4).
+        Only when BOTH halves are present and the SAME stuck colour (white/white or black/black) AND the
+        legacy flag is still in the file and False - the old seeding's signature (the legacy keys ride
+        through every save, inert). Both halves then take the factory pair, as a fresh seeding would. A
+        half that is missing or not a colour is not that signature: the file is left to validation. A
+        user who set such a pair on 2.2 without ever having the 2.1.x flag is left alone. Nothing else is
+        touched.
+        """
+        d = constants.config.defaults
+        dark, light = migrated.get("default_color_dark"), migrated.get("default_color_light")
+        if migrated.get("color_is_automatic") is not False or not self._is_stuck_theme_text(dark):
+            return False
+        if self._normalized_hex(dark) != self._normalized_hex(light):
+            return False
+        pair = d.THEMED_COLOR_DEFAULTS["default_color"]
+        if (dark, light) == pair:
+            return False
+        migrated["default_color_dark"], migrated["default_color_light"] = pair
+        self.logger.info("Migrated default_color_dark/_light %r/%r -> %r/%r (2.1.7's stuck fixed colour; "
+                         "#332, 1.5)", dark, light, *pair)
+        return True
+
+    @staticmethod
+    def _normalized_hex(value: Any) -> Optional[str]:
+        """'#RRGGBB' upper-case for a #RGB / #RRGGBB string (surrounding whitespace allowed), else None."""
+        if not isinstance(value, str):
+            return None
+        v = value.strip()
+        if re.fullmatch(r"#[0-9a-fA-F]{3}", v):
+            v = "#" + "".join(c * 2 for c in v[1:])
+        return v.upper() if re.fullmatch(r"#[0-9a-fA-F]{6}", v) else None
+
+    @classmethod
+    def _is_stuck_theme_text(cls, value: Any) -> bool:
+        """A 2.1.7 'fixed' text colour that was really the theme's (#332): the factory white or black."""
+        c = constants.color
+        return cls._normalized_hex(value) in (c.WHITE.upper(), c.BLACK.upper())
 
     @staticmethod
     def _is_hex(value: Any) -> bool:

@@ -182,12 +182,15 @@ class GraphHoverTooltip(QObject):
                 span_days: Optional[float] = None) -> str:
         when = self._when(x_num, span_days)
         is_net = self._host._current_stat == "network"
+        # Qt text: series names in the UI language even when the graph itself draws English (bn_BD).
+        to_ui = getattr(getattr(self._host, "renderer", None), "ui_series_label", None)
         parts = [f"<span style='color:{su.semantic_colors()['text_secondary']};'>{when}</span>"]
         for lbl, y, color in rows:
             # The network axes are plotted in Mbps (the renderer converts bytes/sec before plotting)
             # but format_speed() takes bytes/sec - convert back, or every readout is off by 125,000x.
             val = self._fmt_speed(y * constants.network.units.MEGA_DIVISOR / constants.network.units.BITS_PER_BYTE) if is_net else f"{y:.0f}%"
-            parts.append(f"<span style='color:{color};'>{lbl}</span> {val}")
+            name = to_ui(lbl) if callable(to_ui) else lbl
+            parts.append(f"<span style='color:{color};'>{name}</span> {val}")
         return "<br>".join(parts)
 
     def _fmt_speed(self, bps: float) -> str:

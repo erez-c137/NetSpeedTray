@@ -39,7 +39,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.request
 import zipfile
 from typing import Callable, Optional
 
@@ -47,7 +46,6 @@ from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox, QProgressDialog, QWidget
 
 from netspeedtray import constants
-from netspeedtray.utils import https
 from netspeedtray.utils.signature_verifier import verify_file
 
 logger = logging.getLogger("NetSpeedTray.UpdateInstaller")
@@ -67,6 +65,10 @@ def download_to(url: str, dest: str,
     (0-100, or -1 when the size is unknown) and aborts if is_cancelled() turns True.
     Raises on any network/IO error, on cancellation, or if the size exceeds _MAX_BYTES.
     """
+    # urllib.request / utils.https load on the first download, not with the module: monitor.py
+    # imports this module on every launch (sweep_stale_update_dirs), which never touches the network.
+    import urllib.request
+    from netspeedtray.utils import https
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     with https.urlopen(req, timeout=30) as resp, open(dest, "wb") as out:
         total = int(resp.headers.get("Content-Length", 0) or 0)
@@ -334,6 +336,8 @@ def _sha256_file(path: str) -> str:
 
 def _fetch_checksums(url: str) -> str:
     """Download the release's checksums.txt over HTTPS (small; capped)."""
+    import urllib.request  # lazy, as in download_to
+    from netspeedtray.utils import https
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     with https.urlopen(req, timeout=30) as resp:
         return resp.read(1_000_000).decode("utf-8", "replace")
@@ -706,7 +710,8 @@ class SecureUpdater(QObject):
         ready = self._move_to_downloads(ready)
 
         try:
-            os.startfile(ready)   # type: ignore[attr-defined]  # reveal in Explorer (Windows)
+            from netspeedtray.utils.helpers import neutral_cwd
+            os.startfile(ready, cwd=neutral_cwd())   # type: ignore[attr-defined]  # reveal in Explorer
         except Exception:
             pass
         try:
@@ -860,8 +865,8 @@ class SecureUpdater(QObject):
         except Exception:
             pass
         try:
-            import webbrowser
-            webbrowser.open(self._release_url)
+            from netspeedtray.utils.helpers import open_external
+            open_external(self._release_url)
         except Exception:
             pass
         self._finish()

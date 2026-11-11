@@ -636,6 +636,10 @@ def dialog(qtbot, monkeypatch):
         d = SettingsDialog(main_widget=m, config=_config(), version="2.2.0", i18n=EN,
                            available_interfaces=["Ethernet"], is_startup_enabled=False)
         qtbot.addWidget(d)
+        # On screen (offscreen): the live preview only applies while Settings is shown.
+        from PyQt6.QtCore import Qt
+        d.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+        d.show()
         return d
     return make
 

@@ -20,7 +20,7 @@ from PyQt6.QtGui import QGuiApplication
 from netspeedtray.constants import timeouts
 from netspeedtray.constants.shell import shell as shell_constants
 from netspeedtray.utils.taskbar_utils import (
-    get_taskbar_info, is_taskbar_obstructed, TaskbarInfo
+    get_taskbar_info, is_taskbar_obstructed, is_window_on_screen, TaskbarInfo
 )
 from netspeedtray.utils.styles import read_system_uses_light_theme
 from netspeedtray.utils import color_scheme
@@ -157,6 +157,7 @@ class SystemEventHandler(QObject):
         self._is_paused = False
         self._theme_signal_connected = False
         self._was_fullscreen = False  # last polled fullscreen state (edge detection)
+        self._fs_hwnd = 0  # the window last judged fullscreen (re-judged when the foreground says nothing)
         self._last_shell_light: Optional[int] = None  # last seen SystemUsesLightTheme (edge detection)
         # Last seen High Contrast / accent-taskbar snapshot (utils/taskbar_appearance), same edge detection.
         self._last_appearance = None
@@ -321,7 +322,17 @@ class SystemEventHandler(QObject):
             return
         try:
             hwnd = win32gui.GetForegroundWindow()
-            is_fs = self._is_fullscreen_obstruction(hwnd)
+            if is_window_on_screen(hwnd):
+                probe = hwnd
+            elif self._was_fullscreen and self._fs_hwnd:
+                # No information from the foreground (NULL, closed, invisible, cloaked - #503): keep
+                # the state unless the window that covered is itself gone.
+                probe = self._fs_hwnd
+            else:
+                return
+            is_fs = self._is_fullscreen_obstruction(probe)
+            if is_fs:
+                self._fs_hwnd = probe
             if is_fs == self._was_fullscreen:
                 return
             self._was_fullscreen = is_fs
@@ -355,7 +366,8 @@ class SystemEventHandler(QObject):
         GetWindowRect/MonitorFromWindow calls.
         """
         try:
-            if not hwnd or not win32gui.IsWindow(hwnd):
+            # An invisible / cloaked window covers nothing, whatever its rect (#503).
+            if not is_window_on_screen(hwnd):
                 return False
             window_rect = win32gui.GetWindowRect(hwnd)
             monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromWindow(hwnd))
@@ -405,6 +417,7 @@ class SystemEventHandler(QObject):
                 return
 
             if self._is_fullscreen_obstruction(hwnd):
+                self._fs_hwnd = hwnd
                 self.immediate_hide_requested.emit()
 
         except (win32gui.error, AttributeError):
@@ -467,6 +480,19 @@ class SystemEventHandler(QObject):
         hover affordances (the usage card) over a game/video even when the user opted to keep the
         widget itself visible (keep_visible_fullscreen)."""
         return self._was_fullscreen
+
+    def fullscreen_hwnd(self) -> int:
+        """The window last judged a fullscreen obstruction (0 if none yet)."""
+        return self._fs_hwnd
+
+    def forget_fullscreen(self) -> None:
+        """The widget's latch gave up a cover that left the foreground (no-foreground-timeout, #503):
+        drop the poll's copy too. Otherwise is_fullscreen_active() stays True while the widget shows -
+        burial recovery and the hover card stand down - and, with no edge left, the cover coming back
+        would not hide the widget until the 1 s tick. While the foreground stays NULL the poll is
+        quiet (no information, nothing latched); the cover returning is a fresh edge and hides at once."""
+        self._was_fullscreen = False
+        self._fs_hwnd = 0
 
     def _connect_color_scheme_signal(self) -> None:
         """Connect to Qt's native colorSchemeChanged signal.

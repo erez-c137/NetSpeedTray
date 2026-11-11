@@ -13,9 +13,8 @@ from typing import Optional, Tuple, List
 from pathlib import Path
 from datetime import datetime
 
-# numpy is imported lazily inside calculate_monotone_cubic_interpolation -
-# loading it here adds ~20 MB RSS to every NST process, even when the
-# widget's mini-graph (the only consumer of curve interpolation) is off.
+# No numpy here: calculate_monotone_cubic_interpolation runs on the widget's paint path, and
+# the widget must never load numpy (~9 MB USS, ~40 MB commit, a thread per CPU for OpenBLAS).
 
 from netspeedtray import constants
 
@@ -625,6 +624,14 @@ def format_retention_label(days: int, i18n) -> str:
 
 # --- Data Processing Utilities ---
 
+def _float_list(values) -> List[float]:
+    """values as floats, None read as NaN (what numpy's array(..., dtype=float) did)."""
+    try:
+        return list(map(float, values))
+    except TypeError:
+        return [math.nan if v is None else float(v) for v in values]
+
+
 def calculate_monotone_cubic_interpolation(x_coords: List[float], y_coords: List[float], density: int = 10) -> Tuple[List[float], List[float]]:
     """
     Computes a Monotone Cubic Spline for smooth, non-overshooting interpolation.
@@ -635,95 +642,120 @@ def calculate_monotone_cubic_interpolation(x_coords: List[float], y_coords: List
         density: Number of interpolated points to generate *between* each pair of original points.
 
     Returns:
-        tuple(interp_x, interp_y): Dense arrays of smoothed points.
-    """
-    # Lazy import: avoids loading numpy at startup (~20 MB RSS) for users
-    # who never enable the mini-graph in the widget.
-    import numpy as np
+        tuple(interp_x, interp_y): Dense lists of smoothed points.
 
-    x = np.array(x_coords, dtype=float)
-    y = np.array(y_coords, dtype=float)
+    Pure Python: the widget's mini graph calls this every paint, and loading numpy for it cost the
+    widget ~9 MB USS and ~40 MB commit. The arithmetic is the numpy version's, operation for
+    operation (same order, IEEE doubles), so the points are bit-identical to it.
+    """
+    x = _float_list(x_coords)
+    y = _float_list(y_coords)
     n = len(x)
-    
+
     if n < 2:
-        return list(x), list(y)
-        
-    # 1. Calculate linear slopes (secants)
-    dx = np.diff(x)
-    dy = np.diff(y)
-    
-    # Avoid division by zero
-    dx[dx == 0] = 1e-9
-    secants = dy / dx
-    
-    # 2. Initialize tangents
-    tangents = np.zeros(n)
-    
-    # 3. Calculate inner tangents (Fritsch-Carlson)
-    # The tangent at k is determined by the secants on either side.
-    # If secants have different signs, tangent is 0 (local extrema).
-    for i in range(1, n-1):
-        m_prev = secants[i-1]
+        return x, y
+
+    # 1. Linear slopes (secants); a zero step becomes 1e-9 to avoid dividing by zero.
+    secants = [dyi / (dxi if dxi != 0 else 1e-9)
+               for dxi, dyi in zip([b - a for a, b in zip(x, x[1:])], [b - a for a, b in zip(y, y[1:])])]
+
+    # 2-3. Inner tangents (Fritsch-Carlson): 0 at a local extremum (secants of different signs),
+    # else the harmonic-style mean that keeps the curve from overshooting. A NaN secant (a NaN sample)
+    # counts as an extremum too: `<= 0` is False for NaN, and the mean's denominator could then be
+    # max(0, nan) + 2 * min(0, nan) = 0 - numpy returned NaN there, plain floats raise
+    # ZeroDivisionError and the whole graph vanished (#488). With the product > 0 both secants share
+    # a sign and are non-zero, so the denominator cannot be 0.
+    tangents = [0.0] * n
+    for i in range(1, n - 1):
+        m_prev = secants[i - 1]
         m_next = secants[i]
-        
-        if m_prev * m_next <= 0:
+        if not (m_prev * m_next > 0):
             tangents[i] = 0.0
         else:
-            # Harmonic mean ensures the tangent doesn't cause overshoot
             tangents[i] = (3 * m_prev * m_next) / (max(m_next, m_prev) + 2 * min(m_next, m_prev))
-            
-    # 4. Boundary conditions (One-sided diffs)
+
+    # 4. Boundary conditions (one-sided differences).
     tangents[0] = secants[0]
     tangents[-1] = secants[-1]
-    
-    # 5. Generate high-density points (Vectorized)
-    # We want 'density' points between each pair of knots.
-    # Total new points: (n-1) * density
-    
-    # Create T vector [0, 1/d, 2/d, ... (d-1)/d] for each segment
-    # Shape: (density, )
-    t = np.linspace(0, 1, density + 1)[:-1] 
-    
-    # Precompute Hermite basis functions for all t
-    # Shape: (density, )
-    t2 = t*t
-    t3 = t*t*t
-    
-    h00 = 2*t3 - 3*t2 + 1
-    h10 = t3 - 2*t2 + t
-    h01 = -2*t3 + 3*t2
-    h11 = t3 - t2
-    
-    # Prepare segment arrays
-    # Shape: (n-1, 1) for broadcasting against (density,)
-    x_start = x[:-1, np.newaxis]
-    x_end   = x[1:, np.newaxis]
-    y_start = y[:-1, np.newaxis]
-    y_end   = y[1:, np.newaxis]
-    m_start = tangents[:-1, np.newaxis]
-    m_end   = tangents[1:, np.newaxis]
-    
-    seg_dx = x_end - x_start
-    
-    # Interpolate Y
-    # Result shape: (n-1, density)
-    # h00 * y0 + h10 * dx * m0 + h01 * y1 + h11 * dx * m1
-    # Broadcasting: (n-1, 1) * (density,) -> (n-1, density)
-    
-    seg_y = (y_start * h00) + (seg_dx * m_start * h10) + (y_end * h01) + (seg_dx * m_end * h11)
-    
-    # Interpolate X
-    # x0 + t * dx
-    seg_x = x_start + t * seg_dx
-    
-    # Flatten and append final point
-    interp_x = seg_x.flatten().tolist()
-    interp_y = seg_y.flatten().tolist()
-    
+
+    # 5. 'density' points per segment at t = 0, 1/d, ..., (d-1)/d (numpy.linspace's i * (1/d)),
+    # with the Hermite basis evaluated once per t.
+    step = 1.0 / density if density > 0 else 0.0
+    t = [i * step for i in range(max(0, density))]
+    basis = []
+    for tk in t:
+        t2 = tk * tk
+        t3 = tk * tk * tk
+        basis.append((2 * t3 - 3 * t2 + 1, t3 - 2 * t2 + tk, -2 * t3 + 3 * t2, t3 - t2))
+
+    interp_x: List[float] = []
+    interp_y: List[float] = []
+    for x0, x1, y0, y1, m0, m1 in zip(x, x[1:], y, y[1:], tangents, tangents[1:]):
+        seg_dx = x1 - x0
+        a, c = seg_dx * m0, seg_dx * m1
+        interp_y.extend([(y0 * h00) + (a * h10) + (y1 * h01) + (c * h11) for h00, h10, h01, h11 in basis])
+        interp_x.extend([x0 + tk * seg_dx for tk in t])
+
     interp_x.append(x[-1])
     interp_y.append(y[-1])
 
     return interp_x, interp_y
+
+
+def neutral_cwd() -> Optional[str]:
+    """A working directory for processes the app starts: the Windows system folder.
+
+    The app chdir's into its own folder at startup (monitor.py), and a child inherits that CWD -
+    which Windows holds open for the child's whole life, so the portable updater cannot rename the
+    folder while any child is alive, even after the app itself has exited (2.1.7's PowerShell probe
+    did exactly that in the 2.2.0-rc.7 rehearsal). A browser or Explorer window the app opens can
+    live for hours. Starting them in the system folder keeps the install folder free.
+
+    %SystemRoot%, then %windir% (an empty variable counts as missing), then GetSystemDirectoryW.
+    None (inherit, the old behaviour) only if none of them names an existing folder."""
+    for var in ("SystemRoot", "windir"):
+        root = (os.environ.get(var) or "").strip()
+        if root:
+            sys_dir = os.path.join(root, "System32")
+            if os.path.isdir(sys_dir):
+                return sys_dir
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(260)
+            n = ctypes.windll.kernel32.GetSystemDirectoryW(buf, len(buf))
+            if 0 < n < len(buf) and os.path.isdir(buf.value):
+                return buf.value
+        except Exception:
+            pass
+    return None
+
+
+def open_external(target: str) -> None:
+    """Open a URL or folder with its default handler, in ``neutral_cwd()`` rather than the app's
+    folder. Never raises.
+
+    On Windows this is ``os.startfile(target, cwd=...)`` and nothing else. There is deliberately no
+    ``webbrowser.open`` fallback there: its Windows default IS ``os.startfile`` (no cwd), so it
+    could only fail the same way, and its other candidates are browsers started as plain children
+    in the inherited CWD - the very process that holds the install folder (review L3). A failure
+    is logged; the user can still open the link by hand. Off Windows (dev boxes), webbrowser."""
+    log = logging.getLogger("NetSpeedTray.helpers")
+    if sys.platform == "win32":
+        try:
+            cwd = neutral_cwd()
+            if cwd:
+                os.startfile(target, cwd=cwd)          # type: ignore[attr-defined, call-arg]
+            else:
+                os.startfile(target)                   # type: ignore[attr-defined]
+        except Exception as e:
+            log.warning("Could not open %r: %s", target, e)
+        return
+    try:
+        import webbrowser
+        webbrowser.open(target)
+    except Exception as e:
+        log.debug("webbrowser.open(%r) failed: %s", target, e)
 
 
 def reveal_in_explorer(path: str) -> None:
@@ -741,6 +773,6 @@ def reveal_in_explorer(path: str) -> None:
         import subprocess
         explorer = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "explorer.exe")
         target = os.path.normpath(str(path)).replace('"', "")
-        subprocess.Popen(f'"{explorer}" /select,"{target}"')
+        subprocess.Popen(f'"{explorer}" /select,"{target}"', cwd=neutral_cwd())
     except Exception as e:
         logging.getLogger("NetSpeedTray.helpers").debug("reveal_in_explorer failed: %s", e)

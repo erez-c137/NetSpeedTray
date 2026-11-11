@@ -6,15 +6,12 @@ when a result is available.
 """
 import json
 import logging
-import urllib.request
-import urllib.error
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from netspeedtray import constants
-from netspeedtray.utils import https
 
 logger = logging.getLogger(f"{constants.app.APP_NAME}.UpdateChecker")
 
@@ -154,6 +151,13 @@ class _CheckWorker(QThread):
 
     def run(self) -> None:
         try:
+            # Imported here, on the worker, not with the module: the widget imports this module at
+            # startup, and with update checks off (or before the first one, 5 s in) urllib.request
+            # and utils.https would sit in memory for nothing. (ssl itself still loads at startup,
+            # through lhm_http's http.client.) The context is still built by utils.https on every
+            # check, truststore first - trust behavior is unchanged.
+            import urllib.request
+            from netspeedtray.utils import https
             req = urllib.request.Request(
                 RELEASES_URL,
                 headers={"Accept": "application/vnd.github.v3+json",

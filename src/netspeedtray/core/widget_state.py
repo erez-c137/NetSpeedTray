@@ -103,16 +103,15 @@ class WidgetState(QObject):
         # _get_read_conn(); the worker is constructed but never started, so flush_and_wait short-circuits.
         self._read_only = read_only
 
-        # In-Memory Cache for real-time mini-graph.
-        #   * in_memory_history holds per-tick raw snapshots (a dict per entry - heavy), so it stays
-        #     sized to the *current* window.
-        #   * the mini-graph series (aggregated speed + per-stat hardware %) are light (a few floats per
-        #     entry), so they buffer the *maximum* selectable window. That way GROWING the graph timespan
-        #     reveals already-recorded samples immediately instead of waiting minutes for them to
-        #     accumulate; the renderer slices each series down to the configured window.
-        self.max_history_points: int = self._get_max_history_points()
+        # In-Memory Cache for real-time mini-graph and the Monitor's session view.
+        #   * the series (aggregated speed + per-stat hardware %) are light (a few floats per entry), so
+        #     they buffer the *maximum* selectable window. That way GROWING the graph timespan reveals
+        #     already-recorded samples immediately instead of waiting minutes for them to accumulate;
+        #     the renderer slices each series down to the configured window.
+        #   * there is deliberately NO per-interface raw series: one (a dict per tick, up to 5000
+        #     entries) lived here until 2.2.1 and nothing read it - the totals above are all any view
+        #     draws, and per-interface history comes from the database.
         self._graph_buffer_points: int = self._get_graph_buffer_points()
-        self.in_memory_history: Deque[SpeedDataSnapshot] = deque(maxlen=self.max_history_points)
         self.aggregated_history: Deque[AggregatedSpeedData] = deque(maxlen=self._graph_buffer_points)
 
         # New: Hardware history for mini-graph tabs
@@ -182,6 +181,9 @@ class WidgetState(QObject):
         # TO (persisted with it, in the same transaction), and the snapshot loaded from the previous
         # session - read once at load, so this session's own persists can never feed it back.
         self._usage_live_counters: Optional[Dict[str, Any]] = None
+        # True once bytes were added with no counters while none are paired (_usage_live_counters
+        # None): the total has moved past the STORED snapshot, so a persist must delete it.
+        self._usage_snapshot_stale = False
         self._usage_live_sampled_at: Optional[float] = None
         self._usage_live_primary: Optional[str] = None
         self._usage_launch_snapshot: Dict[str, Any] = {}
@@ -379,7 +381,6 @@ class WidgetState(QObject):
         poll, handed over by :meth:`add_net_sample`, never a rate. ``persist_data`` (the measured rates)
         is accepted for call-site compatibility and ignored."""
         _now = now or datetime.now()
-        self.in_memory_history.append(SpeedDataSnapshot(speeds=speed_data.copy(), timestamp=_now))
 
         if aggregated_up is not None and aggregated_down is not None:
             total_up, total_down = aggregated_up, aggregated_down
@@ -755,12 +756,16 @@ class WidgetState(QObject):
         `counters` are the raw NIC counters the total now accounts up to (sampled at wall time
         `sampled_at`; `primary` is the auto-mode interface they were metered on); they are persisted
         with the total so the next launch in the same boot can recover what moves while the app is
-        closed. Kept by reference - serialized only on persist.
+        closed. Copied on entry (shallow: the per-interface psutil values are immutable tuples) and
+        serialized only on persist, so a caller that later mutates its dict - the controller used
+        to clear it at shutdown, before the final persist - cannot change the stored snapshot.
 
         `window_start` is the wall time the measurement window began (the previous sample, or the
         launch snapshot). Bytes are charged to the period in which their window BEGAN: a standby
         gap or a closed-app window spanning the reset day lands in the period it started in, never
         all in the new one (which could fire an early overage alert)."""
+        if counters is not None:
+            counters = dict(counters)
         if getattr(self, "_usage_reset_pending", False):
             # Traffic after a reset request: if the reset lands, these bytes are the new total.
             post = self._usage_post_reset
@@ -817,8 +822,15 @@ class WidgetState(QObject):
                 # (e.g. on a read) - the anchor never exceeds the cumulative.
                 u["anchor_up"] += up
                 u["anchor_down"] += down
+        if counters is None and (up or down) and self._usage_live_counters is None:
+            # Bytes with no counters to pair (the launch reconcile and the held backlog after a
+            # route wait): the total now includes bytes beyond the STORED snapshot, and keeping that
+            # snapshot beside it would let a kill before the next counters persist make the next
+            # launch recover the same window again. Until counters pair, a persist deletes it.
+            self._usage_snapshot_stale = True
         if counters is not None:
             # Only now does the total include these counters' bytes - pair them from here on.
+            self._usage_snapshot_stale = False
             self._usage_live_counters = counters
             self._usage_live_sampled_at = sampled_at if sampled_at is not None else time.time()
             self._usage_live_primary = primary
@@ -840,11 +852,12 @@ class WidgetState(QObject):
             return
         self.db_worker.enqueue_task("persist_usage", WidgetState._usage_payload(
             self._usage, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary),
-            WidgetState._encode_left_periods(WidgetState._usage_left_periods(self))))
+            WidgetState._encode_left_periods(WidgetState._usage_left_periods(self)),
+            clear_snapshot=getattr(self, "_usage_snapshot_stale", False)))
 
     @staticmethod
     def _usage_payload(u: Dict[str, Any], live: Optional[Tuple[Any, Any, Any]],
-                       memory: Optional[str] = None) -> Tuple[Any, ...]:
+                       memory: Optional[str] = None, clear_snapshot: bool = False) -> Tuple[Any, ...]:
         """The persist_usage tuple for odometer ``u`` paired with ``live`` = (counters, sampled_at,
         primary) - the NIC counters that total accounts up to, or counters None - and ``memory``, the
         encoded re-key memory ("" deletes it, None leaves it untouched)."""
@@ -860,6 +873,9 @@ class WidgetState(QObject):
                 # to advance past the STORED snapshot, so it must go - leaving it would make the next
                 # same-boot launch re-add bytes this total already holds.
                 snapshot_json = usage_snapshot.CLEAR_SNAPSHOT
+        elif clear_snapshot:
+            # No counters, but the total already includes bytes past the stored snapshot.
+            snapshot_json = usage_snapshot.CLEAR_SNAPSHOT
         # 7th element: the counter snapshot, written in the SAME transaction as the total;
         # CLEAR_SNAPSHOT deletes the stored one; None (no counters seen yet) leaves it untouched.
         return (u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
@@ -885,7 +901,8 @@ class WidgetState(QObject):
                 kept["cumulative_down"] += max(0.0, down)
             if_failed = WidgetState._usage_payload(
                 kept, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary),
-                WidgetState._encode_left_periods(WidgetState._usage_left_periods(self)))
+                WidgetState._encode_left_periods(WidgetState._usage_left_periods(self)),
+                clear_snapshot=getattr(self, "_usage_snapshot_stale", False))
         self.db_worker.enqueue_task("persist_usage_after_delete", {
             "if_reset": WidgetState._usage_payload(reset, post[2], ""),
             "if_failed": if_failed})
@@ -973,7 +990,7 @@ class WidgetState(QObject):
             self._net_batch = []
             self._hw_batch = []
             self.db_worker.enqueue_task("delete_history", {"include_usage": bool(include_usage)})
-        for series in (self.in_memory_history, self.aggregated_history,
+        for series in (self.aggregated_history,
                        self.cpu_history, self.gpu_history, self.ram_history):
             series.clear()
         if include_usage:
@@ -1211,17 +1228,6 @@ class WidgetState(QObject):
         scope = WidgetState.metered_scope(self.config, names)
         return self.history_reader.daily_volume(start_time, end_time or datetime.now(), scope)
 
-    def get_in_memory_speed_history(self) -> List[SpeedDataSnapshot]:
-        """
-        Retrieves the current in-memory speed history.
-        
-        Returns:
-            A list of SpeedDataSnapshot objects, each containing a dictionary of
-            per-interface speeds for a specific timestamp.
-        """
-        return list(self.in_memory_history)
-
-
     def get_aggregated_speed_history(self) -> List[AggregatedSpeedData]:
         """
         Retrieves the pre-calculated aggregated speed history.
@@ -1350,18 +1356,6 @@ class WidgetState(QObject):
                 detach_running_worker(self.db_worker)
 
 
-    def _get_max_history_points(self) -> int:
-        """Calculates max points for the in-memory deque based on config."""
-        try:
-            history_minutes = self.config.get("history_minutes", 30)
-            update_rate_sec = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
-            points = int(round((history_minutes * 60) / update_rate_sec))
-            return max(10, min(points, 5000))
-
-        except Exception as e:
-            self.logger.error("Error calculating max history points: %s. Using default.", e)
-            return 1800
-
     def _get_graph_buffer_points(self) -> int:
         """Capacity for the lightweight mini-graph series (aggregated speed + per-stat hardware %).
         Sized to the MAXIMUM selectable graph window - not the current one - so that growing the graph
@@ -1386,12 +1380,6 @@ class WidgetState(QObject):
         if not self._read_only and self._poll_ms() != old_poll:
             # Only the writer's gap threshold depends on it; stored bytes never do.
             self.db_worker.enqueue_task("set_poll_ms", self._poll_ms())
-        new_max_points = self._get_max_history_points()
-        if new_max_points != self.max_history_points:
-            self.max_history_points = new_max_points
-            self.in_memory_history = deque(self.in_memory_history, maxlen=self.max_history_points)
-            self.logger.debug("In-memory raw history capacity updated to %d points.", self.max_history_points)
-
         # The graph series buffer the *max* window, so they only resize when update_rate changes (not on
         # a timespan change - the renderer just slices a different amount from the same buffer).
         new_graph_points = self._get_graph_buffer_points()

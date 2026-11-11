@@ -25,6 +25,10 @@ class ShellConstants:
     # it and the local widget showed through the remote desktop (#132). A caption-less one covering
     # the taskbar's whole monitor is treated as fullscreen; a windowed session keeps its caption.
     RDP_CLIENT_WINDOW_CLASSES: Final[Set[str]] = {"TscShellContainerClass"}
+    # The desktop's own windows. One of them in the foreground (Win+D, Show desktop, a click on the
+    # wallpaper) is a deliberate exit from a fullscreen app, so the widget returns without the
+    # two-reading confirmation other exits need (#503).
+    DESKTOP_WINDOW_CLASSES: Final[Set[str]] = {"Progman", "WorkerW"}
 
 
     def __init__(self) -> None:

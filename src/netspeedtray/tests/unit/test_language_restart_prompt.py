@@ -55,7 +55,9 @@ def _save_and_capture_prompt(dialog, selected_language, system_lcid=1033):
     """Run _save_and_close with a stubbed get_settings; report whether the prompt was shown.
 
     `system_lcid` drives what auto-detect resolves to, which the new comparison consults whenever
-    the selection is None.
+    the selection is None. The regional format is pinned to English as well: with an English display
+    language auto-detect falls back to a supported format locale (by design), so the machine's real
+    `locale.getlocale()` made these tests fail on German regional settings.
     """
     settings = constants.config.defaults.DEFAULT_CONFIG.copy()
     settings["language"] = selected_language
@@ -64,6 +66,7 @@ def _save_and_capture_prompt(dialog, selected_language, system_lcid=1033):
     windll.kernel32.GetUserDefaultUILanguage.return_value = system_lcid
 
     with patch("ctypes.windll", windll, create=True), \
+         patch("locale.getlocale", return_value=("en_US", "UTF-8")), \
          patch.object(dialog, "get_settings", return_value=settings), \
          patch("netspeedtray.views.settings.dialog.QMessageBox") as msg_box, \
          patch("netspeedtray.views.settings.dialog.save_window_position"):

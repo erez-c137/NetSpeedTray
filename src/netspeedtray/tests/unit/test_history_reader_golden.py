@@ -13,9 +13,11 @@ what production would hold: three eras (hour tier 31-40 days ago, minute tier 1-
 hours), multi-day gaps, the full hardware set including fractional latency_*_timeout loss rows, and a
 usage_counter row with its counter snapshot.
 """
+import contextlib
 import math
 import random
 import sqlite3
+import time
 import types
 from dataclasses import astuple, is_dataclass, replace
 from datetime import datetime, timedelta
@@ -28,6 +30,7 @@ from netspeedtray import constants
 from netspeedtray.core import usage_snapshot
 from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
 from netspeedtray.core.widget_state import WidgetState
+from netspeedtray.tests.unit import legacy_v7_reader_oracle
 from netspeedtray.tests.unit.legacy_v7_reader_oracle import LegacyV7Readers as Legacy
 
 DAY = 86400
@@ -121,6 +124,31 @@ def ws(q_app, tmp_path_factory):
     state = _make_state(db_dir)
     yield state
     state.cleanup()
+
+
+@contextlib.contextmanager
+def _frozen_clock(ws, now_ts=None):
+    """Both readers see ONE "now" for the comparison inside.
+
+    An open-ended window (``end=None``) ends at "now" and a missing ``start`` is 24 h before it; the
+    legacy oracle reads ``datetime.now()``, the facade reads its injected ``_clock``. Left on the wall
+    clock, a second tick between the two calls slides the window one second and a 30 s sample can cross
+    its inclusive start edge (CI, PR #473: hardware_history(latency_anchor, None, None) len 1434 vs
+    1435). A whole-second instant, so ``int(now.timestamp())`` is exact on both sides."""
+    now_ts = int(time.time()) if now_ts is None else now_ts
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(now_ts, tz)
+
+        @classmethod
+        def fromtimestamp(cls, *a, **kw):           # plain datetimes, so _same's type check holds
+            return datetime.fromtimestamp(*a, **kw)
+
+    with patch.object(legacy_v7_reader_oracle, "datetime", _FrozenDatetime), \
+            patch.object(ws.history_reader, "_clock", lambda: float(now_ts)):
+        yield now_ts
 
 
 def _same(a, b, path="result"):
@@ -233,11 +261,13 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
             if resolution == "minute" and (span is None or span > timedelta(days=10)):
                 continue
             kw = dict(interface_name=iface, return_raw=return_raw, resolution=resolution, wait_for_flush=False)
-            old = _without_legacy_padding(Legacy.get_speed_history(ws, start, end, **kw), start, end,
-                                          return_raw)
-            new = ws.get_speed_history(start, end, **kw)
             effective = resolution if resolution != "auto" else \
                 constants.data.history_period.get_target_resolution(start, end)
+            with _frozen_clock(ws):    # the day-resolution oracle below reads the legacy reader too
+                old = _without_legacy_padding(Legacy.get_speed_history(ws, start, end, **kw), start, end,
+                                              return_raw)
+                new = ws.get_speed_history(start, end, **kw)
+                want = _expected_local_days(ws, start, end, iface) if effective == "day" else None
             if effective == "day":
                 # The one intended divergence (2.2 RC): day buckets now start at LOCAL midnight, not
                 # UTC midnight (which moved by an hour across DST). Compared per day against an
@@ -249,7 +279,6 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
                     if p[1] or p[2]:
                         ts = int(p[0] if return_raw else p[0].timestamp())
                         got[ts] = (p[1], p[2])
-                want = _expected_local_days(ws, start, end, iface)
                 assert set(got) == set(want), f"day buckets ({start},{end},{iface})"
                 for day, (u, d) in want.items():
                     assert got[day][0] == pytest.approx(u) and got[day][1] == pytest.approx(d), \
@@ -271,8 +300,9 @@ def test_hardware_history_matches_legacy(ws):
     checked = 0
     for start, end in WINDOWS:
         for stat in HW_STATS:
-            old = Legacy.get_hardware_history(ws, stat, start, end)
-            new = ws.get_hardware_history(stat, start, end)
+            with _frozen_clock(ws):
+                old = Legacy.get_hardware_history(ws, stat, start, end)
+                new = ws.get_hardware_history(stat, start, end)
             _same(new, old, f"hardware_history({stat},{start},{end})")
             checked += len(old)
     assert checked > 1000

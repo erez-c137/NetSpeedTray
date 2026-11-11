@@ -31,6 +31,7 @@ from PyQt6.QtGui import QScreen
 from PyQt6.QtWidgets import QApplication
 
 from netspeedtray import constants
+from netspeedtray.utils import dwm
 # Screen names are logged pseudonymized: the support bundle's MANIFEST promises
 # no display names ship (v2.1.5 item 7).
 from netspeedtray.utils.config import stable_pseudonym
@@ -166,6 +167,114 @@ def valid_rect(rect: Any) -> Optional[Tuple[int, int, int, int]]:
     return (left, top, right, bottom)
 
 
+# --- Qt screen <-> physical (Win32) coordinates ---------------------------------------------------
+# How Qt 6 on Windows reports a screen (per-monitor-v2 DPI aware, the default
+# HighDpiScaleFactorRoundingPolicy.PassThrough, so devicePixelRatio() == the monitor's DPI / 96):
+# QScreen.geometry() keeps the monitor's NATIVE origin and divides only its SIZE by the scale
+# (QHighDpi::fromNativeScreenGeometry: QRect(native.topLeft(), native.size() / factor)). A 3840x2160
+# monitor at 150 % placed above a laptop panel, at physical (0, -2160), is reported as
+# QRect(0, -2160, 2560, 1440) - NOT (0, -1440, ...). Logical points inside it map the same way, around
+# that origin: logical = origin + (physical - origin) / factor. So:
+# - a screen's physical rect is (left, top, left + width * dpr, top + height * dpr) - multiplying the
+#   ORIGIN by the scale too (the code before #373) puts every non-primary scaled monitor somewhere
+#   else, and a taskbar on it matched no screen at all (relu616 on #373: the preferred extended monitor
+#   read as taskbar-less, so the widget free-floated above its bar);
+# - physical / scale is a logical coordinate only on a screen whose origin is 0 on that axis (the
+#   primary, always at the virtual-desktop origin).
+
+def qt_screen_native_rect(screen: Any) -> Optional[Tuple[int, int, int, int]]:
+    """``screen``'s physical-px rect (left, top, right, bottom), derived from Qt's per-screen geometry
+    as described above, or None when it can't be read."""
+    try:
+        geo = screen.geometry()
+        dpr = float(screen.devicePixelRatio()) or 1.0
+        left, top = int(geo.left()), int(geo.top())
+        return valid_rect((left, top, left + int(round(geo.width() * dpr)),
+                           top + int(round(geo.height() * dpr))))
+    except Exception:  # noqa: BLE001 - a mocked / dying screen
+        return None
+
+
+def physical_to_logical(value: float, origin: float, scale: float) -> float:
+    """A physical coordinate on one axis of a screen whose Qt origin on that axis is ``origin``, in
+    Qt logical px (see above). With ``origin`` 0 this is exactly ``value / scale``."""
+    scale = scale if scale and scale > 0 else 1.0
+    return origin + (value - origin) / scale
+
+
+def screen_origin(taskbar_info: Any) -> Tuple[float, float]:
+    """``(x, y)``: the Qt origin of ``taskbar_info``'s screen (QScreen.geometry().topLeft()), what its
+    physical rects convert around; (0, 0) - the primary's, where physical / scale is exact - when it
+    can't be read (no screen, a mocked one)."""
+    try:
+        geo = taskbar_info.get_screen().geometry()
+        x, y = geo.left(), geo.top()
+        if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (x, y)):
+            return float(x), float(y)
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0, 0.0
+
+
+def monitor_device_name_for_hwnd(hwnd: Optional[int]) -> Optional[str]:
+    """The GDI device name (``\\\\.\\DISPLAY2``) of the monitor ``hwnd`` is on - what Qt reports as
+    ``QScreen.name()`` on Windows - or None (no such window, any API failure)."""
+    if not hwnd:
+        return None
+    try:
+        monitor = win32api.MonitorFromWindow(int(hwnd), MONITOR_DEFAULTTONEAREST)
+        if not monitor:
+            return None
+        name = win32api.GetMonitorInfo(monitor).get("Device")
+        return name if isinstance(name, str) and name else None
+    except Exception:  # noqa: BLE001 - fail-safe: geometry decides instead
+        return None
+
+
+def find_screen_for_taskbar(tb_rect_phys: Tuple[int, int, int, int], device_name: Optional[str] = None,
+                            screens: Optional[List[Any]] = None,
+                            primary: Optional[Any] = None) -> Optional[Any]:
+    """The QScreen a taskbar (physical rect ``tb_rect_phys``) belongs to.
+
+    1. ``device_name`` (the taskbar window's monitor, ``monitor_device_name_for_hwnd``) equal to a
+       screen's ``name()``: exact, and independent of any coordinate maths (#373).
+    2. The largest overlap between the bar and each screen's PHYSICAL rect (``qt_screen_native_rect``).
+    3. The screen whose physical rect contains the bar's centre.
+    4. The primary screen.
+    """
+    if screens is None:
+        screens = QApplication.screens()
+    if primary is None:
+        primary = QApplication.primaryScreen()
+    if device_name:
+        for screen in screens:
+            try:
+                if screen.name() == device_name:
+                    return screen
+            except Exception:  # noqa: BLE001
+                continue
+    rect = valid_rect(tuple(tb_rect_phys) if tb_rect_phys is not None else None)
+    if rect is not None:
+        best, best_area = None, 0
+        for screen in screens:
+            phys = qt_screen_native_rect(screen)
+            if phys is None:
+                continue
+            w = min(rect[2], phys[2]) - max(rect[0], phys[0])
+            h = min(rect[3], phys[3]) - max(rect[1], phys[1])
+            area = w * h if w > 0 and h > 0 else 0
+            if area > best_area:
+                best, best_area = screen, area
+        if best is not None:
+            return best
+        cx, cy = (rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0
+        for screen in screens:
+            phys = qt_screen_native_rect(screen)
+            if phys is not None and phys[0] <= cx <= phys[2] and phys[1] <= cy <= phys[3]:
+                return screen
+    return primary
+
+
 def find_apps_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
     """The Win11 Start-to-last-app span from the classic HWNDs: ``MSTaskSwWClass`` (else its
     ``ReBarWindow32`` parent), physical px, or None.
@@ -195,8 +304,9 @@ def find_apps_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
 # at startup, on a dock change, on Reset position, and - as re-checks that KEEP the last result until
 # the new one lands (``keep_last``) - when core/side_bar_watcher predicts the app group reaching the
 # widget or sees the icon alignment flip. On a TOP/BOTTOM bar only the #24 app-button yield
-# (core/app_overlap_yield.py) runs it - keep_last re-checks that read the contiguous app group and
-# never change the horizontal placement.
+# (core/app_overlap_yield.py) runs it - keep_last re-checks that read the contiguous app group; the
+# only thing the horizontal placement takes from it is the Widgets button's box, and only when that
+# button sits beside the tray (PositionCalculator._clear_of_widgets_button).
 _layout_lock = threading.Lock()
 # Notified (under _layout_lock) whenever a probe lands or a request ends: wait_for_taskbar_layout.
 _layout_landed = threading.Condition(_layout_lock)
@@ -206,11 +316,178 @@ _layout_landed = threading.Condition(_layout_lock)
 # group: the contiguous Start-led button run (uia_widgets.app_group_from_elements), for consumers that
 # must not count far-away buttons; landed: how many probe results have landed (a sequence number).
 _layout_state: dict = {"hwnd": 0, "apps": None, "widgets": None, "group": None, "overflow": None,
+                       "widgets_content": None,
                        "bar": None, "pending": False,
-                       "done": False, "gen": 0, "running": False, "started": 0.0, "landed": 0}
+                       "done": False, "gen": 0, "running": False, "started": 0.0}
 # A UIA call into a hung Explorer can block for a long time. Past this, the request counts as
 # finished WITHOUT a result (placement goes final on the classic HWND rect); a late result is dropped.
 LAYOUT_PROBE_TIMEOUT_S = 5.0
+
+# The last LANDED layout per taskbar HWND (#373). ``_layout_state`` is one slot - the taskbar whose probe
+# was requested last - so with "Show on all taskbars" (#229/#434) every mirror's probe used to evict the
+# others': the main widget's bar (and each mirror's) flipped to "no layout known" whenever another bar
+# was probed, and its Widgets-button box came and went. A bar that is not in the slot now answers from
+# here: its own last result, never another bar's. Bounded like _probed_tray (least recently landed goes
+# first); an Explorer restart brings new HWNDs, so an old bar's entry is never answered for a new bar.
+_layout_by_hwnd: dict = {}
+_LAYOUT_BY_HWND_MAX = 16
+# A cached (out-of-slot) result older than this no longer answers for the APP buttons (apps, group,
+# overflow, bar) - they come and go all the time; the classic HWND rect / "unknown" answers instead, as
+# for a bar out of the slot before #373. The Widgets box (and its content) is KEPT: it only changes with
+# the weather text or the Widgets toggle, and dropping it moved a side-bar mirror from above the weather
+# button onto it 90 s after launch (#473 VM run: DISPLAY2 at 150 %, right bars, weather on). A box the
+# user turned off is dropped at once instead (the TaskbarDa check). Three background-refresh periods: a
+# bar that is refreshed (every tray-less bar a widget or mirror docks on) never ages out.
+LAYOUT_CACHE_MAX_AGE_S = 3 * constants.timeouts.TRAYLESS_BAR_LAYOUT_REFRESH_S
+_APP_ENTRY_KEYS = ("apps", "group", "overflow")   # "bar" stays: taskbar_layout_matches_bar
+# Background probes (request_background_layout_probe): bars to probe into _layout_by_hwnd once the slot
+# has nothing pending, oldest first. They never take the slot or its gen.
+_layout_background: list = []
+# Slot requests superseded by another bar's before their probe started (moved to _layout_background):
+# HWND -> when the request was made. taskbar_layout_snapshot reports them pending until that background
+# probe lands, or LAYOUT_PROBE_TIMEOUT_S after the request - as if the slot had kept them.
+_layout_superseded: dict = {}
+_LAYOUT_ENTRY_KEYS = ("apps", "widgets", "group", "overflow", "widgets_content", "bar", "bar_shape")
+# A process-wide sequence number for landed probes: each entry carries the number of its landing, and
+# taskbar_layout_landed_count answers it PER BAR - a reseeded or timed-out request never moves it, so a
+# cached result can never pass for a fresh landing.
+_landing_seq = 0
+
+
+def _store_landed_layout(taskbar_hwnd: int, entry: dict) -> None:
+    """Remember a FRESH probe result for ``taskbar_hwnd`` (caller holds _layout_lock).
+
+    Also the bar's LAST SEEN Widgets box (``last_widgets`` / ``last_widgets_content``). A probe that
+    finds no button while its presence is unsure - Widgets turned off in Settings, or turned back on
+    less than WIDGETS_REENABLE_GRACE_S ago (Explorer may not have drawn it yet) - is marked
+    ``interim``: once Widgets is on, reads answer that last seen box until a probe sees the button
+    again (#473 VM re-check: turned back on, the mirrors sat on the weather text for ~17 s, until
+    the next 30 s refresh, because the probes made while it was off had found no button)."""
+    global _landing_seq
+    h = int(taskbar_hwnd)
+    prev = _layout_by_hwnd.pop(h, None)             # re-inserted last: least recently landed is first
+    if len(_layout_by_hwnd) >= _LAYOUT_BY_HWND_MAX:
+        _layout_by_hwnd.pop(next(iter(_layout_by_hwnd)))
+    _landing_seq += 1
+    stored = {k: entry.get(k) for k in _LAYOUT_ENTRY_KEYS}
+    # probe_start: when this result's UIA call began (taskbar_layout_landed_since).
+    stored.update(ts=time.monotonic(), seq=_landing_seq, interim=False, probe_start=entry.get("probe_start"))
+    if stored["widgets"] is not None:
+        stored.update(last_widgets=stored["widgets"], last_widgets_content=stored["widgets_content"])
+    else:
+        last = prev.get("last_widgets") if prev else None
+        stored.update(last_widgets=last,
+                      last_widgets_content=prev.get("last_widgets_content") if prev else None,
+                      interim=last is not None and _widgets_presence_unsure())
+    _layout_by_hwnd[h] = stored
+
+
+# _widgets_toggle_on's last answer and when it was read: it is asked 10-30 times per bar per tick (many
+# under _layout_lock), and the toggle only changes when the user flips it in Settings.
+_widgets_toggle_memo: Tuple[Optional[float], bool] = (None, True)   # (read at, on): one assignment
+
+
+def _widgets_toggle_on() -> bool:
+    """Taskbar settings > Widgets is on (TaskbarDa, a microsecond registry read), memoised for
+    WIDGETS_TOGGLE_MEMO_S. Its own name so the test suite can pin it without replacing the registry
+    reader its own tests exercise."""
+    global _widgets_toggle_memo
+    now = time.monotonic()
+    at, on = _widgets_toggle_memo                  # one read of one tuple: never a torn pair
+    if at is not None and 0.0 <= now - at < constants.timeouts.WIDGETS_TOGGLE_MEMO_S:
+        return on
+    on = _widgets_button_enabled()
+    _widgets_toggle_memo = (now, on)               # one assignment
+    return on
+
+
+# The Widgets toggle as last seen by widgets_toggle_generation(): ``gen`` counts flips (a docked
+# widget re-probes its bar on each), ``on_at`` is when it was last turned ON.
+_widgets_flip: dict = {"on": None, "gen": 0, "on_at": None}
+
+
+def widgets_toggle_generation() -> Tuple[int, Optional[float]]:
+    """``(flips, last_turned_on_at)`` of Taskbar settings > Widgets, read now (a microsecond registry
+    read). PositionManager polls it each tick for a tray-less bar and re-probes on a flip (#473)."""
+    on = _widgets_toggle_on()
+    with _layout_lock:
+        prev = _widgets_flip["on"]
+        if prev is not None and on != prev:
+            _widgets_flip["gen"] += 1
+            if on:
+                _widgets_flip["on_at"] = time.monotonic()
+        _widgets_flip["on"] = on
+        return _widgets_flip["gen"], _widgets_flip["on_at"]
+
+
+def _widgets_presence_unsure() -> bool:
+    """A probe that finds no Widgets button may be wrong: the toggle is off, or was turned on less than
+    WIDGETS_REENABLE_GRACE_S ago."""
+    if not _widgets_toggle_on():
+        return True
+    on_at = _widgets_flip.get("on_at")
+    return on_at is not None and time.monotonic() - on_at < constants.timeouts.WIDGETS_REENABLE_GRACE_S
+
+
+def _interim_live(entry: Optional[dict]) -> bool:
+    """``entry``'s stand-in box (the last seen one, after Widgets was turned back on) still answers:
+    until a probe confirms or replaces it, and at most WIDGETS_INTERIM_MAX_S after the toggle came
+    back on - a button that moved while it was off (alignment changed) must not linger. Every docked
+    tray-less bar is re-probed at the grace's end, well inside that bound."""
+    if entry is None or not entry.get("interim"):
+        return False
+    on_at = _widgets_flip.get("on_at")
+    return on_at is not None and time.monotonic() - on_at <= constants.timeouts.WIDGETS_INTERIM_MAX_S
+
+
+def _widgets_of(entry: Optional[dict], key: str, value: Any) -> Any:
+    """The Widgets ``key`` ("widgets" / "widgets_content") to answer for a bar: None while Widgets is
+    off; the last seen box for a live ``interim`` entry once it is on; else ``value`` as probed."""
+    if not _widgets_toggle_on():
+        return None
+    if value is None and _interim_live(entry):
+        return entry.get("last_" + key)
+    return value
+
+
+def taskbar_layout_interim(taskbar_hwnd: Optional[int]) -> bool:
+    """``taskbar_hwnd`` answers a stand-in Widgets box right now (see _store_landed_layout)."""
+    if not taskbar_hwnd:
+        return False
+    with _layout_lock:
+        return _interim_live(_layout_by_hwnd.get(int(taskbar_hwnd)))
+
+
+def taskbar_layout_aged(taskbar_hwnd: Optional[int]) -> bool:
+    """``taskbar_hwnd`` is out of the probe slot and its cached layout is older than
+    LAYOUT_CACHE_MAX_AGE_S (it answers its Widgets box from that old probe)."""
+    if not taskbar_hwnd:
+        return False
+    with _layout_lock:
+        if _layout_state["hwnd"] == int(taskbar_hwnd):
+            return False
+        entry = _layout_by_hwnd.get(int(taskbar_hwnd))
+        return entry is not None and time.monotonic() - entry.get("ts", 0.0) > LAYOUT_CACHE_MAX_AGE_S
+
+
+def _cached_layout_entry(taskbar_hwnd: Optional[int]) -> Optional[dict]:
+    """The landed layout of a bar that is NOT in the slot (caller holds _layout_lock), or None. Older
+    than LAYOUT_CACHE_MAX_AGE_S: the app-button rects are dropped, the Widgets box is kept. With the
+    Widgets button turned off in Settings (TaskbarDa = 0) its box is dropped at once."""
+    if not taskbar_hwnd:
+        return None
+    entry = _layout_by_hwnd.get(int(taskbar_hwnd))
+    if entry is None:
+        return None
+    if time.monotonic() - entry.get("ts", 0.0) > LAYOUT_CACHE_MAX_AGE_S:
+        entry = dict(entry, **{k: None for k in _APP_ENTRY_KEYS})
+    return dict(entry, widgets=_widgets_of(entry, "widgets", entry.get("widgets")),
+                widgets_content=_widgets_of(entry, "widgets_content", entry.get("widgets_content")))
+
+
+def _slot_widgets(key: str) -> Any:
+    """The slot bar's Widgets ``key``, by the same rules as a cached bar's (caller holds the lock)."""
+    return _widgets_of(_layout_by_hwnd.get(int(_layout_state["hwnd"] or 0)), key, _layout_state.get(key))
 
 
 def _query_taskbar_layout_blocking(taskbar_hwnd: int):
@@ -240,18 +517,27 @@ def _rect_union(a, b) -> Optional[Tuple[int, int, int, int]]:
 
 
 def _layout_worker() -> None:
-    """Probe until the newest request has been answered (requests made meanwhile re-run it)."""
+    """Probe until the newest request has been answered (requests made meanwhile re-run it), then
+    any background probes (request_background_layout_probe)."""
     while True:
         with _layout_lock:
-            gen, hwnd = _layout_state["gen"], _layout_state["hwnd"]
-            if not _layout_state["pending"]:
+            if _layout_state["pending"]:
+                gen, hwnd, background = _layout_state["gen"], _layout_state["hwnd"], False
+                _layout_state["probing"] = gen          # this request's probe has started
+            elif _layout_background:
+                gen, hwnd, background = None, _layout_background.pop(0), True
+            else:
                 _layout_state["running"] = False
                 return
+        probe_start = time.monotonic()
         bar_before = _taskbar_window_rect(hwnd)
         result = _query_taskbar_layout_blocking(hwnd)
         bar = _rect_union(bar_before, _taskbar_window_rect(hwnd))   # an auto-hide bar may slide meanwhile
-        overflow = None
-        if isinstance(result, tuple) and len(result) == 5:
+        overflow = content = None
+        if isinstance(result, tuple) and len(result) == 6:
+            apps, widgets, group, overflow, tray, content = result
+            _remember_probed_tray(hwnd, tray)
+        elif isinstance(result, tuple) and len(result) == 5:
             apps, widgets, group, overflow, tray = result
             _remember_probed_tray(hwnd, tray)
         elif isinstance(result, tuple) and len(result) == 4:
@@ -262,15 +548,38 @@ def _layout_worker() -> None:
             (apps, widgets), group = result, None
         else:
             apps = widgets = group = None
+        entry = dict(apps=valid_rect(apps), widgets=valid_rect(widgets), group=valid_rect(group),
+                     overflow=valid_rect(overflow), widgets_content=valid_rect(content), bar=bar,
+                     # From ONE window rect, not the union: an auto-hide bar sliding during the probe
+                     # keeps its thickness, while the union grows (taskbar_layout_matches_bar).
+                     bar_shape=_bar_shape(bar_before or bar), probe_start=probe_start)
         with _layout_lock:
-            if _layout_state["gen"] == gen and _layout_state["pending"]:
-                _layout_state.update(apps=valid_rect(apps), widgets=valid_rect(widgets),
-                                     group=valid_rect(group), overflow=valid_rect(overflow),
-                                     bar=bar, pending=False, done=True,
-                                     landed=_layout_state.get("landed", 0) + 1)
+            if background:
+                _layout_superseded.pop(int(hwnd), None)
+                if _layout_state["hwnd"] != int(hwnd):
+                    _store_landed_layout(hwnd, entry)
+                elif _layout_state["done"] and not _layout_state["pending"]:
+                    # The slot moved to this bar meanwhile and has nothing newer in flight.
+                    _layout_state.update(entry)
+                    _store_landed_layout(hwnd, entry)
+                logger.debug("Taskbar layout background probe (HWND %s): apps=%s widgets=%s",
+                             hwnd, apps, widgets)
+                # A slot request made while this background probe ran has waited for it: its timeout
+                # counts from now, when its own probe starts - unless the background probe itself
+                # outlasted the timeout (a hung Explorer: the slot request then times out as before).
+                now = time.monotonic()
+                if (_layout_state["pending"] and _layout_state["started"] >= probe_start
+                        and now - probe_start <= LAYOUT_PROBE_TIMEOUT_S):
+                    _layout_state["started"] = now
+            elif _layout_state["gen"] == gen and _layout_state["pending"]:
+                _layout_state.update(entry, pending=False, done=True)
+                _store_landed_layout(hwnd, entry)
                 _layout_landed.notify_all()
                 logger.debug("Taskbar layout probe: apps=%s widgets=%s", apps, widgets)
-            # else: superseded (loop re-runs for the newer request) or timed out (loop exits)
+            elif _layout_state["hwnd"] != int(hwnd):
+                # Superseded by ANOTHER bar's request: still this bar's layout, from just now.
+                _store_landed_layout(hwnd, entry)
+            # else: superseded by a newer request for the same bar (loop re-runs it) or timed out
 
 
 def request_taskbar_layout_probe(taskbar_hwnd: Optional[int], keep_last: bool = False) -> None:
@@ -284,11 +593,36 @@ def request_taskbar_layout_probe(taskbar_hwnd: Optional[int], keep_last: bool = 
     if not taskbar_hwnd:
         return
     with _layout_lock:
+        h = int(taskbar_hwnd)
+        old = int(_layout_state["hwnd"] or 0)
+        if (old and old != h and _layout_state["pending"]
+                and _layout_state.get("probing") != _layout_state["gen"] and old not in _layout_background):
+            # Another bar's request whose probe never started is superseded: probe that bar in the
+            # background instead of dropping it (#473 VM: on a bottom -> right change every widget and
+            # mirror asks in the same tick, and the DISPLAY2 mirror's probe was lost - it sat on the
+            # weather button until the next 30 s refresh).
+            _layout_background.append(old)
+            # Its caller (the #24 yield, the side-bar watcher) is still polling: that bar reads
+            # "pending" until the background probe lands (its landed count then moves - a fresh
+            # result) or the request's own timeout runs out.
+            _layout_superseded[old] = _layout_state["started"]
+        _layout_superseded.pop(h, None)           # asked for again: the slot answers it now
         _layout_state["gen"] += 1
-        same = _layout_state["hwnd"] == int(taskbar_hwnd) and _layout_state["done"]
+        if h in _layout_background:
+            _layout_background.remove(h)          # the slot probes it now
+        same = _layout_state["hwnd"] == h and _layout_state["done"]
+        cached = _cached_layout_entry(h) if _layout_state["hwnd"] != h else None
         if keep_last and same:
             _layout_state.update(pending=True, started=time.monotonic())
+        elif keep_last and cached is not None:
+            # A re-check of a bar whose result another bar's probe moved out of the slot (#373): its
+            # own last result (not older than LAYOUT_CACHE_MAX_AGE_S) keeps answering until this one
+            # lands, as for a bar still in the slot. It is NOT a landing: the per-bar landed count
+            # (taskbar_layout_landed_count) moves only when this request's own probe lands.
+            _layout_state.update({k: cached.get(k) for k in _LAYOUT_ENTRY_KEYS},
+                                 hwnd=h, pending=True, done=True, started=time.monotonic())
         else:
+            _layout_by_hwnd.pop(h, None)
             _layout_state.update(hwnd=int(taskbar_hwnd), apps=None, widgets=None, group=None,
                                  overflow=None, bar=None, pending=True, done=False,
                                  started=time.monotonic())
@@ -303,6 +637,37 @@ def request_taskbar_layout_probe(taskbar_hwnd: Optional[int], keep_last: bool = 
         _start_layout_worker()
 
 
+def request_background_layout_probe(taskbar_hwnd: Optional[int]) -> None:
+    """Refresh ``taskbar_hwnd``'s layout (Widgets button, clock) WITHOUT taking the one-taskbar slot
+    (#373): for a top/bottom bar with no TrayNotifyWnd - a Win11 secondary taskbar, docked to by the
+    main widget on a preferred monitor or by a "Show on all taskbars" mirror. The result lands in the
+    per-HWND cache (and _probed_tray) once the slot has nothing pending: the slot's owner (a side bar's
+    placement, the #24 yield) is never superseded and its bar's landed count never moves for another
+    bar. A slot request made while a background probe is running waits for that one UIA call only;
+    its timeout then counts from when its own probe starts (see _layout_worker).
+
+    When the slot already holds this bar, a keep_last re-check of it instead (nothing if one is in
+    flight). Non-blocking; a bar already queued is not queued twice."""
+    if not taskbar_hwnd:
+        return
+    h = int(taskbar_hwnd)
+    start = False
+    with _layout_lock:
+        in_slot = _layout_state["hwnd"] == h
+        if in_slot and _layout_state["pending"]:
+            return
+        if not in_slot:
+            if h not in _layout_background:
+                _layout_background.append(h)
+            start = not _layout_state["running"]
+            _layout_state["running"] = True
+    if in_slot:
+        request_taskbar_layout_probe(h, keep_last=True)
+        return
+    if start:
+        _start_layout_worker()
+
+
 def _start_layout_worker() -> None:
     threading.Thread(target=_layout_worker, name="nst-taskbar-layout-uia", daemon=True).start()
 
@@ -313,8 +678,20 @@ def taskbar_layout_snapshot(taskbar_hwnd: Optional[int]):
     stale rect yet be marked final). Rects are None until a probe for this taskbar has landed;
     ``pending`` is True while a requested probe is in flight and not yet timed out."""
     with _layout_lock:
-        if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd):
+        if not taskbar_hwnd:
             return None, None, False
+        if _layout_state["hwnd"] != int(taskbar_hwnd):
+            pending = False
+            since = _layout_superseded.get(int(taskbar_hwnd))
+            if since is not None:
+                if time.monotonic() - since <= LAYOUT_PROBE_TIMEOUT_S:
+                    pending = True
+                else:
+                    _layout_superseded.pop(int(taskbar_hwnd), None)
+            cached = _cached_layout_entry(taskbar_hwnd)   # its own last result, if any (#373)
+            if cached is None:
+                return None, None, pending
+            return cached["apps"], cached["widgets"], pending
         if _layout_state["pending"] and time.monotonic() - _layout_state["started"] > LAYOUT_PROBE_TIMEOUT_S:
             if _layout_state["done"]:   # a keep_last re-check: the last result stays
                 logger.info("Taskbar layout re-check timed out after %.0f s; keeping the last layout.",
@@ -326,14 +703,32 @@ def taskbar_layout_snapshot(taskbar_hwnd: Optional[int]):
                 _layout_state.update(pending=False, done=True, apps=None, widgets=None, group=None,
                                      overflow=None)
         if _layout_state["done"]:
-            return _layout_state["apps"], _layout_state["widgets"], bool(_layout_state["pending"])
+            # A Widgets button turned off since the last probe is gone NOW, not at the next probe
+            # (#473 VM: the main widget took ~15 s to move back by the clock, mirrors ~1 s).
+            return (_layout_state["apps"], _slot_widgets("widgets"), bool(_layout_state["pending"]))
         return None, None, bool(_layout_state["pending"])
+
+
+def taskbar_layout_widgets_content(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
+    """The last probed Widgets button's icon + text extent (physical px) for ``taskbar_hwnd``, or None
+    (no probe landed, no button, nothing visible in it)."""
+    taskbar_layout_snapshot(taskbar_hwnd)   # applies the timeout rule
+    with _layout_lock:
+        if taskbar_hwnd and _layout_state["hwnd"] != int(taskbar_hwnd):
+            cached = _cached_layout_entry(taskbar_hwnd)
+            return cached.get("widgets_content") if cached is not None else None
+        if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
+            return None
+        return _slot_widgets("widgets_content")
 
 
 def taskbar_layout_overflow(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
     """The last probed "..." overflow button (physical px) for ``taskbar_hwnd``, or None."""
     taskbar_layout_snapshot(taskbar_hwnd)   # applies the timeout rule
     with _layout_lock:
+        if taskbar_hwnd and _layout_state["hwnd"] != int(taskbar_hwnd):
+            cached = _cached_layout_entry(taskbar_hwnd)
+            return cached.get("overflow") if cached is not None else None
         if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
             return None
         return _layout_state["overflow"]
@@ -389,6 +784,9 @@ def taskbar_layout_group(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int
     """The last probed contiguous Start-led button run (physical px) for ``taskbar_hwnd``, or None."""
     taskbar_layout_snapshot(taskbar_hwnd)   # applies the timeout rule
     with _layout_lock:
+        if taskbar_hwnd and _layout_state["hwnd"] != int(taskbar_hwnd):
+            cached = _cached_layout_entry(taskbar_hwnd)
+            return cached.get("group") if cached is not None else None
         if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
             return None
         return _layout_state["group"]
@@ -398,6 +796,9 @@ def taskbar_layout_bar(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, 
     """The taskbar window rect (physical px) read around the last landed probe, or None: what the
     probe's rects must fit in to be in the same coordinate space (``group_fits_bar``)."""
     with _layout_lock:
+        if taskbar_hwnd and _layout_state["hwnd"] != int(taskbar_hwnd):
+            cached = _cached_layout_entry(taskbar_hwnd)
+            return cached.get("bar") if cached is not None else None
         if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd) or not _layout_state["done"]:
             return None
         return _layout_state.get("bar")
@@ -414,13 +815,71 @@ def group_fits_bar(group_rect, bar_rect,
             and group[2] <= bar[2] + tolerance and group[3] <= bar[3] + tolerance)
 
 
-def taskbar_layout_landed_count(taskbar_hwnd: Optional[int]) -> int:
-    """How many probe results have landed (for ``taskbar_hwnd``; -1 for another taskbar): a caller
-    that notes it before a request knows its probe landed - rather than timed out - when it grows."""
+def _bar_shape(rect: Any) -> Optional[Tuple[bool, int]]:
+    """``(horizontal, thickness)`` of a taskbar window rect (physical px), or None."""
+    r = valid_rect(rect)
+    if r is None:
+        return None
+    w, h = r[2] - r[0], r[3] - r[1]
+    return (w > h, int(min(w, h)))
+
+
+def taskbar_layout_matches_bar(taskbar_hwnd: Optional[int], bar_rect: Any, is_primary: bool = False) -> bool:
+    """The layout known for ``taskbar_hwnd`` was probed on a bar of the same SHAPE as ``bar_rect`` (the
+    taskbar window now, physical px): the same orientation and, except on the primary, the same
+    thickness (within BAR_SHAPE_TOLERANCE_PX). False after a live Taskbar position change bottom ->
+    right (#473 VM): that layout's Widgets box / apps are another edge's. Never containment - an
+    auto-hide bar probed mid-slide, or a bar that grew (Small -> Default, a DPI change), still matches
+    on the primary, whose placement must not change; a tray-less bar re-probes on every dock change
+    anyway. True when either is unknown."""
+    cur = _bar_shape(bar_rect)
+    if not taskbar_hwnd or cur is None:
+        return True
     with _layout_lock:
-        if not taskbar_hwnd or _layout_state["hwnd"] != int(taskbar_hwnd):
+        if _layout_state["hwnd"] == int(taskbar_hwnd):
+            entry = _layout_state if _layout_state["done"] else None
+        else:
+            entry = _layout_by_hwnd.get(int(taskbar_hwnd))
+        probed = None
+        if entry is not None:
+            probed = entry.get("bar_shape") or _bar_shape(entry.get("bar"))
+    if probed is None:
+        return True
+    if probed[0] != cur[0]:
+        return False                       # another orientation: another edge's layout
+    if is_primary:
+        return True
+    return abs(probed[1] - cur[1]) <= BAR_SHAPE_TOLERANCE_PX
+
+
+# Thickness slack (physical px) for taskbar_layout_matches_bar: rounding of fractional-DPI bar sizes.
+BAR_SHAPE_TOLERANCE_PX = 2
+
+
+def taskbar_layout_landed_count(taskbar_hwnd: Optional[int]) -> int:
+    """The landing number of ``taskbar_hwnd``'s last FRESH probe result (0 when none, or none kept): a
+    caller that notes it before a request knows its probe landed - rather than timed out - when it
+    grows. Per bar (#373 review): it used to be the slot's count, -1 for a bar out of the slot, and a
+    keep_last re-check that reseeded the slot from the per-HWND cache then read a timed-out probe as a
+    landing of that (possibly long-stale) cached layout. The numbers come from one process-wide
+    sequence, so a landing always moves its bar's count past any value read before."""
+    with _layout_lock:
+        if not taskbar_hwnd:
             return -1
-        return int(_layout_state.get("landed", 0))
+        entry = _layout_by_hwnd.get(int(taskbar_hwnd))
+        return int(entry.get("seq", 0)) if entry is not None else 0
+
+
+def taskbar_layout_landed_since(taskbar_hwnd: Optional[int], started_at: float) -> bool:
+    """A FRESH result for ``taskbar_hwnd`` landed whose probe began at or after ``started_at``
+    (time.monotonic()): a probe already running when the caller asked for one does not count. For the
+    #24 yield of a "Show on all taskbars" copy, whose background probes have no request generation."""
+    with _layout_lock:
+        if not taskbar_hwnd:
+            return False
+        entry = _layout_by_hwnd.get(int(taskbar_hwnd))
+        began = entry.get("probe_start") if entry is not None else None
+        return isinstance(began, (int, float)) and began >= started_at
 
 
 def find_classic_layout_hwnds(taskbar_hwnd: int) -> Tuple[int, int, int]:
@@ -479,7 +938,9 @@ def get_apps_extent(taskbar_hwnd: Optional[int]) -> Tuple[Optional[Tuple[int, in
 # alignment it sits far-left (centered) or just left of the tray (edge-aligned - the case that can
 # overlap the widget). Cached + refreshed on a background thread; callers get the last-known rect
 # instantly and never block. Fail-safe: any error / Widgets disabled / future-build rename -> None.
-# Used only for the one-time #200 nudge (never to auto-move).
+# Feeds the one-time #200 nudge, and - when the layout probe's full box is not there - the horizontal
+# default spot's step left of a Widgets button beside the tray (rc.3). The cache belongs to ONE taskbar
+# HWND: after an Explorer restart the old bar's rect is never answered for the new bar.
 #
 # This used to shell out to a hidden powershell.exe on every 30 s refresh, for the whole session
 # (2.2.0-beta.1 lifecycle review). Now: zero process spawns; the probe is skipped when the Widgets
@@ -487,7 +948,7 @@ def get_apps_extent(taskbar_hwnd: Optional[int]) -> Tuple[Optional[Tuple[int, in
 # the nudge it feeds has been shown (set_widgets_probe_enabled).
 _WIDGETS_CACHE_TTL_S = 30.0
 _widgets_lock = threading.Lock()
-_widgets_state: dict = {"rect": None, "ts": 0.0, "querying": False}
+_widgets_state: dict = {"rect": None, "ts": 0.0, "querying": False, "hwnd": 0}
 _widgets_probe_enabled = True
 _ADVANCED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
 
@@ -514,6 +975,10 @@ def _widgets_button_enabled() -> bool:
         return True
 
 
+# Public name: the app-button yield re-probes the layout when the Widgets toggle flips (rc.3).
+widgets_button_enabled = _widgets_button_enabled
+
+
 def _query_widgets_rect_blocking(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
     """The Widgets button's physical-pixel content rect, or None. ``taskbar_hwnd`` must be the
     Shell_TrayWnd root (the WidgetsButton is a descendant of the taskbar frame, NOT of TrayNotifyWnd).
@@ -529,18 +994,20 @@ def _query_widgets_rect_blocking(taskbar_hwnd: int) -> Optional[Tuple[int, int, 
 
 
 def rect_overlaps_x(left: float, right: float, widgets_rect: Optional[Tuple[int, int, int, int]],
-                    dpi_scale: float) -> bool:
+                    dpi_scale: float, origin: float = 0.0) -> bool:
     """
     True if the horizontal span ``[left, right]`` (logical px, e.g. the widget's own geometry) overlaps
     the Widgets/weather element's x-extent (``widgets_rect`` is physical px; converted via ``dpi_scale``).
 
     Used to decide the one-time #200 nudge. ``widgets_rect`` is the visible content extent (dead space
     excluded), so a widget that merely grazes the element's padding is correctly NOT counted as overlap.
+    ``origin`` is the screen's Qt x origin (screen_origin): 0 on the primary, where this is rect / dpi;
+    a secondary's physical rect converts around its own origin (physical_to_logical, #373).
     """
     if not widgets_rect or dpi_scale <= 0:
         return False
-    r_left = widgets_rect[0] / dpi_scale
-    r_right = widgets_rect[2] / dpi_scale
+    r_left = physical_to_logical(widgets_rect[0], origin, dpi_scale)
+    r_right = physical_to_logical(widgets_rect[2], origin, dpi_scale)
     return left < r_right and right > r_left
 
 
@@ -556,13 +1023,18 @@ def get_widgets_rect(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, in
     """
     if not taskbar_hwnd:
         return None
+    if not _widgets_toggle_on():
+        return None          # turned off: no button, whatever the 30 s cache still holds (#473 VM)
     now = time.monotonic()
     start_refresh = False
     with _widgets_lock:
         if not _widgets_probe_enabled:
             return None
-        rect = _widgets_state["rect"]
-        stale = (now - _widgets_state["ts"]) > _WIDGETS_CACHE_TTL_S
+        same_bar = _widgets_state.get("hwnd", 0) == int(taskbar_hwnd)
+        # Another taskbar's rect (an Explorer restart brings a new HWND, often with a new layout -
+        # rc.3 VM: the left-aligned bar's rect outlived a switch to centred) is no answer for this one.
+        rect = _widgets_state["rect"] if same_bar else None
+        stale = not same_bar or (now - _widgets_state["ts"]) > _WIDGETS_CACHE_TTL_S
         if stale and not _widgets_state["querying"]:
             _widgets_state["querying"] = True
             start_refresh = True
@@ -573,6 +1045,7 @@ def get_widgets_rect(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, in
                 _widgets_state["rect"] = result
                 _widgets_state["ts"] = time.monotonic()
                 _widgets_state["querying"] = False
+                _widgets_state["hwnd"] = int(taskbar_hwnd)
         threading.Thread(target=_refresh, name="nst-widgets-uia", daemon=True).start()
     return rect
 
@@ -606,7 +1079,8 @@ class TaskbarInfo:
     apps_extent: Optional[Tuple[int, int, int, int]] = None
     apps_extent_source: Optional[str] = None
     # The Widgets button's full rect from the same layout probe (independent of the #200 nudge's
-    # widgets_rect, which stops probing once the nudge has been shown).
+    # widgets_rect, which stops probing once the nudge has been shown). Side-bar placement, and on a
+    # top/bottom bar the default spot's step left of a Widgets button beside the tray.
     widgets_extent: Optional[Tuple[int, int, int, int]] = None
     # Physical-pixel union of the classic toolbars (Desktop / Links / ...) between the task list and
     # the tray, or None - always None on Windows 11 (find_toolbar_bands_rect, #324).
@@ -644,40 +1118,33 @@ class TaskbarInfo:
                 if screen.geometry() == stored_geo_rect:
                     return screen
 
-            # Layer 2: Geometric intersection (good for most edge cases)
-            tb_qrect_phys = QRect(self.rect[0], self.rect[1], self.rect[2] - self.rect[0], self.rect[3] - self.rect[1])
+            # Layer 2: the taskbar window's monitor by device name (exact; no coordinate maths).
+            winapi_screen_name = monitor_device_name_for_hwnd(self.hwnd)
+            if winapi_screen_name:
+                for screen in all_screens:
+                    if screen.name() == winapi_screen_name:
+                        logger.warning("Used name-based fallback to get screen for HWND %s", self.hwnd)
+                        return screen
+
+            # Layer 3: largest intersection with each screen's PHYSICAL rect (qt_screen_native_rect:
+            # Qt keeps each screen's native origin and scales only the size - #373).
+            tb_rect = valid_rect(tuple(self.rect))
             best_match_screen: Optional[QScreen] = None
             max_overlap: int = 0
             for screen in all_screens:
-                geo_log = screen.geometry()
-                dpi = screen.devicePixelRatio()
-                geo_phys = QRect(int(geo_log.left() * dpi), int(geo_log.top() * dpi), int(geo_log.width() * dpi), int(geo_log.height() * dpi))
-                overlap_rect = geo_phys.intersected(tb_qrect_phys)
-                if overlap_rect.width() * overlap_rect.height() > max_overlap:
-                    max_overlap = overlap_rect.width() * overlap_rect.height()
+                phys = qt_screen_native_rect(screen) if tb_rect is not None else None
+                if phys is None:
+                    continue
+                w = min(tb_rect[2], phys[2]) - max(tb_rect[0], phys[0])
+                h = min(tb_rect[3], phys[3]) - max(tb_rect[1], phys[1])
+                if w > 0 and h > 0 and w * h > max_overlap:
+                    max_overlap = w * h
                     best_match_screen = screen
-            
+
             if best_match_screen:
                 logger.warning("Used intersection-based fallback to get screen for HWND %s", self.hwnd)
                 return best_match_screen
 
-            # Layer 3: Direct WinAPI to Qt name matching (most robust fallback)
-            try:
-                # Get the HMONITOR directly from the taskbar's HWND
-                tb_monitor_handle = win32api.MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST)
-                if tb_monitor_handle:
-                    # Get the monitor's device name (e.g., "\\.\DISPLAY1") from the WinAPI
-                    monitor_info = win32api.GetMonitorInfo(tb_monitor_handle)
-                    winapi_screen_name = monitor_info.get('Device', '')
-                    if winapi_screen_name:
-                        # Find the QScreen that has the exact same device name
-                        for screen in all_screens:
-                            if screen.name() == winapi_screen_name:
-                                logger.warning("Used robust name-based fallback to get screen for HWND %s", self.hwnd)
-                                return screen
-            except Exception as e:
-                logger.error("Error during name-based screen matching fallback: %s", e)
-                
             logger.warning("Could not find any matching QScreen for taskbar HWND %s. Falling back to primary screen.", self.hwnd)
             return QApplication.primaryScreen()
         except Exception as e:
@@ -815,10 +1282,12 @@ class TaskbarInfo:
             screen_rect_log: QRect = screen.geometry()
             dpi_scale = self.dpi_scale
 
-            tb_left_log = self.rect[0] / dpi_scale
-            tb_top_log = self.rect[1] / dpi_scale
-            tb_right_log = self.rect[2] / dpi_scale
-            tb_bottom_log = self.rect[3] / dpi_scale
+            # Around the screen's Qt origin (physical_to_logical, #373): rect / scale on the primary.
+            x0, y0 = screen_rect_log.left(), screen_rect_log.top()
+            tb_left_log = physical_to_logical(self.rect[0], x0, dpi_scale)
+            tb_top_log = physical_to_logical(self.rect[1], y0, dpi_scale)
+            tb_right_log = physical_to_logical(self.rect[2], x0, dpi_scale)
+            tb_bottom_log = physical_to_logical(self.rect[3], y0, dpi_scale)
 
             tb_width_log = tb_right_log - tb_left_log
             tb_height_log = tb_bottom_log - tb_top_log
@@ -967,55 +1436,6 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
     primary_screen = QApplication.primaryScreen()
     all_screens = QApplication.screens()
 
-    def find_screen_for_taskbar(tb_rect_phys: Tuple[int, int, int, int]) -> Optional[QScreen]:
-        """
-        Finds the QScreen that a taskbar belongs to using a robust, multi-layered
-        geometric heuristic.
-        """
-        # --- Layer 1: Find the screen with the largest geometric intersection (most reliable) ---
-        best_match_screen: Optional[QScreen] = None
-        max_overlap: int = -1
-
-        try:
-            tb_qrect_phys = QRect(tb_rect_phys[0], tb_rect_phys[1],
-                                  tb_rect_phys[2] - tb_rect_phys[0], tb_rect_phys[3] - tb_rect_phys[1])
-
-            for screen in all_screens:
-                geo_log = screen.geometry()
-                dpi = screen.devicePixelRatio()
-                geo_phys = QRect(int(round(geo_log.left() * dpi)), int(round(geo_log.top() * dpi)),
-                                 int(round(geo_log.width() * dpi)), int(round(geo_log.height() * dpi)))
-
-                overlap_rect = geo_phys.intersected(tb_qrect_phys)
-                overlap_area = overlap_rect.width() * overlap_rect.height()
-
-                if overlap_area > max_overlap:
-                    max_overlap = overlap_area
-                    best_match_screen = screen
-            
-            if best_match_screen:
-                logger.debug("Found best screen match for taskbar via intersection: %s",
-                             stable_pseudonym(best_match_screen.name(), "DISPLAY"))
-                return best_match_screen
-        except Exception as e:
-            logger.error(f"Error during screen intersection check: {e}. Proceeding to fallbacks.")
-
-        # --- Layer 2: Fallback to a point-based check ---
-        try:
-            point = QPoint(tb_rect_phys[0], tb_rect_phys[1])
-            screen_at_point = QApplication.screenAt(point)
-            if screen_at_point:
-                logger.warning("Used point-based fallback to find screen: %s",
-                               stable_pseudonym(screen_at_point.name(), "DISPLAY"))
-                return screen_at_point
-        except Exception as e:
-            logger.error(f"Error during point-based screen check: {e}. Proceeding to final fallback.")
-
-        # --- Layer 3: Final safety net - return the primary screen ---
-        logger.warning("All screen detection methods failed. Returning primary screen as a final fallback.")
-        return primary_screen
-
-
     def process_taskbar(hwnd: int) -> Optional[TaskbarInfo]:
         """
         Processes a single taskbar window and constructs a TaskbarInfo object.
@@ -1046,8 +1466,12 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
             tray_hwnd = win32gui.FindWindowEx(hwnd, 0, "TrayNotifyWnd", None) or None
             tasklist_rect_phys = find_tasklist_rect(hwnd)
             
-            # Find associated QScreen using our robust geometric method FIRST.
-            screen = find_screen_for_taskbar(rect_phys)
+            # The taskbar's QScreen: its monitor's device name first, else the physical overlap (#373).
+            screen = find_screen_for_taskbar(rect_phys, monitor_device_name_for_hwnd(hwnd),
+                                             all_screens, primary_screen)
+            if screen is not None:
+                logger.debug("Taskbar HWND %s is on screen %s", hwnd,
+                             stable_pseudonym(screen.name(), "DISPLAY"))
             if not screen:
                 logger.error(f"Robust screen detection failed for HWND {hwnd}. This should not happen.")
                 return None
@@ -1065,6 +1489,21 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
             screen_geo = screen.geometry()
             # One snapshot: the apps span and the Widgets box always come from the same probe.
             apps_extent, apps_source, widgets_extent, _pending = taskbar_layout_for(hwnd)
+            if not taskbar_layout_matches_bar(hwnd, rect_phys, is_primary=is_primary_qt):
+                # Probed on another edge / thickness of this bar (a live Taskbar position change): that
+                # layout's boxes are not this one's. Unknown until the new dock's probe lands - the
+                # dock change requests it at once (PositionManager._refresh_trayless_bar_layout).
+                apps_extent = find_apps_rect(hwnd)
+                apps_source = "hwnd" if apps_extent is not None else None
+                widgets_extent = None
+            widgets_rect = get_widgets_rect(hwnd) if is_primary_qt else None
+            if is_primary_qt and widgets_extent is not None and taskbar_layout_aged(hwnd):
+                # The aged-box rule (keep the last Widgets box) is for the tray-less bars, which the
+                # background refresh re-probes every 30 s. The primary gets no such refresh: an old
+                # box answers "unknown" here, as before #373, so the #200 probe's fresher rect
+                # (widgets_rect, 30 s) wins in widgets_button_span_x - longer weather text can't put
+                # the widget on it (#473 review).
+                widgets_extent = None
             return TaskbarInfo(
                 hwnd=hwnd,
                 tray_hwnd=tray_hwnd,
@@ -1076,9 +1515,11 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
                 dpi_scale=dpi_scale,
                 is_primary=is_primary_qt,
                 height=logical_height,
-                # Only the primary taskbar hosts a Widgets button; cached + non-blocking. Pass the
+                # The #200 nudge's probe: primary only (its cache holds ONE bar - asking for each bar
+                # would make it thrash). A secondary bar's Widgets box is ``widgets_extent`` below,
+                # from the per-HWND layout cache (#373). Cached + non-blocking. Pass the
                 # Shell_TrayWnd root (`hwnd`), not tray_hwnd - the button is under the taskbar frame.
-                widgets_rect=get_widgets_rect(hwnd) if is_primary_qt else None,
+                widgets_rect=widgets_rect,
                 monitor_rect=tuple(monitor_info["Monitor"]) if monitor_info.get("Monitor") else None,
                 apps_extent=apps_extent,
                 apps_extent_source=apps_source,
@@ -1381,15 +1822,34 @@ def is_rdp_client_covering_monitor(hwnd: int, class_name: str,
         return False
 
 
+def is_window_on_screen(hwnd: int) -> bool:
+    """
+    True when ``hwnd`` is a live window that is actually drawn: it exists, is visible, and is not
+    DWM-cloaked. A foreground reading that fails this (NULL during an activation hand-off, a window
+    already destroyed, an invisible or cloaked monitor-sized helper) says nothing about whether a
+    fullscreen app still covers the taskbar, so the fullscreen gate treats it as no information
+    rather than as "not covered" (#503).
+    """
+    try:
+        if not hwnd or not win32gui.IsWindow(hwnd) or not win32gui.IsWindowVisible(hwnd):
+            return False
+    except Exception:
+        return False
+    return not dwm.is_cloaked(int(hwnd))
+
+
 def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo], hwnd_to_check: int) -> bool:
     """
     Checks if the taskbar is obstructed by a specific window.
-    
+
     The goal is simple: widget should be visible whenever the taskbar is visible.
     Only TRUE fullscreen windows (covering the entire monitor) should hide the widget.
+    An invisible or DWM-cloaked window covers nothing, whatever its rect (#503).
     """
     try:
         if not hwnd_to_check or not win32gui.IsWindow(hwnd_to_check) or not taskbar_info or not taskbar_info.hwnd:
+            return False
+        if not is_window_on_screen(hwnd_to_check):
             return False
 
         # Ignore our own windows (e.g., context menu popups)
@@ -1529,7 +1989,7 @@ def vertical_taskbar_strip(taskbar_info: TaskbarInfo, edge: constants.TaskbarEdg
         # Another appbar shares the edge: the reserved band is wider than the taskbar, and the
         # taskbar may not be the part touching the screen edge - take x from its window. Safe here:
         # a bar that reserves work area is not auto-hiding, so the rect doesn't slide (#135).
-        x_origin = rect[0] / scale
+        x_origin = physical_to_logical(rect[0], full_geom.left(), scale)   # around Qt's screen origin
     elif edge == constants.TaskbarEdge.RIGHT:
         x_origin = (full_geom.right() + 1) - thickness
     else:
@@ -1538,13 +1998,14 @@ def vertical_taskbar_strip(taskbar_info: TaskbarInfo, edge: constants.TaskbarEdg
 
 
 def rect_overlaps_y(top: float, bottom: float, widgets_rect: Optional[Tuple[int, int, int, int]],
-                    dpi_scale: float) -> bool:
+                    dpi_scale: float, origin: float = 0.0) -> bool:
     """The side-bar twin of ``rect_overlaps_x``: True if ``[top, bottom]`` (logical px) overlaps the
     Widgets/weather element's y-extent. On a LEFT/RIGHT taskbar the widget and the Widgets button
     share the bar's whole width, so comparing x always "overlapped" (#200 nudge false positive)."""
     if not widgets_rect or dpi_scale <= 0:
         return False
-    return top < widgets_rect[3] / dpi_scale and bottom > widgets_rect[1] / dpi_scale
+    return (top < physical_to_logical(widgets_rect[3], origin, dpi_scale)
+            and bottom > physical_to_logical(widgets_rect[1], origin, dpi_scale))
 
 
 def dock_signature(taskbar_info: Optional[TaskbarInfo]) -> Optional[tuple]:

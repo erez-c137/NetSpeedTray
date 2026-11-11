@@ -5,7 +5,7 @@ The Mini Graph section moved to the Widget page in the 2.2 IA pass (pages/mini_g
 """
 from typing import Dict, Any, Callable, List
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtGui import QFont, QFontDatabase
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit
 
 from netspeedtray import constants
@@ -211,7 +211,7 @@ class AppearancePage(QWidget):
     def load_settings(self, config: Dict[str, Any]):
         # Main Font
         fam = config.get("font_family", constants.config.defaults.DEFAULT_FONT_FAMILY)
-        self.font_family_label.setText(fam)
+        style_utils.set_text_in_face(self.font_family_label, fam)   # a font's own (maybe CJK) name
         self.current_font.setFamily(_qt_family(fam))
         self.font_size.setValue(int(config.get("font_size", constants.config.defaults.DEFAULT_FONT_SIZE)))
         self._update_weight_options(fam)
@@ -234,7 +234,7 @@ class AppearancePage(QWidget):
         # Arrow Fonts
         self.use_separate_arrow_font.setChecked(bool(config.get("use_separate_arrow_font", False)))
         a_fam = config.get("arrow_font_family", fam) # Fallback to main
-        self.arrow_font_family_label.setText(a_fam)
+        style_utils.set_text_in_face(self.arrow_font_family_label, a_fam)   # a font's own (maybe CJK) name
         self.current_arrow_font.setFamily(_qt_family(a_fam))
         
         main_size = int(config.get("font_size", constants.config.defaults.DEFAULT_FONT_SIZE))
@@ -276,15 +276,38 @@ class AppearancePage(QWidget):
 
     def set_font_family(self, font: QFont):
         fam = font.family()
-        self.font_family_label.setText(fam)
+        style_utils.set_text_in_face(self.font_family_label, fam)   # a font's own (maybe CJK) name
         self.current_font.setFamily(fam)
         self._update_weight_options(fam)
         self._set_slider_weight(self.current_font.weight())
         self.on_change()
 
+    def current_weight(self) -> int:
+        """The weight the slider shows (what Save stores)."""
+        idx = self.font_weight.value()
+        if 0 <= idx < len(self.allowed_font_weights):
+            return self.allowed_font_weights[idx]
+        return int(constants.fonts.WEIGHT_NORMAL)
+
+    def apply_font_choice(self, family: str, size: int, weight=None) -> None:
+        """The font picker's result for the main font: family, size and (when it had one) weight."""
+        style_utils.set_text_in_face(self.font_family_label, family)   # a font's own (maybe CJK) name
+        self.current_font.setFamily(family)
+        self._update_weight_options(family)
+        self._set_slider_weight(weight if weight else self.current_font.weight())
+        self.font_size.setValue(int(size))
+        self.on_change()
+
+    def apply_arrow_font_choice(self, family: str, size: int) -> None:
+        """The font picker's result for the arrow font (its weight is fixed)."""
+        style_utils.set_text_in_face(self.arrow_font_family_label, family)   # a font's own (maybe CJK) name
+        self.current_arrow_font.setFamily(family)
+        self.arrow_font_size.setValue(int(size))
+        self.on_change()
+
     def set_arrow_font_family(self, font: QFont):
         fam = font.family()
-        self.arrow_font_family_label.setText(fam)
+        style_utils.set_text_in_face(self.arrow_font_family_label, fam)   # a font's own (maybe CJK) name
         self.current_arrow_font.setFamily(fam)
         self.on_change()
 
@@ -320,31 +343,9 @@ class AppearancePage(QWidget):
         self.on_change()
 
     def _update_weight_options(self, family: str):
-        family = _qt_family(family)
-        styles = QFontDatabase.styles(family)
-        weights = []
-        name_map = {}
-        for s in styles:
-            w = QFontDatabase.weight(family, s)
-            if w <= 0: continue
-            
-            if w not in weights:
-                weights.append(w)
-            
-            key_name = constants.fonts.WEIGHT_MAP.get(w)
-            if key_name:
-                display_name = getattr(self.i18n, key_name, key_name)
-            else:
-                display_name = s
-                
-            current_name = name_map.get(w, "")
-            is_new_better = not current_name or ("italic" in current_name.lower() and "italic" not in display_name.lower())
-            
-            if is_new_better:
-                name_map[w] = display_name
-                
-        weights.sort()
-        
+        # The styles of THIS family only - never every installed font's (memory plan 2.2).
+        from netspeedtray.views.settings.font_picker import family_weights
+        weights, name_map = family_weights(_qt_family(family), self.i18n)
         self.allowed_font_weights = weights
         self.font_weight_name_map = name_map
         self.font_weight.setRange(0, max(0, len(weights) - 1))

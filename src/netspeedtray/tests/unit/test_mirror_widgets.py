@@ -323,6 +323,68 @@ class TestSettingOff:
         assert order == ["mirrors"] and w._mirrors is None
 
 
+def test_foreground_change_tells_every_mirror_after_the_tick():
+    """rc.5 #373: a new foreground window may add a button to any bar - each mirror's yield measures
+    its own bar (after the tick, which attached it). A dead mirror is skipped."""
+    order, told = [], []
+
+    class _Fg(_FakeMirror):
+        def refresh(self, tb, fg):
+            order.append(("refresh", self.screen_name))
+
+        def note_foreground_change(self):
+            order.append(("fg", self.screen_name))
+            told.append(self)
+
+    main = SimpleNamespace(docked_taskbar=lambda: (100, "PRIMARY"))
+    mgr = MirrorManager(main, taskbars_provider=lambda: [_tb(100, "PRIMARY", True), _tb(200, "B")],
+                        mirror_factory=_Fg, foreground_provider=lambda: 0, window_class=_classes)
+    mgr.tick()
+    order.clear()
+    mgr._on_foreground(55)
+    assert order == [("refresh", "B"), ("fg", "B")]
+    old = mgr.mirrors["B"]
+    old.dead = True                                     # the tick rebuilds it: only the new one is told
+    mgr._on_foreground(55)
+    assert mgr.mirrors["B"] is not old and told[-1] is mgr.mirrors["B"] and told.count(old) == 1
+    mgr.shutdown()
+
+
+def test_tick_judges_the_live_foreground_not_the_stored_hwnd():
+    """#503: the debounced foreground event's hwnd is 250 ms old (maybe closed). Mirrors are judged
+    against the live foreground; the passed one only when the live read fails."""
+    live = {"fg": 77}
+
+    def foreground():
+        if live["fg"] is None:
+            raise RuntimeError("GetForegroundWindow failed")
+        return live["fg"]
+    main = SimpleNamespace(docked_taskbar=lambda: (100, "PRIMARY"))
+    mgr = MirrorManager(main, taskbars_provider=lambda: [_tb(100, "PRIMARY", True), _tb(200, "B")],
+                        mirror_factory=_FakeMirror, foreground_provider=foreground, window_class=_classes)
+    mgr._on_foreground(0xDEAD)
+    assert mgr.mirrors["B"].refreshed[-1][1] == 77
+    live["fg"] = None
+    mgr.tick(0xBEEF)
+    assert mgr.mirrors["B"].refreshed[-1][1] == 0xBEEF
+    mgr.shutdown()
+
+
+def test_an_unconfirmed_mirror_exit_schedules_one_recheck():
+    """#503: a mirror waiting to confirm a fullscreen exit gets its second reading from a single-shot
+    re-tick FULLSCREEN_EXIT_CONFIRM_MS later, not the 1 s tick."""
+    class _Pending(_FakeMirror):
+        fs_recheck_wanted = True
+    main = SimpleNamespace(docked_taskbar=lambda: (100, "PRIMARY"))
+    mgr = MirrorManager(main, taskbars_provider=lambda: [_tb(100, "PRIMARY", True), _tb(200, "B")],
+                        mirror_factory=_Pending, foreground_provider=lambda: 0, window_class=_classes)
+    mgr.tick()
+    assert mgr._fs_recheck_timer.isActive()
+    assert mgr._fs_recheck_timer.interval() == constants.timeouts.FULLSCREEN_EXIT_CONFIRM_MS
+    mgr.shutdown()
+    assert not mgr._fs_recheck_timer.isActive()
+
+
 # --- 3. a mirror's refresh ------------------------------------------------------------------------
 
 def _refresh_host(keep_visible=False, visible=False, menu=False):
@@ -344,6 +406,7 @@ def per_monitor(monkeypatch):
     """Two monitors: a fullscreen window (hwnd 9) sits on the monitor of taskbar 200 only."""
     monkeypatch.setattr(mirror_mod, "is_taskbar_visible", lambda tb: tb.hwnd != 300)  # 300 auto-hidden
     monkeypatch.setattr(mirror_mod, "is_taskbar_obstructed", lambda tb, fg: fg == 9 and tb.hwnd == 200)
+    monkeypatch.setattr(mirror_mod, "is_window_on_screen", lambda h: bool(h))   # fake hwnds are "drawn"
 
     def no_bare_lookup(*a, **k):
         raise AssertionError("a mirror must never fetch a taskbar itself")
@@ -384,6 +447,24 @@ class TestMirrorRefresh:
         m.position_manager.ensure_topmost.assert_called_once()
         m.recover_if_buried.assert_called_once()
         assert m._tb is tb
+
+    def test_hidden_while_its_bars_app_buttons_reach_it(self, per_monitor):
+        """rc.5 #373: the yield is synced for THIS mirror's bar before the visibility gate, and a
+        yielded mirror hides there - never re-placed while hidden (as the main widget)."""
+        m = _refresh_host(visible=True)
+        m.position_manager.is_yielding_to_apps.return_value = True
+        tb = _tb(400, "C")
+        MirrorWidget.refresh(m, tb, 0)
+        m.position_manager.sync_app_overlap.assert_called_once_with(tb)
+        m.setVisible.assert_called_once_with(False)
+        m.position_manager.update_position.assert_not_called()
+
+    def test_shown_again_when_the_yield_ends(self, per_monitor):
+        m = _refresh_host(visible=False)
+        m.position_manager.is_yielding_to_apps.return_value = False
+        MirrorWidget.refresh(m, _tb(400, "C"), 0)
+        m.position_manager.sync_app_overlap.assert_called_once()
+        m.setVisible.assert_called_once_with(True)
 
     def test_skipped_while_the_shared_menu_is_open(self, per_monitor):
         m = _refresh_host(visible=True, menu=True)
@@ -799,15 +880,82 @@ class TestSideWatcherNeverPerMirror:
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
         assert side_bar_hooks.hooks == {"made": 0, "live": 0}
 
-    def test_mirror_never_attaches_the_app_button_yield(self, real_mirror):
-        """#438's #24 yield is the main widget's: a mirror's PositionManager is built with it inert,
-        so even asked to sync on its (horizontal) bar it never attaches, probes or hides."""
+    def test_mirror_runs_its_own_app_button_yield_on_its_bar(self, real_mirror, monkeypatch):
+        """rc.5 #373 (relu616): copies sat over the app buttons. A mirror's PositionManager runs the #24
+        yield as a COPY: attached to ITS bar, probing in the background (never the main widget's probe
+        slot), with no first-yield notice and no drop baseline."""
+        from netspeedtray.utils import taskbar_utils
+        slot, background = [], []
+        monkeypatch.setattr(taskbar_utils, "request_taskbar_layout_probe",
+                            lambda h, keep_last=False: slot.append(h))
+        monkeypatch.setattr(taskbar_utils, "request_background_layout_probe", lambda h: background.append(h))
+        m = real_mirror.mirror
+        pm = m.position_manager
+        assert pm._app_yield._enabled is True and pm._app_yield._background_probes is True
+        assert pm._app_yield._on_first_yield is None and pm._app_yield._on_persist_drop is None
+        MirrorWidget.refresh(m, real_mirror.tb, 0)
+        assert pm._app_yield.attached_hwnd == real_mirror.tb.hwnd
+        pm._app_yield._probe_timer.stop()
+        pm._app_yield._fire_probe()
+        pm._app_yield._poll_timer.stop()
+        assert background == [real_mirror.tb.hwnd] and real_mirror.tb.hwnd not in slot
+
+    def test_mirror_yield_obeys_the_setting_off(self, real_mirror):
+        real_mirror.main.config["hide_when_apps_cover"] = False
+        m = real_mirror.mirror
+        assert m.position_manager._app_yield._enabled is True    # it runs - the setting turns it off
+        MirrorWidget.refresh(m, real_mirror.tb, 0)
+        assert m.position_manager._app_yield.attached_hwnd == 0
+        assert not m.position_manager._app_yield._probe_timer.isActive()
+
+    def test_a_yield_flip_refreshes_the_mirror_from_its_cached_bar(self, real_mirror, monkeypatch):
+        m = real_mirror.mirror
+        calls = []
+        monkeypatch.setattr(m, "refresh", lambda tb, fg: calls.append(tb))
+        m.position_manager._app_yield_changed()          # what AppOverlapYield calls on a flip
+        assert m._yield_refresh_timer.isActive() and calls == []   # out of the probe's poll callback
+        m._yield_refresh_timer.stop()
+        m._refresh_after_yield_change()
+        assert calls == [real_mirror.tb]
+        m.dead = True
+        m._refresh_after_yield_change()
+        assert calls == [real_mirror.tb]
+
+    def test_a_retired_mirror_ignores_a_queued_yield_refresh(self, real_mirror, monkeypatch):
+        """Review L2: a yield flip queues a 0 ms refresh; the same pass destroys the mirror - the refresh
+        must not re-show it at its old spot from the stale bar."""
+        m = real_mirror.mirror
+        calls = []
+        monkeypatch.setattr(m, "refresh", lambda tb, fg: calls.append(tb))
+        m.position_manager._app_yield_changed()
+        m.retire()
+        assert not m._yield_refresh_timer.isActive()
+        m._refresh_after_yield_change()
+        assert calls == []
+
+    def test_destroy_retires_the_mirror_first(self):
+        order = []
+
+        class _R(_FakeMirror):
+            def retire(self):
+                order.append("retire")
+
+            def detach_owner(self):
+                order.append("detach")
+
+        main = SimpleNamespace(docked_taskbar=lambda: (100, "PRIMARY"))
+        mgr = MirrorManager(main, taskbars_provider=lambda: [_tb(100, "PRIMARY", True), _tb(200, "B")],
+                            mirror_factory=_R, foreground_provider=lambda: 0, window_class=_classes)
+        mgr.tick()
+        mgr.shutdown()
+        assert order == ["retire", "detach"]
+
+    def test_the_shared_menu_makes_the_mirror_busy_for_the_yield(self, real_mirror):
+        from netspeedtray.core.app_overlap_yield import BUSY
+        real_mirror.main._is_context_menu_visible = True
         pm = real_mirror.mirror.position_manager
-        assert pm._app_yield._enabled is False
-        for _ in range(3):
-            pm.sync_app_overlap(real_mirror.tb)
-            pm.note_foreground_change()
-        assert pm._app_yield.attached_hwnd == 0 and pm.is_yielding_to_apps() is False
+        pm._app_overlap_info = real_mirror.tb
+        assert pm._app_overlap_context() == BUSY
 
     def test_destroy_stops_the_app_yield(self):
         mgr, _ = _manager([_tb(100, "PRIMARY", True), _tb(200, "B")])

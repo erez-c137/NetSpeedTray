@@ -7,6 +7,8 @@ supports multiple layouts (e.g., vertical, horizontal) to adapt to different UI 
 """
 
 import contextlib
+import functools
+import itertools
 import logging
 import math
 from typing import Any, Dict, Iterator, List, NamedTuple, Optional, Tuple, TYPE_CHECKING
@@ -22,6 +24,8 @@ from netspeedtray import constants
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import hardware_vendors
 from netspeedtray.utils import color_scheme
+from netspeedtray.utils.font_runs import (WidgetFontMetrics, draw_text, draw_text_centered, set_text_language,
+                                         user_text_advance)
 
 # v2.1 network-identity band tag, drawn as a rounded pill/badge. The layout RESERVES the fixed
 # worst-case slot and the renderer DRAWS the actual (usually narrower) tag in it - both MUST use these
@@ -48,7 +52,7 @@ def identity_layout(fm, ssid, band):
     """
     pad = IDENTITY_PILL_PAD_X
     h = fm.height() + 2
-    ssid_w = fm.horizontalAdvance(ssid) if ssid else 0
+    ssid_w = user_text_advance(fm, ssid) if ssid else 0   # a Wi-Fi name is user text (font_runs)
     band_pill_w = (fm.horizontalAdvance(band) + 2 * pad) if band else 0
     if ssid and band:
         w = pad + ssid_w + pad + band_pill_w
@@ -80,11 +84,15 @@ def make_widget_font(family: str, point_size: int, weight: int) -> QFont:
     """The widget's QFont for a configured family (7a). "Segoe UI Variable" (the default) gets its Text
     optical size through the opsz axis - set explicitly, so every Qt measures it alike (Qt 6.9 applied the
     Text size by itself, 6.10 the Small one: "888.8 Mbps" 60 vs 64 px). The named sizes ("... Text",
-    "... Small", "... Display") map to the family and their axis value. Segoe UI is the second family of
-    the request: the variable font has no Hebrew (or Arabic, CJK...) glyphs, and Qt then takes those from
-    Segoe UI - the face the Hebrew UI uses (#194) - instead of an arbitrary fallback at mismatched sizes.
-    Without the variable font (Windows 10) it is Segoe UI outright; QFont alone would pick Tahoma. Every
-    other family is passed through unchanged, exactly as before."""
+    "... Small", "... Display") map to the family and their axis value. Without the variable font
+    (Windows 10) it is Segoe UI outright; QFont alone would pick Tahoma. Every other family is passed
+    through unchanged, exactly as before.
+
+    Always ONE family. Until 2.2.0 Segoe UI was a second family of the request, for the glyphs the
+    variable font lacks (Hebrew, CJK...): a family list makes Qt resolve its whole fallback chain on the
+    first measurement, which loads the styles of every installed font family (~38 MB, never freed).
+    Those glyphs are now drawn run by run in a face that has them (utils/font_runs, #194's Segoe UI for
+    Hebrew), measured with WidgetFontMetrics."""
     f = constants.fonts
     family = f.FAMILY_RENAMES.get(family, family)
     opsz = f.VARIABLE_OPSZ.get(family)
@@ -93,7 +101,6 @@ def make_widget_font(family: str, point_size: int, weight: int) -> QFont:
     if not _has_variable_font():
         return QFont(f.FALLBACK_FONT, point_size, weight)
     font = QFont(f.VARIABLE_FAMILY, point_size, weight)
-    font.setFamilies([f.VARIABLE_FAMILY, f.FALLBACK_FONT])
     try:
         font.setVariableAxis(QFont.Tag.fromString("opsz"), float(opsz))
     except Exception:   # Qt < 6.7: the variable font's default instance
@@ -109,31 +116,93 @@ def trend_window(num_points: int) -> int:
     return max(r.TREND_MIN_WINDOW, int(round(num_points * r.TREND_WINDOW_FRACTION)))
 
 
-def _gaussian_local_linear(y, window: int):
-    """The smoother behind trend_smooth for ONE window: centred Gaussian in the interior, slope-damped
-    local-linear fit where the window runs off the ends. Returns a numpy array."""
-    import numpy as np
-
-    n = len(y)
-    # The kernel must not be longer than the data ('same' convolution keeps len(y) only then).
-    half = min(int(window) // 2, (n - 1) // 2)
-    if half < 1:
-        return y.copy()
-    d = np.arange(-half, half + 1, dtype=float)
+@functools.lru_cache(maxsize=64)
+def _trend_kernel(half: int, damping: float) -> Tuple[Tuple[float, ...], Tuple[float, ...], Tuple[float, ...], float]:
+    """The Gaussian of one smoothing window: weights g(d), g(d)*d, g(d)*d*d for d in [-half, half]
+    (sigma = half / 2, so the cut is at +-2 sigma), and the slope ridge scaled to the full kernel's
+    own second moment."""
     sigma = max(half / 2.0, 0.5)
-    g = np.exp(-0.5 * (d / sigma) ** 2)
-    ones = np.ones(n)
+    d = [float(k) for k in range(-half, half + 1)]
+    g = tuple(math.exp(-0.5 * (x / sigma) ** 2) for x in d)
+    gd = tuple(a * x for a, x in zip(g, d))
+    gdd = tuple(a * x for a, x in zip(gd, d))
+    return g, gd, gdd, damping * math.fsum(gdd)
 
-    def corr(a, k):   # out[i] = sum_j a[j] * k(j - i), over the samples that exist
-        return np.convolve(a, k[::-1], mode="same")
 
-    s0, s1 = corr(ones, g), corr(ones, g * d)
-    # Weighted second moment plus the ridge, scaled to the full kernel's own second moment.
-    s2 = corr(ones, g * d * d) + constants.renderer.TREND_EDGE_SLOPE_DAMPING * float((g * d * d).sum())
-    t0, t1 = corr(y, g), corr(y, g * d)
+@functools.lru_cache(maxsize=1024)
+def _trend_moments(half: int, damping: float, lo: int, hi: int) -> Tuple[float, float, float]:
+    """s0, s1, s2 (+ ridge) of the kernel slice [lo, hi) - the samples that exist around one position.
+    Exact sums (fsum), so the centred kernel's s1 is exactly 0."""
+    g, gd, gdd, ridge = _trend_kernel(half, damping)
+    return math.fsum(g[lo:hi]), math.fsum(gd[lo:hi]), math.fsum(gdd[lo:hi]) + ridge
+
+
+def _trend_half(window: int, n: int) -> int:
+    # The kernel must not be longer than the data.
+    return min(int(window) // 2, (n - 1) // 2)
+
+
+def _local_linear_at(y: List[float], half: int, damping: float, i: int) -> float:
+    """The smoother at ONE position, from the raw samples (any position; used at the ends)."""
+    n = len(y)
+    g, gd, _gdd, _ridge = _trend_kernel(half, damping)
+    k = 2 * half + 1
+    lo, hi = max(0, half - i), k - max(0, i + half + 1 - n)
+    s0, s1, s2 = _trend_moments(half, damping, lo, hi)
+    ys = y[i - half + lo:i - half + hi]
+    if s1 == 0.0:   # the whole kernel inside the data: _gaussian_local_linear's interior formula
+        return s2 * math.sumprod(ys, g) / (s0 * s2)
+    t0, t1 = math.sumprod(ys, g[lo:hi]), math.sumprod(ys, gd[lo:hi])
     return (s2 * t0 - s1 * t1) / (s0 * s2 - s1 * s1)
 
 
+def _gaussian_local_linear(y: List[float], window: int, start: int = 0) -> List[float]:
+    """The smoother behind trend_smooth for ONE window, at positions start..n-1: a centred Gaussian
+    in the interior, a slope-damped local-linear fit where the window runs off the ends.
+
+    Per position: out = (s2*t0 - s1*t1) / (s0*s2 - s1^2), with t0 = sum(y*g), t1 = sum(y*g*d) and
+    s0/s1/s2 the same sums over a series of ones (+ the ridge on s2), each taken over the samples that
+    exist. In the interior s1 is exactly 0, so out = s2*t0 / (s0*s2) and t1 is not needed."""
+    n = len(y)
+    half = _trend_half(window, n)
+    if half < 1:
+        return y[start:]
+    damping = float(constants.renderer.TREND_EDGE_SLOPE_DAMPING)
+    g = _trend_kernel(half, damping)[0]
+    k = 2 * half + 1
+    s0, s1, s2 = _trend_moments(half, damping, 0, k)
+    out = [_local_linear_at(y, half, damping, i) for i in range(start, min(half, n))]
+    lo, hi = max(start, half), n - half
+    if lo < hi:
+        sp = math.sumprod
+        if s1 == 0.0:
+            den = s0 * s2
+            out += [s2 * sp(y[i - half:i + half + 1], g) / den for i in range(lo, hi)]
+        else:   # not reached (s1 is an exact sum of +-pairs); kept so the formula stays honest
+            out += [_local_linear_at(y, half, damping, i) for i in range(lo, hi)]
+    out += [_local_linear_at(y, half, damping, i) for i in range(max(start, hi, half), n)]
+    return out
+
+
+def _none_as_nan(fn):
+    """Feed ``fn`` the series as a list, with None read as NaN the way numpy's asarray(float) did.
+    Samples are floats in practice, so the None scan runs only when the math trips over one (a
+    TypeError) - or on a short series, where a None could pass through untouched (half < 1)."""
+    @functools.wraps(fn)
+    def wrapper(values, *args, **kwargs):
+        y = values if isinstance(values, list) else list(values)
+        if len(y) <= 64 and None in y:
+            y = [math.nan if v is None else v for v in y]
+        try:
+            return fn(y, *args, **kwargs)
+        except TypeError:
+            if None not in y:
+                raise
+            return fn([math.nan if v is None else v for v in y], *args, **kwargs)
+    return wrapper
+
+
+@_none_as_nan
 def trend_smooth(values: List[float], window: int, edge_window: Optional[int] = None) -> List[float]:
     """Smooth an evenly spaced series for the Trend mini graph: a centred Gaussian moving average,
     with a slope-damped local-linear fit where the window runs off the ends, and a short window at
@@ -156,21 +225,294 @@ def trend_smooth(values: List[float], window: int, edge_window: Optional[int] = 
     within ~5 samples at every timespan. Long timespans stay calm where it matters - many samples
     share one pixel there.
 
-    A few numpy convolutions, O(n * window): under a millisecond for 1,800 samples, and only when
-    the history changes (the caller caches the result with its polyline)."""
-    import numpy as np   # lazy, like calculate_monotone_cubic_interpolation: only with the graph on
-
-    y = np.asarray(values, dtype=float)
+    Pure Python (math.sumprod), no numpy: the widget must not load numpy (+9 MB, +40 MB commit) just
+    to draw this line. O(n * window); the renderer uses it while every sample gets a point (a few
+    hundred samples, well under a millisecond) and trend_smooth_sampled beyond that."""
+    y = values
     n = len(y)
     out = _gaussian_local_linear(y, window)
     edge = constants.renderer.TREND_EDGE_WINDOW if edge_window is None else int(edge_window)
     blend = min(int(window) // 2, n - 1)
     if edge < window and blend > 0:
-        short = _gaussian_local_linear(y, edge)
-        k = np.arange(n - 1, -1, -1, dtype=float)          # samples back from "now"
-        w = np.clip(1.0 - k / blend, 0.0, 1.0)              # 1 at "now", 0 a half-window back
-        out = (1.0 - w) * out + w * short
-    return out.tolist()
+        start = n - blend                   # samples less than `blend` back from "now" (weight > 0)
+        short = _gaussian_local_linear(y, edge, start)
+        for j, i in enumerate(range(start, n)):
+            w = 1.0 - (n - 1 - i) / blend   # 1 at "now", 0 a half-window back
+            out[i] = (1.0 - w) * out[i] + w * short[j]
+    return out
+
+
+def _trend_smooth_at(y: List[float], window: int, edge_window: Optional[int],
+                     positions: List[int]) -> List[float]:
+    """trend_smooth(y, window, edge_window) at ``positions`` only, operation for operation (so bit-
+    identical): _gaussian_local_linear's interior formula is _local_linear_at's whole-kernel branch."""
+    n = len(y)
+    damping = float(constants.renderer.TREND_EDGE_SLOPE_DAMPING)
+    half = _trend_half(window, n)
+    edge = constants.renderer.TREND_EDGE_WINDOW if edge_window is None else int(edge_window)
+    half_edge = _trend_half(edge, n)
+    blend = min(int(window) // 2, n - 1)
+    start = n - blend if edge < window and blend > 0 else n
+    out = []
+    for i in positions:
+        v = _local_linear_at(y, half, damping, i) if half >= 1 else y[i]
+        if i >= start:
+            w = 1.0 - (n - 1 - i) / blend
+            v = (1.0 - w) * v + w * (_local_linear_at(y, half_edge, damping, i) if half_edge >= 1 else y[i])
+        out.append(v)
+    return out
+
+
+# Bins smaller than this (strides of a few samples) are not worth their moments: the lattice sums the
+# raw kernel instead (see _gaussian_local_linear_lattice).
+_TREND_MIN_BIN = 8
+# trend_smooth_sampled searches around this many of the highest lattice points, and of the zone's local
+# maxima (3 exact samples each).
+_TREND_EXACT_PEAKS = 4
+# A graph too narrow for the lattice (2 * stride > half) takes its auto-fit from the lattice path at
+# stride half // this: measured within 1e-4 of the full smoothing's max (bit-identical ~90% of the time),
+# ~1-2 ms at 7,200 samples. half // 2 (the widest the lattice allows) read up to 1.5% low on spiky data.
+_TREND_FIT_STRIDE_DIV = 8
+
+
+@functools.lru_cache(maxsize=32)
+def _bin_basis(b: int) -> Tuple[Tuple[float, ...], ...]:
+    """Orthogonal polynomials over a bin's b sample offsets: 1, r - c, (r - c)^2 - mean (the last one
+    only from 3 samples up - on 2 samples every weight profile is already linear)."""
+    c = (b - 1) / 2.0
+    p1 = tuple(r - c for r in range(b))
+    if b < 3:
+        return (tuple(1.0 for _ in range(b)), p1)
+    v = math.fsum(x * x for x in p1) / b
+    return (tuple(1.0 for _ in range(b)), p1, tuple(x * x - v for x in p1))
+
+
+class _LatticePlan(NamedTuple):
+    q: int                     # bin moments per bin (len(_bin_basis(b)))
+    kmin: int                  # bin offset of the bin the -half cut falls in (bins [k*b, (k+1)*b))
+    first: int                 # first kernel offset of the binned stretch: (kmin + 1) * b
+    last: int                  # first offset past it: kmax * b
+    wg: Tuple[float, ...]      # binned g (bin-basis coefficients, flattened like the moments)
+    wgd: Tuple[float, ...]     # binned g*d
+    comb_g: Tuple[float, ...]  # wg + raw g over [-half, first) + raw g over [last, half]
+
+
+@functools.lru_cache(maxsize=64)
+def _trend_lattice_plan(half: int, damping: float, b: int) -> _LatticePlan:
+    """The kernel split for _gaussian_local_linear_lattice. Bins of kernel offsets [k*b, (k+1)*b) that
+    lie strictly inside the +-half cut are projected on the bin basis (least squares: sum(y * g) over
+    such a bin = sum(bin moments * coefficients), exact when g is a quadratic over the bin - a
+    Gaussian over a bin a fraction of sigma wide is that to ~0.1%). The two bins the cut falls in
+    (g drops from e^-2 to 0 there) stay per-sample."""
+    g, gd, _gdd, _ridge = _trend_kernel(half, damping)
+    basis = _bin_basis(b)
+    norms = [math.fsum(x * x for x in p) for p in basis]
+    kmin, kmax = -((half + b - 1) // b), half // b
+    wg, wgd = [], []
+    for kk in range(kmin + 1, kmax):
+        seg_g = g[kk * b + half:kk * b + half + b]
+        seg_gd = gd[kk * b + half:kk * b + half + b]
+        for p, nrm in zip(basis, norms):
+            wg.append(math.fsum(a * x for a, x in zip(seg_g, p)) / nrm)
+            wgd.append(math.fsum(a * x for a, x in zip(seg_gd, p)) / nrm)
+    first, last = (kmin + 1) * b, kmax * b
+    comb_g = tuple(wg) + g[:first + half] + g[last + half:]
+    return _LatticePlan(len(basis), kmin, first, last, tuple(wg), tuple(wgd), comb_g)
+
+
+def _gaussian_local_linear_lattice(y: List[float], window: int, b: int) -> List[float]:
+    """_gaussian_local_linear at the lattice positions 0, b, 2b, ... only, from the series' moments
+    over bins of b samples ([l*b, (l+1)*b)), see _trend_lattice_plan, with the two cut bins summed
+    sample by sample; the points near the data's ends (and the last partial bin) are exact. Cost O(n + (n / b) * (window / b)), so a
+    5,000-sample series costs about what 2 * graph-width samples did."""
+    n = len(y)
+    half = _trend_half(window, n)
+    if half < 1:
+        return y[::b]
+    damping = float(constants.renderer.TREND_EDGE_SLOPE_DAMPING)
+    g, gd, _gdd, _ridge = _trend_kernel(half, damping)
+    k = 2 * half + 1
+    if b < _TREND_MIN_BIN:
+        # Small bins save almost nothing over the raw kernel (q moments per bin of b samples), so
+        # sum the raw samples at each lattice point: exact, and as fast.
+        s0, s1, s2 = _trend_moments(half, damping, 0, k)
+        total = (n + b - 1) // b
+        m_lo, m_hi = -(-half // b), (n - half - 1) // b
+        out = [_local_linear_at(y, half, damping, m * b) for m in range(0, min(m_lo, total))]
+        if m_lo <= m_hi:
+            sp = math.sumprod
+            den = s0 * s2
+            out += [s2 * sp(y[s:s + k], g) / den for s in range(m_lo * b - half, m_hi * b - half + 1, b)]
+        out += [_local_linear_at(y, half, damping, m * b) for m in range(max(m_lo, m_hi + 1), total)]
+        return out
+    plan = _trend_lattice_plan(half, damping, b)
+    q, kmin, first, last, wg, wgd, comb_g = plan
+    sp = math.sumprod
+    nfull = n // b
+    chunks = [y[s:s + b] for s in range(0, nfull * b, b)]
+    moments = [0.0] * (q * nfull)
+    basis = _bin_basis(b)
+    moments[0::q] = list(map(sum, chunks))
+    for j in range(1, q):
+        moments[j::q] = list(map(sp, chunks, itertools.repeat(basis[j])))
+    s0, s1, s2 = _trend_moments(half, damping, 0, k)
+    den = s0 * s2
+    nb = len(wg) // q                                  # binned bins per position
+    total = (n + b - 1) // b
+    # Interior lattice points: the whole kernel inside the data and every binned bin a whole one.
+    m_lo = -(-half // b)
+    m_hi = min((n - half - 1) // b, (nfull * b - last) // b)
+    out = [0.0] * total
+
+    if m_lo <= m_hi:
+        # One sumprod per point: [its bins' moments, the raw samples of its two cut bins].
+        span, n_left, right = nb * q, first + half, last + half
+        c = s2 / den
+        mo_starts = range((m_lo + kmin + 1) * q, (m_hi + kmin + 2) * q, q)
+        y_starts = range(m_lo * b - half, m_hi * b - half + 1, b)   # i - half
+        out[m_lo:m_hi + 1] = [sp(moments[a:a + span] + y[s:s + n_left] + y[s + right:s + k], comb_g) * c
+                              for a, s in zip(mo_starts, y_starts)]
+        rest = itertools.chain(range(0, m_lo), range(m_hi + 1, total))
+    else:
+        rest = range(total)
+    for m in rest:   # the ends and the last partial bin: exact (as cheap as the binned sum there)
+        out[m] = _local_linear_at(y, half, damping, m * b)
+    return out
+
+
+@_none_as_nan
+def trend_smooth_sampled(values: List[float], window: int, stride: int,
+                         edge_window: Optional[int] = None) -> Tuple[List[int], List[float], List[float]]:
+    """trend_smooth for a long series that the graph only samples every ``stride`` samples (~2 per
+    pixel): returns (indices, smoothed values at them, the values the auto-fit should size to).
+
+    The drawn indices are 0, stride, 2*stride, ... and the newest sample - the points the Trend paint
+    path always took from the full smoothed series. All n smoothed samples cost O(n * window), in
+    pure Python ~20 ms at 5,000 samples, so only what the graph needs is computed: the long window at
+    the drawn points (_gaussian_local_linear_lattice: exact below _TREND_MIN_BIN, from bin moments
+    above), the newest TREND_EDGE_WINDOW // 2 samples exactly, and the short "now" window exactly over
+    its whole blend zone, where the long window is interpolated between lattice points.
+
+    The auto-fit read the max over EVERY smoothed sample, not only the drawn ones, so the third list
+    adds what the lattice cannot see: around the highest lattice points, the samples a search finds
+    highest (computed exactly - see below), the blend zone sample by sample with its peaks recomputed
+    exactly, then trend_scale_values's mean of the newest samples. On the widget's graph rects the
+    drawn points and the axis stay within 0.08 px of the full computation for a single spike anywhere
+    and 0.15 px on any traffic; 0.25 px for any stride up to half / 2 (pinned by
+    test_mini_graph_no_numpy)."""
+    y = values
+    n = len(y)
+    b = int(stride)
+    # Drawn points too far apart for the kernel (2 * stride > half): a lattice point at this stride can
+    # miss a sample's whole bump, and nothing below can find it. That is a graph narrower than ~40 px
+    # on a long history, where the full smoothing cost 30-50 ms a series per sample (5,000-7,200
+    # samples). Few points are drawn, so compute exactly those (trend_smooth's own arithmetic, so the
+    # values are identical), and take the auto-fit from the lattice path at a stride well inside it.
+    if b > 1 and n >= 4 * b and 2 * b > _trend_half(window, n):
+        b_fit = _trend_half(window, n) // _TREND_FIT_STRIDE_DIV
+        if b_fit > 1 and n >= 4 * b_fit:
+            idx = list(range(0, n, b))
+            if idx[-1] != n - 1:
+                idx.append(n - 1)
+            return idx, _trend_smooth_at(y, window, edge_window, idx), trend_smooth_sampled(
+                y, window, b_fit, edge_window)[2]
+    # The full computation when every sample is drawn, when there are too few to bin, or when the
+    # kernel is too short for the narrow-graph path above (half < 2 * _TREND_FIT_STRIDE_DIV: cheap).
+    if b <= 1 or n < 4 * b or 2 * b > _trend_half(window, n):
+        full = trend_smooth(y, window, edge_window)
+        idx = list(range(0, n, max(1, b)))
+        if idx and idx[-1] != n - 1:
+            idx.append(n - 1)
+        return idx, (full if len(idx) == n else [full[i] for i in idx]), trend_scale_values(full)
+    window = int(window)
+    damping = float(constants.renderer.TREND_EDGE_SLOPE_DAMPING)
+    half = _trend_half(window, n)
+    lattice = _gaussian_local_linear_lattice(y, window, b)
+    edge = constants.renderer.TREND_EDGE_WINDOW if edge_window is None else int(edge_window)
+    blend = min(window // 2, n - 1)
+    blending = edge < window and blend > 0
+    h = constants.renderer.TREND_EDGE_WINDOW // 2
+    tail = n - max(1, h)                          # the newest samples: computed exactly
+    zone = min(n - blend if blending else n, tail)
+    tail_long = ([_local_linear_at(y, half, damping, i) for i in range(tail, n)] if half >= 1
+                 else y[tail:])
+
+    # The long window over the zone: linear between lattice points, then the exact tail (its peaks
+    # are recomputed exactly below).
+    zone_vals = []
+    i = zone
+    while i < tail:
+        m0 = i // b
+        x0, x1 = m0 * b, (m0 + 1) * b
+        v0, v1 = lattice[m0], (lattice[m0 + 1] if x1 < tail else tail_long[0])
+        x1 = min(x1, tail)
+        slope = (v1 - v0) / (x1 - x0)
+        zone_vals += [v0 + slope * (j - x0) for j in range(i, x1)]
+        i = x1
+    zone_vals += tail_long
+    long_zone = zone_vals
+    if blending:
+        short = _gaussian_local_linear(y, edge, zone)
+        ws = [max(0.0, 1.0 - (n - 1 - i) / blend) for i in range(zone, n)]
+        zone_vals = [(1.0 - w) * v + w * s for w, v, s in zip(ws, long_zone, short)]
+    # Where the zone peaks, the interpolated long window can be ~1% off a sharp smoothed peak: redo
+    # the zone's highest local maxima exactly (the long window at +-1 sample, re-blended).
+    if half >= 1 and len(zone_vals) >= 3:
+        tops = sorted((v, j) for j, v in enumerate(zone_vals[:tail - zone])
+                      if (j == 0 or v >= zone_vals[j - 1]) and v >= zone_vals[j + 1])[-_TREND_EXACT_PEAKS:]
+        for _v, j in tops:
+            for k in range(max(0, j - 1), min(tail - zone, j + 2)):
+                exact = _local_linear_at(y, half, damping, zone + k)
+                zone_vals[k] = ((1.0 - ws[k]) * exact + ws[k] * short[k]) if blending else exact
+
+    idx = list(range(0, n, b))
+    if idx[-1] != n - 1:
+        idx.append(n - 1)
+    drawn = [lattice[m] if i < zone else zone_vals[i - zone] for m, i in enumerate(idx)]
+
+    # The auto-fit: the max over every sample but the newest h, which count as their mean.
+    n_before = -(-zone // b)
+    scale = lattice[:n_before]                    # the lattice points before the zone
+    # A peak between two lattice points, around each of the highest lattice points (the oldest one, a
+    # spike half a window from the oldest edge, and the first point inside the zone - blend weight ~0
+    # there - included). In the interior the smoothing is t0 / s0 = C(i) + g_cut * B(i) / s0, with
+    # B(i) the plain sum of the window's samples (exact at any i from prefix sums) and C(i) continuous:
+    # the cut's step (g_cut = e^-2) lives entirely in B. So C gets a parabola through three lattice
+    # points, B is added sample by sample over the two strides around the point, and the best few
+    # samples are then computed EXACTLY. (A parabola through the smoothing itself was off by up to 1%
+    # where a spike crossed the cut beside a peak.) Near the ends - the local-linear fit - the
+    # parabola goes through the smoothing itself.
+    peaks = lattice[:n_before + 1]
+    if len(peaks) >= 3 and half >= 1:
+        k_cut = _trend_kernel(half, damping)[0][0] / _trend_moments(half, damping, 0, 2 * half + 1)[0]
+        for m in sorted(range(min(n_before, len(peaks))), key=peaks.__getitem__,
+                        reverse=True)[:_TREND_EXACT_PEAKS]:
+            c = min(max(m, 1), len(peaks) - 2)         # middle of the three nodes
+            xa, xb, xc = (c - 1) * b, c * b, (c + 1) * b
+            va, vb, vc = peaks[c - 1], peaks[c], peaks[c + 1]
+            interior = xa >= half and xc <= n - 1 - half
+            if interior:   # prefix sums over just this stretch's windows: [xa - half, xc + half]
+                base = xa - half
+                prefix = list(itertools.accumulate(y[base:xc + half + 1], initial=0.0))
+
+                def box(i, prefix=prefix, base=base):
+                    return prefix[i + half + 1 - base] - prefix[i - half - base]
+                va, vb, vc = va - k_cut * box(xa), vb - k_cut * box(xb), vc - k_cut * box(xc)
+            d1 = (vb - va) / (xb - xa)
+            d2 = ((vc - vb) / (xc - xb) - d1) / (xc - xa)
+            lo_i, hi_i = max(0, (m - 1) * b), min(zone - 1, (m + 1) * b)
+            if lo_i > hi_i:
+                continue
+            if interior:
+                est = [va + (i - xa) * (d1 + (i - xb) * d2) + k_cut * box(i) for i in range(lo_i, hi_i + 1)]
+            else:
+                est = [va + (i - xa) * (d1 + (i - xb) * d2) for i in range(lo_i, hi_i + 1)]
+            j = lo_i + max(range(len(est)), key=est.__getitem__)
+            scale += [_local_linear_at(y, half, damping, i) for i in range(max(0, j - 1), min(zone, j + 2))]
+    if h < 1:
+        return idx, drawn, scale + zone_vals
+    newest = zone_vals[n - h - zone:]
+    return idx, drawn, scale + zone_vals[:n - h - zone] + [sum(newest) / len(newest)]
 
 
 def trend_scale_values(smoothed: List[float]) -> List[float]:
@@ -474,15 +816,16 @@ class WidgetRenderer:
         self.low_color = QColor(self.config.low_speed_color)
         
         weight = int(self.config.font_weight)
+        set_text_language(getattr(getattr(self, "i18n", None), "language", ""))
         self.font = make_widget_font(self.config.font_family, self.config.font_size, weight)
-        self.metrics = QFontMetrics(self.font)
+        self.metrics = WidgetFontMetrics(self.font)   # measures runs as draw_text draws them
         
         if self.config.use_separate_arrow_font:
             self.arrow_font = make_widget_font(self.config.arrow_font_family, self.config.arrow_font_size,
                                                int(self.config.arrow_font_weight))
         else:
             self.arrow_font = self.font
-        self.arrow_metrics = QFontMetrics(self.arrow_font)
+        self.arrow_metrics = WidgetFontMetrics(self.arrow_font)
         
         # Pre-cache pens
         self._cached_pens = {
@@ -509,7 +852,7 @@ class WidgetRenderer:
         error_font = QFont(self.font)
         error_font.setPointSize(max(6, base_size - 2))
         painter.setFont(error_font)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, message)
+        draw_text_centered(painter, rect, message)
         painter.restore()
 
 
@@ -769,7 +1112,7 @@ class WidgetRenderer:
                 widest = max(family, key=fm.horizontalAdvance)
                 if fm.horizontalAdvance(widest) > width - 2 * margin:
                     unit_font, _ = self._fit_font(widest, width - 2 * margin)
-                    unit_w = QFontMetrics(unit_font).horizontalAdvance(unit)
+                    unit_w = WidgetFontMetrics(unit_font).horizontalAdvance(unit)
             x0 = max(margin, (width - block_w) // 2)
 
             line_h, asc, gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
@@ -801,7 +1144,7 @@ class WidgetRenderer:
             if show_unit_row:
                 painter.setFont(unit_font)
                 painter.setPen(self._cached_pens['default'])
-                painter.drawText(max(margin, (width - unit_w) // 2), y, unit)
+                draw_text(painter, max(margin, (width - unit_w) // 2), y, unit)
             painter.restore()
 
             self._last_text_rect = QRect(min(x0, (width - unit_w) // 2) if show_unit_row else x0,
@@ -832,19 +1175,19 @@ class WidgetRenderer:
         """(font, width): the widget font stepped down in half points until ``text`` fits ``avail``
         px, never below _MIN_UNIT_POINT_SIZE (past that it is clipped - and logged - as before)."""
         font = QFont(self.font)
-        width = QFontMetrics(font).horizontalAdvance(text)
+        width = WidgetFontMetrics(font).horizontalAdvance(text)
         size = font.pointSizeF()
         if size <= 0:   # a pixel-sized font
             px = font.pixelSize()
             while width > avail and px > 6:
                 px -= 1
                 font.setPixelSize(px)
-                width = QFontMetrics(font).horizontalAdvance(text)
+                width = WidgetFontMetrics(font).horizontalAdvance(text)
             return font, width
         while width > avail and size > self._MIN_UNIT_POINT_SIZE:
             size = max(self._MIN_UNIT_POINT_SIZE, size - 0.5)
             font.setPointSizeF(size)
-            width = QFontMetrics(font).horizontalAdvance(text)
+            width = WidgetFontMetrics(font).horizontalAdvance(text)
         return font, width
 
     def draw_hardware_compact(self, painter: QPainter, stats: List[Tuple[str, Optional[float]]], width: int,
@@ -882,16 +1225,16 @@ class WidgetRenderer:
                 icon_x = x0 if inline else (width - icon_w) // 2
                 if style == "text":
                     painter.setPen(QPen(color))
-                    painter.drawText(icon_x, y, label)
+                    draw_text(painter, icon_x, y, label)
                 else:
                     self._draw_icon(painter, label, icon_x, y, color)
                 painter.setFont(self.font)
                 painter.setPen(self.default_color)
                 if inline:
-                    painter.drawText(x0 + icon_w + gap + pct_col - fm.horizontalAdvance(pct), y, pct)
+                    draw_text(painter, x0 + icon_w + gap + pct_col - fm.horizontalAdvance(pct), y, pct)
                 else:
                     y += line_h + row_gap
-                    painter.drawText((width - fm.horizontalAdvance(pct)) // 2, y, pct)
+                    draw_text(painter, (width - fm.horizontalAdvance(pct)) // 2, y, pct)
                 y += line_h + row_gap
             painter.restore()
             self._last_text_rect = QRect(x0, top - asc, block_w, block_h)
@@ -940,7 +1283,8 @@ class WidgetRenderer:
         self._last_text_rect = QRect(arrow_x, y - self.metrics.ascent(), row_width, self.metrics.height())
         self._extend_content_bounds(self._last_text_rect)
 
-    def _draw_pill(self, painter: QPainter, rect: QRectF, accent: QColor, text: str, solid: bool, radius: float) -> None:
+    def _draw_pill(self, painter: QPainter, rect: QRectF, accent: QColor, text: str, solid: bool, radius: float,
+                   user: bool = False) -> None:
         """Draw one rounded pill: SOLID fills `accent` with white text; OUTLINE strokes `accent`, text in `accent`."""
         if solid:
             painter.setPen(Qt.PenStyle.NoPen)
@@ -953,7 +1297,7 @@ class WidgetRenderer:
             painter.drawRoundedRect(rect, radius, radius)
             painter.setPen(accent)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+        draw_text_centered(painter, rect, text, user)
 
     def _draw_identity_badge(self, painter: QPainter, x: float, y: float, parts: dict,
                              ssid: Optional[str], band: Optional[str],
@@ -970,7 +1314,7 @@ class WidgetRenderer:
             self._draw_pill(painter, QRectF(x, y, parts["band_w"], h), accent, band, band_solid, radius)
         elif mode == "ssid":
             # Neutral outline pill with the name.
-            self._draw_pill(painter, QRectF(x, y, parts["w"], h), self.default_color, ssid, False, radius)
+            self._draw_pill(painter, QRectF(x, y, parts["w"], h), self.default_color, ssid, False, radius, user=True)
         elif mode == "both":
             # Outer outline capsule holding the name; band as a same-height pill nested flush to the
             # right edge ("two left edges"). The nested band honors band_solid just like the band-only
@@ -983,7 +1327,7 @@ class WidgetRenderer:
             painter.drawRoundedRect(outer, radius, radius)
             painter.setPen(self.default_color)
             ssid_baseline = int(y + (h + self.metrics.ascent() - self.metrics.descent()) / 2)
-            painter.drawText(int(x + parts["ssid_x"]), ssid_baseline, ssid)
+            draw_text(painter, int(x + parts["ssid_x"]), ssid_baseline, ssid, user=True)
             band_rect = QRectF(x + parts["band_x"], y, parts["band_w"], h)
             self._draw_pill(painter, band_rect, accent, band, band_solid, radius)
         painter.restore()
@@ -1049,7 +1393,7 @@ class WidgetRenderer:
             # the band pen set above and the whole line stays one color signal.
             if config.use_custom_arrow_colors:
                 painter.setPen(self._cached_pens['arrow_up' if is_upload else 'arrow_down'])
-            painter.drawText(arrow_x, y, arrow)
+            draw_text(painter, arrow_x, y, arrow)
             if config.use_custom_arrow_colors:
                 # Restore the band pen BEFORE the number. Forgetting this makes the value silently
                 # inherit the arrow color, which reads as a color-coding regression (cf. #153).
@@ -1064,11 +1408,11 @@ class WidgetRenderer:
         painter.setFont(self.font)
         val_width = self.metrics.horizontalAdvance(val)
         aligned_number_x = number_x + (number_area_width - val_width)
-        painter.drawText(int(aligned_number_x), y, val)
+        draw_text(painter, int(aligned_number_x), y, val)
         
         # 3. Draw Unit
         if not config.hide_unit_suffix:
-            painter.drawText(unit_x, y, unit)
+            draw_text(painter, unit_x, y, unit)
 
 
 
@@ -1203,7 +1547,7 @@ class WidgetRenderer:
             for r in rows:
                 if style == "text":
                     painter.setPen(QPen(QColor(r['color'])))
-                    painter.drawText(current_x, y, r['label'])
+                    draw_text(painter, current_x, y, r['label'])
                 else:
                     self._draw_icon(painter, r['label'], current_x, y, QColor(r['color']))
                 vx = current_x + label_col
@@ -1218,9 +1562,9 @@ class WidgetRenderer:
                 has_mem_below = (not inline_mem) and bool(r['mem'])
                 right_align_pct = has_trailing or not has_mem_below
                 px = (vx + pct_col - self.metrics.horizontalAdvance(r['pct'])) if right_align_pct else vx
-                painter.drawText(px, y, r['pct'])
+                draw_text(painter, px, y, r['pct'])
                 if suffix_col and r['suffix']:
-                    painter.drawText(vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
+                    draw_text(painter, vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
                 if inline_mem and mem_col and r['mem']:
                     mx = vx + pct_col + suffix_col
                     label_x = mx + sep_col
@@ -1230,7 +1574,7 @@ class WidgetRenderer:
                     num_x = number_col_x + mem_num_col - self.metrics.horizontalAdvance(r['mem'])
                     if mem_label_col:
                         self._draw_memory_label(painter, label_x, y, r)
-                    painter.drawText(num_x, y, r['mem'])
+                    draw_text(painter, num_x, y, r['mem'])
                 y += line_height
                 if not inline_mem and r['mem']:
                     # Right-align memory to the segment's right edge while keeping the
@@ -1243,7 +1587,7 @@ class WidgetRenderer:
                     if mem_label_col:
                         self._draw_memory_label(painter, label_x, y, r)
 
-                    painter.drawText(num_x, y, r['mem'])
+                    draw_text(painter, num_x, y, r['mem'])
                     y += line_height
 
             self._last_text_rect = QRect(x_offset, top_y, seg_w + margin, total_height)
@@ -1288,7 +1632,7 @@ class WidgetRenderer:
         """Paint a row's RAM/VRAM label at the fixed start of its reserved label cell,
         in the row's CPU/GPU colour, then restore the value pen."""
         painter.setPen(QPen(QColor(row['color'])))
-        painter.drawText(label_x, y, row['mem_label'])
+        draw_text(painter, label_x, y, row['mem_label'])
         painter.setPen(self.default_color)
 
     def _draw_icon(self, painter: QPainter, icon_type: str, x: int, y_ascent: int, color: Optional[QColor] = None) -> None:
@@ -1475,7 +1819,10 @@ class WidgetRenderer:
                 def make_smooth_polyline(accessor):
                     raw_y = [accessor(d) for d in history]
                     cx, cy = calculate_monotone_cubic_interpolation(raw_x, raw_y, density=5)
-                    points = [QPointF(x, base_y - (min(max(0, y), y_cap) / max_y) * h) for x, y in zip(cx, cy)]
+                    # max(0, NaN) is 0: a NaN sample draws on the baseline. An inf one is held at the top
+                    # edge (the uncapped auto-fit would put it at -inf).
+                    points = [QPointF(x, base_y - (min(max(0, y), y_cap if y != math.inf else max_y) / max_y) * h)
+                              for x, y in zip(cx, cy)]
                     return points
 
                 # Dotted line at the plan speed - only with headroom above 0%: at 0% the plan speed IS the
@@ -1582,18 +1929,27 @@ class WidgetRenderer:
         if cached is None or cached[0] != (width, height) or cached[1] != current_hash:
             num_points = len(history)
             window = trend_window(num_points)
+            # Fewer samples than pixels (a short history stretched across the graph): interpolate so
+            # the line stays a curve, not a chain of segments. Denser than that (the usual case): the
+            # smoothed series has no detail finer than a pixel, so ~2 points per pixel are plenty -
+            # and trend_smooth_sampled computes only those (plus what the auto-fit needs).
+            sparse = num_points < graph_rect.width()
+            stride = 1 if sparse else max(1, num_points // (2 * max(1, graph_rect.width())))
+
+            def smooth(values):   # (indices drawn, smoothed values there, the auto-fit's values)
+                return trend_smooth_sampled(values, window, stride)
+
             if is_hardware:
-                ups, downs = trend_smooth([d.value for d in history], window), []
+                ups, downs = smooth([d.value for d in history]), None
                 max_y, ceiling = 100.0, None
             else:
-                ups = (trend_smooth([d.upload for d in history], window)
-                       if series in ("both", "upload") else [])
-                downs = (trend_smooth([d.download for d in history], window)
-                         if series in ("both", "download") else [])
+                ups = smooth([d.upload for d in history]) if series in ("both", "upload") else None
+                downs = smooth([d.download for d in history]) if series in ("both", "download") else None
                 # No outlier clip: smoothing already took out the 1 s spikes it exists for, and on
                 # smoothed data it fired on real (smoothed) peaks and set the axis below them.
-                max_y, ceiling = self._network_graph_scale(history, config, series, trend_scale_values(ups),
-                                                           trend_scale_values(downs), outlier_clip=False)
+                max_y, ceiling = self._network_graph_scale(history, config, series,
+                                                           ups[2] if ups else [], downs[2] if downs else [],
+                                                           outlier_clip=False)
             # Always inside the graph: the auto-fit reads the edge damped (trend_scale_values) and a
             # fixed axis can be outrun, so cap at the top edge either way - never draw off the rect.
             y_cap = max_y
@@ -1603,27 +1959,19 @@ class WidgetRenderer:
             base_y = float(graph_rect.bottom())
             # QRect.bottom() is top + height - 1, so span height - 1: max_y lands ON the top row, not above it.
             h = float(max(1, graph_rect.height() - 1))
-            xs = [right_edge - (num_points - 1 - i) * step_x for i in range(num_points)]
-            # Fewer samples than pixels (a short history stretched across the graph): interpolate so
-            # the line stays a curve, not a chain of segments. Denser than that (the usual case): the
-            # smoothed series has no detail finer than a pixel, so ~2 points per pixel are plenty.
-            sparse = num_points < graph_rect.width()
-            stride = max(1, num_points // (2 * max(1, graph_rect.width())))
 
-            def polyline(values):
-                if not values:
+            def polyline(smoothed):
+                if not smoothed or not smoothed[1]:
                     return []
+                idx, values, _scale = smoothed
+                px = [right_edge - (num_points - 1 - i) * step_x for i in idx]
+                py = values
                 if sparse:
-                    px, py = calculate_monotone_cubic_interpolation(xs, values, density=5)
-                    px, py = list(px), list(py)
-                    if not px or px[-1] != xs[-1]:   # end exactly on "now"
-                        px.append(xs[-1])
+                    now_x = px[-1]
+                    px, py = calculate_monotone_cubic_interpolation(px, values, density=5)
+                    if not px or px[-1] != now_x:   # end exactly on "now"
+                        px.append(now_x)
                         py.append(values[-1])
-                else:
-                    idx = list(range(0, num_points, stride))
-                    if idx[-1] != num_points - 1:
-                        idx.append(num_points - 1)
-                    px, py = [xs[i] for i in idx], [values[i] for i in idx]
                 return [QPointF(x, base_y - (min(max(0.0, y), y_cap) / max_y) * h) for x, y in zip(px, py)]
 
             if ceiling is not None and config.graph_show_ceiling and config.graph_scale_headroom > 0:
@@ -1704,11 +2052,19 @@ class WidgetRenderer:
         if downloads is None:
             downloads = [d.download for d in history] if series in ("both", "download") else []
         max_speed_val = max(uploads + downloads)
+        if not math.isfinite(max_speed_val):
+            # max() keeps a NaN it starts on (nothing compares greater), which made the whole axis NaN
+            # while a NaN sample sat at the oldest edge; an inf made every finite point flat. Size the
+            # axis to the finite samples (the paint paths draw a NaN point on the baseline, an inf one at
+            # the top edge).
+            max_speed_val = max((v for v in uploads + downloads if math.isfinite(v)), default=0.0)
 
         if outlier_clip and len(history) > 10:
-            all_speeds = uploads + downloads
-            all_speeds_sorted = sorted(all_speeds)
-            percentile_95 = all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
+            # Finite samples only: sorted() with a NaN in the list does not sort (every comparison with
+            # it is False), so the "95th percentile" could be any sample and clip the axis far too low.
+            all_speeds_sorted = sorted(v for v in uploads + downloads if math.isfinite(v))
+            percentile_95 = (all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
+                             if all_speeds_sorted else 0.0)
             if percentile_95 > 0 and max_speed_val > percentile_95 * 3.0:
                 max_speed_val = percentile_95
 

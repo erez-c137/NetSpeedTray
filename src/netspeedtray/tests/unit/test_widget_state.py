@@ -105,8 +105,11 @@ def test_add_speed_data_feeds_memory_only(v8_widget_state):
     state, _ = v8_widget_state
     test_speed_data = {"Wi-Fi": (1250000.0, 2500000.0), "Ethernet": (1000.0, 2000.0)}
     state.add_speed_data(test_speed_data, persist_data={"Wi-Fi": (9e6, 9e6)})
-    assert len(state.in_memory_history) == 1
-    assert state.in_memory_history[0].speeds == test_speed_data
+    assert len(state.aggregated_history) == 1
+    assert state.aggregated_history[0].upload == 1250000.0 + 1000.0
+    assert state.aggregated_history[0].download == 2500000.0 + 2000.0
+    # RAM phase 1: the unread per-interface raw deque (a dict per tick, up to 5000) is gone for good.
+    assert not hasattr(state, "in_memory_history")
     assert state._net_batch == [] and not hasattr(state, "_db_batch")
 
 

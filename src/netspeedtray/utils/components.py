@@ -20,7 +20,7 @@ from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont, QPaintEvent, QPainter, QColor
 from netspeedtray.utils.styles import (
     toggle_style, slider_style, font as token_font, semantic_colors, get_accent_color,
-    timeline_pills_style, prefers_reduced_motion, is_dark_mode,
+    timeline_pills_style, prefers_reduced_motion, is_dark_mode, ui_font, ui_family_css, icon_font_family, symbol_face, set_ui_text, face_for_text, set_text_in_face, apply_text_face,
 )
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray import constants
@@ -156,13 +156,12 @@ class Win11Toggle(QWidget):
 
 
     def _create_label_widget(self, text: str) -> QLabel:
-        label = QLabel(text, self)
-        # Segoe UI Variable is Windows 11 only; fall back to Segoe UI on Win10
-        # to avoid Qt picking an unintended serif fallback (#149).
-        font = QFont()
-        font.setFamilies(["Segoe UI Variable", "Segoe UI"])
-        font.setPointSize(10)
-        label.setFont(font)
+        # No text in the constructor: an adapter name (以太网) laid out in the UI face first makes Qt
+        # search every installed family. The text goes in last, in its own face (set_text_in_face).
+        label = QLabel(self)
+        # The UI face (#149: never an unintended serif fallback), ONE family - a family list loads every
+        # installed font family (utils/styles.ui_family). Small cut: what this label drew in until 2.2.0.
+        label.setFont(ui_font(point_size=10, optical="Small"))
         label.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # Ensure internal labels also have no border/outline
         label_qss = "background:transparent; border:none; outline: none;"
@@ -170,6 +169,7 @@ class Win11Toggle(QWidget):
             label_qss += f" color: {self._label_text_color};"
         label.setStyleSheet(label_qss)
         label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        set_text_in_face(label, text)
         return label
 
 
@@ -288,7 +288,7 @@ class Win11Toggle(QWidget):
 
         if self._label_widget:
             if has_internal_label:
-                self._label_widget.setText(text)
+                set_text_in_face(self._label_widget, text)
                 self._label_widget.setVisible(True)
             else: 
                 self._label_widget.setVisible(False)
@@ -306,6 +306,7 @@ class Win11Toggle(QWidget):
             if self._label_text_color:
                 label_qss += f" color: {self._label_text_color};"
             self._label_widget.setStyleSheet(label_qss)
+            apply_text_face(self._label_widget, self._label_widget.text())   # the new sheet dropped its face
 
 
     def sizeHint(self) -> QSize:
@@ -394,10 +395,8 @@ class Win11Slider(QWidget):
 
         layout.addWidget(self.slider)
 
-        # Win11 family with Win10 fallback (#149).
-        label_font = QFont()
-        label_font.setFamilies(["Segoe UI Variable", "Segoe UI"])
-        label_font.setPointSize(10)
+        # The UI face, one family (#149; utils/styles.ui_family). Small cut: as until 2.2.0.
+        label_font = ui_font(point_size=10, optical="Small")
         
         if self._editable:
             self._value_input = QLineEdit(self) 
@@ -668,7 +667,8 @@ class SettingCard(QFrame):
         self._title_label.setWordWrap(True)
         text_col.addWidget(self._title_label)
         if description:
-            self._desc_label = QLabel(description)
+            self._desc_label = QLabel()
+            set_ui_text(self._desc_label, description)
             self._desc_label.setFont(token_font(tokens.TYPE_CAPTION))
             self._desc_label.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
             self._desc_label.setWordWrap(True)
@@ -768,7 +768,7 @@ class SettingCard(QFrame):
         """Swap the muted description (only for a card built with one)."""
         label = getattr(self, "_desc_label", None)
         if label is not None:
-            label.setText(text)
+            set_ui_text(label, text)   # e.g. LHM status "Options → ...": arrows not in every UI face
         for w in self._named:
             w.setAccessibleDescription(str(text or "").strip())
         if self._control is not None:
@@ -927,7 +927,7 @@ class SettingExpander(QWidget):
         # Native Win11 disclosure chevron (Segoe Fluent Icons), not a Unicode triangle.
         self._chevron.setStyleSheet(
             f"color: {c['text_secondary']}; background: transparent;"
-            f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 12px;")
+            f" font-family: '{icon_font_family()}'; font-size: 12px;")   # one family (no fallback walk)
         hl.addWidget(self._chevron, 0, Qt.AlignmentFlag.AlignVCenter)
 
         if description and not header_toggle:
@@ -1000,7 +1000,7 @@ class SettingExpander(QWidget):
     def set_description(self, text: str) -> None:
         """Swap the muted header description (only for an expander built with one)."""
         if self._desc_label is not None:
-            self._desc_label.setText(text)
+            set_ui_text(self._desc_label, text)
         for w in self._named + ([] if self._has_toggle else [self._header]):
             w.setAccessibleDescription(str(text or "").strip())
 
@@ -1070,7 +1070,7 @@ class Win11Segmented(QWidget):
                 border: 1px solid {c['card_stroke']};
                 border-radius: 0px;
                 padding: 7px 12px;
-                font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+                {ui_family_css()}
             }}
             QToolButton:hover {{ background-color: {c['subtle_fill']}; }}
             QToolButton:checked {{ background-color: {accent}; color: white; border-color: {accent}; }}
@@ -1260,6 +1260,11 @@ class ArrowStylePicker(QWidget):
                 key = "ARROW_PRESET_" + str(name).upper().replace(" ", "_")
                 btn.setToolTip(self._tr(key, name))
                 btn.setAccessibleName(self._tr(key, name))   # the visible text is just two glyphs
+                # ▴ ▾ / △ ▽ / ⇑ ⇓ are not in the UI face: draw the pair in the known face the widget
+                # draws it in (utils/font_runs), so Qt never searches every installed family for them.
+                face = symbol_face(btn.text())
+                if face:
+                    btn.setStyleSheet("font-family: '%s';" % face)
         root.addWidget(self._seg)
 
         self._custom_row = QWidget()
@@ -1286,6 +1291,14 @@ class ArrowStylePicker(QWidget):
             crow.addWidget(lbl)
             crow.addWidget(edit)
         crow.addStretch(0)
+        # The placeholders ↑ ↓ (and the custom arrows typed here) are not in every UI face (Bengali's
+        # Nirmala UI): these two fields draw in a known face that has them.
+        arrow_face = face_for_text("↑↓")
+        if arrow_face:
+            for edit in (self._up_edit, self._down_edit):
+                f = QFont(edit.font())
+                f.setFamily(arrow_face)
+                edit.setFont(f)
         self._custom_row.setVisible(False)
         root.addWidget(self._custom_row)   # was orphaned after `return` in _tr (dead code) - the custom
         #                                    arrow row never entered the layout, so "Custom" did nothing.

@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSpinBox
 
 from netspeedtray.utils.components import SettingCard, SettingExpander, Win11Toggle, Win11ComboBox
+from netspeedtray.utils import styles as su
 
 
 class ConnectionSettings(QWidget):
@@ -50,6 +51,7 @@ class ConnectionSettings(QWidget):
         self._host.setEditable(True)
         self._host.addItems(["1.1.1.1", "8.8.8.8", "9.9.9.9"])
         self._host.setMinimumWidth(160)
+        su.keep_combo_face(self._host)   # a typed host (an internationalized name) in its own face
         self._host.currentTextChanged.connect(lambda _t: self.on_change())
         body.addWidget(SettingCard(self._tr("CONN_HOST_LABEL", "Internet test server"), control=self._host))
         root.addWidget(self._lat)
@@ -93,7 +95,7 @@ class ConnectionSettings(QWidget):
         self._lat.setChecked(bool(config.get("latency_enabled", True)))
         self._public.setChecked(bool(config.get("latency_public_enabled", False)))
         self._sync_description()   # setChecked does not emit when the state is unchanged
-        self._host.setCurrentText(str(config.get("latency_public_host", "1.1.1.1")))
+        su.set_combo_text_in_face(self._host, str(config.get("latency_public_host", "1.1.1.1")))
         self._down.setValue(int(config.get("plan_down_mbps", 0) or 0))
         self._up.setValue(int(config.get("plan_up_mbps", 0) or 0))
 

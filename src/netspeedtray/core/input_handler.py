@@ -49,11 +49,24 @@ class InputHandler(QObject):
         # The release that ends a double-click is not a click of its own.
         self._swallow_release: bool = False
 
+        # A drag whose release never reaches us (UAC prompt, Win+L, Alt+Tab, a modal mid-drag) must not
+        # leave ``widget._dragging`` set: the #24 yield reads it as BUSY and never hides the widget for
+        # app buttons again (relu616, rc.4 on #373). While a drag runs, the real button is polled.
+        self._drag_watchdog = QTimer(self)
+        self._drag_watchdog.setInterval(constants.timeouts.DRAG_RELEASE_WATCHDOG_MS)
+        self._drag_watchdog.timeout.connect(self._on_drag_watchdog)
+        self._drag_watchdog_misses: int = 0
+        # The watchdog reads the PHYSICAL mouse button, which a touch / pen drag may never set (Qt
+        # takes those as WM_POINTER and synthesizes the mouse events): it only watches mouse drags.
+        # Touch / pen still end on the button-up move, deactivation and hide.
+        self._press_from_mouse: bool = True
+
     def handle_mouse_press(self, event: QMouseEvent) -> None:
         """Handles mouse press start (left = drag; middle = configurable click action)."""
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_start_pos = event.globalPosition().toPoint() - self.widget.pos()
             self._is_dragging = False # Waiting for move to confirm drag
+            self._press_from_mouse = self._is_real_mouse(event)
             # Qt sends a double-click's 2nd press as MouseButtonDblClick, never as a press: a real
             # press means any double-click tail is over (its release may have been lost to a menu or
             # a grab) - don't let it eat this click.
@@ -70,7 +83,13 @@ class InputHandler(QObject):
 
     def handle_mouse_move(self, event: QMouseEvent) -> None:
         """Handles dragging logic."""
-        if not (event.buttons() & Qt.MouseButton.LeftButton) or not self._drag_start_pos:
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            # Mouse tracking is on, so a plain hover lands here too. Mid-drag it means the release
+            # was lost on the way (UAC, Win+L, Alt+Tab): the drag is over - end it as a drop.
+            if self._is_dragging:
+                self.end_lost_drag("a move arrived with the left button up")
+            return
+        if not self._drag_start_pos:
             return
 
         # Check for minimum drag distance to prevent accidental moves (Fix for sticky Free Move)
@@ -81,6 +100,9 @@ class InputHandler(QObject):
         # the widget moves away (or under it), so dismiss it - and any pending show - as the drag begins.
         if not self._is_dragging:
             self._dismiss_hover_card()
+            self._drag_watchdog_misses = 0
+            if self._press_from_mouse:
+                self._drag_watchdog.start()
         self._is_dragging = True
         self.widget._dragging = True # Notify widget to stop position checks
         
@@ -110,18 +132,7 @@ class InputHandler(QObject):
         """Handles drag end and config saving."""
         if event.button() == Qt.MouseButton.LeftButton:
             if self._is_dragging:
-                # Drag completed
-                self._is_dragging = False
-                self.widget._dragging = False
-                self._save_dragged_position()
-                self.logger.debug("Drag ended. Position saved: %s", self.widget.pos())
-                # #24: a drop onto the taskbar's app buttons is the user's choice - no yield for it.
-                note_drop = getattr(self.position_manager, "note_user_drop", None)
-                if callable(note_drop):
-                    try:
-                        note_drop()
-                    except Exception as e:
-                        self.logger.debug("drop note failed: %s", e)
+                self._finish_drag()
             elif self._swallow_release:
                 self._swallow_release = False      # the tail of a double-click
             elif self._drag_start_pos is not None:
@@ -129,6 +140,76 @@ class InputHandler(QObject):
 
             self._drag_start_pos = None
             event.accept()
+
+    def _finish_drag(self) -> None:
+        """The drag is over: clear the flags, save where the widget is, tell the yield it was a drop."""
+        self._stop_drag_watchdog()
+        self._is_dragging = False
+        self._drag_start_pos = None
+        self.widget._dragging = False
+        self._save_dragged_position()
+        self.logger.debug("Drag ended. Position saved: %s", self.widget.pos())
+        # #24: a drop onto the taskbar's app buttons is the user's choice - no yield for it.
+        note_drop = getattr(self.position_manager, "note_user_drop", None)
+        if callable(note_drop):
+            try:
+                note_drop()
+            except Exception as e:
+                self.logger.debug("drop note failed: %s", e)
+
+    def end_lost_drag(self, reason: str) -> None:
+        """End a drag whose left-button release never arrived (a UAC prompt, Win+L, Alt+Tab, a
+        modal, the widget hidden mid-drag). Treated exactly like a release at the last position: the
+        widget is already drawn there, so saving it keeps what the user sees (not saving would let
+        the next reposition snap it back, a move the user never asked for), and the #24 drop note
+        is the same one a real drop sends - it only lasts until the widget is seen clear once.
+        No-op when no drag is under way."""
+        if not self._is_dragging:
+            self._stop_drag_watchdog()
+            return
+        self.logger.info("Drag ended without a button release (%s) - treated as a drop.", reason)
+        self._finish_drag()
+
+    @staticmethod
+    def _is_real_mouse(event: QMouseEvent) -> bool:
+        """True for a press from a real mouse (not touch / pen). Unknown counts as a
+        mouse: the watchdog is then on, as for every mouse drag."""
+        try:
+            from PyQt6.QtGui import QInputDevice
+            # Qt 6 gives a mouse event synthesized from touch / pen the touchscreen / stylus device.
+            return event.pointingDevice().type() == QInputDevice.DeviceType.Mouse
+        except Exception:
+            return True
+
+    def _stop_drag_watchdog(self) -> None:
+        self._drag_watchdog_misses = 0
+        try:
+            self._drag_watchdog.stop()
+        except (AttributeError, RuntimeError):   # a handler built without __init__ (tests)
+            pass
+
+    def _left_button_down(self) -> bool:
+        """The REAL state of the logical left button. Qt's own button state is what went stale, so
+        ask Windows (GetAsyncKeyState reads PHYSICAL buttons - honour swapped buttons). On the secure
+        desktop (UAC, Win+L) it reads 0: up, which is right - no drag survives that."""
+        try:
+            import win32api
+            import win32con
+            vk = win32con.VK_RBUTTON if win32api.GetSystemMetrics(win32con.SM_SWAPBUTTON) else win32con.VK_LBUTTON
+            return bool(win32api.GetAsyncKeyState(vk) & 0x8000)
+        except Exception:
+            return bool(QApplication.mouseButtons() & Qt.MouseButton.LeftButton)
+
+    def _on_drag_watchdog(self) -> None:
+        if not self._is_dragging:
+            self._stop_drag_watchdog()
+            return
+        if self._left_button_down():
+            self._drag_watchdog_misses = 0
+            return
+        self._drag_watchdog_misses += 1
+        if self._drag_watchdog_misses >= constants.timeouts.DRAG_RELEASE_WATCHDOG_MISSES:
+            self.end_lost_drag("the left button is no longer held")
 
     def _on_single_click(self) -> None:
         """A left click that was not a drag: the hover card's pin toggle."""
@@ -253,6 +334,14 @@ class InputHandler(QObject):
                     widget_width = self.widget.width()
                     
                     new_offset = int(right_boundary - current_x_log - widget_width)
+                    # The default (0) and the pre-1.3.0 defaults (10 / 1 / 3) read as "not placed by
+                    # the user" (rc.2 W6), and the default spot steps left of a Widgets button beside
+                    # the tray (rc.3): a drop that happens to land on one of them must still stick.
+                    # 1 px further from the tray is invisible; the drag limit keeps it >= ~7 anyway.
+                    defaults = constants.config.defaults
+                    while (new_offset == defaults.DEFAULT_TRAY_OFFSET_X
+                           or new_offset in defaults.LEGACY_DEFAULT_TRAY_OFFSETS_X):
+                        new_offset += 1
                     updates["tray_offset_x"] = new_offset
                     self.logger.debug(f"Saved Horizontal Offset: {new_offset} (RightBound={right_boundary}, X={current_x_log}, W={widget_width})")
                     

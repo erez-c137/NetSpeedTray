@@ -34,6 +34,14 @@ _GPU_PREFIXES = (
 # "Radeon 890M". Discrete cards are "RX ...", "Pro ...", "VII" and never end in a model number + M.
 _AMD_IGPU_MODEL_RE = re.compile(r"\b\d{3,4}m\b")
 _AMD_DGPU_TOKENS = ("rx", "pro", "vii")
+# A GPU's temperature is its die: Core, then Hot Spot, then any other sensor (#236). Voltage-
+# regulator, memory, liquid and PLX-bridge sensors are other parts of the card, so they rank LAST -
+# used only as a card's own last resort (an APU whose only LHM temperature is "GPU VR SoC"), never
+# ahead of a die sensor. Cards are never mixed: a reading only ever comes from its own group.
+_GPU_TEMP_PRIORITY = ("GPU Core", "Core", "GPU Hot Spot", "Hot Spot")
+_GPU_TEMP_NOT_THE_DIE = ("vr ", "vrm", "vddc", "memory", "junction", "liquid", "plx")
+_GPU_POWER_PRIORITY = ("GPU Package", "GPU Total", "Total Board Power", "Board Power", "GPU PPT",
+                       "GPU Core")
 _CPU_TEMP_PRIORITY = (
     "Core (Tctl/Tdie)", "CPU Package", "Tctl/Tdie", "Tdie",
     "Tctl", "Package", "Core Max", "CCD1 (Tdie)", "CCD",
@@ -238,7 +246,7 @@ def _gpu_rank(gpu: LhmGpu) -> Tuple[int, str]:
         return 0, ident
     integrated = ("integrated" in ident or " igpu" in name or "integrated" in name
                   or _is_amd_igpu(name))
-    if not integrated and ("amd" in ident or "radeon" in name):
+    if not integrated and ("amd" in ident or "atigpu" in ident or "radeon" in name):
         return 1, ident
     if "intel" in ident or "intel" in name:
         return 2, ident
@@ -263,10 +271,30 @@ def parse_snapshot(data: Any) -> LhmSnapshot:
     cpu_temp = _pick_cpu_temp(cpu_temps)
     cpu_power = _pick(cpu_powers, ("CPU Package", "Package", "CPU Total", "Total"))
 
+    gpus = gpu_groups([s for s in sensors if _belongs_to(s, _GPU_PREFIXES)])
+
+    return LhmSnapshot(
+        cpu_temp=cpu_temp.value if cpu_temp else None,
+        cpu_temp_sensor=cpu_temp.name if cpu_temp else None,
+        cpu_power=cpu_power.value if cpu_power else None,
+        cpu_power_sensor=cpu_power.name if cpu_power else None,
+        gpus=gpus,
+    )
+
+
+def _is_gpu_die_temp(sensor: LhmSensor) -> bool:
+    name = sensor.name.casefold() + " "
+    return not any(word in name for word in _GPU_TEMP_NOT_THE_DIE)
+
+
+def gpu_groups(sensors: list[LhmSensor]) -> Tuple[LhmGpu, ...]:
+    """One LhmGpu per GPU hardware node, best-ranked first (discrete before integrated).
+
+    Temperature and power are picked INSIDE one hardware group, so a group's two readings are always
+    the same card's. Shared by the web-server snapshot and the WMI fallback (#236), whose sensors carry
+    no hardware id - their group is the sensor identifier's hardware part (/gpu-amd/0)."""
     grouped: dict[Tuple[str, str], list[LhmSensor]] = {}
     for sensor in sensors:
-        if not _belongs_to(sensor, _GPU_PREFIXES):
-            continue
         hardware_id = sensor.hardware_id or sensor.sensor_id.rsplit("/", 2)[0]
         grouped.setdefault((hardware_id, sensor.hardware_name), []).append(sensor)
 
@@ -274,8 +302,9 @@ def parse_snapshot(data: Any) -> LhmSnapshot:
     for (hardware_id, hardware_name), gpu_sensors in grouped.items():
         temps = [s for s in gpu_sensors if s.sensor_type == "temperature" and 0.0 < s.value < 150.0]
         powers = [s for s in gpu_sensors if s.sensor_type == "power" and 0.0 < s.value < 1000.0]
-        temp = _pick(temps, ("GPU Core", "Core", "GPU Hot Spot", "Hot Spot"))
-        power = _pick(powers, ("GPU Package", "GPU Total", "Total Board Power", "Board Power", "GPU PPT", "GPU Core"))
+        temp = (_pick([s for s in temps if _is_gpu_die_temp(s)], _GPU_TEMP_PRIORITY)
+                or _pick(temps, _GPU_TEMP_PRIORITY))
+        power = _pick(powers, _GPU_POWER_PRIORITY)
         if temp is not None or power is not None:
             gpus.append(LhmGpu(
                 hardware_id=hardware_id,
@@ -285,14 +314,7 @@ def parse_snapshot(data: Any) -> LhmSnapshot:
                 power=power.value if power else None,
                 power_sensor=power.name if power else None,
             ))
-
-    return LhmSnapshot(
-        cpu_temp=cpu_temp.value if cpu_temp else None,
-        cpu_temp_sensor=cpu_temp.name if cpu_temp else None,
-        cpu_power=cpu_power.value if cpu_power else None,
-        cpu_power_sensor=cpu_power.name if cpu_power else None,
-        gpus=tuple(sorted(gpus, key=_gpu_rank)),
-    )
+    return tuple(sorted(gpus, key=_gpu_rank))
 
 
 class LhmHttpStatusError(ValueError):

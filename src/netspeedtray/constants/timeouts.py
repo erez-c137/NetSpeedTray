@@ -47,6 +47,14 @@ class TimeoutConstants:
     # for the 1s state-watcher tick (a visible ~1s lag). Cheap: short-circuits
     # before any taskbar query unless the foreground window is actually fullscreen.
     FULLSCREEN_POLL_INTERVAL_MS: Final[int] = 250
+    # Leaving fullscreen needs two agreeing "not covered" readings at least this far apart (#503):
+    # one stray foreground reading must not flash the widget over a fullscreen app. Entering
+    # fullscreen (hide) stays immediate.
+    FULLSCREEN_EXIT_CONFIRM_MS: Final[int] = 250
+    # ...and a foreground that tells us nothing (NULL, closed, invisible, cloaked) keeps a fullscreen
+    # hide for at most this long while the covering window still looks drawn - so a cover that is
+    # not really in front (a shell surface during Show desktop) can't hold the widget hidden.
+    FULLSCREEN_NO_FOREGROUND_HOLD_MS: Final[int] = 1500
     # Burial recovery (#314, #238): the minimum spacing of the widget's Z-order checks when
     # EVENT_OBJECT_REORDER / foreground changes arrive in a burst. The first change is checked
     # at once; the rest of a burst collapses into one check at the end of the window.
@@ -80,6 +88,20 @@ class TimeoutConstants:
     # A tick-only fight trips it after ~12 s, a 300 ms re-burier after ~4 s.
     BURIAL_FRESH_RATE_MAX: Final[int] = 12
     BURIAL_FRESH_RATE_WINDOW_MS: Final[int] = 15000
+    # Show desktop exemption (owner, rc.7 / rc.8: ~13 Show desktop clicks in 8 s tripped the cap above
+    # and left the widget under the taskbar for the backoff). A burial found after the foreground
+    # moved to / from the taskbar or the desktop since our last re-seat is the user's click: re-seated
+    # at once, never charged, never counted toward the cap. One click can bury the widget more than
+    # once with the foreground already settled (the taskbar takes the click, the desktop follows), so
+    # up to SHOW_DESKTOP_GRACE_REBURIALS more burials within SHOW_DESKTOP_GRACE_MS of that exempt
+    # re-seat are free too - then the fight window / cap / backoff apply again.
+    # Deliberate trade-off: a re-burier TIED to real foreground switches (say an app stealing focus
+    # from the desktop every 0.3 s) is re-seated free on each switch, plus the grace burials. It is
+    # bounded by how fast the foreground actually changes (Windows' focus-steal rules) and by the
+    # ZORDER_RECHECK_MIN_INTERVAL_MS check spacing; a re-burier that leaves the foreground alone gets
+    # nothing from this and still trips the cap exactly as before.
+    SHOW_DESKTOP_GRACE_MS: Final[int] = 1000
+    SHOW_DESKTOP_GRACE_REBURIALS: Final[int] = 2
     # The one INFO "recovered from taskbar burial" line per episode is meant for a REAL burial
     # (#327 note, rc.2 W8). The widget is also buried for a moment when it first docks (startup,
     # an Explorer restart) and when a tray icon arrives - the shell re-lays the taskbar and the
@@ -123,15 +145,42 @@ class TimeoutConstants:
     # costs at most this, once, and the provisional decision is re-done as soon as the probe lands.
     SIDE_BAR_FIRST_LAYOUT_WAIT_MS: Final[int] = 250
     SIDE_BAR_NEAR_SLOTS: Final[int] = 3
+    # A bar with no TrayNotifyWnd (a Win11 secondary taskbar on any edge, #373) gets a background UIA
+    # layout probe - its clock and Widgets/weather button - on every new dock, and again at most this
+    # often while the widget (or a "Show on all taskbars" mirror) sits on it: the weather text resizes
+    # the button and seconds widen the clock. The same cadence as the #200 Widgets probe's TTL.
+    TRAYLESS_BAR_LAYOUT_REFRESH_S: Final[float] = 30.0
+    # Widgets turned back ON (TaskbarDa 0 -> 1): Explorer may take a moment to draw the button, so a
+    # probe that finds none this soon after keeps the bar's last seen box, and every docked tray-less
+    # bar is probed again right away and once more after this long (#473 VM re-check).
+    WIDGETS_REENABLE_GRACE_S: Final[float] = 5.0
+    # ... and the stand-in (last seen) box answers at most this long after Widgets came back on, unless a
+    # probe confirmed it: the re-probe at the grace's end lands long before.
+    WIDGETS_INTERIM_MAX_S: Final[float] = 2 * WIDGETS_REENABLE_GRACE_S
+    # The Widgets toggle (TaskbarDa) is read at most once per this long; it changes only from Settings.
+    WIDGETS_TOGGLE_MEMO_S: Final[float] = 0.25
     # #24 app-button yield on a horizontal Win11 bar (core/app_overlap_yield.py): hiding is immediate,
     # but the widget comes back only after two clear readings at least this far apart - the buttons
     # animate for ~300-550 ms after an app closes, and one mid-animation read must not blink it back.
     # (The probe rate limit, SIDE_BAR_MIN_PROBE_INTERVAL_MS, makes the real spacing >= 500 ms.) The
-    # yield reuses the side-bar cadence above: foreground follow-up, near re-check + back-off, slots.
+    # yield keeps this confirmation even with its faster nearby re-check cadence.
     APP_YIELD_SHOW_CONFIRM_MS: Final[int] = 300
-    # While yielded the near re-check backs off only up to this (not SIDE_BAR_NEAR_RECHECK_MAX_MS): an
-    # app closed in the background (no foreground change) must bring the widget back within seconds.
-    APP_YIELD_YIELDED_RECHECK_MAX_MS: Final[int] = 10000
+    # Horizontal app-button yield: a nearby or hidden widget needs a fresh layout every second,
+    # even after long idle periods. Far-away bars still have no periodic UIA probes.
+    APP_YIELD_ACTIVE_RECHECK_MS: Final[int] = 1000
+    # The 1 s refresh tick drives that re-check, and the probe it starts fires a few ms AFTER the tick,
+    # so a strict ">= 1000 ms since the last probe" skips every other tick (measured with real QTimers:
+    # median gap 2.0 s). A tick this much early still counts.
+    APP_YIELD_TICK_SLACK_MS: Final[int] = 200
+    # The 1 s cadence holds while something moves (a foreground change, a changed span, a yield flip)
+    # and this long after. Then an unchanged near / yielded layout backs off (doubling) up to
+    # APP_YIELD_IDLE_RECHECK_MAX_MS: one probe costs ~6 ms of our CPU + ~13 ms of Explorer's (host
+    # measurement, 2026-10-29), and a bar can sit crowded for hours (a game on top, the user away).
+    APP_YIELD_ACTIVE_WINDOW_MS: Final[int] = 15000
+    APP_YIELD_IDLE_RECHECK_MAX_MS: Final[int] = 8000
+    # A foreground event may precede Explorer's final layout by more than 800 ms. Observe a bounded
+    # burst, including wide uncombined task buttons, rather than assuming one 44 px slot was added.
+    APP_YIELD_FOREGROUND_FOLLOWUPS: Final[int] = 3
     # An Explorer restart, AFTER the taskbar is back (while it is missing, TASKBAR_ABSENT_HOLD_MS /
     # holding_for_taskbar owns the hide): a yielded widget stays aside this long while the NEW taskbar
     # still reports no buttons (rc.2 live test C5: its first probe found nothing, the buttons came ~3 s
@@ -157,9 +206,23 @@ class TimeoutConstants:
     # just holds the position, so a single transient failed lookup can't flicker it (#440 review L5).
     TASKBAR_ABSENT_HIDE_AFTER_TICKS: Final[int] = 2
 
+    # A widget drag whose left-button release never arrives (a UAC prompt, Win+L, Alt+Tab or a modal
+    # mid-drag) left ``_dragging`` True for good, and the #24 yield read BUSY every tick until a restart
+    # (relu616, rc.4 on #373). While a drag is under way the real button state is polled this often;
+    # DRAG_RELEASE_WATCHDOG_MISSES polls in a row with the button up end the drag as a drop. A real
+    # drag holds the button down, so it is never cut short however long it lasts.
+    DRAG_RELEASE_WATCHDOG_MS: Final[int] = 250
+    DRAG_RELEASE_WATCHDOG_MISSES: Final[int] = 2
+
     # Widget / UI Delays (milliseconds)
     WIDGET_INIT_DELAY_MS: Final[int] = 500
     GRAPH_CLOSE_REFRESH_DELAY_MS: Final[int] = 300
+    # Settings / Monitor closed -> reset Qt's font database (utils/font_release) this long after the
+    # window is destroyed, so its deferred deletes and the widget's next repaint have settled.
+    FONT_RELEASE_DELAY_MS: Final[int] = 1500
+    # A Settings dialog closed while a history backup / delete is still running is destroyed only once
+    # that work has reported back; polled at this interval.
+    SETTINGS_DESTROY_RETRY_MS: Final[int] = 1000
     
     # Thread / App Lifecycle (milliseconds/seconds)
     APP_CLOSE_WAIT_MS: Final[int] = 2000

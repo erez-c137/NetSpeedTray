@@ -29,6 +29,7 @@ _DWMWA_USE_IMMERSIVE_DARK_MODE = 20         # BOOL; build >= 18985
 _DWMWA_USE_IMMERSIVE_DARK_MODE_LEGACY = 19  # the same flag on 20H1 (1903/1909)
 _DWMWA_WINDOW_CORNER_PREFERENCE = 33        # int;  Win11 build >= 22000
 _DWMWA_SYSTEMBACKDROP_TYPE = 38             # int;  Win11 22H2 build >= 22621
+_DWMWA_CLOAKED = 14                         # DWORD, read-only; nonzero = cloaked (Win8+)
 
 # DWM_WINDOW_CORNER_PREFERENCE values
 _DWMWCP_ROUND = 2
@@ -67,6 +68,29 @@ def _set_attr(hwnd: int, attr: int, value: int) -> bool:
             ctypes.sizeof(val),
         )
         return hr == _S_OK
+    except Exception:
+        return False
+
+
+def is_cloaked(hwnd: int) -> bool:
+    """True when DWM reports ``hwnd`` cloaked: present and "visible" to USER32 but not drawn (a
+    window on another virtual desktop, a suspended UWP frame, a shell surface parked off-screen).
+    False on any error, so a failed query never makes a window count as hidden (#503)."""
+    if not hwnd:
+        return False
+    try:
+        dwm = ctypes.windll.dwmapi  # type: ignore[attr-defined]
+    except (OSError, AttributeError):
+        return False
+    val = wintypes.DWORD(0)
+    try:
+        hr = dwm.DwmGetWindowAttribute(
+            wintypes.HWND(hwnd),
+            wintypes.DWORD(_DWMWA_CLOAKED),
+            ctypes.byref(val),
+            ctypes.sizeof(val),
+        )
+        return hr == _S_OK and val.value != 0
     except Exception:
         return False
 

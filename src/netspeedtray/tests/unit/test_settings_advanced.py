@@ -2,6 +2,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QMessageBox
 
 from netspeedtray import constants
@@ -61,7 +62,24 @@ def dialog(qtbot, monkeypatch):
         available_interfaces=["Ethernet"], is_startup_enabled=False,
     )
     qtbot.addWidget(dlg)
+    # On screen (never really): a result while Settings is open is a box over it; closed, a notice.
+    dlg.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    dlg.show()
     return dlg
+
+
+def test_a_delete_result_after_settings_closed_is_a_notice_not_a_box(dialog, monkeypatch):
+    """#490 review P0: a box parented to the hidden dialog ran its exec loop while the owner destroyed
+    the dialog (heap corruption). Closed, the result goes to the widget's notice flyout."""
+    boxes = []
+    for k in ("information", "warning", "critical"):
+        monkeypatch.setattr(QMessageBox, k, lambda *a, **kw: boxes.append(a))
+    dialog.hide()
+    dialog._on_history_deleted("done")
+    dialog._on_delete_timeout()
+    assert boxes == []
+    texts = [c.args[1] for c in dialog.parent_widget.show_backup_notice.call_args_list]
+    assert texts == [dialog.i18n.DELETE_HISTORY_DONE, dialog.i18n.DELETE_HISTORY_FAILED]
 
 
 def test_reset_all_restores_defaults(qtbot, dialog, monkeypatch):

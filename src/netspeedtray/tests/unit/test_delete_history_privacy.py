@@ -18,6 +18,7 @@ Privacy review 2.2 (finding 1) and data-integrity review (A, B): what "Delete al
   * B: a usage reset while the file is still opening drops the polls buffered before it (they used to
     be replayed into the fresh counter: 5 x 100 MB -> 500000001 after the first poll).
 """
+import types
 import os
 import sqlite3
 import stat
@@ -52,6 +53,11 @@ def no_retry_sleep(monkeypatch):
     monkeypatch.setattr(constants.timeouts, "DB_CHECKPOINT_RETRY_SLEEP", 0.0)
 
 
+def _current_period_key() -> str:
+    """The odometer only counts within its period, so a hardcoded month expires (it did on 2026-11-01)."""
+    return WidgetState._compute_period_key(1)
+
+
 def _make_v7(d: Path, usage=None) -> Path:
     db = d / DB
     w = LegacyV7Worker(db)
@@ -61,7 +67,8 @@ def _make_v7(d: Path, usage=None) -> Path:
     F.populate(w.conn)
     if usage:
         w.conn.execute("INSERT OR REPLACE INTO usage_counter (id, cumulative_up, cumulative_down, anchor_up, "
-                       "anchor_down, period_key, updated_ts) VALUES (1, ?, ?, ?, ?, '2026-10-01', 0)", usage)
+                       "anchor_down, period_key, updated_ts) VALUES (1, ?, ?, ?, ?, ?, 0)",
+                       (*usage, _current_period_key()))
         w.conn.commit()
     w._close_connection()
     return db
@@ -723,6 +730,9 @@ def test_settings_re_arms_cap_alerts_only_after_a_successful_delete():
         logger=NS(debug=lambda *a, **k: None),
         _delete_include_usage=True,
     )
+    fake._show_result = types.MethodType(SettingsDialog._show_result, fake)
+    fake.isVisible = lambda: True
+    fake.isMinimized = lambda: False
     with patch("netspeedtray.views.settings.dialog.QMessageBox"):
         SettingsDialog._on_history_deleted(fake, DatabaseWorker.DELETE_FAILED)
         assert fake.config["usage_alert_state"] == "2026-10-01:80" and calls == []
@@ -740,7 +750,7 @@ def test_a_vacuum_failure_after_the_commit_is_a_done_delete_not_a_failed_one(tmp
     OLD 5e9 total back over the (already deleted) odometer."""
     w = _migrated_worker(tmp_path)
     w.conn.execute("INSERT OR REPLACE INTO usage_counter (id, cumulative_up, cumulative_down, anchor_up, "
-                   "anchor_down, period_key, updated_ts) VALUES (1, 5e9, 5e9, 0, 0, '2026-10-01', 0)")
+                   "anchor_down, period_key, updated_ts) VALUES (1, 5e9, 5e9, 0, 0, ?, 0)", (_current_period_key(),))
     got = []
     w.history_deleted.connect(got.append)
     with patch.object(writer_v8.WriterV8, "incremental_vacuum",
@@ -827,6 +837,30 @@ def test_steady_observed_time_past_the_floor_does_age_a_backup_out(tmp_path):
     assert b.exists(), "30 observed days: not yet"
     _run_hours(w, end, 25)
     assert not b.exists()
+    w._close_connection()
+
+
+def test_a_backup_whose_unlink_failed_once_is_retried_on_the_next_pass(tmp_path, monkeypatch):
+    """Zeroing stamps the file 'modified now'; if the unlink then fails (a scanner holding the fresh
+    write), the retry must still see the backup's own dates - not keep a zeroed file a whole period."""
+    w = _clock_worker(tmp_path)
+    b = _fake_bak(tmp_path, 7, REAL - timedelta(days=60))
+    b.write_bytes(b"history")
+    old = REAL - timedelta(days=60)
+    os.utime(b, (old.timestamp(), old.timestamp()))
+    real_unlink, failed = os.unlink, []
+
+    def flaky_unlink(path, *a, **k):
+        if Path(path) == b and not failed:
+            failed.append(1)
+            raise PermissionError(32, "held by a scanner")
+        return real_unlink(path, *a, **k)
+
+    monkeypatch.setattr(os, "unlink", flaky_unlink)
+    end = _run_hours(w, int((REAL - timedelta(days=31)).timestamp()), 24 * 30)
+    _run_hours(w, end, 26)
+    assert failed, "the first eligible pass must have tried (and failed) to unlink it"
+    assert not b.exists(), "the next pass retries it instead of waiting another retention period"
     w._close_connection()
 
 
@@ -934,6 +968,9 @@ def test_settings_tells_the_user_a_backup_was_kept(status, key, box):
               config={}, original_config={}, logger=NS(debug=lambda *a, **k: None),
               i18n=NS(SUCCESS_TITLE="ok", DELETE_HISTORY_DONE_BACKUP_UPGRADE="UPG", DELETE_HISTORY_DONE_BACKUP_KEPT="KEPT"),
               _delete_include_usage=False)
+    fake._show_result = types.MethodType(SettingsDialog._show_result, fake)
+    fake.isVisible = lambda: True
+    fake.isMinimized = lambda: False
     with patch("netspeedtray.views.settings.dialog.QMessageBox") as mb:
         getattr(mb, box).side_effect = lambda *a: shown.append(a[2])
         SettingsDialog._on_history_deleted(fake, status)

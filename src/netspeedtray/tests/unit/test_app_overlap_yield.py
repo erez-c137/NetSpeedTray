@@ -26,6 +26,8 @@ from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.utils import taskbar_utils, uia_widgets
 from netspeedtray.utils.taskbar_utils import TaskbarInfo
 
+# Captured before conftest's autouse no-op replaces it (the copy tests below run the real one).
+REAL_BACKGROUND_PROBE = taskbar_utils.request_background_layout_probe
 T = constants.timeouts
 GAP = constants.layout.TRAY_EDGE_MIN_GAP_PX
 BOTTOM = constants.taskbar.edge.BOTTOM
@@ -97,7 +99,7 @@ def layout():
     def query(_hwnd):
         if ctl.fail or ctl.elements is None:
             return None
-        return uia_widgets._layout_from_elements_full(ctl.elements, False)
+        return uia_widgets._layout_from_elements_ext(ctl.elements, False)
 
     def land(elements=None, fail=False):
         ctl.elements, ctl.fail = (elements if elements is not None else ctl.elements), fail
@@ -125,7 +127,7 @@ class Rig:
     """An AppOverlapYield on a fake bottom bar; the clock and the widget's x are the test's."""
 
     def __init__(self, layout, widget_x, *, dpi=1.0, width=WIDGET_W, centered=None, drop_key=None,
-                 saved_drop=None, enabled=True):
+                 saved_drop=None, enabled=True, background_probes=False):
         self.layout = layout
         self.widget_x = widget_x
         self.width = width
@@ -137,12 +139,17 @@ class Rig:
         self.centered = centered
         self.drop_key = drop_key
         self.saved_drop = saved_drop
+        self.layout_key = None
+        self.stepped = None          # rc.3: the two default spots beside a Widgets button (or None)
+        self.tray_spot = None
+        self.tray_spot_clear = False   # rc.3: the tray spot clears the weather text
         self.persisted = []
         self.now = 1000.0
         self.changes = 0
         self.firsts = 0
         self.y = AppOverlapYield(self._ctx, self._changed, self._first, clock=lambda: self.now,
-                                 on_persist_drop=self._persist, enabled=enabled)
+                                 on_persist_drop=self._persist, enabled=enabled,
+                                 background_probes=background_probes)
 
     def _ctx(self):
         if not self.eligible:
@@ -152,7 +159,9 @@ class Rig:
         if self.busy:
             return BUSY
         return OverlapContext(hwnd=self.hwnd, dpi=self.dpi, widget=(self.widget_x, self.widget_x + self.width),
-                              centered=self.centered, drop_key=self.drop_key, saved_drop=self.saved_drop)
+                              centered=self.centered, drop_key=self.drop_key, saved_drop=self.saved_drop,
+                              layout_key=self.layout_key, stepped=self.stepped, tray_spot=self.tray_spot,
+                              tray_spot_clear=self.tray_spot_clear)
 
     def _persist(self, value):
         self.persisted.append(value)
@@ -265,7 +274,7 @@ def test_hysteresis_drop_baseline_and_unknown():
 
 # --- the watcher on the owner's real bar ---------------------------------------------------------
 
-def test_owner_bottom_centred_bar_never_yields_and_costs_few_probes(rig, layout):
+def test_owner_bottom_centred_bar_never_yields_on_foreground_probes(rig, layout):
     r = rig(OWNER_WIDGET_X)
     r.start(CENTERED)
     assert layout.requests == [True]             # keep_last: never falls back to the lagging HWND rect
@@ -280,8 +289,8 @@ def test_owner_bottom_centred_bar_never_yields_and_costs_few_probes(rig, layout)
             probes += 1
         r.y._followup_timer.stop()
     assert not r.y.yielded and r.changes == 0 and r.firsts == 0
-    # 5.6 slots clear: a probe only every third foreground change (each one assumed one slot).
-    assert probes <= 11
+    # Measure each event: a newly opened uncombined button need not be a 44 px slot.
+    assert probes == 31
 
 
 def test_owner_bar_idle_tick_never_probes(rig, layout):
@@ -291,6 +300,50 @@ def test_owner_bar_idle_tick_never_probes(rig, layout):
         r.now += 1.0
         r.y.sync()
         assert not r.pending_probe()
+
+
+def test_a_live_relayout_of_the_same_bar_re_probes_once(rig, layout):
+    """rc.3 review: on a top/bottom bar the yield is the only layout prober, and once the group is
+    far from the widget it never probes again - so the Widgets box the default spot steps left of
+    froze at its startup value. A Settings alignment flip, a tray icon appearing (the tray widens)
+    or Widgets toggled re-lay the bar on the SAME HWND: each must re-probe, once."""
+    r = rig(OWNER_WIDGET_X)
+    r.layout_key = (0, 1770, True)
+    r.start(left_aligned(3))
+    for _ in range(5):
+        r.now += 1.0
+        r.y.sync()
+        assert not r.pending_probe()                 # unchanged inputs: idle, as before
+    for key in [(1, 1770, True),                     # TaskbarAl flipped to centred
+                (1, 1746, True),                     # a tray icon appeared
+                (1, 1746, False)]:                   # Widgets turned off
+        r.layout_key = key
+        r.now += 1.0
+        r.y.sync()
+        assert r.pending_probe(), key
+        r.probe(left_aligned(3))
+        r.now += 1.0
+        r.y.sync()
+        assert not r.pending_probe(), key            # once per change, not every tick
+
+
+def test_a_live_relayout_also_re_probes_after_the_button_has_slid(rig):
+    """rc.3 VM: the tray end moves first and the Widgets button slides after it; a probe taken right
+    at the layout change caught the button mid-slide and nothing probed again (the widget sat 39 px
+    short of the button). A layout change arms the foreground follow-ups too."""
+    r = rig(OWNER_WIDGET_X)
+    r.layout_key = (0, 1738, True)
+    r.start(left_aligned(3))
+    r.layout_key = (0, 1694, True)                   # an input-language indicator appeared
+    r.now += 1.0
+    r.y.sync()
+    assert r.pending_probe()
+    r.probe(left_aligned(3))
+    assert r.y._followup_timer.isActive()
+    assert r.y._followups_left == T.APP_YIELD_FOREGROUND_FOLLOWUPS
+    r.y._followup_timer.stop()
+    r.y._on_followup()                               # 800 ms later: one more measurement
+    assert r.pending_probe()
 
 
 def test_centred_bar_few_apps_never_yields_even_when_the_group_recentres(rig):
@@ -328,12 +381,12 @@ def test_left_aligned_apps_grow_into_the_widget_with_and_without_overflow(rig):
     r.start(left_aligned(20))                    # ends at 981: 9 slots away, nothing polls
     assert not r.y.yielded
     fg = 0
-    while not r.pending_probe():                 # apps opening: one assumed slot per foreground change
+    while not r.pending_probe():                 # opening a window must request a real measurement
         r.now += 2.0
         r.y.note_foreground_change()
         fg += 1
         assert fg < 10
-    assert fg == 7                               # predicted within 3 slots
+    assert fg == 1                               # measurement is not gated by the slot prediction
     r.probe(left_aligned(28))                    # ends at 1333: 47 px clear
     assert not r.y.yielded
     r.y.note_foreground_change()
@@ -461,7 +514,7 @@ def test_foreground_change_probes_now_and_800ms_later_when_near(rig):
     assert r.pending_probe()
 
 
-def test_near_tick_every_3s_backs_off_while_nothing_changes(rig):
+def test_near_tick_stays_responsive_while_nothing_changes(rig):
     r = rig(1380)
     r.start(left_aligned(27))
     intervals = []
@@ -476,9 +529,7 @@ def test_near_tick_every_3s_backs_off_while_nothing_changes(rig):
             assert waited < 200
         intervals.append(waited)
         r.probe(left_aligned(27))
-    assert intervals[0] == pytest.approx(T.SIDE_BAR_NEAR_RECHECK_MS / 1000.0, abs=0.6)
-    assert intervals[1] == pytest.approx(T.SIDE_BAR_NEAR_RECHECK_MS / 1000.0 * 2, abs=0.6)
-    assert intervals == sorted(intervals) and intervals[-1] <= T.SIDE_BAR_NEAR_RECHECK_MAX_MS / 1000.0 + 0.5
+    assert intervals == [T.APP_YIELD_ACTIVE_RECHECK_MS / 1000.0] * 6
 
 
 def test_far_widget_tick_never_probes_but_yielded_one_does(rig):
@@ -525,9 +576,11 @@ def _pm(edge=BOTTOM, tasklist=None, config=None, x=1380):
 def test_position_manager_context_only_for_native_horizontal_bars(q_app):
     pm, tb, widget = _pm()
     pm._app_overlap_info = tb
-    with patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=1):
+    tb.get_tray_rect.return_value = (1770, Y0, 1920, Y1)
+    with patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=1),             patch.object(taskbar_utils, "widgets_button_enabled", return_value=True):
         ctx = pm._app_overlap_context()
-    assert ctx == OverlapContext(hwnd=HWND, dpi=1.0, widget=(1380.0, 1380.0 + WIDGET_W), centered=True)
+    assert ctx == OverlapContext(hwnd=HWND, dpi=1.0, widget=(1380.0, 1380.0 + WIDGET_W), centered=True,
+                                 layout_key=(1, 1770, True))
     tb.get_edge_position.return_value = RIGHT
     assert isinstance(pm._app_overlap_context(), str)              # side bars: #406's watcher
     tb.get_edge_position.return_value = BOTTOM
@@ -590,7 +643,10 @@ def refresh(monkeypatch):
                         lambda preferred_screen_name=None: types.SimpleNamespace(hwnd=HWND))
     monkeypatch.setattr(widget_main, "is_taskbar_visible", lambda tb: True)
     monkeypatch.setattr(widget_main, "is_taskbar_obstructed", lambda tb, hwnd: state["obstructed"])
-    monkeypatch.setattr(widget_main.win32gui, "GetForegroundWindow", lambda: 0)
+    # A real (stand-in) foreground window: a NULL foreground is "no information" to the fullscreen
+    # gate since #503, so it could not report the obstruction these tests set up.
+    monkeypatch.setattr(widget_main.win32gui, "GetForegroundWindow", lambda: 0x77)
+    monkeypatch.setattr(widget_main, "is_window_on_screen", lambda h: bool(h))
 
     def run(yielded, keep_visible=False, obstructed=False, visible=True):
         state["obstructed"] = obstructed
@@ -636,8 +692,9 @@ def test_first_yield_notice_is_the_non_activating_flyout_once_ever(q_app):
     i18n = types.SimpleNamespace(SIDE_BAR_NO_ROOM_TITLE="t", APP_OVERLAP_YIELD_BODY="b {setting}",
                                  HIDE_WHEN_APPS_COVER_LABEL="S", SETTINGS_WINDOW_TITLE="W", WIDGET_SETTINGS_GROUP="P")
     stub = types.SimpleNamespace(config={}, logger=MagicMock(), update_config=MagicMock(), i18n=i18n,
-                                 _show_notice_flyout=MagicMock())
+                                 _show_notice_flyout=MagicMock(return_value=True))
     stub._app_overlap_text = lambda t: main_mod.NetworkSpeedWidget._app_overlap_text(stub, t)
+    stub._show_app_overlap_notice = lambda t, b: main_mod.NetworkSpeedWidget._show_app_overlap_notice(stub, t, b)
     with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
         main_mod.NetworkSpeedWidget._maybe_show_app_overlap_notice(stub)
         main_mod.NetworkSpeedWidget._maybe_show_app_overlap_notice(stub)
@@ -696,27 +753,48 @@ def test_second_launch_suspends_the_yield_for_the_session(rig):
     assert r.y.suspend_for_session() is False    # a second one: it was not yielded
 
 
-def _second_launch_widget(pm, *, fullscreen=False, visible=False):
+def test_second_launch_while_not_yielded_does_not_suspend(rig):
+    """#373: a second launch that finds the widget NOT yielded (still starting, mid-hysteresis) leaves
+    the yield working - relu616's widget sat over the app buttons for a whole session."""
+    r = rig(1380)
+    r.start(left_aligned(3))                     # plenty of room: shown
+    assert not r.y.yielded
+    assert r.y.suspend_for_session() is False
+    assert not r.y.suspended and r.y.attached_hwnd == HWND
+
+
+def _second_launch_widget(pm, *, fullscreen=False, visible=False, config=None, flyout_ok=True):
     """A stand-in widget running the REAL second-launch methods (#440's show_from_second_launch and the
-    #24 stand-down / explanation), recording the order things happen in."""
+    #24 stand-down / explanation), recording the order things happen in. ``config`` is shared across
+    stand-ins to model a restart; ``flyout_ok`` is what showing the notice flyout returns."""
     from netspeedtray.views.widget import main as main_mod
     W = main_mod.NetworkSpeedWidget
     order = []
-    i18n = types.SimpleNamespace(SIDE_BAR_NO_ROOM_TITLE="t", APP_OVERLAP_ACTIVATE_BODY="a {setting} {settings} {page}",
+    i18n = types.SimpleNamespace(SIDE_BAR_NO_ROOM_TITLE="t", SECOND_LAUNCH_SHOWN_TITLE="t2",
+                                 APP_OVERLAP_ACTIVATE_BODY="a {setting} {settings} {page}",
                                  HIDE_WHEN_APPS_COVER_LABEL="S", SETTINGS_WINDOW_TITLE="W", WIDGET_SETTINGS_GROUP="P")
-    w = types.SimpleNamespace(logger=MagicMock(), i18n=i18n, config={}, position_manager=pm,
-                              _taskbar_lost_count=3, _ACTIVATE_FLYOUT_DELAY_MS=W._ACTIVATE_FLYOUT_DELAY_MS)
+    w = types.SimpleNamespace(logger=MagicMock(), i18n=i18n, config={} if config is None else config,
+                              position_manager=pm, _taskbar_lost_count=3,
+                              _ACTIVATE_FLYOUT_DELAY_MS=W._ACTIVATE_FLYOUT_DELAY_MS)
+    w.update_config = lambda updates: w.config.update(updates)
     shown = {"v": visible}
     w.isVisible = lambda: shown["v"]
     w.setVisible = lambda v: (order.append(("setVisible", v)), shown.update(v=v))
     w._is_off_screen = lambda: False
     w._execute_refresh = lambda *a: order.append(("refresh", pm.is_yielding_to_apps()))
-    w._show_notice_flyout = lambda title, body: order.append(("flyout", title, body))
+    w._show_notice_flyout = lambda title, body: (order.append(("flyout", title, body)), flyout_ok)[1]
     w.system_event_handler = types.SimpleNamespace(is_fullscreen_active=lambda: fullscreen)
     for name in ("show_from_second_launch", "_stand_down_app_yield", "_explain_app_yield_stand_down",
-                 "_app_overlap_text"):
-        setattr(w, name, getattr(W, name).__get__(w))
+                 "_app_overlap_text", "_show_second_launch_notice"):
+        if hasattr(W, name):
+            setattr(w, name, getattr(W, name).__get__(w))
     return w, order
+
+
+def _stub_placement(pm):
+    for name in ("reset_reseat_state", "update_position", "ensure_topmost", "reseat_above_taskbar"):
+        setattr(pm, name, MagicMock(name=name))
+    pm.is_buried_behind_taskbar = MagicMock(return_value=False)
 
 
 def _yielded_pm(layout):
@@ -727,9 +805,7 @@ def _yielded_pm(layout):
     layout.land(left_aligned(28, overflow=True))
     pm._app_yield._poll_probe()
     assert pm.is_yielding_to_apps() is True
-    for name in ("reset_reseat_state", "update_position", "ensure_topmost", "reseat_above_taskbar"):
-        setattr(pm, name, MagicMock(name=name))
-    pm.is_buried_behind_taskbar = MagicMock(return_value=False)
+    _stub_placement(pm)
     return pm, tb
 
 
@@ -743,22 +819,164 @@ def test_second_launch_un_yields_first_then_shows_then_explains(layout, q_app):
     # 1. the yield is off before anything is shown; 2. #440's show + re-place; 3. the flyout, last.
     assert order[0] == ("setVisible", True)
     assert ("update_position", False) in order and ("refresh", False) in order
-    assert order[-1] == ("flyout", "t", "a S W P")
+    assert order[-1] == ("flyout", "t2", "a S W P")   # its own title (#373 R3), not the side-bar one
     assert pm._app_yield.suspended and pm.is_yielding_to_apps() is False
+    assert w.config["second_launch_notice_shown"] is True
 
 
 def test_second_launch_without_a_yield_shows_no_flyout(layout, q_app):
     from netspeedtray.views.widget import main as main_mod
     pm, tb, _widget = _pm()
-    for name in ("reset_reseat_state", "update_position", "ensure_topmost", "reseat_above_taskbar"):
-        setattr(pm, name, MagicMock(name=name))
-    pm.is_buried_behind_taskbar = MagicMock(return_value=False)
+    _stub_placement(pm)
     w, order = _second_launch_widget(pm)
     with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
         w.show_from_second_launch()
     assert ("setVisible", True) in order
     assert not [o for o in order if o[0] == "flyout"]
-    assert pm._app_yield.suspended                 # still off for the session (cheap, consistent)
+    assert not pm._app_yield.suspended             # #373: nothing to stand down, the yield stays on
+
+
+def test_second_launch_while_starting_keeps_the_yield_for_the_next_full_bar(layout, q_app):
+    """#373 (relu616, rc.3): the second launch came while the widget was NOT yielded - attached, its
+    first probe still out. The yield must stay on: the full-bar reading that lands next hides it."""
+    from netspeedtray.views.widget import main as main_mod
+    pm, tb, _widget = _pm()
+    pm.sync_app_overlap(tb)
+    pm._app_yield._probe_timer.stop()
+    pm._app_yield._fire_probe()                    # in flight, nothing landed yet
+    assert pm.is_yielding_to_apps() is False
+    _stub_placement(pm)
+    w, order = _second_launch_widget(pm)
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch()
+    assert pm._app_yield.suspended is False
+    assert not [o for o in order if o[0] == "flyout"]
+    layout.land(left_aligned(28, overflow=True))
+    pm._app_yield._poll_probe()
+    assert pm.is_yielding_to_apps() is True        # the yield still works
+
+
+def test_second_launch_notice_shows_once_ever(layout, q_app):
+    """#373 R3: the stand-down happens on every second launch that finds the widget yielded, but its
+    notice only the first time ever (``second_launch_notice_shown`` persists across restarts)."""
+    from netspeedtray.views.widget import main as main_mod
+    config = {}
+    flyouts = []
+    for _session in range(2):                      # a restart in between: a fresh pm + widget, same config
+        pm, _tb = _yielded_pm(layout)
+        w, order = _second_launch_widget(pm, config=config)
+        with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+            w.show_from_second_launch()
+        assert pm._app_yield.suspended and pm.is_yielding_to_apps() is False
+        flyouts += [o for o in order if o[0] == "flyout"]
+    assert len(flyouts) == 1
+    assert config["second_launch_notice_shown"] is True
+
+
+def test_install_then_launch_stands_down_and_explains(layout, q_app):
+    """#373 review: Setup's Finish-page launch starts the app, it yields at once on a full bar, and the
+    user double-clicks the shortcut seconds later. That is the user asking - stand down + notice, even
+    though the running instance is only seconds old (an instance-age grace swallowed exactly this)."""
+    import time
+    from netspeedtray.views.widget import main as main_mod
+    pm, _tb = _yielded_pm(layout)
+    w, order = _second_launch_widget(pm)
+    w._reachable_since = time.monotonic()          # just started (what an instance-age check would read)
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch()                # the activate message's default: a user launch
+    assert pm._app_yield.suspended and pm.is_yielding_to_apps() is False
+    assert order[0] == ("setVisible", True) and order[-1] == ("flyout", "t2", "a S W P")
+    assert w.config["second_launch_notice_shown"] is True
+
+
+def test_sign_in_duplicate_leaves_a_yielded_widget_aside(layout, q_app):
+    """#373: the SECOND process said it is a duplicate autostart at sign-in (wParam): the yield is
+    untouched, a yielded widget stays aside, no notice."""
+    from netspeedtray.views.widget import main as main_mod
+    pm, _tb = _yielded_pm(layout)
+    w, order = _second_launch_widget(pm)
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch(sign_in_duplicate=True)
+    assert pm._app_yield.suspended is False and pm.is_yielding_to_apps() is True
+    assert order == []                             # no show, no flyout
+    assert "second_launch_notice_shown" not in w.config
+
+
+def test_only_the_first_sign_in_duplicate_is_ignored(layout, q_app):
+    """#373 re-review: a deliberate launch within the sign-in window also arrives flagged. Only the
+    FIRST flagged activation of an instance is the duplicate autostart; the next one, flagged too, is
+    the user - it stands down and explains."""
+    from netspeedtray.views.widget import main as main_mod
+    pm, _tb = _yielded_pm(layout)
+    w, order = _second_launch_widget(pm)
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch(sign_in_duplicate=True)
+    assert pm._app_yield.suspended is False and order == []
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch(sign_in_duplicate=True)
+    assert pm._app_yield.suspended and pm.is_yielding_to_apps() is False
+    assert order[0] == ("setVisible", True) and order[-1] == ("flyout", "t2", "a S W P")
+
+
+def test_sign_in_duplicate_while_not_yielded_still_shows_and_reseats(layout, q_app):
+    from netspeedtray.views.widget import main as main_mod
+    pm, tb, _widget = _pm()
+    _stub_placement(pm)
+    w, order = _second_launch_widget(pm)
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w.show_from_second_launch(sign_in_duplicate=True)
+    assert ("setVisible", True) in order and not [o for o in order if o[0] == "flyout"]
+    pm.ensure_topmost.assert_called_once_with()
+    assert pm._app_yield.suspended is False
+
+
+def test_the_activate_wparam_reaches_the_second_launch_path(layout, q_app):
+    """The REAL atom through nativeEvent: wParam 1 (the second process's sign-in verdict) leaves the yield
+    alone; wParam 0 (a user launch, and all any pre-rc.4 sender posts) stands it down."""
+    import ctypes
+    from netspeedtray.core import shutdown_channel
+    from netspeedtray.views.widget import main as main_mod
+    for wparam, suspended in ((constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE, False),
+                              (constants.app.ACTIVATE_WPARAM_USER, True)):
+        pm, _tb = _yielded_pm(layout)
+        w, _order = _second_launch_widget(pm)
+        msg = main_mod._NativeMSG()
+        msg.message = shutdown_channel.activate_message_id()
+        msg.wParam = wparam
+        with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+            assert main_mod.NetworkSpeedWidget.nativeEvent(
+                w, b"windows_generic_MSG", ctypes.addressof(msg)) == (True, 0)
+        assert pm._app_yield.suspended is suspended
+
+
+def test_second_launch_notice_flag_waits_for_the_flyout(layout, q_app):
+    """#373 review: the flag is saved when the (delayed) flyout really showed - not when it was queued,
+    and not at all when showing failed (the next yielded launch may then try again)."""
+    from netspeedtray.views.widget import main as main_mod
+    pm, _tb = _yielded_pm(layout)
+    w, order = _second_launch_widget(pm)
+    queued = []
+    with patch.object(main_mod.QTimer, "singleShot",
+                      side_effect=lambda ms, fn: queued.append(fn) if ms == w._ACTIVATE_FLYOUT_DELAY_MS else fn()):
+        w.show_from_second_launch()
+    assert len(queued) == 1 and "second_launch_notice_shown" not in w.config   # queued, not shown yet
+    queued.pop()()
+    assert w.config["second_launch_notice_shown"] is True
+    # A failed show saves nothing.
+    config = {}
+    pm2, _tb2 = _yielded_pm(layout)
+    w2, order2 = _second_launch_widget(pm2, config=config, flyout_ok=False)
+    with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+        w2.show_from_second_launch()
+    assert [o for o in order2 if o[0] == "flyout"] and "second_launch_notice_shown" not in config
+    assert w2._second_launch_notice_shown is False
+
+
+def test_second_launch_notice_flag_is_kept_by_reset_all():
+    from netspeedtray.views.settings.dialog import SettingsDialog
+    assert "second_launch_notice_shown" in SettingsDialog.RESET_ALL_KEEPS
+    assert constants.config.defaults.DEFAULT_CONFIG["second_launch_notice_shown"] is False
+    assert constants.config.defaults.VALIDATION_SCHEMA["second_launch_notice_shown"]["type"] is bool
 
 
 def test_second_launch_under_fullscreen_stands_down_but_shows_nothing(layout, q_app):
@@ -872,7 +1090,7 @@ def test_hidden_widget_is_judged_at_its_computed_position(q_app):
     with patch.object(pm._calculator, "calculate_position", return_value=ScreenPosition(1255, Y0)) as calc:
         ctx = pm._app_overlap_context()
     assert ctx.widget == (1255.0, 1255.0 + WIDGET_W)
-    calc.assert_called_once()
+    assert calc.called                            # (rc.3: also asked for both default spots)
     widget.isVisible.return_value = True          # shown: its real position
     assert pm._app_overlap_context().widget[0] == 1227.0
 
@@ -906,6 +1124,185 @@ def test_position_manager_can_be_built_without_the_yield(q_app):
     pm = PositionManager(WindowState(config={}, widget=widget, taskbar_info=tb), app_yield_enabled=False)
     pm.sync_app_overlap(tb)
     assert pm.is_yielding_to_apps() is False and pm._app_yield.attached_hwnd == 0
+
+
+# --- rc.5 #373: "Show on all taskbars" copies yield on THEIR bar, without the probe slot ------------------
+
+MAIN_BAR = 7070      # the main widget's bar: it holds the one-taskbar probe slot
+
+
+@pytest.fixture
+def bg(layout, monkeypatch):
+    """The layout fixture plus the REAL background probe (conftest no-ops it for every other test)."""
+    monkeypatch.setattr(taskbar_utils, "request_background_layout_probe", REAL_BACKGROUND_PROBE)
+    return layout
+
+
+def _main_holds_the_slot(bg):
+    taskbar_utils.request_taskbar_layout_probe(MAIN_BAR)
+    bg.land(CENTERED)
+    assert taskbar_utils._layout_state["hwnd"] == MAIN_BAR
+
+
+def _assert_main_slot_untouched():
+    assert taskbar_utils._layout_state["hwnd"] == MAIN_BAR
+    assert not taskbar_utils.taskbar_layout_probe_pending(MAIN_BAR)
+    assert taskbar_utils.taskbar_layout_group(MAIN_BAR) == (674, 1032, 1247, 1080)
+
+
+def test_a_copy_yields_on_its_own_bar_without_taking_the_main_widgets_probe_slot(rig, bg):
+    """Each copy probing through the slot would evict the main widget's reading (its yield then reads
+    'unknown' and the slot thrashes between bars): a copy's probes go to the background queue."""
+    _main_holds_the_slot(bg)
+    r = rig(1380, background_probes=True)
+    r.start(left_aligned(28, overflow=True))
+    assert r.y.yielded and r.changes == 1
+    _assert_main_slot_untouched()
+    assert True not in bg.requests[1:]              # no keep_last slot re-check was asked for
+    # ...and it comes back by the same hysteresis: two clear readings >= 300 ms apart.
+    r.y._schedule(0)
+    r.probe(left_aligned(3))
+    assert r.y.yielded
+    r.probe(left_aligned(3), advance=T.APP_YIELD_SHOW_CONFIRM_MS / 1000.0)
+    assert not r.y.yielded
+    _assert_main_slot_untouched()
+
+
+def test_a_copy_probe_stays_in_flight_until_its_bar_lands(rig, bg):
+    _main_holds_the_slot(bg)
+    r = rig(1380, background_probes=True)
+    r.y.sync()
+    r.y._probe_timer.stop()
+    r.y._fire_probe()
+    r.y._poll_probe()                                   # nothing landed yet: still polling
+    assert r.y._inflight and r.y._poll_timer.isActive()
+    bg.land(left_aligned(28, overflow=True))
+    r.y._poll_probe()
+    assert not r.y._inflight and r.y.yielded
+
+
+def test_a_copy_probe_that_never_lands_times_out_as_unknown(rig, bg):
+    _main_holds_the_slot(bg)
+    r = rig(1380, background_probes=True)
+    r.y.sync()
+    r.y._probe_timer.stop()
+    r.y._fire_probe()
+    bg.workers.clear()                              # a hung Explorer: the probe never lands
+    r.y._poll_probe()
+    assert r.y._inflight                                # still waiting inside the timeout
+    r.now += taskbar_utils.LAYOUT_PROBE_TIMEOUT_S + 0.1
+    r.y._poll_probe()
+    assert not r.y._inflight and not r.y.yielded
+
+
+def test_a_copy_ignores_a_landing_whose_probe_began_before_it_asked(rig, bg):
+    """Review M1: a probe of this bar already running when the copy fired (the 30 s tray-less refresh, a
+    slow earlier re-check) lands the bar as it WAS - taken as this reading, every judgement would lag
+    one probe and two 'clear' readings could show the copy over buttons that came back."""
+    _main_holds_the_slot(bg)
+    r = rig(1380, background_probes=True)
+    r.y.sync()
+    r.y._probe_timer.stop()
+    r.y._fire_probe()
+    with taskbar_utils._layout_lock:                    # the older probe lands: a clear bar
+        taskbar_utils._store_landed_layout(HWND, {"group": (12, Y0, 300, Y1),
+                                                  "probe_start": r.y._fired_mono - 0.5})
+    r.y._poll_probe()
+    assert r.y._inflight and not r.y.yielded            # not this probe's reading: still waiting
+    bg.land(left_aligned(28, overflow=True))            # this probe: the buttons reach the copy
+    r.y._poll_probe()
+    assert not r.y._inflight and r.y.yielded
+
+
+def test_a_copy_whose_bar_holds_the_slot_re_checks_it_there(rig, bg):
+    """The copy's own bar can be the slot's (its fresh dock probe): the background request is then a
+    keep_last re-check of that bar, and it still lands as this reading."""
+    taskbar_utils.request_taskbar_layout_probe(HWND)
+    bg.land(left_aligned(3))
+    r = rig(1380, background_probes=True)
+    r.start(left_aligned(28, overflow=True))
+    assert r.y.yielded
+    assert bg.requests[-1] is True                      # a keep_last re-check, not a fresh slot probe
+
+
+def _copy_pm(*, config=None, x=1380, dpi=1.0, origin=0, width_px=1920):
+    """A PositionManager built the way a mirror builds it, on a bottom bar of its own screen."""
+    pm, tb, widget = _pm(config=config, x=x)
+    pm._app_yield.detach()
+    tb.dpi_scale = dpi
+    tb.rect = (origin, Y0, origin + width_px, Y1)
+    tb.get_tray_rect.return_value = None
+    screen = MagicMock()
+    screen.geometry.return_value = QRect(origin, 0, int(width_px / dpi), int(1080 / dpi))
+    tb.get_screen.return_value = screen
+    copy = PositionManager(WindowState(config=pm._state.config, widget=widget, taskbar_info=tb),
+                           app_yield_copy=True)
+    return copy, tb, widget
+
+
+def _probe_pm(pm, bg, elements):
+    pm._app_yield._probe_timer.stop()
+    pm._app_yield._fire_probe()
+    bg.land(elements)
+    pm._app_yield._poll_probe()
+
+
+def test_a_copy_never_shows_the_first_yield_notice_nor_touches_the_main_drop(bg, q_app):
+    """The first-yield notice and the saved drop are the main widget's (#472 stays main-only): a copy
+    yielding must not show a notice per copy, and a copy seeing its bar clear must not clear the main
+    widget's 'dropped on the buttons' offset."""
+    _main_holds_the_slot(bg)
+    config = {"app_overlap_drop_offset": -420}
+    pm, tb, _w = _copy_pm(config=config)
+    pm.on_app_yield_first = first = MagicMock()
+    pm.on_app_yield_persist = persist = MagicMock()
+    with patch.object(taskbar_utils, "widgets_button_enabled", return_value=False):
+        ctx = pm._app_overlap_context()
+        assert ctx.drop_key is None and ctx.saved_drop is None
+        pm.sync_app_overlap(tb)
+        _probe_pm(pm, bg, left_aligned(28, overflow=True))
+        assert pm.is_yielding_to_apps() is True
+        pm._app_yield._schedule(0)
+        _probe_pm(pm, bg, left_aligned(3))          # clear: would spend a drop baseline
+    first.assert_not_called()
+    persist.assert_not_called()
+    assert config["app_overlap_drop_offset"] == -420
+    _assert_main_slot_untouched()
+
+
+def test_a_copy_obeys_the_setting_off(bg, q_app):
+    pm, tb, _w = _copy_pm(config={"hide_when_apps_cover": False})
+    pm.sync_app_overlap(tb)
+    assert pm._app_yield.attached_hwnd == 0 and pm.is_yielding_to_apps() is False
+    assert not pm._app_yield._probe_timer.isActive()
+
+
+def test_a_copy_on_a_mixed_dpi_secondary_judges_in_its_screens_logical_px(bg, q_app):
+    """A copy on a 150 % secondary right of the primary (#473's VM layout): the UIA group (physical px)
+    converts around THAT screen's Qt origin, as the copy's own window position is in it."""
+    def shifted(elements, dx):
+        return [(c, a, (r[0] + dx, r[1], r[2] + dx, r[3])) for c, a, r in elements]
+    _main_holds_the_slot(bg)
+    origin = 1920
+    # 28 apps + overflow end at physical 1920 + 1377 = 3297 -> logical 1920 + 1377 / 1.5 = 2838.
+    pm, tb, widget = _copy_pm(x=2900, dpi=1.5, origin=origin)
+    with patch.object(taskbar_utils, "widgets_button_enabled", return_value=False), \
+            patch.object(taskbar_utils, "current_dpi_for_hwnd", return_value=1.5):
+        pm.sync_app_overlap(tb)
+        _probe_pm(pm, bg, shifted(left_aligned(28, overflow=True, widgets=False), origin))
+        assert pm.is_yielding_to_apps() is False        # 62 logical px clear (raw physical px would collide)
+        widget.pos.return_value = QPoint(2840, Y0)      # now within the gap of the group's end
+        pm._app_yield._schedule(0)
+        _probe_pm(pm, bg, shifted(left_aligned(28, overflow=True, widgets=False), origin))
+        assert pm.is_yielding_to_apps() is True
+    _assert_main_slot_untouched()
+
+
+def test_a_copy_on_a_side_bar_never_yields_like_the_main_widget(bg, q_app):
+    pm, tb, _w = _copy_pm()
+    tb.get_edge_position.return_value = RIGHT
+    pm.sync_app_overlap(tb)
+    assert pm._app_yield.attached_hwnd == 0 and pm.is_yielding_to_apps() is False
 
 
 # --- lows --------------------------------------------------------------------------------------------
@@ -961,15 +1358,72 @@ def test_unknown_after_the_hold_shows_it(rig):
     assert not r.y.yielded
 
 
-def test_yielded_backoff_is_capped_at_10s(rig):
-    r = rig(1380)
-    r.start(left_aligned(28, overflow=True))
-    assert r.y.yielded
-    for _ in range(8):
-        r.now += 30.0
+def _tick_gaps(r, elements, seconds, step=0.25):
+    """Drive the 1 s tick in ``step`` s increments for ``seconds``; the gaps between probes."""
+    gaps, last, end = [], r.now, r.now + seconds
+    while r.now < end:
+        r.now += step
         r.y.sync()
-        r.probe(left_aligned(28, overflow=True))
-    assert r.y._near_interval_ms == T.APP_YIELD_YIELDED_RECHECK_MAX_MS == 10000
+        if r.pending_probe():
+            gaps.append(round(r.now - last, 2))
+            last = r.now
+            r.probe(elements)
+    return gaps
+
+
+def test_yielded_rechecks_every_second_while_active_then_back_off_to_the_idle_cap(rig):
+    r = rig(1380)
+    crowded = left_aligned(28, overflow=True)
+    r.start(crowded)
+    assert r.y.yielded
+    gaps = _tick_gaps(r, crowded, 120.0)
+    active = T.APP_YIELD_ACTIVE_WINDOW_MS / 1000.0
+    assert set(gaps[:int(active) - 1]) == {T.APP_YIELD_ACTIVE_RECHECK_MS / 1000.0}
+    assert max(gaps) <= T.APP_YIELD_IDLE_RECHECK_MAX_MS / 1000.0 + 0.25
+    assert gaps[-1] == pytest.approx(T.APP_YIELD_IDLE_RECHECK_MAX_MS / 1000.0, abs=0.3)
+    # Hours crowded: a probe every 8 s, not every second (one probe ~19 ms of CPU incl. Explorer's).
+    assert len(gaps) < 120.0 / 2
+
+
+def test_a_long_idle_yield_still_returns_within_the_idle_cap_on_a_background_close(rig):
+    r = rig(1380)
+    crowded = left_aligned(28, overflow=True)
+    r.start(crowded)
+    _tick_gaps(r, crowded, 300.0)
+    assert r.y.yielded
+    waited = 0.0
+    while not r.pending_probe():                 # an app closed in the background: no foreground hint
+        r.now += 0.25
+        waited += 0.25
+        r.y.sync()
+    assert waited <= T.APP_YIELD_IDLE_RECHECK_MAX_MS / 1000.0
+    r.probe(left_aligned(20))
+    r.probe(left_aligned(20), advance=0.5)
+    assert not r.y.yielded
+
+
+def test_foreground_change_restores_the_one_second_cadence_after_idle(rig):
+    r = rig(1380)
+    near = left_aligned(27)                       # 91 px clear: near, never yields
+    r.start(near)
+    _tick_gaps(r, near, 120.0)
+    assert r.y._near_interval_ms == T.APP_YIELD_IDLE_RECHECK_MAX_MS
+    r.y.note_foreground_change()
+    r.probe(near)
+    r.y._followup_timer.stop()
+    r.y._followups_left = 0
+    assert set(_tick_gaps(r, near, 10.0)) == {T.APP_YIELD_ACTIVE_RECHECK_MS / 1000.0}
+
+
+def test_a_tick_slightly_under_one_second_after_the_probe_still_rechecks(rig):
+    """The tick is a 1000 ms QTimer and its probe fires a few ms after it: without slack the next
+    tick sees 0.99x s and skips (real-QTimer measurement: median gap 2.0 s, not 1 s)."""
+    r = rig(1380)
+    near = left_aligned(27)
+    r.start(near)
+    r.now += 0.995
+    r.y.sync()
+    assert r.pending_probe()
 
 
 def test_centred_prediction_grows_half_a_slot_at_each_end():
@@ -979,16 +1433,12 @@ def test_centred_prediction_grows_half_a_slot_at_each_end():
     assert predict_group((12.0, 981.0), 1, None) == (12.0 - slot, 981.0 + slot)
 
 
-def test_owner_centred_bar_with_alignment_needs_more_changes_before_a_probe(rig):
+def test_even_a_far_centred_bar_is_measured_after_one_foreground_change(rig):
     r = rig(OWNER_WIDGET_X, centered=True)
     r.start(CENTERED)
-    n = 0
-    while not r.pending_probe():
-        r.now += 2.0
-        r.y.note_foreground_change()
-        n += 1
-        assert n < 20
-    assert n == 6                                 # 249 px clear, 22 px per change; was 3 at a whole slot
+    r.now += 2.0
+    r.y.note_foreground_change()
+    assert r.pending_probe()
 
 
 def test_shutdown_and_restart_log_their_own_reason(rig, caplog):
@@ -1002,6 +1452,114 @@ def test_shutdown_and_restart_log_their_own_reason(rig, caplog):
         r.y.detach("shutting down")
     assert any("shutting down" in x for x in caplog.messages)
     assert not any("no longer" in x for x in caplog.messages)
+
+
+def test_a_copys_yield_lines_carry_its_tag_and_the_main_widgets_do_not(caplog, q_app):
+    """VM follow-up (#478): the main widget and every copy logged identical yield lines - a tester's
+    log could not tell which window stepped aside. A copy's lines carry its PositionManager tag."""
+    import logging
+    copy = AppOverlapYield(lambda: None, lambda: None, log_tag="mirror D-1a2b")
+    main = AppOverlapYield(lambda: None, lambda: None)
+    for y in (copy, main):
+        y._hwnd = HWND
+        y._state.yielded = True
+    with caplog.at_level(logging.INFO, logger="NetSpeedTray.AppOverlapYield"):
+        copy.detach("test")
+        main.detach("test")
+    lines = [m for m in caplog.messages if "App-button yield off" in m]
+    assert lines == ["[mirror D-1a2b] App-button yield off: test.", "App-button yield off: test."]
+    tb = _pm()[1]
+    pm = PositionManager(WindowState(config={}, widget=MagicMock(), taskbar_info=tb),
+                         log_tag="mirror D-1a2b", app_yield_copy=True)
+    assert pm._app_yield._log.extra == {"tag": "mirror D-1a2b"}
+
+
+def test_wide_labelled_button_is_measured_even_when_old_model_is_far(rig):
+    r = rig(500, centered=False)
+    r.start(left_aligned(1, widgets=False))       # last app ends at 145, well outside the near band
+    wide = [_b("ToggleButton", "StartButton", 12, 57),
+            _b("ToggleButton", "SearchButton", 57, 101),
+            _b(APP, "Appid: wide labelled window", 101, 601)]
+    r.now += 1.0
+    r.y.note_foreground_change()
+    assert r.pending_probe()
+    r.probe(wide)
+    assert r.y.yielded
+
+
+def test_followup_detects_layout_that_changes_after_first_800ms(rig):
+    r = rig(1380, centered=False)
+    original = left_aligned(27, widgets=False)
+    r.start(original)
+    r.now += 1.0
+    r.y.note_foreground_change()
+    r.probe(original)
+    r.y._followup_timer.stop()
+    r.now += 0.8
+    r.y._on_followup()
+    r.probe(original)                            # first follow-up still sees the old layout
+    assert not r.y.yielded and r.y._followup_timer.isActive()
+    r.y._followup_timer.stop()
+    r.now += 0.8
+    r.y._on_followup()
+    r.probe(left_aligned(30, widgets=False))      # final layout only arrives after 800 ms
+    assert r.y.yielded
+
+
+def test_far_bar_followup_burst_is_bounded_and_then_idle(rig, layout):
+    r = rig(OWNER_WIDGET_X, centered=True)
+    r.start(CENTERED)
+    r.now += 1.0
+    r.y.note_foreground_change()
+    r.probe(CENTERED)
+    for _ in range(T.APP_YIELD_FOREGROUND_FOLLOWUPS):
+        r.y._followup_timer.stop()
+        r.now += 0.8
+        r.y._on_followup()
+        r.probe(CENTERED)
+    assert not r.y._followup_timer.isActive() and r.y._followups_left == 0
+    assert len(layout.requests) == 2 + T.APP_YIELD_FOREGROUND_FOLLOWUPS
+    for _ in range(60):
+        r.now += 1.0
+        r.y.sync()
+        assert not r.pending_probe()
+
+
+def test_background_close_returns_widget_without_a_foreground_change(rig):
+    r = rig(1380)
+    crowded = left_aligned(28, overflow=True)
+    r.start(crowded)
+    for _ in range(12):                          # do not accumulate a long idle back-off
+        r.now += 1.0
+        r.y.sync()
+        r.probe(crowded)
+    assert r.y.yielded
+    r.now += 1.0                                # background close: no foreground hint
+    r.y.sync()
+    r.probe(left_aligned(20))
+    assert r.y.yielded and r.pending_probe()     # still require the anti-flicker confirmation
+    r.probe(left_aligned(20), advance=0.5)
+    assert not r.y.yielded
+
+
+def test_foreground_event_resets_old_backoff_and_works_before_first_layout(rig):
+    r = rig(1380)
+    r.y.sync()                                  # attach, initial probe has not landed yet
+    r.y._near_interval_ms = 60000
+    r.y.note_foreground_change()
+    assert r.y._near_interval_ms == T.APP_YIELD_ACTIVE_RECHECK_MS
+    assert r.y._followups_left == T.APP_YIELD_FOREGROUND_FOLLOWUPS
+    assert r.pending_probe() and r.y._followup_timer.isActive()
+
+
+def test_detach_discards_pending_foreground_followups(rig):
+    r = rig(OWNER_WIDGET_X)
+    r.start(CENTERED)
+    r.y.note_foreground_change()
+    r.y.detach()
+    assert r.y._followups_left == 0 and not r.y._followup_timer.isActive()
+    r.y._on_followup()
+    assert not r.pending_probe()
 
 
 # --- a live scale change: Explorer's buttons in a stale scale's coordinates (rc.2 final VM run) ---
@@ -1073,3 +1631,281 @@ def test_the_bar_rect_spans_a_slide_during_the_probe(layout):
         taskbar_utils.request_taskbar_layout_probe(HWND)
         layout.land()
     assert taskbar_utils.taskbar_layout_bar(HWND) == (0, 1032, 1920, 1108)
+
+
+# --- rc.3: the full-bar fallback - stay at the rc.2 tray spot instead of hiding -------------------------
+# left_aligned(): Widgets button 1530..1690, apps from 101 in 44 px slots. Default spots for a 150 px
+# widget: left of the button (1372..1522, the rc.3 step) and the rc.2 tray spot (1676..1826).
+STEPPED = (1372.0, 1522.0)
+TRAY_SPOT = (1676.0, 1826.0)
+
+
+def _fallback_rig(rig):
+    r = rig(STEPPED[0])
+    r.stepped, r.tray_spot, r.tray_spot_clear = STEPPED, TRAY_SPOT, True
+    return r
+
+
+def test_a_full_bar_keeps_the_widget_at_the_tray_spot_instead_of_hiding_it(rig):
+    """Owner decision (rc.3): app buttons reaching the stepped spot while the rc.2 spot is clear move
+    the widget there (visible on the button's padding, as rc.2) - never a yield."""
+    r = _fallback_rig(rig)
+    r.start(left_aligned(28))                    # ends 1333: 39 px clear of the stepped spot
+    assert not r.y.retreated and not r.y.yielded
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, overflow=True), advance=1.0)   # "..." ends 1377: reaches the stepped spot
+    assert r.y.retreated and not r.y.yielded and r.changes == 1   # re-placed, still shown
+    r.widget_x = TRAY_SPOT[0]                    # PositionManager places it with widgets_step=False
+    for _ in range(3):                           # same full bar: it stays put, no flapping
+        r.y.note_foreground_change()
+        r.probe(left_aligned(28, overflow=True), advance=1.0)
+        assert r.y.retreated and not r.y.yielded
+    assert r.changes == 1
+
+
+def test_the_fallback_returns_after_two_clear_readings_and_never_flips_per_probe(rig):
+    r = _fallback_rig(rig)
+    r.start(left_aligned(30))                    # ends 1421: reaches the stepped spot at once
+    assert r.y.retreated and not r.y.yielded
+    r.widget_x = TRAY_SPOT[0]
+    r.y.note_foreground_change()
+    r.probe(left_aligned(20), advance=1.0)       # apps closed: one clear reading is not enough
+    assert r.y.retreated and r.pending_probe()   # the confirmation is scheduled
+    r.probe(left_aligned(30), advance=0.1)       # back again before the confirmation: count restarts
+    assert r.y.retreated
+    r.y.note_foreground_change()
+    r.probe(left_aligned(20), advance=1.0)
+    assert r.y.retreated
+    r.probe(left_aligned(20), advance=0.5)       # second clear reading >= 300 ms later
+    assert not r.y.retreated and not r.y.yielded
+    assert r.changes == 2                        # retreat + return: one re-place each
+
+
+def test_a_retreated_widget_is_rechecked_on_the_tick_to_notice_a_background_close(rig):
+    """Retreated, the widget sits a whole Widgets button (~150 px) right of the group - more than
+    SIDE_BAR_NEAR_SLOTS slots - so 'near' alone would stop the tick re-checks and only a foreground
+    change could bring it back. It is watched like a yield."""
+    r = rig(STEPPED[0], width=60)
+    r.stepped, r.tray_spot = (1460.0, 1520.0), (1766.0, 1826.0)   # a narrow widget: 246 px apart
+    r.tray_spot_clear = True
+    r.start(left_aligned(31))                    # ends 1465: reaches the stepped spot only
+    assert r.y.retreated
+    r.widget_x = 1766.0
+    r.now += T.SIDE_BAR_NEAR_RECHECK_MS / 1000.0 + 0.1
+    r.y.sync()
+    assert r.pending_probe()
+
+
+def test_the_fallback_returns_only_with_a_margin_of_room(rig):
+    """rc.3 review: a group end hovering at the threshold (1362 clear / 1368 reaching, stepped spot
+    from 1372) swung the widget 304 px every couple of probes. Returning needs the usual gap PLUS
+    WIDGETS_FALLBACK_RETURN_MARGIN_PX of room."""
+    margin = constants.layout.WIDGETS_FALLBACK_RETURN_MARGIN_PX
+    r = _fallback_rig(rig)
+    r.start(left_aligned(28, stray=(1333, 1368)))   # ends 1368: reaches the stepped spot
+    assert r.y.retreated
+    r.widget_x = TRAY_SPOT[0]
+    for _ in range(3):                               # 1362: clear by 10 - but not by gap + margin
+        r.y.note_foreground_change()
+        r.probe(left_aligned(28, stray=(1333, 1362)), advance=1.0)
+        assert r.y.retreated and r.y._step_clear_since is None   # not even a first clear reading
+        r.y.note_foreground_change()
+        r.probe(left_aligned(28, stray=(1333, 1368)), advance=1.0)
+        assert r.y.retreated
+    end = int(STEPPED[0] - GAP - margin)             # exactly gap + margin clear
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, stray=(1333, end)), advance=1.0)
+    r.probe(left_aligned(28, stray=(1333, end)), advance=0.5)
+    assert not r.y.retreated
+
+
+def test_a_flapping_tray_arms_the_follow_up_burst_at_most_once_per_active_window(rig):
+    """rc.3 review: every layout-key change armed 1 probe + 3 follow-ups, even on a far centred bar - a
+    tray icon flapping every 2 s meant ~89 probes a minute. The burst is armed at most once per
+    APP_YIELD_ACTIVE_WINDOW_MS; the single immediate (rate-limited) probe stays."""
+    r = rig(OWNER_WIDGET_X)
+    r.layout_key = (1, 1770, True)
+    r.start(CENTERED)
+    bursts = probes = 0
+    for i in range(30):                              # 60 s of a flapping tray
+        r.layout_key = (1, 1770 if i % 2 else 1746, True)
+        r.now += 2.0
+        r.y.sync()
+        if r.y._followup_timer.isActive():
+            bursts += 1
+            r.y._followup_timer.stop()
+        if r.pending_probe():
+            probes += 1
+            r.probe(CENTERED)
+    window_s = T.APP_YIELD_ACTIVE_WINDOW_MS / 1000.0
+    assert bursts <= int(60 / window_s) + 1
+    assert probes == 30                              # one immediate re-probe per change, as before
+
+
+def test_a_display_scale_change_restarts_the_fallback_confirmations(rig):
+    r = _fallback_rig(rig)
+    r.start(left_aligned(30))
+    assert r.y.retreated
+    r.y.note_foreground_change()
+    r.probe(left_aligned(20), advance=1.0)           # first clear reading: confirmation pending
+    assert r.y._step_clear_since is not None
+    r.dpi = 1.25
+    r.now += 1.0
+    r.y.sync()
+    assert r.y._step_clear_since is None and r.y._spot_gone_since is None
+
+
+def test_buttons_reaching_the_tray_spot_too_still_yield(rig):
+    r = _fallback_rig(rig)
+    r.start(left_aligned(36))                    # ends 1685: covers both spots
+    assert r.y.yielded and not r.y.retreated
+
+
+def test_no_second_spot_means_todays_yield(rig):
+    """A centred bar, no Widgets button beside the tray or a user's drag: stepped/tray_spot are None
+    and the yield is exactly rc.2's."""
+    r = rig(STEPPED[0])
+    r.start(left_aligned(30))
+    assert r.y.yielded and not r.y.retreated
+
+
+def test_the_fallback_ends_when_the_second_spot_goes_away(rig):
+    r = _fallback_rig(rig)
+    r.start(left_aligned(30))
+    assert r.y.retreated
+    r.stepped = r.tray_spot = None               # e.g. Widgets turned off: one default spot again
+    r.widget_x = TRAY_SPOT[0]
+    r.y.note_foreground_change()
+    r.probe(left_aligned(30), advance=1.0)
+    assert r.y.retreated and r.pending_probe()   # one reading is no proof: confirmation scheduled
+    r.probe(left_aligned(30), advance=0.5)
+    assert not r.y.retreated and r.changes == 2   # retreat + release
+
+
+def test_one_reading_without_the_second_spot_keeps_the_fallback(rig):
+    """Review of #463: a single context without the Widgets box (the snapshot taken while the layout
+    cache answered for another bar) dropped the hold; the next refresh then placed the widget at the
+    stepped spot - ON the app buttons - until the backed-off probe (up to 8 s) retreated again."""
+    r = _fallback_rig(rig)
+    r.start(left_aligned(30))
+    assert r.y.retreated and r.changes == 1
+    r.widget_x = TRAY_SPOT[0]
+    r.stepped = r.tray_spot = None               # one snapshot without the Widgets box
+    r.y.note_foreground_change()
+    r.probe(left_aligned(30), advance=1.0)
+    assert r.y.retreated and r.changes == 1      # still held: no re-place onto the buttons
+    r.stepped, r.tray_spot = STEPPED, TRAY_SPOT  # the box is back
+    r.probe(left_aligned(30), advance=0.5)
+    assert r.y.retreated and r.changes == 1
+
+
+def test_position_manager_places_at_the_tray_spot_while_retreated(q_app):
+    """The yield's fallback drives the calculator: widgets_step=False while retreated, and the context
+    carries both default spots when a Widgets button sits beside the tray."""
+    pm, tb, widget = _pm(config={"tray_offset_x": 0})
+    pm._app_overlap_info = tb
+    screen = tb.get_screen.return_value
+    screen.availableGeometry.return_value = QRect(0, 0, 1920, Y0)
+    tb.get_tray_rect.return_value = (1834, Y0, 1920, Y1)
+    tb.toolbars_rect = None
+    tb.widgets_extent = (1530, Y0, 1690, Y1)
+    tb.widgets_rect = None
+    with patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=0),             patch.object(taskbar_utils, "widgets_button_enabled", return_value=True):
+        ctx = pm._app_overlap_context()
+        assert ctx.stepped == (1372.0, 1522.0) and ctx.tray_spot == (1676.0, 1826.0)
+        assert pm.get_calculated_position().x == 1372
+        pm._app_yield._hwnd, pm._app_yield._retreated = HWND, True
+        assert pm.get_calculated_position().x == 1676
+        widget.isVisible.return_value = False      # hidden: judged where it WOULD go (the tray spot)
+        assert pm._app_overlap_context().widget[0] == 1676.0
+    pm._app_yield._hwnd = 0
+    pm._state.config["tray_offset_x"] = 10        # a pre-1.3.0 default is no drop key (rc.3 review)
+    assert pm._app_overlap_context().drop_key is None
+
+
+# --- rc.3 verify: the fallback never draws over the weather text ----------------------------------------
+# VM (Win11 26300, 100 %, left-aligned): WidgetsButton 1606..1758, its NamedContainer 1614..1750, the icon
+# 1617..1641, "Sunny" ending 1682; with "Mostly cloudy" the rc.2 spot (1613..1698 on that bar) put the
+# arrow and "0.0" over the text. The fallback is used only when the tray spot clears the TEXT.
+WIDGETS_VM = [
+    _b("ToggleButton", "WidgetsButton", 1606, 1758),
+    ("NamedContainerAutomationPeer", "", (1614, 1036, 1750, 1076)),
+    ("Microsoft.UI.Xaml.Controls.AnimatedVisualPlayer", "BadgeAnchorLargeTicker", (1617, 1043, 1641, 1067)),
+    ("TextBlock", "", (1649, 1039, 1672, 1055)),
+    ("TextBlock", "", (1649, 1055, 1682, 1071)),
+]
+
+
+def test_widgets_content_is_the_icon_and_text_not_the_container():
+    assert uia_widgets.widgets_content_from_elements(WIDGETS_VM) == (1617, 1039, 1682, 1071)
+    assert uia_widgets.widgets_content_from_elements(WIDGETS_VM[:2]) is None    # nothing visible
+    assert uia_widgets.widgets_content_from_elements(CENTERED[6:]) is None      # no Widgets button
+    stray = WIDGETS_VM + [("TextBlock", "", (1800, 1039, 1850, 1071))]         # a tray label: outside
+    assert uia_widgets.widgets_content_from_elements(stray) == (1617, 1039, 1682, 1071)
+
+
+def test_the_layout_probe_keeps_the_widgets_content(layout):
+    taskbar_utils.request_taskbar_layout_probe(HWND)
+    layout.land(left_aligned(3, widgets=False) + WIDGETS_VM)
+    assert taskbar_utils.taskbar_layout_widgets_content(HWND) == (1617, 1039, 1682, 1071)
+
+
+def test_no_clear_tray_spot_means_the_yield_steps_aside_and_returns_on_the_usual_gap(rig):
+    """The tray spot would cover the weather text (or the text's extent is unknown): no fallback - the
+    #24 yield hides the widget for the STEPPED spot (Windows shrinks a left-aligned bar's buttons before
+    they ever reach the tray spot), and shows it again on the SAME gap it hid at (rc.5 #373: with the
+    fallback's 22 px return margin, a group ending 8..30 px short kept it hidden though it fit)."""
+    r = rig(STEPPED[0])
+    r.stepped, r.tray_spot, r.tray_spot_clear = STEPPED, TRAY_SPOT, False
+    r.start(left_aligned(28, overflow=True))         # "..." ends 1377: reaches the stepped spot only
+    assert r.y.yielded and not r.y.retreated and r.changes == 1
+    end = int(STEPPED[0] - GAP - 2)                  # one button gone: clear by GAP + 2, under the old margin
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, stray=(1333, end)), advance=1.0)
+    assert r.y.yielded                                # first clear reading: confirmation pending
+    r.probe(left_aligned(28, stray=(1333, end)), advance=0.5)
+    assert not r.y.yielded
+    r.y.note_foreground_change()                      # the same bar seen from a shown widget: stays up
+    r.probe(left_aligned(28, stray=(1333, end)), advance=1.0)
+    assert not r.y.yielded
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, stray=(1333, int(STEPPED[0] - GAP + 2))), advance=1.0)
+    assert r.y.yielded                                # inside the gap: hides again at once
+
+
+def test_weather_text_growing_under_a_held_widget_steps_it_aside_at_once(rig):
+    r = _fallback_rig(rig)
+    r.start(left_aligned(30))                         # reaches the stepped spot: held by the tray
+    assert r.y.retreated and not r.y.yielded
+    r.widget_x = TRAY_SPOT[0]
+    r.tray_spot_clear = False                         # "Sunny" -> "Mostly cloudy"
+    r.y.note_foreground_change()
+    r.probe(left_aligned(30), advance=1.0)
+    assert not r.y.retreated and r.y.yielded          # same reading: hidden, never on the buttons
+
+
+def _pm_left_bar(content):
+    pm, tb, widget = _pm(config={"tray_offset_x": 0})
+    widget.width.return_value = 85
+    pm._app_overlap_info = tb
+    tb.get_screen.return_value.availableGeometry.return_value = QRect(0, 0, 1920, Y0)
+    tb.get_tray_rect.return_value = (1770, Y0, 1920, Y1)
+    tb.toolbars_rect = None
+    tb.widgets_extent = (1606, Y0, 1758, Y1)
+    tb.widgets_rect = None
+    with patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=0), \
+            patch.object(taskbar_utils, "widgets_button_enabled", return_value=True), \
+            patch.object(taskbar_utils, "taskbar_layout_widgets_content", return_value=content):
+        return pm._app_overlap_context()
+
+
+@pytest.mark.parametrize("content,clear", [
+    ((1617, 1039, 1682, 1071), False),   # "Sunny" ends 1682: the rc.2 spot (1677) would cover it
+    ((1617, 1039, 1745, 1071), False),   # "Mostly cloudy"
+    ((1617, 1039, 1669, 1071), True),    # text ending 1669: 1677 clears it by exactly the gap
+    (None, False),                       # unknown: hide rather than collide
+])
+def test_position_manager_allows_the_fallback_only_clear_of_the_text(q_app, content, clear):
+    ctx = _pm_left_bar(content)
+    assert ctx.stepped == (1513.0, 1598.0) and ctx.tray_spot == (1677.0, 1762.0)
+    assert ctx.tray_spot_clear is clear

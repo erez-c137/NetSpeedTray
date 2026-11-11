@@ -19,20 +19,41 @@ from netspeedtray.constants import ui, color as color_constants
 _variable_present = None  # lazy cache: is "Segoe UI Variable" installed?
 
 
+_icon_family: Optional[str] = None   # lazy cache: the installed Fluent icon family
+
+
+def icon_font_family() -> str:
+    """The Fluent icon font: 'Segoe Fluent Icons' (Win11), else 'Segoe MDL2 Assets' (Win10). Picked from
+    ``QFontDatabase.families()`` - names only, no styles loaded - rather than handed to Qt as a fallback
+    list: a QFont with more than one family makes Qt load the styles of every installed font family on
+    its first use (~38 MB, process-wide, never freed)."""
+    global _icon_family
+    if _icon_family is None:
+        try:
+            installed = set(QFontDatabase.families())
+        except Exception:
+            installed = set()
+        _icon_family = next((fam for fam in style_constants.ICON_FONT_FAMILIES if fam in installed),
+                            style_constants.ICON_FONT_FAMILIES[-1])
+    return _icon_family
+
+
 def fluent_icon(codepoint: int, size: int = 16, color: str = "#FFFFFF") -> QIcon:
     """Render a Segoe Fluent Icons glyph to a tintable QIcon - the native Win11 iconography.
 
-    Win11 ships 'Segoe Fluent Icons'; Win10 ships 'Segoe MDL2 Assets'. Listing both lets Win11 win and
-    Win10 degrade. The glyph is drawn to a transparent pixmap in ``color`` so it can be tinted per state
+    Win11 ships 'Segoe Fluent Icons'; Win10 ships 'Segoe MDL2 Assets' (icon_font_family picks the one
+    installed). The glyph is drawn to a transparent pixmap in ``color`` so it can be tinted per state
     (e.g. text_secondary at rest → accent when a tab/nav row is selected). Uses setPixelSize for a
     DPI-crisp icon optically matched to the label's px font. NEVER pass an emoji - only Fluent codepoints.
+    No font merging: both icon fonts carry every codepoint the app uses, and a Fluent codepoint has no
+    meaningful fallback glyph - searching for one would load every installed family.
     """
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
     try:
-        f = QFont()
-        f.setFamilies(["Segoe Fluent Icons", "Segoe MDL2 Assets"])
+        f = QFont(icon_font_family())
+        f.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
         f.setPixelSize(size)
         p.setFont(f)
         p.setPen(QColor(color))
@@ -64,6 +85,22 @@ def combo_chevron_url(color_hex: str) -> str:
         return path.replace("\\", "/")
     except Exception:
         return ""
+
+
+# A dropdown QToolButton's right padding: its text padding + room for the chevron (menu_chevron_qss).
+MENU_CHEVRON_PADDING = 32
+
+
+def menu_chevron_qss(selector: str = "QToolButton") -> str:
+    """QSS drawing a dropdown button's chevron as its menu indicator - the Fluent ChevronDown image the
+    combos use (combo_chevron_url) - in the button's right padding (give it MENU_CHEVRON_PADDING).
+    Not a "\u25be" in the label: no UI face has that glyph, so Qt searched every installed family for
+    it (the Monitor's first open loaded ~850 font files)."""
+    url = combo_chevron_url("#C8C8C8" if is_dark_mode() else "#505050")
+    if not url:
+        return f" {selector}::menu-indicator {{ image: none; width: 0; }}"
+    return (f" {selector}::menu-indicator {{ image: url(\"{url}\"); width: 14px; height: 14px;"
+            f" subcontrol-origin: border; subcontrol-position: center right; right: 10px; }}")
 
 
 def spin_arrow_url(up: bool, color_hex: str) -> str:
@@ -101,46 +138,527 @@ def _is_rtl() -> bool:
         return False
 
 
-def font(token: tuple) -> QFont:
-    """
-    Build a QFont for a Fluent type token - a ``(style_name, pixel_size, weight)`` tuple
-    from ``constants.styles`` (e.g. ``TYPE_BODY_STRONG``).
-
-    On Windows 11 the optical cut + weight is selected via ``setStyleName`` on the single
-    "Segoe UI Variable" family (the cuts are STYLES, not family names). On Windows 10,
-    where that family isn't installed, falls back to plain Segoe UI at the same px/weight.
-
-    RTL exception (#194): "Segoe UI Variable" carries no Hebrew glyphs, so Qt substitutes
-    the missing letters from an arbitrary fallback at mismatched metrics - some Hebrew
-    letters (e.g. נ, ת) then render visibly smaller than their neighbors. Plain "Segoe UI"
-    has full, consistent Hebrew, so for a right-to-left UI we use it for everything (the
-    Win11 optical-cut niceness isn't worth broken text).
-    """
+def _variable_installed() -> bool:
     global _variable_present
-    style_name, px, weight = token
-
-    if _is_rtl():
-        f = QFont(style_constants.FONT_FALLBACK)
-        f.setPixelSize(px)
-        f.setWeight(weight)
-        return f
-
     if _variable_present is None:
         try:
             _variable_present = style_constants.FONT_FAMILY_VARIABLE in QFontDatabase.families()
         except Exception:
             _variable_present = False
+    return _variable_present
 
-    if _variable_present:
-        f = QFont(style_constants.FONT_FAMILY_VARIABLE)
-        f.setStyleName(style_name)       # selects the optical cut + weight variant
-        f.setPixelSize(px)
-        f.setWeight(weight)              # keep the weight request consistent
-        return f
-    f = QFont(style_constants.FONT_FALLBACK)
-    f.setPixelSize(px)
-    f.setWeight(weight)
+
+# --------------------------------------------------------------------------- the UI's one face (rc.7)
+#
+# The app's UI text - menus, the hover card, flyouts, Settings, Monitor - is drawn in ONE face per UI
+# language, never a family list: a QFont (or a QSS font-family) that lists more than one family, a
+# family name Qt can't match, or a glyph the face lacks makes Qt resolve its whole fallback chain,
+# which loads the styles of EVERY installed font family (~38 MB, ~850 mapped font files on a typical
+# PC, process-wide, never freed). So the face must cover the language's own text and Latin:
+#   - Segoe UI Variable for the Latin, Cyrillic and Greek UIs (Windows 10: Segoe UI);
+#   - Segoe UI for a right-to-left UI (#194: Segoe UI Variable has no Hebrew letters);
+#   - the language's Windows UI face for ja/ko/zh/bn (constants.fonts.SCRIPT_FAMILIES' first installed
+#     face: Yu Gothic UI, Malgun Gothic, Microsoft YaHei UI / JhengHei UI, Nirmala UI).
+# The widget keeps its own (configurable) face and draws its own strings run by run (utils/font_runs).
+
+_ui_language = ""
+_ui_family: Optional[str] = None
+
+
+def set_ui_language(language: Optional[str]) -> None:
+    """The UI language, which picks the UI face (call once at startup - a language change restarts)."""
+    global _ui_language, _ui_family
+    language = str(language or "")
+    if language != _ui_language:
+        _ui_language = language
+        _ui_family = None
+
+
+def ui_family() -> str:
+    """The ONE family the app's UI text is drawn in, for the UI language (see above)."""
+    global _ui_family
+    if _is_rtl():
+        return style_constants.FONT_FALLBACK
+    if _ui_family is None:
+        from netspeedtray.constants import fonts as font_constants
+        from netspeedtray.utils.font_runs import resolve_family
+        family = None
+        for candidate in font_constants.SCRIPT_FAMILIES.get(_ui_language, ()):
+            family = resolve_family(candidate)   # the name Qt lists (a localized one on a CJK Windows)
+            if family:
+                break
+        if not family:
+            from netspeedtray.constants.i18n import I18nStrings
+            if _ui_language in I18nStrings.RTL_LANGUAGES:
+                family = style_constants.FONT_FALLBACK
+            elif _variable_installed():
+                family = style_constants.FONT_FAMILY_VARIABLE
+            else:
+                family = style_constants.FONT_FALLBACK
+        _ui_family = family
+    return _ui_family
+
+
+def ui_family_css() -> str:
+    """``font-family: '<the UI face>';`` for a stylesheet - one family, never a list (see above)."""
+    return "font-family: '%s';" % ui_family().replace("'", "")
+
+
+_mono_family: Optional[str] = None
+
+
+def mono_family() -> str:
+    """The one installed monospace face: Cascadia Mono, else Consolas, else Courier New."""
+    global _mono_family
+    if _mono_family is None:
+        from netspeedtray.constants import fonts as font_constants
+        from netspeedtray.utils.font_runs import resolve_family
+        _mono_family = next((resolve_family(f) for f in font_constants.MONO_FAMILIES if resolve_family(f)),
+                            font_constants.MONO_FAMILIES[-1])
+    return _mono_family
+
+
+def _set_optical_size(f: QFont, style_name: str) -> None:
+    """Segoe UI Variable's optical size for a type-ramp style ("Small", "Text Semibold", "Display"...),
+    set on the opsz axis explicitly: a font that leaves the axis unset inherits the APP font's (Text),
+    so a caption would silently draw in the Text cut."""
+    from netspeedtray.constants import fonts as font_constants
+    opsz = font_constants.UI_OPSZ.get(str(style_name or "Text").split(" ")[0], font_constants.UI_OPSZ["Text"])
+    try:
+        f.setVariableAxis(QFont.Tag.fromString("opsz"), float(opsz))
+    except Exception:   # Qt < 6.7: the style name alone selects the cut
+        pass
+
+
+def ui_font(point_size: Optional[float] = None, pixel_size: Optional[int] = None,
+            weight: Optional[int] = None, optical: str = "Text") -> QFont:
+    """A QFont in the UI face (``ui_family``); in Segoe UI Variable at the ``optical`` size."""
+    family = ui_family()
+    f = QFont(family)
+    if pixel_size:
+        f.setPixelSize(int(pixel_size))
+    elif point_size:
+        f.setPointSizeF(float(point_size))
+    if weight:
+        f.setWeight(QFont.Weight(int(weight)))
+    if family == style_constants.FONT_FAMILY_VARIABLE:
+        _set_optical_size(f, optical)
     return f
+
+
+# A run in another face starts with this invisible Latin letter. Qt gives a script-neutral character
+# (an arrow, a space) the script of its neighbours, and a face that doesn't support that script's
+# writing system is passed over for the whole run - Qt then searches every installed family: "→"
+# between Bengali words, drawn in Segoe UI Variable, is a BENGALI arrow to Qt and loaded ~850 font
+# files. After a Latin letter the run is Latin, which Segoe UI Variable supports. Screen readers get
+# the plain text (set_ui_text sets the accessible name).
+_LATIN_ANCHOR = "<span style=\"font-size:1px; color:transparent;\">l</span>"
+
+
+def _face_runs(text: str, escape: bool) -> str:
+    import html
+    from netspeedtray.utils.font_runs import family_covers
+    base = ui_family()
+    out, run, run_face = [], "", None
+
+    def flush():
+        if run:
+            esc = html.escape(run, quote=False) if escape else run
+            out.append(esc if run_face is None else
+                       "<span style=\"font-family:'%s';\">%s%s</span>" % (run_face, _LATIN_ANCHOR, esc))
+
+    for ch in text:
+        face = None
+        if not ch.isspace() and not family_covers(base, ch):
+            face = next((f for f in (style_constants.FONT_FAMILY_VARIABLE, style_constants.FONT_FALLBACK)
+                         if f != base and family_covers(f, ch)), None)
+        if face != run_face and not ch.isspace():
+            flush()
+            run, run_face = "", face
+        run += ch
+    flush()
+    return "".join(out)
+
+
+def ui_html(text: str) -> str:
+    """Plain ``text`` as rich text in which every run of characters the UI face lacks - the ↑ ↓ →
+    arrows in Nirmala UI (Bengali) - is a span in the first of Segoe UI Variable / Segoe UI that has
+    them: one known face, so Qt never searches its fallback chain for them (which loads every installed
+    family). A character neither has stays in the UI face (Qt's own fallback, as before). Spaces and
+    line breaks are kept as in plain text (white-space: pre-wrap)."""
+    return "<span style=\"white-space:pre-wrap;\">%s</span>" % _face_runs(text, escape=True)
+
+
+def rich_plain_text(markup: str) -> str:
+    """The words of rich text (a label's accessible name when ui_rich added anchor letters)."""
+    from PyQt6.QtGui import QTextDocumentFragment
+    return QTextDocumentFragment.fromHtml(markup).toPlainText()
+
+
+def ui_rich(markup: str) -> str:
+    """``ui_html`` for text that already is rich text: only the text between tags gets the spans."""
+    import re
+    if not needs_ui_html(re.sub(r"<[^>]*>", "", markup)):
+        return markup
+    return "".join(part if part.startswith("<") else _face_runs(part, escape=False)
+                   for part in re.split(r"(<[^>]*>)", markup))
+
+
+def needs_ui_html(text: str) -> bool:
+    """The UI face lacks a (non-space) character of ``text`` (False for a face we can't see - the
+    offscreen test platform: drawn as before)."""
+    from netspeedtray.utils.font_runs import family_covers, resolve_family
+    base = ui_family()
+    return bool(text) and resolve_family(base) is not None and not family_covers(base, text)
+
+
+def face_for_text(text: str, language: Optional[str] = None, also=()) -> Optional[str]:
+    """None when the UI face draws all of ``text``; else the first known face that does - ``language``'s
+    own UI face first (a language's name in its own script: "日本語", "বাংলা"), then those of the
+    languages in ``also``, then every UI language's face, Segoe UI Variable and Segoe UI. None too when
+    no known face has it all (Qt's fallback, as before) or the face can't be seen (offscreen tests)."""
+    from netspeedtray.constants import fonts as font_constants
+    from netspeedtray.constants.i18n import I18nStrings
+    from netspeedtray.utils.font_runs import family_covers, resolve_family
+    if not text or resolve_family(ui_family()) is None or family_covers(ui_family(), text):
+        return None
+    own = list(font_constants.SCRIPT_FAMILIES.get(str(language or ""), ()))
+    if language in I18nStrings.RTL_LANGUAGES:
+        own.append(style_constants.FONT_FALLBACK)
+    for extra in also or ():
+        own.extend(font_constants.SCRIPT_FAMILIES.get(str(extra or ""), ()))
+    others = [f for fams in font_constants.SCRIPT_FAMILIES.values() for f in fams]
+    for candidate in own + [style_constants.FONT_FAMILY_VARIABLE, style_constants.FONT_FALLBACK] + others:
+        if family_covers(candidate, text):
+            return resolve_family(candidate)
+    return None
+
+
+# --------------------------------------------------------------------------- system / user text (rc.7)
+#
+# Text that comes from Windows or the user, not from our locale files - adapter names (以太网 on a
+# Chinese Windows), Wi-Fi names, process names, GPU names, font names, a typed host - may need a script
+# the UI face lacks. Laid out in the UI face, Qt then searches its fallback chain, which loads EVERY
+# installed family (~850 mapped files) - just building a Settings row is enough. So such text is drawn
+# in the one known face that has all of it (face_for_text); text no known face places alone (mixed
+# scripts, none installed) keeps Qt's normal path, as before.
+
+_FACE_MARK = "/*nst-text-face*/"
+_FACE_END = "/*/nst-text-face*/"
+_FACE_BASE_FONT = "nst_text_face_base_font"
+
+
+_windows_language: Optional[str] = None
+
+
+def windows_language() -> str:
+    """The Windows display language as one of the app's locale codes ("" when unknown): the language
+    Windows names its adapters in (以太网 on a Chinese Windows)."""
+    global _windows_language
+    if _windows_language is None:
+        from netspeedtray.constants.i18n import I18nStrings
+        try:
+            raw = I18nStrings._read_ui_language()
+            _windows_language = I18nStrings.resolve_language(raw) if raw else ""
+        except Exception:
+            _windows_language = ""
+    return _windows_language
+
+
+def text_face(text) -> Optional[str]:
+    """The face system/user ``text`` must be drawn in (None: the UI face draws it - or nothing known
+    does, and Qt's own fallback runs as before). The UI language's own faces are tried first (a
+    Japanese UI draws a Han adapter name in Yu Gothic UI, the face it already loaded), then the
+    Windows display language's (an English UI on a Chinese Windows draws every Han name in Microsoft
+    YaHei UI - not some in Yu Gothic UI and others in YaHei, by which characters each one has)."""
+    text = str(text or "")
+    if any(ord(ch) > 0xFFFF for ch in text):
+        # Emoji and other astral characters: GDI can't be asked about them (UTF-16 glyph lookup), so
+        # each candidate face would be probed through a cached QRawFont - mapping ~27 CJK/Nirmala files
+        # for good - and none of the known faces has emoji anyway. Qt's path, as before.
+        return None
+    return face_for_text(text, _ui_language, also=(windows_language(),))
+
+
+def face_font(face: str, like: QFont) -> QFont:
+    """A QFont in ``face`` at ``like``'s size, weight and style (a fresh font: none of the UI face's
+    optical-size axis carried over)."""
+    f = QFont(face)
+    if like.pixelSize() > 0:
+        f.setPixelSize(like.pixelSize())
+    elif like.pointSizeF() > 0:
+        f.setPointSizeF(like.pointSizeF())
+    f.setWeight(like.weight())
+    f.setItalic(like.italic())
+    return f
+
+
+def _strip_face_qss(qss: str) -> str:
+    import re
+    return re.sub(re.escape(_FACE_MARK) + r".*?" + re.escape(_FACE_END), "", qss or "", flags=re.S).rstrip()
+
+
+def _qt_class_name(widget) -> str:
+    """The nearest Qt class of ``widget`` ("QComboBox" for a Win11ComboBox) - a style sheet type
+    selector that also matches subclasses."""
+    meta = widget.metaObject()
+    while meta is not None and not meta.className().startswith("Q"):
+        meta = meta.superClass()
+    return meta.className() if meta is not None else "QWidget"
+
+
+def apply_text_face(widget, text) -> Optional[str]:
+    """Call BEFORE system/user ``text`` is set on ``widget`` (a label, a button, a check box): when it
+    needs a face of its own (``text_face``) the widget is drawn in that face - its font AND its own
+    style sheet, since an ancestor's ``QLabel { font-family: <UI face> }`` rule (the Settings dialog's)
+    overrides setFont, and a widget's own sheet beats any inherited one. Otherwise any face an earlier
+    call gave it is taken back. Returns the face (None: the widget's own font, as before). Measuring
+    (fontMetrics().elidedText) must come after this call too."""
+    face = text_face(text)
+    qss = widget.styleSheet() or ""
+    marked = _FACE_MARK in qss
+    if face is None and not marked and widget.property(_FACE_BASE_FONT) is None:
+        return None
+    base = widget.property(_FACE_BASE_FONT)
+    if base is None:
+        base = QFont(widget.font())
+        widget.setProperty(_FACE_BASE_FONT, base)
+    plain = _strip_face_qss(qss)
+    if face is None:
+        widget.setFont(base)
+        widget.setProperty(_FACE_BASE_FONT, None)
+        if marked:
+            widget.setStyleSheet(plain)
+        return None
+    widget.setFont(face_font(face, base))
+    decl = "font-family: '%s';" % face.replace("'", "")
+    if not plain or "{" in plain:
+        # A rule of its own for the widget's Qt class (the widget's sheet wins over its parents'), so it
+        # doesn't reach the widget's children - a combo box's popup list keeps its rows' own faces.
+        decl = "%s { %s }" % (_qt_class_name(widget), decl)
+    elif not plain.endswith(";"):   # bare declarations: one more
+        plain += ";"
+    new_qss = "%s %s%s%s" % (plain, _FACE_MARK, decl, _FACE_END)
+    if new_qss.strip() != qss.strip():
+        widget.setStyleSheet(new_qss.strip())
+    return face
+
+
+def set_text_in_face(label, text) -> Optional[str]:
+    """``label.setText(text)`` for system/user text, in its own face (``apply_text_face``) when the UI
+    face lacks a character of it. Returns the face."""
+    text = str(text)
+    face = apply_text_face(label, text)
+    label.setText(text)
+    return face
+
+
+def set_elided_text_in_face(label, text, width: int) -> Optional[str]:
+    """``set_text_in_face`` for a fixed-width label: ``text`` elided at its right to ``width`` px,
+    measured in the face it is drawn in. Call after any setStyleSheet on ``label`` (a new sheet drops
+    the face; this puts it back). Returns the face."""
+    from PyQt6.QtGui import QFontMetrics
+    text = str(text)
+    face = apply_text_face(label, text)
+    label.setText(QFontMetrics(label.font()).elidedText(text, Qt.TextElideMode.ElideRight, int(width)))
+    return face
+
+
+def add_combo_item_in_face(combo, text, user_data=None) -> None:
+    """``combo.addItem(text, user_data)`` for system/user text: the item draws in its own face in the
+    popup (FontRole) when it needs one. Pair with ``keep_combo_face`` for the closed box's text."""
+    text = str(text)
+    combo.addItem(text, user_data)
+    face = text_face(text)
+    if face:
+        combo.setItemData(combo.count() - 1, face_font(face, combo.font()), Qt.ItemDataRole.FontRole)
+        _size_combo_by_length(combo)
+
+
+def _size_combo_by_length(combo) -> None:
+    """A combo box sizes itself by measuring every item in ITS font - the UI face's "Auto" in Bengali
+    measured in Microsoft YaHei UI is a glyph that face lacks (every family loads). Once an item has a
+    face of its own, the box is sized by its longest item's length in characters instead (an East
+    Asian wide character counts two), and no item is measured in a face that isn't its own."""
+    import unicodedata
+    from PyQt6.QtWidgets import QComboBox
+    longest = 0
+    for i in range(combo.count()):
+        t = combo.itemText(i)
+        longest = max(longest, sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in t))
+    combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(max(combo.minimumContentsLength(), longest))
+    try:   # rows sized by the first one (the Language picker's way): a relayout measures no other row
+        combo.view().setUniformItemSizes(True)
+    except Exception:
+        pass
+
+
+def _follow_combo_face(combo, text) -> None:
+    # An editable box draws its text in its line edit. The line edit FIRST: the box's face would
+    # otherwise flow into it before apply_text_face saved its own (UI face) font, and switching back to
+    # "1.1.1.1" would "restore" Microsoft YaHei UI.
+    if combo.isEditable() and combo.lineEdit() is not None:
+        apply_text_face(combo.lineEdit(), text)
+    apply_text_face(combo, text)
+
+
+def set_combo_text_in_face(combo, text) -> None:
+    """``combo.setCurrentText(text)`` for system/user text in an editable box, its face set FIRST: the
+    line edit lays the text out before currentTextChanged reaches ``keep_combo_face``. (Typed text
+    can't be ahead of itself: a first keystroke the face lacks takes Qt's path, as before.)"""
+    text = str(text)
+    _follow_combo_face(combo, text)
+    combo.setCurrentText(text)
+
+
+def keep_combo_face(combo) -> None:
+    """The closed combo box draws its current text in that text's own face (``apply_text_face``),
+    now and whenever the selection changes."""
+    def follow(text, c=combo) -> None:
+        _follow_combo_face(c, text)
+
+    if not combo.property("nst_keeps_text_face"):
+        combo.setProperty("nst_keeps_text_face", True)
+        # The popup list keeps the box's CURRENT font for good (set explicitly, so the box's face
+        # change doesn't propagate to it): its rows draw in the UI face or their own (FontRole) -
+        # Bengali "Auto" laid out in Microsoft YaHei UI would load every family.
+        view = combo.view()
+        if view is not None:
+            view.setFont(QFont(view.font()))
+        combo.currentTextChanged.connect(follow)
+    follow(combo.currentText())
+
+
+def action_text_in_face(action, text, like: QFont) -> None:
+    """``action.setText(text)`` for system/user text in a menu, with its own font (in ``like``'s size)
+    when it needs a face (``text_face``). A menu's sheet must not set font-family for this to hold."""
+    face = text_face(text)
+    if face:
+        action.setFont(face_font(face, like))
+    action.setText(str(text))
+
+
+def tooltip_in_face(text) -> str:
+    """A tooltip for system/user ``text``: rich text in its own face when it needs one (tooltips draw in
+    the application font), else the plain text unchanged."""
+    import html
+    text = str(text or "")
+    face = text_face(text)
+    if not face:
+        return text
+    return "<span style=\"font-family:'%s'; white-space:pre-wrap;\">%s</span>" % (
+        face.replace("'", ""), html.escape(text, quote=False))
+
+
+def symbol_face(text: str) -> Optional[str]:
+    """The ONE known face the widget draws ``text`` (symbols: the ▴ ▾ arrow presets) in when the UI face
+    lacks it (utils/font_runs' choice, so a preview looks like the taskbar) - None when the UI face has it
+    all, or no single known face does."""
+    from netspeedtray.utils import font_runs
+    if not needs_ui_html(text):
+        return None
+    if font_runs.family_covers(style_constants.FONT_FAMILY_VARIABLE, text):
+        return font_runs.resolve_family(style_constants.FONT_FAMILY_VARIABLE)   # the widget's face, loaded
+    runs = font_runs.text_runs(QFont(ui_family()), text)
+    if len(runs) == 1 and runs[0][0] not in (None, font_runs.QT_PATH):
+        return runs[0][0]
+    return None
+
+
+def ui_label(text: str, parent=None):
+    """A QLabel showing ``text`` through set_ui_text."""
+    from PyQt6.QtWidgets import QLabel
+    label = QLabel(parent)
+    set_ui_text(label, text)
+    return label
+
+
+def set_ui_text(label, text: str) -> None:
+    """``label.setText(text)``, as rich text (``ui_html``) only when the UI face lacks a character of it;
+    otherwise plain text exactly as before."""
+    text = str(text)
+    if needs_ui_html(text):
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setText(ui_html(text))
+        label.setAccessibleName(text)   # the words, without the run markup's anchor letter
+        label.setProperty("nst_ui_html", True)
+    else:
+        if label.property("nst_ui_html"):
+            label.setAccessibleName("")   # back to the label's own text
+            label.setProperty("nst_ui_html", False)
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setText(text)
+
+
+def apply_ui_language(app, language: Optional[str]) -> None:
+    """Startup: pick the UI face for ``language`` and make it the application font (every widget
+    without its own font - the tray menu, tooltips, message boxes - and every per-class font Qt took
+    from the system, which QApplication.setFont replaces), at the system's UI point size. Segoe UI
+    Variable gets its Text optical size, Windows' cut for ~9 pt UI text and the closest to the Segoe
+    UI it replaces. Also registers the script fallbacks (Bengali)."""
+    set_ui_language(language)
+    apply_script_font_fallbacks(language)
+    try:
+        size = app.font().pointSizeF()
+    except Exception:
+        size = -1.0
+    app.setFont(ui_font(point_size=size if size and size > 0 else 9.0))
+
+
+def font(token: tuple) -> QFont:
+    """
+    Build a QFont for a Fluent type token - a ``(style_name, pixel_size, weight)`` tuple
+    from ``constants.styles`` (e.g. ``TYPE_BODY_STRONG``), in the UI face (``ui_family``).
+
+    In Segoe UI Variable the optical cut + weight is selected via ``setStyleName`` (the cuts are
+    STYLES, not family names), and the cut's opsz axis value is set too (``_set_optical_size``).
+    Any other UI face (Segoe UI on Windows 10 or in a right-to-left UI - #194: Segoe UI Variable has
+    no Hebrew -, or the CJK/Bengali UI face) is the plain face at the same px/weight.
+    """
+    style_name, px, weight = token
+    family = ui_family()
+    f = QFont(family)
+    if family == style_constants.FONT_FAMILY_VARIABLE:
+        f.setStyleName(style_name)       # selects the optical cut + weight variant
+        _set_optical_size(f, style_name)
+    f.setPixelSize(px)
+    f.setWeight(weight)                  # keep the weight request consistent
+    return f
+
+
+# UI languages whose script the Segoe families lack, and the Windows font that has it (#457). Qt
+# already falls back per run of that script, but a script-neutral mark after Latin text - the
+# Bengali danda "।" after ")" or "</b>" - is resolved from the Latin side and lands on Fixedsys, a
+# bitmap tick. Registering the script's font as Qt's application fallback for the script AND for
+# script-neutral (Common) text fixes that. A fallback is consulted only for glyphs a face lacks, so
+# Latin, arrows, CJK, Hebrew and emoji render exactly as before.
+#
+# Not a substitute of the Segoe families (rc.4 - 2.2.0): a substitute makes every Segoe font resolve
+# its fallback chain on its first measurement, which loads the styles of every installed font family
+# (~38 MB, never freed) at startup. A fallback family is looked up only when a glyph is missing.
+SCRIPT_FONT_FALLBACKS = {"bn_BD": ("Nirmala UI",)}
+_SCRIPT_FALLBACK_SCRIPTS = {"bn_BD": ("Script_Bengali", "Script_Common")}
+
+
+def apply_script_font_fallbacks(language: Optional[str]) -> list:
+    """Register SCRIPT_FONT_FALLBACKS[language] as Qt application fallback families for the language's
+    script and for script-neutral text. Call once at startup (a language change needs a restart).
+    Returns the scripts changed, as QChar.Script names ([] = no-op)."""
+    from PyQt6.QtCore import QChar
+    language = str(language or "")
+    families = SCRIPT_FONT_FALLBACKS.get(language)
+    if not families:
+        return []
+    changed = []
+    for name in _SCRIPT_FALLBACK_SCRIPTS.get(language, ()):
+        script = getattr(QChar.Script, name)
+        present = [x.lower() for x in QFontDatabase.applicationFallbackFontFamilies(script)]
+        for family in families:
+            if family.lower() not in present:
+                QFontDatabase.addApplicationFallbackFontFamily(script, family)
+        changed.append(name)
+    return changed
 
 
 def semantic_colors() -> dict:
@@ -260,7 +778,7 @@ def dialog_style() -> str:
     # Radio Button Dot Color (White in dark mode, Black/White in light mode? Usually White on Accent is safe)
     dot_color = "white"
 
-    label_style_str = f"color: {text_color}; font-size: 13px; font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;"
+    label_style_str = f"color: {text_color}; font-size: 13px; {ui_family_css()}"
     
     # Unchecked border
     radio_border_dull = "#999999" if dark_mode_active else "#666666"
@@ -269,7 +787,7 @@ def dialog_style() -> str:
         QDialog {{
             background-color: {sidebar_bg};
             border-radius: 8px;
-            font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+            {ui_family_css()}
         }}
         QWidget#contentWidget {{
             background-color: {content_bg}; 
@@ -280,7 +798,7 @@ def dialog_style() -> str:
         }}
         QRadioButton, QCheckBox {{
             color: {text_color};
-            font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+            {ui_family_css()}
             font-size: 13px;
             background-color: transparent;
             outline: none;
@@ -428,7 +946,7 @@ def sidebar_style() -> str:
         QListWidget {{
             background-color: {sidebar_bg};
             border: none;
-            font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+            {ui_family_css()}
             font-size: 13px;
             padding: 8px 0;
             margin: 0px;
@@ -488,7 +1006,7 @@ def graph_settings_panel_style() -> str:
             font-size: 13px;
         }}
         #settingsPanel QLabel#settingsTitleLabel {{
-            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+            {ui_family_css()}
             font-size: 14px;
             font-weight: 600;
             color: {style_constants.DARK_MODE_TEXT_COLOR};
@@ -537,16 +1055,16 @@ def graph_tooltip_style() -> str:
 
 def zoom_hint_style() -> str:
     """Returns the stylesheet for the 'Double-click to Reset' hint."""
-    return """
-        QLabel {
+    return f"""
+        QLabel {{
             background-color: rgba(0, 0, 0, 0.6);
             color: rgba(255, 255, 255, 0.9);
             border-radius: 12px;
             padding: 4px 12px;
             font-size: 11px;
-            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+            {ui_family_css()}
             font-weight: 500;
-        }
+        }}
     """
 
 
@@ -554,22 +1072,22 @@ def graph_overlay_style() -> str:
     """
     Returns a stylesheet for the overlay elements on the graph (hamburger button).
     """
-    return """
-        QPushButton {
+    return f"""
+        QPushButton {{
             background-color: rgba(40, 40, 40, 0.85);
             color: white;
             padding: 2px;
             font-size: 13px;
-            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+            {ui_family_css()}
             border-radius: 4px;
             border: none;
-        }
-        QPushButton:hover {
+        }}
+        QPushButton:hover {{
             background-color: rgba(55, 55, 55, 0.9);
-        }
-        QPushButton:pressed {
+        }}
+        QPushButton:pressed {{
             background-color: rgba(25, 25, 25, 0.95);
-        }
+        }}
     """
 
 
@@ -598,28 +1116,28 @@ def graph_stats_card_style() -> str:
 
 def graph_stats_title_style() -> str:
     """Style for the uppercase title of a stat card."""
-    return """
-        QLabel {
+    return f"""
+        QLabel {{
             color: #888;
             font-size: 10px;
             font-weight: 600;
             text-transform: uppercase;
-            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+            {ui_family_css()}
             background-color: transparent;
-        }
+        }}
     """
 
 
 def graph_stats_value_style() -> str:
     """Style for the large monospace value in a stat card."""
-    return """
-        QLabel {
+    return f"""
+        QLabel {{
             color: white;
             font-size: 14px;
             font-weight: 600;
-            font-family: 'Cascadia Mono', 'Consolas', 'SF Mono', monospace;
+            font-family: '{mono_family()}';
             background-color: transparent;
-        }
+        }}
     """
 
 
@@ -645,7 +1163,7 @@ def timeline_pills_style() -> str:
             padding: 4px 2px;
             font-size: 10px;
             font-weight: 600;
-            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+            {ui_family_css()}
         }}
         QPushButton#pillFirst {{
             border-top-left-radius: 6px;
@@ -702,7 +1220,7 @@ def segmented_pills_style(dark: bool) -> str:
             padding: 4px 2px;
             font-size: 10px;
             font-weight: 600;
-            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+            {ui_family_css()}
         }}
         QPushButton#pillFirst {{
             border-top-left-radius: 6px;
@@ -895,7 +1413,7 @@ def button_style(accent: bool = False) -> str:
             color: {text_color};
             border: 1px solid {border_color};
             padding: 5px 15px; border-radius: 4px;
-            font-family: "Segoe UI Variable", "Segoe UI", sans-serif; font-size: 13px;
+            {ui_family_css()} font-size: 13px;
             min-height: 22px; 
         }}
         QPushButton:hover {{

@@ -2,6 +2,17 @@
 Application entry point and lifecycle management for NetSpeedTray.
 """
 
+# numpy's bundled OpenBLAS starts one worker thread per core the first time numpy loads (the
+# Monitor's graphs; the spike filter's convolutions) and reserves a buffer for each: ~350 MB of
+# commit and ~11 threads on a 12-core box, for four tiny convolutions that gain nothing from
+# threads. The env var is read once, when OpenBLAS initializes, so it must be set before ANY import
+# that can pull numpy in - hence first, ahead of every other import. This file is the only entry
+# point (the frozen exe's Analysis script, and every headless flag: --export-csv, --apply-update,
+# --shutdown). setdefault: a user's or developer's own value still wins. A unit test pins it.
+import os as _os
+_os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+_os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 # matplotlib's Qt backend setup lives at the top of `views/graph/window.py`
 # (the only module that imports matplotlib). Loading it here would cost
 # ~30-50 MB of RAM at startup even for users who never open the graph
@@ -61,6 +72,29 @@ if __name__ == "__main__":
         _crash_log.enable()
     except Exception:
         pass
+
+
+def _run_shutdown_early() -> int:
+    """`--shutdown [--timeout N]` - run HERE, ahead of the PyQt6 / pywin32 / widget imports below.
+    It needs ctypes, the constants and logging, nothing else, but it used to run from main(), after
+    all of those had loaded: in a loaded VM (Windows Update plus Defender scanning each DLL of the
+    onedir on load) that took longer than the whole deadline above, so the process exited 1 before
+    it had posted the message at all - the running app was never asked to quit, and no log line
+    was written. Keep this path free of anything that pulls Qt in (a test pins it)."""
+    from netspeedtray.utils.config import ConfigManager
+    ConfigManager.setup_logging()
+    logger = logging.getLogger("NetSpeedTray.Main")
+    try:
+        from netspeedtray.core.shutdown_channel import run_shutdown_cli
+        code = run_shutdown_cli()
+    except Exception as e:
+        logger.error("Shutdown command errored: %s", e, exc_info=True)
+        return 2
+    return 2 if code is None else code
+
+
+if __name__ == "__main__" and "--shutdown" in sys.argv[1:]:
+    sys.exit(_run_shutdown_early())
 
 import win32api
 import win32event
@@ -433,7 +467,9 @@ def main() -> int:
     # the same message from its own [Code] and never runs this exe - see core/shutdown_channel.py).
     # Asks the running instance to quit through its tray-Exit path and waits for it to exit.
     # Headless and first: no QApplication, no mutex, and none of the update sweeps below - whatever
-    # runs this may itself be executing from an update temp dir.
+    # runs this may itself be executing from an update temp dir. The exe never gets here with
+    # `--shutdown` (it is dispatched at import, before the GUI imports - _run_shutdown_early); this
+    # stays for callers of main() itself.
     try:
         from netspeedtray.core.shutdown_channel import run_shutdown_cli
         shutdown_code = run_shutdown_cli()
@@ -499,6 +535,15 @@ def main() -> int:
             from PyQt6.QtCore import Qt
             app.setLayoutDirection(
                 Qt.LayoutDirection.RightToLeft if i18n_strings.is_rtl else Qt.LayoutDirection.LeftToRight)
+            # The UI's one face for the language (Segoe UI Variable; Segoe UI for Hebrew; the CJK/Bengali
+            # UI face) as the application font, plus the Bengali script fallback - before any widget
+            # builds its fonts. Cosmetic only, so it can never abort startup.
+            try:
+                from netspeedtray.utils.styles import apply_ui_language
+                apply_ui_language(app, i18n_strings.language)
+            except Exception as e:
+                logger.warning("UI font not applied for %s: %s",
+                               getattr(i18n_strings, "language", None), e)
 
             # 4c. Import wmi HERE, on the GUI thread, before the widget starts any worker: the module
             # owns a COM object from its import on, and a worker that imported it first would leave

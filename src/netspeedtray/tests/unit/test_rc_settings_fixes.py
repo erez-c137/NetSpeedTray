@@ -65,6 +65,10 @@ def _make(qtbot, cfg=None, ifaces=("Ethernet", "Wi-Fi")):
 
 
 def _flush(dlg):
+    # The live preview applies only while Settings is on screen (a hidden dialog never emits).
+    if not dlg.isVisible():
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)   # never a real window
+        dlg.show()
     if dlg._update_timer.isActive():
         dlg._update_timer.stop()
     dlg._emit_settings_changed_throttled()
@@ -82,6 +86,7 @@ def test_float_graph_opacity_loads_and_a_noop_save_changes_nothing(qtbot, opacit
     cfg = dict(DEFAULTS, graph_opacity=opacity, keep_data=365, font_family="Consolas",
                record_hardware_history=True)
     dlg, _ = _make(qtbot, cfg)
+    dlg._build_all_pages()   # pages are built lazily (on first visit)
     assert dlg._failed_pages == set()
     got = dlg.get_settings()
     others = [k for k in _changed(cfg, got) if k != "graph_opacity"]
@@ -100,6 +105,7 @@ def test_a_page_that_fails_to_load_never_writes_its_keys(qtbot, monkeypatch):
     cfg = dict(DEFAULTS, monitor_cpu_enabled=True, cpu_load_high_threshold=91,
                keep_data=365, metrics_endpoint_port=9555)
     dlg, main = _make(qtbot, cfg)
+    dlg._build_all_pages()   # pages are built lazily (on first visit)
     assert dlg._failed_pages == {"hardware"}
     got = dlg.get_settings()
     assert _changed(cfg, got) == []
@@ -403,6 +409,7 @@ def test_every_config_key_has_a_reset_all_decision(qtbot):
     """A new config key must be reset by a page, listed as hidden-but-reset, or kept as state."""
     dlg, _ = _make(qtbot)
     owned = set()
+    dlg._build_all_pages()   # pages are built lazily (on first visit)
     for p in dlg._pages():
         owned |= set(p.get_settings())
     undecided = set(DEFAULTS) - owned - set(dlg.RESET_ALL_HIDDEN) - set(dlg.RESET_ALL_KEEPS)
@@ -457,3 +464,26 @@ def test_half_typed_hex_keeps_the_last_valid_colour(qtbot):
     assert main.config["default_color_dark"] == "#ABCDEF"
     dlg.appearance_page.default_color_dark_input.setText("#123456")
     assert dlg.get_settings()["default_color_dark"] == "#123456"
+
+
+# --- A dialog kept alive after Cancel (backup running) never applies a preview again -----------------
+
+def test_a_hidden_dialog_never_reapplies_the_cancelled_preview(qtbot):
+    """After Cancel the dialog can stay alive, hidden, while a backup finishes. A credentials field's
+    editingFinished on focus-out used to restart the throttle _revert_live_preview had stopped, and
+    250 ms later the cancelled values were applied live again."""
+    dlg, main = _make(qtbot)
+    dlg.show()
+    field = dlg.hardware_page.lhm_username
+    field.setText("cancelled-user")
+    field.editingFinished.emit()
+    assert dlg._update_timer.isActive()                 # on screen: the preview is scheduled
+    dlg.cancel_button.click()                           # reverts, stops the timer, hides
+    assert not dlg.isVisible() and not dlg._update_timer.isActive()
+    reverted = dict(main.config)
+    calls = len(main.calls)
+    field.editingFinished.emit()                        # the focus-out that follows the hide
+    assert not dlg._update_timer.isActive()
+    dlg._update_timer.timeout.emit()                    # and if a tick lands anyway
+    dlg._emit_settings_changed_throttled()
+    assert len(main.calls) == calls and main.config == reverted

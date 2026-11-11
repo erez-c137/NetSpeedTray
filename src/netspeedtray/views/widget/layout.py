@@ -74,11 +74,14 @@ class WidgetLayoutManager:
             font_weight = QFont.Weight.Normal
 
         from netspeedtray.utils.widget_renderer import make_widget_font
+        from netspeedtray.utils.font_runs import WidgetFontMetrics, set_text_language
+        set_text_language(getattr(getattr(self.widget, "i18n", None), "language", ""))
         font = make_widget_font(font_family, font_size, font_weight)   # Segoe UI Variable -> Text opsz (7a)
         self.widget.setFont(font)
         self.widget.current_font = font # Update public attribute
         
-        self.metrics = QFontMetrics(font)
+        # Measures a string as the renderer draws it: glyphs the face lacks in their own face (font_runs).
+        self.metrics = WidgetFontMetrics(font)
         self.widget.current_metrics = self.metrics # Update public attribute
         
         # Arrow font handling
@@ -100,7 +103,7 @@ class WidgetLayoutManager:
         else:
             arrow_font = font
             
-        self.arrow_metrics = QFontMetrics(arrow_font)
+        self.arrow_metrics = WidgetFontMetrics(arrow_font)
         # Kept for the thin-strip fit check, which re-measures them at each display scale (#322).
         self._font, self._arrow_font = font, arrow_font
         
@@ -610,6 +613,7 @@ class WidgetLayoutManager:
         ratio ``scale`` - the same text engine and hinting the widget paints with - and check that no
         pixel lands outside the band (1 device px clear on top). Exact where a metrics model is not:
         at 125/150% hinting moves glyphs by a device row either way (#322 review)."""
+        from netspeedtray.utils.font_runs import draw_text
         pad = 8
         font, arrow_font = self._font, (self._arrow_font or self._font)
         fm, afm = self.metrics, (self.arrow_metrics or self.metrics)
@@ -630,11 +634,11 @@ class WidgetLayoutManager:
                 x = 0
                 p.setFont(font)
                 for s in strings:
-                    p.drawText(x, y, s)
+                    draw_text(p, x, y, s)
                     x += fm.horizontalAdvance(s) + 4
                 p.setFont(arrow_font)
                 for g in arrows:
-                    p.drawText(x, y, g)
+                    draw_text(p, x, y, g)
                     x += afm.horizontalAdvance(g) + 4
                 p.drawRect(QRect(x, y - icon + 1, icon, icon))     # the CPU/GPU icon box
         finally:

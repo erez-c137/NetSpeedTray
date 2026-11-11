@@ -39,6 +39,34 @@ class FontConstants:
     }
     # Pre-release builds of 2.2 rc.2 wrote the optical size as the family name: always read it as the family.
     FAMILY_RENAMES: Final[Dict[str, str]] = {'Segoe UI Variable Text': 'Segoe UI Variable'}
+    # Faces for the glyphs the widget's own face lacks (utils/font_runs): each such glyph is drawn in the
+    # first installed face of the list that has it, never through a Qt fallback search - that loads the
+    # styles of every installed family (~38 MB, never freed). Segoe UI comes first (the widget font's
+    # second family until 2.2.0 - Hebrew, #194), then the UI language's own faces (Japanese and Chinese
+    # share Han code points), the other languages' faces, the symbol and emoji faces. Symbols,
+    # punctuation and numbers (the ▴ △ ▵ ⇑ arrow presets, ①) try Segoe UI, then SYMBOL_FAMILIES: the order
+    # Qt's fallback drew them in until 2.2.0 (measured per code point, font_runs).
+    SCRIPT_FAMILIES: Final[Dict[str, tuple]] = {
+        'ja_JP': ('Yu Gothic UI', 'Meiryo UI'),
+        'ko_KR': ('Malgun Gothic',),
+        'zh_CN': ('Microsoft YaHei UI', 'Microsoft YaHei'),
+        'zh_TW': ('Microsoft JhengHei UI', 'Microsoft JhengHei'),
+        'bn_BD': ('Nirmala UI',),
+    }
+    # Windows' per-script UI faces, for a Wi-Fi name in any other script (Thai, Ethiopic, Myanmar...).
+    EXTRA_SCRIPT_FAMILIES: Final[tuple] = (
+        'Leelawadee UI', 'Ebrima', 'Gadugi', 'Myanmar Text', 'Mongolian Baiti', 'Microsoft Himalaya',
+        'Microsoft Yi Baiti', 'Microsoft New Tai Lue', 'Microsoft Tai Le', 'Microsoft PhagsPa',
+        'Javanese Text', 'MV Boli', 'Sylfaen', 'Segoe UI Historic', 'SimSun-ExtB', 'SimSun-ExtG')
+    SYMBOL_FAMILIES: Final[tuple] = ('Tahoma', 'MS UI Gothic', 'Segoe UI Symbol')
+    # The app UI's ONE face per language (utils/styles.ui_family): SCRIPT_FAMILIES' first installed face
+    # for those languages, Segoe UI for a right-to-left UI (#194: Segoe UI Variable has no Hebrew),
+    # else Segoe UI Variable (Windows 10: Segoe UI). Optical sizes of Segoe UI Variable (opsz axis) per
+    # style-name prefix of the type ramp: the app font and every su.font() set theirs explicitly.
+    UI_OPSZ: Final[Dict[str, float]] = {'Small': 8.0, 'Text': 10.5, 'Display': 36.0}
+    # The one monospace face (Monitor's connection details): the first installed.
+    MONO_FAMILIES: Final[tuple] = ('Cascadia Mono', 'Consolas', 'Courier New')
+    EMOJI_FAMILIES: Final[tuple] = ('Segoe UI Emoji',)
     NOTE_FONT_SIZE: Final[int] = 8
 
     # This map points numeric font weights to their corresponding i18n translation keys.

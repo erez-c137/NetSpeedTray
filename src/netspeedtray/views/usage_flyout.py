@@ -274,10 +274,12 @@ class UsageFlyout(QWidget):
     def _usage_row(self, grid: QGridLayout, row: int, label: str, totals: Totals) -> None:
         up_bytes, down_bytes = totals
         grid.addWidget(self._label(label, tokens.TYPE_BODY_STRONG, self._c["text_primary"]), row, 0)
-        down = self._label(f"↓ {self._fmt(down_bytes)}", tokens.TYPE_BODY,
-                           self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
-        up = self._label(f"↑ {self._fmt(up_bytes)}", tokens.TYPE_BODY,
-                         self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
+        down = self._label("", tokens.TYPE_BODY, self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
+        up = self._label("", tokens.TYPE_BODY, self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
+        # The arrows are not in every UI face (Bengali's Nirmala UI): su.set_ui_text draws them in a known
+        # face instead of letting Qt search every installed family for them.
+        su.set_ui_text(down, f"↓ {self._fmt(down_bytes)}")
+        su.set_ui_text(up, f"↑ {self._fmt(up_bytes)}")
         grid.addWidget(down, row, 1)
         grid.addWidget(up, row, 2)
         self._usage_labels[row] = (down, up)
@@ -290,8 +292,8 @@ class UsageFlyout(QWidget):
             if labels is None or totals is None:
                 continue
             up_bytes, down_bytes = totals
-            labels[0].setText(f"↓ {self._fmt(down_bytes)}")
-            labels[1].setText(f"↑ {self._fmt(up_bytes)}")
+            su.set_ui_text(labels[0], f"↓ {self._fmt(down_bytes)}")
+            su.set_ui_text(labels[1], f"↑ {self._fmt(up_bytes)}")
         if cap is not None and self._cap_labels is not None:
             used_lbl, pct_lbl, bar, cap_txt, gb = self._cap_labels
             used_gb, _cap_gb, pct = cap
@@ -411,7 +413,8 @@ class UsageFlyout(QWidget):
             self._hw_values[("vram", "label")].setText(
                 self._tr("VRAM_SHARED_LABEL", "VRAM (shared)") if hardware.get("vram_shared") else "VRAM")
         if ("identity", "text") in self._hw_values:
-            self._hw_values[("identity", "text")].setText(str(hardware.get("identity") or dash))
+            # The Wi-Fi name (我的网络) in its own face when the UI face lacks it (styles.set_text_in_face).
+            su.set_text_in_face(self._hw_values[("identity", "text")], str(hardware.get("identity") or dash))
 
     # ----------------------------------------------------------------- battery
 

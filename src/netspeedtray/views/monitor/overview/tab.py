@@ -38,15 +38,14 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, format_data_size, format_duration_short
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils.widget_paint import WidgetMetrics   # reuse its Mbps→bytes/sec converter (DRY)
-# NOTE: `summaries` imports numpy at module scope. To honor the Monitor's import firewall (a glance at
-# the default Overview must not eagerly pull the heavy compute deps), it is imported LAZILY inside
-# _read_window - the one place it's used - NOT here. Keep it that way.
+# NOTE: `summaries` is numpy-free since #488 (the widget's hover card reads it too), so importing it here
+# would cost little; it stays imported lazily inside _read_window, the one place it is used.
 from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, NetworkHero, dynamic_range
 from netspeedtray.views.monitor.overview.busiest_apps import BusiestAppsCard
 from netspeedtray.views.monitor.timeline_selector import TimelineSelector
 from netspeedtray.views.monitor.graph_host import bind_reader_thread, stop_reader_thread
-# stats_detail imports `summaries` (-> numpy). It's only needed when the user opens the detail sheet or
-# exports, so it is imported LAZILY in those handlers - keeping numpy off the Overview's import path.
+# stats_detail (the detail sheet + its exporter) is only needed when the user opens the detail sheet or
+# exports, so it is imported LAZILY in those handlers - keeping the Overview's import path light.
 
 # Per-resource accent as (dark, light) pairs. Network up/down get a distinct, harmonious pair; CPU/GPU
 # echo the graph's line hues; RAM/VRAM get their own calm colors. The light variant keeps the thin
@@ -161,7 +160,7 @@ def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
     # latency blip you missed live is still counted.
     events: Dict[str, Any] = {}
     if latency_enabled:
-        from netspeedtray.utils import summaries as S   # lazy: keeps numpy off the import path
+        from netspeedtray.utils import summaries as S   # lazy (only this reader uses it)
         events = S.outage_summary(ws.get_hardware_history("latency_gw_timeout", start, end))
     volume = None
     if session_start is not None:
@@ -725,7 +724,7 @@ class OverviewTab(QWidget):
                             period_start=getattr(mw, "_hover_usage_period_start", None),
                             coverage=getattr(self, "_cap_coverage", None))
 
-            self._session_lbl.setText(self._session_text(mw))
+            su.set_ui_text(self._session_lbl, self._session_text(mw))   # arrows not in every UI face
             self._context_r_lbl.setText(self._context_right_text(mw))
         except Exception as e:
             if not getattr(self, "_render_err_logged", False):
@@ -802,7 +801,7 @@ class OverviewTab(QWidget):
         if ws is None:
             return
         from netspeedtray import __version__
-        from netspeedtray.views.monitor.stats_detail import run_interactive_export   # lazy (numpy)
+        from netspeedtray.views.monitor.stats_detail import run_interactive_export   # lazy (only on export)
         start, end, _is_session = self._window()
         label = self._timeline.current_label() if hasattr(self._timeline, "current_label") \
             else self._period_key()
@@ -941,7 +940,7 @@ class OverviewTab(QWidget):
         if not subjects:
             return
         from netspeedtray import __version__
-        from netspeedtray.views.monitor.stats_detail import StatsDetailSheet   # lazy (numpy)
+        from netspeedtray.views.monitor.stats_detail import StatsDetailSheet   # lazy (only on open)
         start, end, _is_session = self._window()
         label = self._timeline.current_label() if hasattr(self._timeline, "current_label") \
             else self._period_key()

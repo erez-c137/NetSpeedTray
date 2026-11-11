@@ -56,6 +56,7 @@ class I18nStrings:
         "zh_TW": "繁體中文 (台灣)",
         "he_IL": "עברית (ישראל)",
         "tr_TR": "Türkçe (Türkiye)",
+        "bn_BD": "বাংলা (বাংলাদেশ)",
     }
 
     # Right-to-left languages. When one is active, the app flips its layout direction (mirrored

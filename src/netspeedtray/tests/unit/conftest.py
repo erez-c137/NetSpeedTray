@@ -13,6 +13,19 @@ os.environ.setdefault("QT_SCALE_FACTOR", "1")  # pin DPI for render determinism
 import pytest
 from PyQt6.QtWidgets import QApplication
 
+# ONE QApplication for the whole process, created here and held by this module until exit.
+# Many test modules declare their own ``q_app``/``qt_app`` fixture (``QApplication.instance() or
+# QApplication([])``), several module-scoped. Whichever of them ran first in a process used to CREATE
+# the app, and was then its only owner: at that module's teardown the wrapper was released, the C++
+# QApplication was destroyed, and the next Qt test made a second one. After that recreate, PyQt6 no
+# longer releases the wrappers of C++-created children (a scroll area's viewport, a combo's line
+# edit, ...) when their Python-created parent is destroyed, so those stale wrappers stay in sip's
+# address map. A later object allocated at a reused address (a QBoxLayout) was then handed back by
+# findChildren(QWidget) as the old QWidget wrapper, and name_controls' accessibleName() read it as a
+# widget: an access violation or "Negative size passed to PyUnicode_New" (PR #505, parallel order).
+# The product creates exactly one QApplication (monitor.py) and never hits this.
+_SESSION_APP = QApplication.instance() or QApplication([])
+
 
 @pytest.fixture(scope="session")
 def q_app():
@@ -21,7 +34,7 @@ def q_app():
     pytest-qt's own ``qtbot``/``qapp`` fixtures reuse ``QApplication.instance()``,
     so this coexists with them (both return the same singleton).
     """
-    return QApplication.instance() or QApplication([])
+    return QApplication.instance() or _SESSION_APP
 
 
 def dispose_widget(widget) -> None:
@@ -71,6 +84,15 @@ def _isolate_update_marker(tmp_path, monkeypatch):
     # test's own Downloads stand-in (or tmp_path itself) - never the real Downloads.
     monkeypatch.setattr(update_applier, "_downloads_dirs", raising=False, value=
                         lambda: [str(tmp_path / "Downloads"), str(tmp_path)])
+
+
+@pytest.fixture(autouse=True)
+def _no_real_shell_launch(monkeypatch):
+    """No test may open a real browser or Explorer window on the machine running the suite:
+    ``os.startfile`` (behind ``helpers.open_external``, the guided-copy folder reveal and
+    ``webbrowser.open`` on Windows) is a no-op here. A test that checks a launch fakes it itself."""
+    if hasattr(os, "startfile"):
+        monkeypatch.setattr(os, "startfile", lambda *a, **k: None)
 
 
 class _NoLhmWebServer:
@@ -134,3 +156,26 @@ def _pin_windows_theme(monkeypatch):
     from netspeedtray.utils.taskbar_appearance import PLAIN
     monkeypatch.setattr(color_scheme, "read_taskbar_appearance", lambda shell_light=False: PLAIN)
     monkeypatch.setattr(color_scheme, "_appearance", None)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_per_taskbar_layout_cache(monkeypatch):
+    """The per-HWND layout cache and background-probe queue (#373) are process-wide; tests reuse the
+    same fake HWNDs, so each test starts (and ends) with both empty - one test's landed layout must
+    never answer for another's taskbar. And no test starts a real background UIA probe thread by
+    placing a widget on a mocked tray-less bar (PositionManager._refresh_trayless_bar_layout): it
+    would flip the layout worker's ``running`` flag under tests that drive the worker by hand. Tests of
+    the background probe import the real function at module level (before this patch applies)."""
+    from netspeedtray.utils import taskbar_utils
+    monkeypatch.setattr(taskbar_utils, "request_background_layout_probe", lambda _hwnd: None)
+    # The Widgets toggle (TaskbarDa) is pinned ON: layout reads drop the Widgets box while it is off
+    # (#473), and no test may depend on the machine's setting. Tests of the toggle patch it themselves.
+    monkeypatch.setattr(taskbar_utils, "_widgets_toggle_on", lambda: True, raising=False)
+    monkeypatch.setattr(taskbar_utils, "_widgets_flip", {"on": None, "gen": 0, "on_at": None},
+                        raising=False)
+    taskbar_utils._layout_by_hwnd.clear()
+    del taskbar_utils._layout_background[:]
+    getattr(taskbar_utils, "_layout_superseded", {}).clear()
+    yield
+    taskbar_utils._layout_by_hwnd.clear()
+    del taskbar_utils._layout_background[:]

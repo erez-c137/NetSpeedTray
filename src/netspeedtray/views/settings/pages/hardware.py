@@ -129,7 +129,7 @@ class HardwarePage(QWidget):
             f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
         layout.addWidget(temps_note)
         # LHM v0.9.5+ is read over its web server (#187), which is off until the user enables it.
-        self.lhm_web_server_hint = QLabel(
+        self.lhm_web_server_hint = su.ui_label(   # "Options → Remote Web Server": no arrow in Nirmala UI
             self.i18n.LHM_WEB_SERVER_HINT.format(port=constants.lhm.HTTP_PORT))
         self.lhm_web_server_hint.setWordWrap(True)
         self.lhm_web_server_hint.setStyleSheet(temps_note.styleSheet())
@@ -297,7 +297,8 @@ class HardwarePage(QWidget):
 
     def _forget_lhm_password(self) -> None:
         """Keep the plain-text password in memory only while the page is on screen: the Settings dialog
-        is hidden, not destroyed, between uses. A pending edit is encrypted into the blob first."""
+        hides before it is destroyed, and a page switch hides it too. A pending edit is encrypted into the
+        blob first."""
         self._lhm_password_setting()
         self.lhm_password.clear()
         self._lhm_password_plain = ""
@@ -326,7 +327,7 @@ class HardwarePage(QWidget):
             self.i18n.LHM_PASSWORD_UNREADABLE if self._lhm_password_unreadable else " ")
 
     def _on_lhm_port_changed(self, _value: int = 0) -> None:
-        self.lhm_web_server_hint.setText(self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
+        su.set_ui_text(self.lhm_web_server_hint, self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
         self.refresh_lhm_status()
         self.on_change()
 
@@ -422,7 +423,7 @@ class HardwarePage(QWidget):
         self.lhm_port.blockSignals(True)
         self.lhm_port.setValue(lhm_port if L.MIN_PORT <= lhm_port <= L.MAX_PORT else L.HTTP_PORT)
         self.lhm_port.blockSignals(False)
-        self.lhm_web_server_hint.setText(self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
+        su.set_ui_text(self.lhm_web_server_hint, self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
         self.lhm_username.setText(str(config.get("lhm_username", "") or ""))
         # A blob this Windows user cannot decrypt (a config copied from another account or PC, DPAPI
         # broken) shows as an empty field with a hint, and is KEPT until the user types a new password
@@ -463,17 +464,18 @@ class HardwarePage(QWidget):
             name = a.name.strip()
             if name and name.casefold() not in {n.casefold() for n in names}:
                 names.append(name)
-        for name in names:
-            self.gpu_adapter.addItem(name, userData=name)
+        for name in names:   # the driver's name: in its own face if the UI face lacks it
+            su.add_combo_item_in_face(self.gpu_adapter, name, name)
         saved = saved.strip()
         idx = 0
         if saved:
             idx = next((i for i in range(self.gpu_adapter.count())
                         if str(self.gpu_adapter.itemData(i)).casefold() == saved.casefold()), -1)
             if idx < 0:
-                self.gpu_adapter.addItem(saved, userData=saved)
+                su.add_combo_item_in_face(self.gpu_adapter, saved, saved)
                 idx = self.gpu_adapter.count() - 1
         self.gpu_adapter.setCurrentIndex(idx)
+        su.keep_combo_face(self.gpu_adapter)
         self._gpu_adapter_card.setVisible(len(names) >= 2 or bool(saved))
 
     def _throttle_c(self) -> int:

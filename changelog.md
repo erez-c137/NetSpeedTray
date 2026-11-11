@@ -75,12 +75,539 @@ ALSO
 
 ---
 
+## [2.2.0-rc.8] - November 11, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+The portable version's in-app update could fail to swap its folder (found by rehearsing a real
+2.1.7 updating itself to 2.2), and the widget could flash over a fullscreen app or blink out on the
+desktop every few seconds. Also: GPU temperature on PCs with two GPUs, data usage after a normal
+quit, the mini graph on a bad sample, GPU names in support bundles, quieter logs and Turkish
+polish.
+
+### Fixed
+
+- **Portable updates no longer fail because the folder is "in use".** Updating the portable 2.1.7
+  could stop at "could not replace its folder" when a helper the old version started was still
+  running for a few seconds. The update now waits for it, and if something really keeps the
+  folder busy, the message names it. ([#499])
+
+  *Under the hood: a folder can't be renamed while any process has it as its working directory.
+  2.1.7 changes into its install folder at startup, and its PowerShell Widgets-button probe can
+  outlive it by 5-10 s; the applier only retried the rename for 8 s. The applier (which is the new
+  version's code, so it also fixes 2.1.7 -> 2.2) now waits up to 30 s for processes running from
+  or sitting in the install folder, plus orphaned children of the old app created during its
+  lifetime, then retries the rename for 20 s with backoff; it never kills anything. 2.2 itself
+  starts nvidia-smi, the browser and Explorer in System32, so none of them can hold the folder and
+  block a later update. Found in a VM rehearsal of 2.1.7 -> rc.7 (the installer path passed every
+  check).*
+
+- **The widget no longer flashes over fullscreen apps, or blinks out on the desktop.** With
+  "Keep visible in fullscreen" off, the widget could reappear over a fullscreen video for half a
+  second every ~24 s, and with nothing fullscreen it could vanish for a moment on the same beat.
+  A single stray reading of which window is in front no longer changes whether the widget shows.
+  Thanks to @kamal63442 for the instrumented captures. ([#503], [#504])
+
+  *Under the hood: the fullscreen check had no memory. Every 250 ms poll and every foreground
+  event judged one window on the spot, and a NULL foreground, a window that had already closed,
+  or an invisible or DWM-cloaked monitor-sized window all read as "not covered" - or, for the
+  invisible/cloaked window, as an instant fullscreen hide. A latch now holds the decision: hiding
+  stays immediate for a visible, uncloaked window covering the monitor; NULL, closed, invisible
+  or cloaked foregrounds keep the previous decision (re-checking the covering window, so closing
+  a fullscreen app with nothing taking focus still brings the widget back, and the hold gives up
+  after about 1.5 s so a cover that has left the foreground can't keep the widget hidden); and
+  showing again needs two "not covered" readings at least 250 ms apart, so leaving fullscreen into
+  a normal window takes 250-500 ms instead of up to 250 ms (the desktop is still instant when it
+  takes the foreground, as with Win+D). The refresh judges the live foreground, not the one a
+  debounced event stored, and the copies on other taskbars follow the same rules. Each fullscreen
+  hide or show writes a DEBUG log line with the reason, window class and process id (no titles),
+  and a hold that gives up writes one INFO line naming the window class.*
+
+- **GPU temperature on PCs with two GPUs comes from the right card.** On a Ryzen with integrated
+  graphics plus a GeForce, read through LibreHardwareMonitor, the widget could show the GeForce's
+  load and power next to the integrated GPU's voltage-regulator temperature (38 °C while the
+  GeForce sat at 26 °C). Temperature and power now always come from the same card. Thanks to
+  @balciseri for the sensor dump. ([#236], [#496])
+
+  *Under the hood: the LHM 0.9.4 / OpenHardwareMonitor WMI fallback took the first `gpu`
+  temperature row and, in a separate query, the first power row, with nothing grouping them by
+  card (2.1.7 did the same, so this is not a regression). The fallback now reuses the web-server
+  path's per-card grouping (`lhm_http.gpu_groups()`). Within a card: GPU Core > Hot Spot > other
+  sensors > VR / VRM / VDDC / memory / junction / liquid / PLX - ranked last, not excluded, so an
+  APU whose only sensor is "GPU VR SoC" still shows it. Once one card has supplied a reading, WMI
+  only completes that card, nvidia-smi only fills in for an NVIDIA card and RAPL PP1 only for an
+  Intel one. Automatic's card choice, utilization (busiest engine on any adapter, #239) and VRAM
+  are unchanged. One visible side effect: AMD cards on the WMI fallback now report "GPU Package"
+  power (the whole package) instead of "GPU Core", matching what the LHM web-server path already
+  reported.*
+
+- **Data usage counts traffic while the app was closed, after a normal quit too.** The data-usage
+  counter is meant to pick up what moved while NetSpeedTray wasn't running (an update restart, a
+  quit and relaunch, or the time before sign-in after a Fast Startup shutdown). It only did after
+  a crash: every normal quit threw away the reading it recovers from. ([#509])
+
+  *Under the hood: the odometer held the controller's last-counters dict by reference, and
+  `controller.cleanup()` cleared it in place before the final persist ran, so every clean exit
+  stored `"counters": {}` and the next launch logged "nothing recovered (no snapshot)". The
+  controller now rebinds the dict and the odometer copies counters on entry. Review found a
+  second case: in auto mode with no route at launch, bytes added without counters could be
+  persisted beside the old snapshot, and a kill before the next persist would recover the same
+  window twice; such a persist now deletes the snapshot (at worst an under-count of the unsaved
+  tail, never a double count).*
+
+- **The mini graph keeps drawing through a bad sample.** One NaN sample (a regression from #488)
+  made the graph vanish, logging an error on every repaint until it scrolled out. Narrow Trend
+  graphs on a long history also cost 30-50 ms per series per sample (also #488); now 1-2 ms.
+  ([#510])
+
+  *Under the hood: the numpy-free monotone spline divided by zero on a NaN tangent; NaN now gives
+  a flat tangent (finite input stays bit-identical to the numpy version). The graph scale and
+  Detailed's 95th-percentile clip use finite samples only, and an inf point is held at the top
+  edge. Narrow Trend graphs computed the full O(n x window) smoothing; the drawn points are now
+  computed directly (bit-identical) and the auto-fit from a stride-`half // 8` lattice (at most
+  0.09% low, inside the axis's 15% headroom). Also: a Settings dialog kept alive after Cancel
+  (backup still running) could re-apply the cancelled live preview when a field lost focus; a
+  hidden dialog no longer applies anything.*
+
+- **Support bundles no longer include your GPU's model name.** The bundle's manifest promised
+  that, but the bundled settings kept the picked GPU and the logs named adapters. The bundled copy
+  now shows `<redacted-gpu>` and `<gpu-1>`, `<gpu-2>`... (your own log on disk is unchanged).
+  ([#498])
+
+- **Quieter logs.** A database that can't be written (a full disk, say) now logs one ERROR, a
+  WARNING every 10 minutes while it lasts and one INFO line when writes resume, instead of an
+  ERROR every 10 s - and, at the 200,000-row buffer cap, a warning for every sample. "All settings
+  applied successfully" (every live-preview change) moved to DEBUG, the "run LibreHardwareMonitor
+  as Administrator" hint logs once per run, and the first primary network interface line no
+  longer says "changed". ([#511])
+
+  *Under the hood: `FailureEpisode` (worker thread only) wraps `WriterV8.flush`, `_trim` and the
+  usage-counter persist. A different error mid-episode logs at ERROR once (up to 5 per episode),
+  and an exit with unsaved buffered rows logs one WARNING. Logging only - no write, retry or cap
+  behavior changed.*
+
+- **Clicking Show desktop over and over no longer leaves the widget hidden.** Each click on the
+  taskbar's Show desktop button briefly puts the widget under the taskbar, and NetSpeedTray puts it
+  back. After about a dozen quick clicks it mistook that for another program fighting it over the
+  top spot and backed off, so the widget stayed hidden until you clicked the desktop. In every 2.2
+  prerelease since rc.2. ([#506])
+
+  *Under the hood: the fresh-burial rate cap from #424 (more than 12 burials in 15 s) charged every
+  further burial to the 1 -> 60 s re-seat backoff, which only clears after 10 s on top. Each re-seat
+  now snapshots the foreground window; a burial that follows a foreground change to or from the
+  taskbar or the desktop (`Shell_TrayWnd`, `Shell_SecondaryTrayWnd`, `Progman`, `WorkerW`) is the
+  user's doing - re-seated at once, never charged and not counted toward the cap - plus up to two
+  more burials within 1 s of it (one click can bury twice). A re-burier that doesn't change the
+  foreground, or a switch between two ordinary apps, is classified exactly as before.*
+
+- A test that drew different random data on every run and could fail on a rare draw. ([#501])
+
+### Localization
+
+- Turkish: five 2.2 strings polished (thanks @lezgintekay). Two locale auto-detect tests failed on
+  Windows with a German regional format (thanks @emgeka for the report); the tests read the real
+  machine's format, the app was right. ([#364], [#448], [#507])
+
+### Developer notes
+
+- The full suite runs serially in about 13 minutes instead of 43: SQLite fsync off inside the
+  test process only (child processes, including the crash and kill tests, keep real fsync;
+  `NST_TEST_REAL_FSYNC=1` restores it), module-scoped database templates, and fewer font-probe
+  subprocesses. The kill tests no longer leave orphaned child processes. `native_desktop` and
+  `slow` markers; pytest-xdist added for local runs, CI stays serial. ([#505])
+
+[#236]: https://github.com/erez-c137/NetSpeedTray/issues/236
+[#364]: https://github.com/erez-c137/NetSpeedTray/issues/364
+[#448]: https://github.com/erez-c137/NetSpeedTray/issues/448
+[#496]: https://github.com/erez-c137/NetSpeedTray/pull/496
+[#498]: https://github.com/erez-c137/NetSpeedTray/pull/498
+[#499]: https://github.com/erez-c137/NetSpeedTray/pull/499
+[#501]: https://github.com/erez-c137/NetSpeedTray/pull/501
+[#503]: https://github.com/erez-c137/NetSpeedTray/issues/503
+[#504]: https://github.com/erez-c137/NetSpeedTray/pull/504
+[#505]: https://github.com/erez-c137/NetSpeedTray/pull/505
+[#506]: https://github.com/erez-c137/NetSpeedTray/pull/506
+[#507]: https://github.com/erez-c137/NetSpeedTray/pull/507
+[#509]: https://github.com/erez-c137/NetSpeedTray/pull/509
+[#510]: https://github.com/erez-c137/NetSpeedTray/pull/510
+[#511]: https://github.com/erez-c137/NetSpeedTray/pull/511
+
+---
+
+## [2.2.0-rc.7] - November 9, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+NetSpeedTray now uses much less memory: on a typical PC the widget settles around 35-40 MB instead
+of 75-90 MB, loads only the font its language needs, and gives memory back when you close Settings or
+the Monitor. Nothing was removed and nothing looks different, apart from a few characters that now
+use the font Windows itself uses for that language.
+
+### Changed
+
+- **Much less memory.** On a typical PC Task Manager shows about 35-40 MB for the widget, down
+  from about 75-90 MB, in every language; the more fonts installed, the bigger the saving. ([#485], [#487], [#488], [#489])
+
+  *Under the hood: the widget font named a fallback family (`setFamilies(["Segoe UI Variable",
+  "Segoe UI"])`), and resolving that list made Qt's DirectWrite database load the styles of every
+  installed family - about 38 MB, process-wide, never freed. The tray menu's icon font, the flyout
+  close button and the Bengali script fallback did the same. The widget now draws in one family
+  and only the glyphs that family lacks go, run by run, to one known face that has them
+  (`utils/font_runs.py`). Wi-Fi names that need anything else, and any right-to-left text, are drawn
+  exactly as before. Measured with an isolated-APPDATA harness: en_US 76 -> 39 MB. Frozen builds in a test VM with few fonts installed (private working set after 2 minutes idle):
+  2.1.7 34.0, rc.6 27.7, rc.7 18.8 MB; commit after closing the Monitor 151 / 162 / 50 MB.*
+
+- **Only the font your language needs is loaded.** English and the other Latin-script languages
+  load Segoe UI Variable and the icon font, nothing else; Japanese, Korean, Chinese and Bengali add
+  exactly their one font. The tray menu, hover card, notices, Settings and the Monitor all use that
+  same font. ([#489])
+
+  *Under the hood: one application font per language (Segoe UI Variable; Segoe UI for Hebrew, which
+  the variable font barely covers; Yu Gothic UI, Malgun Gothic, Microsoft YaHei UI / JhengHei UI,
+  Nirmala UI), every fallback list removed, and characters no UI font has replaced or drawn in the
+  font that has them. A test pins the mapped font files per language for the widget, menu, hover
+  card, a notice, Settings and the Monitor - before this, Japanese, Korean, Chinese and Bengali
+  mapped all 852 font files.*
+
+- **Settings and the Monitor give their memory back when you close them**, and Settings opens
+  faster (about 0.1 s instead of 0.5 s); reopening it takes a little longer than before. ([#490])
+
+  *Under the hood: Settings was hidden for reuse and kept ~26 MB; it is now destroyed on close and
+  its pages are built when first shown (an unbuilt page saves its settings unchanged). Qt keeps its
+  font database for the whole process, so 1.5 s after Settings or the Monitor closes it is reset
+  (`utils/font_release.py`: add and remove one application font) - the measured way to free it.*
+
+- **The font picker in Settings is our own.** It shows each font in its own face, has a search box,
+  and applies weight and size too (the old Windows dialog ignored them). ([#490])
+
+- **The mini graph's Trend style no longer loads numpy**, and neither does the hover card. The
+  curve is the same - within a thousandth of a pixel. ([#488])
+
+  *Under the hood: `trend_smooth`, the monotone cubic interpolation and `utils/summaries.py` are pure
+  Python; long histories compute only the points the graph draws, and the axis keeps the true peak.
+  numpy (~9 MB, and ~350 MB of reserved memory plus one idle thread per CPU from its math library)
+  now loads only with the Monitor - and with `OPENBLAS_NUM_THREADS=1`, so even then it reserves
+  ~40 MB and starts no threads.*
+
+- **A few small things load only when used:** the Settings code, the update check's network code
+  and a raw-history buffer nothing read are gone from startup. ([#485])
+
+### Fixed
+
+- **Names that come from Windows no longer load every font.** On a Windows set to another language -
+  network adapters named `以太网` on Chinese Windows, for example - Settings, the Monitor and Check
+  connection loaded every installed font to draw those names, even in an English UI. Adapter, app,
+  GPU and host names are now drawn in the one font that has their characters. Found by
+  [@XYuki-cloud]'s test run. ([#495])
+
+  *Under the hood: `text_face` / `apply_text_face` (`utils/styles.py`) pick the face for system text
+  (preferring the Windows display language's), set it as the widget's font and a marked per-widget
+  style-sheet rule (the dialog's `QLabel { font-family }` rule overrides `setFont`), and only then set
+  the text - text in the constructor already falls back. Combos with a per-item face are sized from
+  the item text. Text no single face covers, and emoji, keep Qt's normal path. The per-language font
+  test no longer reads the machine's real adapters; a new case simulates Chinese Windows. Measured:
+  Settings with Chinese adapter names, 852 -> 11 font files mapped.*
+
+- A test that failed if the test suite ran across midnight. ([#491])
+
+[#485]: https://github.com/erez-c137/NetSpeedTray/pull/485
+[#487]: https://github.com/erez-c137/NetSpeedTray/pull/487
+[#488]: https://github.com/erez-c137/NetSpeedTray/pull/488
+[#489]: https://github.com/erez-c137/NetSpeedTray/pull/489
+[#490]: https://github.com/erez-c137/NetSpeedTray/pull/490
+[#491]: https://github.com/erez-c137/NetSpeedTray/pull/491
+[#495]: https://github.com/erez-c137/NetSpeedTray/pull/495
+[@XYuki-cloud]: https://github.com/XYuki-cloud
+
+---
+
+## [2.2.0-rc.6] - November 8, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+One fix from the rc.5 tests: a widget that stepped aside for app buttons comes back as soon as
+there is room again.
+
+### Fixed
+
+- **A widget that stepped aside for app buttons comes back as soon as they leave it room.** On a
+  taskbar with the Widgets/weather button beside the tray, it could stay hidden with visible room
+  to spare - for example after closing NetSpeedTray's own Settings window - until another app
+  closed. ([#373], [#483], reported by [@relu616])
+
+  *Under the hood: the yield hid at `TRAY_EDGE_MIN_GAP_PX` (8 px) but, hidden for the spot left of
+  the Widgets button, returned only at 8 + `WIDGETS_FALLBACK_RETURN_MARGIN_PX` (22) px - a margin
+  copied in #466 from the full-bar fallback, where moving the widget between two spots changes the
+  next judgment. Hiding moves nothing, so it only made a dead zone: a group ending 8-30 px short
+  kept a hidden widget hidden and a shown one up (relu616's laptop: 22 px). One gap now hides and
+  shows; the two-reading confirmation still covers animating buttons. The fallback keeps its
+  margin.*
+
+[#373]: https://github.com/erez-c137/NetSpeedTray/issues/373
+[#483]: https://github.com/erez-c137/NetSpeedTray/pull/483
+[@relu616]: https://github.com/relu616
+
+---
+
+## [2.2.0-rc.5] - November 4, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+What the rc.4 testers found with more than one monitor: the copies on other taskbars now step aside
+for app buttons like the main widget, a drag that never got its mouse release no longer switches the
+step-aside off until a restart, and the Widgets-panel notice and the monitor list work for every
+monitor.
+
+### Fixed
+
+- **The copies from "Show on all taskbars" now hide when their taskbar's app buttons reach them.**
+  Only the main widget did, so with the main widget on another monitor, the copy on the main taskbar
+  sat over the app buttons. Copies follow "Hide while app buttons cover the widget" and the same
+  rules: step to the spot by the tray when a Widgets button is there, hide at once, come back after
+  two clear checks. Notices stay with the main widget. ([#373], [#478], reported by [@relu616])
+
+  *Under the hood: mirrors were built with `app_yield_enabled=False`. Each now runs its own
+  `AppOverlapYield` against its own bar (task-list bounds per HWND, converted with
+  `physical_to_logical` around the screen's Qt origin). Mirror probes go to the per-bar layout cache
+  on the background worker, never the main widget's one-taskbar slot, at most one per mirror per
+  500 ms; a mirror only accepts a probe that started after it asked. No first-yield notice, no drop
+  offset, and the #472 second-launch suspend stays main-widget only. Side bars: unchanged, as for the
+  main widget. Yield log lines now carry the copy's tag (`[mirror DISPLAY…]`).*
+
+- **A drag that never gets its mouse release no longer stops the widget stepping aside for app
+  buttons until a restart.** A lock screen, a UAC prompt or Alt+Tab in the middle of a drag left the
+  widget "being dragged" for good, so it sat over the app buttons from then on. The drag now ends as
+  a drop at that spot. ([#373], [#479], reported by [@relu616])
+
+  *Under the hood: `widget._dragging` was cleared only in the left-button release handler, and the
+  yield reports BUSY while it is set. A drag now also ends on a move with the left button up, on
+  deactivation and on hide, and a 250 ms check during mouse drags reads the real button state
+  (`GetAsyncKeyState`, swapped buttons honored) and ends it after two "up" reads. It counts as a
+  drop (position saved, the yield told), and a late real release does nothing. The button check
+  skips touch and pen drags, which may never set the physical button.*
+
+- **The "covering the Widgets panel" notice works on secondary taskbars.** It only knew the main
+  taskbar's Widgets button, so dropping the widget on the weather of another monitor's taskbar never
+  showed it. ([#373], [#479])
+
+  *Under the hood: `widgets_rect` is filled for the primary only; on a secondary bar the notice now
+  reads that bar's Widgets extent from the per-HWND layout cache and converts it with
+  `physical_to_logical`.*
+
+- **The "Preferred monitor" list shows each monitor's real resolution and scale, and fits.** It
+  showed scaled sizes ("1280x720" for a 1920 x 1080 screen at 150 %) and cut off long entries such as
+  "(Hauptbildschirm)". Saved choices still match. ([#373], [#479])
+- **The first "stepped aside" notice is only marked as seen once it has actually shown.** ([#479])
+
+### Localization
+
+- The monitor list entry (`PREFERRED_MONITOR_ITEM`) now includes the scale, in all 17 languages.
+  ([#479])
+- **Bengali:** clearer words for jitter and Location, and "privacy" where it said "security".
+  ([#477], thanks [@Askeleid])
+- **Hungarian:** font weight names now read as a clear thin-to-light ladder. ([#476], thanks
+  [@cscsanaki])
+
+[#373]: https://github.com/erez-c137/NetSpeedTray/issues/373
+[#476]: https://github.com/erez-c137/NetSpeedTray/pull/476
+[#477]: https://github.com/erez-c137/NetSpeedTray/pull/477
+[#478]: https://github.com/erez-c137/NetSpeedTray/pull/478
+[#479]: https://github.com/erez-c137/NetSpeedTray/pull/479
+[@relu616]: https://github.com/relu616
+[@Askeleid]: https://github.com/Askeleid
+[@cscsanaki]: https://github.com/cscsanaki
+
+---
+
+## [2.2.0-rc.4] - November 2, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+What the rc.3 testers found, mostly with more than one monitor: the widget docks on a second monitor
+at another scale, keeps clear of the weather and the clock on every taskbar, and a second launch no
+longer switches off the step-aside. Plus a stuck text color from 2.1.7, and Bengali.
+
+> **Upgrading:** the settings file moves to schema 1.5 and the 1.4 file is kept beside it as
+> `NetSpeedTray_Config.json.bak.v1.4`. Only the text color can change, and only for the stuck
+> white or black case below.
+
+### Fixed
+
+- **White text on a light taskbar, or black text on a dark one, is fixed for 2.1.7 upgraders.**
+  Confirming the color picker in 2.1.7 switched automatic color off for good, so the factory white -
+  or the black it had set for a light taskbar - came across on both taskbars. Those now get the
+  white / near-black defaults; any other color you picked stays. ([#332])
+
+  *Under the hood: the 1.3 seeding (`_migrate_color_scheme`) copied a fixed color to both halves,
+  and `paint_colors` only rescues the factory light value. A fixed `#FFFFFF` or `#000000` (also
+  `#fff` / `#000`, any case, padded) now seeds the theme defaults (`#FFFFFF` / `#1B1B1B`); a new
+  one-time 1.5 step repairs files rc.2/rc.3 already seeded - both halves set to the factory pair -
+  only when both halves are present and the same white or black AND the inert legacy
+  `color_is_automatic` is still `false` in the file. Such a pair without that flag is a 2.2 choice
+  and stays; a missing half is left to validation. Arrows are untouched.*
+
+- **With "Preferred monitor" set to an extended monitor at a different scale, the widget docks to
+  that monitor's taskbar again.** It floated above the bar at the desktop's bottom-right instead,
+  because the app decided that monitor had no taskbar. ([#373], reported by [@relu616], analysis by
+  [@emgeka])
+
+  *Under the hood: Qt 6 on Windows reports each screen with its NATIVE origin and only its size
+  divided by the scale - a 150 % 4K monitor above a 150 % laptop panel is `QRect(0, -2160, 2560,
+  1440)`. `find_screen_for_taskbar` (and `TaskbarInfo.get_screen()`'s intersection fallback) turned
+  that into physical px by multiplying the origin too, so the bar at (0, -72, 3840, 0) overlapped no
+  screen, the first screen (the primary) won, `_select_taskbar_for_screen` never matched the
+  preferred monitor and `get_free_float_screen` floated the widget. The match now uses the bar
+  window's monitor device name first (`MonitorFromWindow` -> `GetMonitorInfo` "Device" ==
+  `QScreen.name()`), then the corrected physical rect (origin as is, size times the scale).*
+
+- **On a secondary taskbar the widget keeps clear of the weather button and of a wide clock.** The
+  step left of a Widgets/weather button beside the clock only ran on the main taskbar, and the clock
+  was always a fixed 75 px reserve - too little for a clock with seconds. Mirrors from "Show on all
+  taskbars" get the same. ([#373], thanks [@emgeka] for the analysis; reported by [@relu616])
+
+  *Under the hood: `Shell_SecondaryTrayWnd` has no `TrayNotifyWnd`, so `get_tray_rect()` is None
+  there, and the widgets step was gated on a tray rect. Now: the right edge is the clock UIA last saw
+  on that bar (`probed_tray_rect`, as the side-bar path already used) when it lies inside the bar's
+  right half, else the reserve; the step runs without a tray rect (a button in the bar's right half
+  that reaches past the reserve still counts); and a secondary screen's physical rects convert to
+  logical px around its Qt origin, not as physical / scale. Nothing probed a mirror's bar (mirrors
+  have no #24 yield), so a tray-less bar (any edge) now gets a background UIA layout probe on every
+  new dock and at most every 30 s (`request_background_layout_probe`), which never takes the
+  one-taskbar slot the side-bar placement and the yield work from (a slot request that waits for one
+  gets its full timeout from when its own probe starts); and the layout cache keeps each bar's last
+  landed result per HWND (least recently landed evicted first), so one bar's probe no longer blanks
+  every other bar's Widgets box. A cached result answers for the app buttons for 90 s at most; a
+  tray-less bar keeps its Widgets box past that (dropping it moved a side-bar mirror onto the weather
+  90 s after launch in the VM), while the main taskbar, which no background refresh re-probes, drops
+  it so the #200 probe's fresher rect wins. Every layout read, the #200 probe's included, drops the
+  Widgets box as soon as the button is turned off in Settings (the toggle is read at most every
+  250 ms); turned back on, the bar's last seen box stands in at once - for 10 s at most unless a probe
+  confirms it - while every docked tray-less bar is re-probed right away and again 5 s later, and the
+  main taskbar once at 5 s if it still holds a stand-in. A layout probed on another orientation of the
+  same bar (and, on a secondary bar, another thickness) is never served after a live Taskbar position
+  change, and a slot request superseded by another bar's before its probe started is probed in the
+  background instead of lost (every mirror re-docks in the same tick) - its caller still reads it as
+  pending until that probe lands; a re-check reseeded from the cache never counts as a fresh
+  landing
+  (`taskbar_layout_landed_count` is now per bar). The main taskbar's placement is otherwise
+  unchanged; it only moves back by the clock within a second of Widgets being turned off, instead
+  of up to ~15 s.*
+
+- **Side taskbars, the task-list safe zone and the app-button step-aside use the right coordinates
+  on a scaled monitor that isn't the main one.** On a monitor at another scale above, below or left
+  of the main one, they worked from positions off by up to a whole screen. ([#373])
+
+  *Under the hood: the same Qt-origin rule as above. `side_bar_geometry` (bar, tray, apps, Widgets,
+  overflow), the secondary side clock, `vertical_taskbar_strip`'s window-based x, the task-list
+  bounds in placement and drag limits, the side-bar watcher's model and the #24 yield's
+  `group_span` / `tray_spot_clear` divided physical px by the scale - right only on the primary, at
+  the virtual-desktop origin. They now convert around the screen's Qt origin
+  (`physical_to_logical`); on the primary that is still exactly `px / scale`.*
+
+- **Starting NetSpeedTray again no longer turns off "Hide while app buttons cover the widget" when
+  the widget wasn't hidden.** A second launch switched the yield off for the whole session every
+  time, so the widget then sat over the app buttons until the next restart, with no explanation.
+  Now only a widget the yield had actually hidden is brought back and kept visible; otherwise the
+  yield keeps working. ([#373], reported by [@relu616])
+
+  *Under the hood: `AppOverlapYield.suspend_for_session()` suspended unconditionally and only
+  reported whether it had been yielded; it now returns False and changes nothing unless `yielded`
+  is true at that moment (still starting, mid-hysteresis and the full-bar fallback by the tray all
+  read False). A duplicate autostart at sign-in (the Run key plus a Startup shortcut) leaves the
+  yield alone: the SECOND process checks the session's sign-in time (`WTSQuerySessionInformationW`
+  / `WTSSessionInfo`, `CurrentTime - LogonTime` from one query) and, under
+  `SIGN_IN_DUPLICATE_WINDOW_S` (120 s), posts `NetSpeedTray_Activate_v1` with wParam 1; any failure
+  means wParam 0, a normal launch. Only the first flagged activation of an instance is ignored - a
+  later one, flagged too, is the user starting it again within the window. The running app's own
+  age is deliberately not used: Setup's Finish-page launch followed by the user's own launch
+  seconds later is exactly this bug's path. Builds before rc.4 ignore wParam.*
+- **The "staying visible" notice after a second launch shows once, under its own title.** It came
+  on every second launch that found the widget stepped aside, titled "No free spot on the taskbar"
+  like two other notices. It now has its own title and a once-ever flag
+  (`second_launch_notice_shown`, kept by Reset all), saved only once the flyout has actually
+  shown. ([#373])
+
+### Localization
+
+- One new string, the notice's title (`SECOND_LAUNCH_SHOWN_TITLE`), in all 17 languages - first
+  drafts, corrections welcome. ([#373])
+- **Bengali** - 17 languages now, picked automatically on Bengali Windows (Bangladesh or India).
+  The Monitor graphs' axis labels, legends and captions stay in English for now: the graph engine
+  can't join Bengali letters yet. ([#457], thanks [@Askeleid])
+- Hungarian: a clearer explanation under the step-aside setting. ([#468], thanks [@cscsanaki])
+
+[#332]: https://github.com/erez-c137/NetSpeedTray/issues/332
+[#373]: https://github.com/erez-c137/NetSpeedTray/issues/373
+[@emgeka]: https://github.com/emgeka
+[#457]: https://github.com/erez-c137/NetSpeedTray/pull/457
+[@Askeleid]: https://github.com/Askeleid
+[#468]: https://github.com/erez-c137/NetSpeedTray/pull/468
+[@relu616]: https://github.com/relu616
+
+## [2.2.0-rc.3] - October 29, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+A small one: what the rc.2 testers found. The widget now really steps aside when wide app buttons
+reach it, keeps clear of the weather button on a left-aligned taskbar, and a few rarer fixes.
+
+> **Upgrading:** from rc.2, rc.1 or any 2.2 beta, just install over it - the running app closes
+> itself and comes back. Nothing in your settings or history is converted this time.
+
+### Fixed
+
+- **The widget steps aside for wide app buttons.** With "Combine taskbar buttons" set to never, the
+  labeled buttons could slide under the widget and stay there. It now notices within about a second
+  and comes back as soon as there's room. ([#460], thanks [@emgeka]; reported by [@relu616])
+
+  *Under the hood: rc.2 counted each foreground change as one 44 px button and only measured when
+  that guess came near, but a labeled button is 115-200 px. Now every foreground change measures
+  (plus three follow-ups 800 ms apart), and a widget near the buttons or stepped aside re-checks
+  every second for 15 s after anything moves, then backs off to every 8 s. The 1 s re-check also
+  ran at 2 s: the probe lands a few ms after the refresh tick, so the next tick saw 0.99 s.*
+
+- **On a left-aligned taskbar the widget no longer sits on the weather button.** Windows puts the
+  Widgets button next to the tray there, and the widget covered its right half - with longer
+  weather text, it drew right over it. It now sits just left of the button. If your app buttons fill
+  the bar up to it, the widget steps aside like on any full taskbar, and only stays by the tray when
+  that spot clears the weather text. A widget you dragged stays where you put it. ([#463], [#466])
+- **`NetSpeedTray.exe --shutdown` works on a busy PC.** It loaded the whole app before asking the
+  running copy to quit, and with Windows Update running that alone outlasted its 35 s limit, so it
+  gave up without asking. It now asks first. The installer wasn't affected. ([#464])
+- **An old history backup whose delete failed once is retried the next time.** Zeroing it first
+  made it look brand new, so a file an antivirus held for a moment stayed on disk for another whole
+  retention period. ([#462])
+
+### Localization
+
+- Dutch, Hungarian and German polish for the rc.2 strings; German now says "du" throughout.
+  ([#454], [#447], [#448], thanks [@boonstraworks], [@cscsanaki] and [@emgeka])
+
+[#447]: https://github.com/erez-c137/NetSpeedTray/pull/447
+[#448]: https://github.com/erez-c137/NetSpeedTray/pull/448
+[#454]: https://github.com/erez-c137/NetSpeedTray/pull/454
+[#460]: https://github.com/erez-c137/NetSpeedTray/pull/460
+[#462]: https://github.com/erez-c137/NetSpeedTray/pull/462
+[#463]: https://github.com/erez-c137/NetSpeedTray/pull/463
+[#464]: https://github.com/erez-c137/NetSpeedTray/pull/464
+[#466]: https://github.com/erez-c137/NetSpeedTray/pull/466
+[@boonstraworks]: https://github.com/boonstraworks
+[@cscsanaki]: https://github.com/cscsanaki
+[@emgeka]: https://github.com/emgeka
+[@relu616]: https://github.com/relu616
+
 ## [2.2.0-rc.2] - October 23, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app
 updater, WinGet and the Store never offer prereleases.*
 
-rc.2 was meant to be a small follow-up, and then 2.2.0 got a month as Latest ahead of it - so it
+rc.2 was meant to be a small follow-up, but I expect 2.2.x to be around for a long time - so it
 became the last full pass: every open defect and promise I could find, plus the smaller feature
 requests. One color scheme for dark and light taskbars, the widget on every taskbar, usage by day,
 a widget that steps aside for your app buttons, a second launch that brings a lost widget back, and

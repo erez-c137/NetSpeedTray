@@ -108,7 +108,7 @@ class ThemedColorPair(QWidget):
             glyph.setObjectName(f"{key}_glyph")
             glyph.setToolTip(theme)
             glyph.setAccessibleName(theme)
-            glyph.setStyleSheet("font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 13px;"
+            glyph.setStyleSheet(f"font-family: '{su.icon_font_family()}'; font-size: 13px;"
                                 " background: transparent;")
             button = QPushButton()
             button.setObjectName(key)

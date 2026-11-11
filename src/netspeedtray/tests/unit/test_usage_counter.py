@@ -126,7 +126,11 @@ def test_persist_enqueues_when_due():
     assert task == "persist_usage"
     # cum_up, cum_down, anchor_up, anchor_down, period_key, ts, counter snapshot, re-key memory
     assert len(payload) == 8
-    assert payload[6] is None  # no counters fed -> leave the stored snapshot untouched
+    # Bytes with no counters to pair: the total moved past the stored snapshot, so it is deleted
+    # (CLEAR_SNAPSHOT) - never left beside a total it no longer matches. (A zero-byte poll with no
+    # counters leaves it untouched: test_odometer_accuracy.)
+    from netspeedtray.core import usage_snapshot
+    assert payload[6] == usage_snapshot.CLEAR_SNAPSHOT
     assert payload[7] == ""    # no period left yet -> no re-key memory stored
 
 
@@ -148,3 +152,31 @@ def test_persist_usage_db_round_trip():
     row = conn.execute(f"SELECT cumulative_up, cumulative_down, period_key FROM {USAGE} WHERE id=1").fetchone()
     assert row == (999.0, 888.0, "2026-06-01")
     assert conn.execute(f"SELECT COUNT(*) FROM {USAGE}").fetchone()[0] == 1
+
+
+def test_persist_usage_failures_are_one_log_episode(caplog):
+    """A full disk logged "Failed to persist usage counter" every 30 s (2026-10-29): now one ERROR,
+    the repeats at DEBUG, and one INFO when a write succeeds again."""
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(f"""
+        CREATE TABLE {USAGE} (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            cumulative_up REAL NOT NULL DEFAULT 0, cumulative_down REAL NOT NULL DEFAULT 0,
+            anchor_up REAL NOT NULL DEFAULT 0, anchor_down REAL NOT NULL DEFAULT 0,
+            period_key TEXT NOT NULL DEFAULT '', updated_ts INTEGER NOT NULL DEFAULT 0);
+        CREATE TRIGGER full BEFORE INSERT ON {USAGE}
+            BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END;
+    """)
+    fake = types.SimpleNamespace(conn=conn, logger=logging.getLogger("test.db.usage_episode"))
+    payload = (1.0, 2.0, 0.0, 0.0, "2026-10-01", 1700)
+    with caplog.at_level(logging.INFO, logger="test.db.usage_episode"):
+        for _ in range(20):
+            DatabaseWorker._persist_usage(fake, payload)
+        conn.execute("DROP TRIGGER full")
+        DatabaseWorker._persist_usage(fake, payload)
+        DatabaseWorker._persist_usage(fake, payload)
+    msgs = [(r.levelno, r.getMessage()) for r in caplog.records]
+    assert [lvl for lvl, _ in msgs] == [logging.ERROR, logging.INFO]
+    assert msgs[0][1] == "Failed to persist usage counter: database or disk is full"
+    assert msgs[1][1].startswith("Usage counter persist recovered after 20 failure(s) over ")
+    assert conn.execute(f"SELECT cumulative_up FROM {USAGE}").fetchone() == (1.0,)

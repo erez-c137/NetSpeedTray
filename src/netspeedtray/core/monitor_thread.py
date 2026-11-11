@@ -54,7 +54,7 @@ from functools import lru_cache
 
 from netspeedtray import constants
 from netspeedtray.core import gpu_adapters
-from netspeedtray.core.lhm_http import LhmHttpClient
+from netspeedtray.core.lhm_http import LhmGpu, LhmHttpClient, LhmSensor, gpu_groups
 from netspeedtray.utils import secret_store
 from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.network_utils import get_connected_network_identity
@@ -74,6 +74,12 @@ _IDENTITY_POLL_INTERVAL_SEC: float = 5.0
 _NON_CPU_SENSOR_IDENTS: tuple = (
     "/gpu", "/nvme", "/hdd", "/ssd", "/psu", "/battery", "/network", "/ram",
 )
+
+
+# Which one-time sensor-source guidance lines this PROCESS has logged ("empty" = a namespace with 0
+# sensors, "none" = no source at all). Module-level, not per thread: the monitor thread is rebuilt
+# (settings changes, resume) and each rebuild used to repeat the same advice in the log.
+_OHM_GUIDANCE_LOGGED: set = set()
 
 
 # Stats that only a temperature / power sensor source can fill.
@@ -139,6 +145,14 @@ def aggregate_gpu_engine_utilization(samples: Dict[Any, Any],
             key = ("unparsed", instance)
         engines[key] = engines.get(key, 0.0) + value
     return max(engines.values(), default=0.0)
+
+
+def _is_nvidia_group(gpu: LhmGpu) -> bool:
+    return "nvidia" in f"{gpu.hardware_id} {gpu.hardware_name}".casefold()
+
+
+def _is_intel_group(gpu: LhmGpu) -> bool:
+    return "intel" in f"{gpu.hardware_id} {gpu.hardware_name}".casefold()
 
 
 class GpuPollResult(NamedTuple):
@@ -538,6 +552,9 @@ class StatsMonitorThread(QThread):
         smi_matches = selected is None or selected.vendor_id == constants.gpu.VENDOR_NVIDIA
         need_smi_temp = include_temp and smi_matches
         need_smi_power = include_power and smi_matches
+        # The sensor group (LHM web server or WMI) that supplied a reading. Once one has, every other
+        # reading comes from that same card or is N/A - never another adapter's sensor (#236).
+        source_gpu = None
 
         # LHM 0.9.5+ HTTP source. SensorId/HardwareId grouping in lhm_http
         # prevents the iGPU or a motherboard "CPU Socket" sensor from winning.
@@ -550,6 +567,7 @@ class StatsMonitorThread(QThread):
                                             gpu_adapters.is_integrated(selected))
                        if lhm_snapshot else None)
         if lhm_gpu:
+            source_gpu = lhm_gpu
             if include_temp and lhm_gpu.temperature is not None:
                 temp_c = lhm_gpu.temperature
                 need_smi_temp = False
@@ -560,48 +578,28 @@ class StatsMonitorThread(QThread):
         if (include_temp and temp_c is None) or (include_power and power_w is None):
             self._init_ohm_wmi()
             if self._wmi_ohm:
-                # 3a. LHM/OHM GPU temperature
-                if include_temp and temp_c is None:
-                    try:
-                        sensors = self._wmi_ohm.ExecQuery(
-                            "SELECT Value, Identifier, Name FROM Sensor WHERE SensorType='Temperature'"
-                        )
-                        for s in sensors:
-                            identifier = str(getattr(s, 'Identifier', '')).lower()
-                            if 'gpu' not in identifier or not self._gpu_sensor_matches(identifier, selected):
-                                continue
-                            val = float(s.Value)
-                            if 0.0 < val < 150.0:
-                                temp_c = val
-                                self.logger.debug("LHM/OHM GPU temp from sensor '%s': %.1f°C", getattr(s, 'Name', '?'), val)
-                                break
-                        if temp_c is None:
-                            self.logger.debug("LHM/OHM: no valid GPU temperature sensor found")
-                        else:
-                            need_smi_temp = False
-                    except Exception as e:
-                        self.logger.debug("LHM/OHM GPU temp error: %s", e)
-                        self._wmi_ohm = None
+                # 3a/3b. LHM v0.9.4 / OHM WMI (all vendors). Grouped per GPU exactly like the web
+                # server's tree: taking the first 'gpu' sensor of each type separately read an APU's
+                # "GPU VR SoC" as the temperature beside the dGPU's power (#236).
+                wmi_gpu = self._wmi_gpu_group(selected, source_gpu, include_temp and temp_c is None,
+                                              include_power and power_w is None)
+                if wmi_gpu is not None:
+                    source_gpu = source_gpu or wmi_gpu
+                    if include_temp and temp_c is None and wmi_gpu.temperature is not None:
+                        temp_c = wmi_gpu.temperature
+                        need_smi_temp = False
+                        self.logger.debug("LHM/OHM GPU temp from sensor '%s': %.1f°C",
+                                          wmi_gpu.temperature_sensor, temp_c)
+                    if include_power and power_w is None and wmi_gpu.power is not None:
+                        power_w = wmi_gpu.power
+                        need_smi_power = False
+                        self.logger.debug("LHM/OHM GPU power from sensor '%s': %.1fW",
+                                          wmi_gpu.power_sensor, power_w)
 
-                # 3b. LHM/OHM GPU power (all vendors)
-                if include_power and power_w is None and self._wmi_ohm:
-                    try:
-                        sensors = self._wmi_ohm.ExecQuery(
-                            "SELECT Value, Identifier, Name FROM Sensor WHERE SensorType='Power'"
-                        )
-                        for s in sensors:
-                            identifier = str(getattr(s, 'Identifier', '')).lower()
-                            if 'gpu' not in identifier or not self._gpu_sensor_matches(identifier, selected):
-                                continue
-                            val = float(s.Value)
-                            if 0.0 < val < 1000.0:
-                                power_w = val
-                                self.logger.debug("LHM/OHM GPU power from sensor '%s': %.1fW", getattr(s, 'Name', '?'), val)
-                                break
-                        if power_w is not None:
-                            need_smi_power = False
-                    except Exception as e:
-                        self.logger.debug("LHM/OHM GPU power error: %s", e)
+        # nvidia-smi is NVIDIA's: in Automatic without an adapter, it only fills in for a sensor group
+        # that IS the NVIDIA card (or when there is no sensor group at all).
+        if source_gpu is not None and not _is_nvidia_group(source_gpu):
+            need_smi_temp = need_smi_power = False
 
         # 4. nvidia-smi fallback for temp/power (vram_total comes as bonus). The subprocess
         #    runs on a slow sub-cadence; values are cached and reused on intervening polls so
@@ -691,9 +689,15 @@ class StatsMonitorThread(QThread):
         # the old guard checked the counter before anything could ever set it, so this whole
         # fallback was dead code.
         # RAPL PP1 is the Intel iGPU's power plane: never an Arc's (or any discrete card's) reading.
-        if include_power and power_w is None and (
-                selected is None or (selected.vendor_id == constants.gpu.VENDOR_INTEL
-                                     and gpu_adapters.is_integrated(selected))):
+        # Without an adapter, it is not paired with another card's temperature either (#236).
+        if selected is not None:
+            rapl_matches = (selected.vendor_id == constants.gpu.VENDOR_INTEL
+                            and gpu_adapters.is_integrated(selected))
+        elif source_gpu is not None:
+            rapl_matches = _is_intel_group(source_gpu)
+        else:
+            rapl_matches = temp_c is None   # a temperature here came from nvidia-smi: NVIDIA's
+        if include_power and power_w is None and rapl_matches:
             try:
                 self._init_power_query()
                 if self._power_query and self._power_pp1_counter is not None:
@@ -764,6 +768,46 @@ class StatsMonitorThread(QThread):
             return None
         total = adapter.shared_system_bytes / mib if adapter.shared_system_bytes > 0 else None
         return sum(mine), total if total else self._half_ram_mib()
+
+    def _wmi_gpu_group(self, adapter: Optional[gpu_adapters.AdapterInfo], same_as: Optional[LhmGpu],
+                       want_temp: bool, want_power: bool) -> Optional[LhmGpu]:
+        """LHM v0.9.4 / OHM WMI: the ONE GPU sensor group for ``adapter`` (or, without one, the
+        best-ranked - discrete first), its temperature and power from that card only (#236). Only the
+        sensor types still wanted are queried. ``same_as``: a group the web server already supplied -
+        WMI may only complete that same card. A failed temperature query drops the connection
+        (re-probed next poll) only when the power query failed too or was not asked; a temperature-only
+        error keeps the power reading. A power-only error never drops it (as before)."""
+        rows: List[LhmSensor] = []
+        wanted = [t for t, want in (("Temperature", want_temp), ("Power", want_power)) if want]
+        failed: List[str] = []
+        for sensor_type in wanted:
+            try:
+                sensors = self._wmi_ohm.ExecQuery(
+                    f"SELECT Value, Identifier, Name FROM Sensor WHERE SensorType='{sensor_type}'")
+                for s in sensors:
+                    identifier = str(getattr(s, 'Identifier', '')).lower()
+                    if 'gpu' not in identifier or not self._gpu_sensor_matches(identifier, adapter):
+                        continue
+                    try:
+                        value = float(s.Value)
+                    except (TypeError, ValueError):
+                        continue
+                    rows.append(LhmSensor(name=str(getattr(s, 'Name', '') or ''),
+                                          sensor_type=sensor_type.lower(), sensor_id=identifier,
+                                          hardware_id="", hardware_name="", value=value))
+            except Exception as e:
+                failed.append(sensor_type)
+                self.logger.debug("LHM/OHM GPU %s error: %s", sensor_type.lower(), e)
+        if "Temperature" in failed and len(failed) == len(wanted):
+            self._wmi_ohm = None
+            return None
+        groups = gpu_groups(rows)
+        if same_as is not None:
+            card = same_as.hardware_id.casefold()
+            return next((g for g in groups if g.hardware_id.casefold() == card), None)
+        if not groups:
+            self.logger.debug("LHM/OHM: no valid GPU temperature/power sensor found")
+        return groups[0] if groups else None
 
     def _selected_gpu_adapter(self) -> Optional[gpu_adapters.AdapterInfo]:
         """The adapter picked in Settings > Hardware (#236), or None for Automatic. A picked GPU that
@@ -1254,6 +1298,11 @@ class StatsMonitorThread(QThread):
         # Nothing connected across all namespaces. Surface ONE actionable line, once.
         if not self._ohm_guidance_logged:
             self._ohm_guidance_logged = True
+            kind = "empty" if saw_empty_namespace else "none"
+            if kind in _OHM_GUIDANCE_LOGGED:
+                self.logger.debug("Hardware monitor: no sensor source (guidance already logged).")
+                return
+            _OHM_GUIDANCE_LOGGED.add(kind)
             if saw_empty_namespace:
                 # Genuine "running but not elevated" case: a namespace exists, 0 sensors.
                 self.logger.info(
@@ -1671,11 +1720,14 @@ class StatsMonitorThread(QThread):
         """Run a short-lived helper (nvidia-smi) and return its stdout, like check_output - but the
         process is held where ``stop()`` can kill it, so a quit never waits out (or orphans) a slow
         one. Raises on a non-zero exit, a timeout (the child is killed), or a kill from stop()."""
+        # Not in the app's folder (the inherited CWD): a child sitting there blocks a portable
+        # update from renaming the folder for as long as it lives (helpers.neutral_cwd).
+        from netspeedtray.utils.helpers import neutral_cwd
         with self._child_lock:
             if not self._is_running:
                 raise RuntimeError("stopping")
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                    stdin=subprocess.DEVNULL, encoding="utf-8",
+                                    stdin=subprocess.DEVNULL, encoding="utf-8", cwd=neutral_cwd(),
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self._child = proc
         try:

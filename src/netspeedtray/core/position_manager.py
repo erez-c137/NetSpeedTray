@@ -69,6 +69,10 @@ _GetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int]
 # keeps the taskbar's owner cluster where it is (the #200 clipping came from dragging it
 # up). With that insertion point the re-seat no longer has to recognise popups at all.
 _SHELL_TASKBAR_CLASSES = ("Shell_TrayWnd", "Shell_SecondaryTrayWnd")
+# The taskbar and the desktop. Show desktop (and a click on the taskbar or the desktop) moves the
+# foreground to or from one of these, and the shell can bury the widget on every click: a burial
+# that comes with such a switch is the user's doing, never a fight (see reseat_above_taskbar).
+_SHELL_FOREGROUND_CLASSES = frozenset(_SHELL_TASKBAR_CLASSES + ("Progman", "WorkerW"))
 _GW_HWNDPREV = 3
 _SWP_NOOWNERZORDER = 0x0200
 _RESEAT_SWP_FLAGS = (win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
@@ -148,6 +152,10 @@ _BURIAL_FIGHT_WINDOW_S = constants.timeouts.BURIAL_FIGHT_WINDOW_MS / 1000.0
 # ... unless fresh burials come faster than a person can cause them (rationale with the constants).
 _BURIAL_FRESH_RATE_MAX = constants.timeouts.BURIAL_FRESH_RATE_MAX
 _BURIAL_FRESH_RATE_WINDOW_S = constants.timeouts.BURIAL_FRESH_RATE_WINDOW_MS / 1000.0
+# ... and never for a Show desktop click (foreground to / from the taskbar or desktop), nor for the
+# few re-burials right after it (rationale with the constants).
+_SHOW_DESKTOP_GRACE_S = constants.timeouts.SHOW_DESKTOP_GRACE_MS / 1000.0
+_SHOW_DESKTOP_GRACE_REBURIALS = constants.timeouts.SHOW_DESKTOP_GRACE_REBURIALS
 # A recovery this close to a dock / tray change logs at DEBUG and keeps the INFO line (rc.2 W8).
 _BURIAL_LOG_SETTLE_S = constants.timeouts.BURIAL_LOG_SETTLE_MS / 1000.0
 _ERROR_ACCESS_DENIED = 5
@@ -244,7 +252,8 @@ _FROM_INFO = object()
 
 
 def _secondary_side_clock_top(taskbar_info: TaskbarInfo, rect: Optional[Tuple[int, int, int, int]],
-                              scale: float, bar_top: float, bar_bottom: float) -> float:
+                              scale: float, bar_top: float, bar_bottom: float,
+                              y_origin: float = 0.0) -> float:
     """Where the tray end starts (logical y) on a side bar with no tray rect - a Win11 SECONDARY
     taskbar (Shell_SecondaryTrayWnd has no TrayNotifyWnd), or a main bar whose tray is not ready.
 
@@ -252,7 +261,8 @@ def _secondary_side_clock_top(taskbar_info: TaskbarInfo, rect: Optional[Tuple[in
     it, because the tray end used to be the bar's bottom edge). Prefer the clock UIA last saw on
     THIS bar - only when it lies inside the bar's current rect, in its lower half, so a rect probed
     on an older layout of the same HWND can't be used - else reserve
-    SECONDARY_SIDE_CLOCK_RESERVE_PX, the horizontal path's clock-width reserve turned on end."""
+    SECONDARY_SIDE_CLOCK_RESERVE_PX, the horizontal path's clock-width reserve turned on end.
+    ``y_origin``: the screen's Qt y origin the physical rect converts around (#373)."""
     try:
         probed = taskbar_utils.valid_rect(
             taskbar_utils.probed_tray_rect(getattr(taskbar_info, "hwnd", None)))
@@ -261,7 +271,7 @@ def _secondary_side_clock_top(taskbar_info: TaskbarInfo, rect: Optional[Tuple[in
     if probed is not None and rect is not None:
         inside = (probed[0] >= rect[0] and probed[2] <= rect[2]
                   and probed[1] >= rect[1] and probed[3] <= rect[3])
-        top = probed[1] / scale
+        top = taskbar_utils.physical_to_logical(probed[1], y_origin, scale)
         if inside and top > (bar_top + bar_bottom) / 2.0:
             return top
     return max(bar_top, bar_bottom - constants.layout.SECONDARY_SIDE_CLOCK_RESERVE_PX)
@@ -283,19 +293,27 @@ def side_bar_geometry(taskbar_info: TaskbarInfo, dpi_scale: float, *, apps: Any 
         return None
     scale = dpi_scale if dpi_scale and dpi_scale > 0 else 1.0
     full = screen.geometry()
-    bar_top = rect[1] / scale if rect else float(full.top())
-    bar_bottom = rect[3] / scale if rect else float(full.bottom() + 1)
+    # Physical y -> logical y around the screen's Qt origin (taskbar_utils.physical_to_logical, #373):
+    # exactly y / scale on the primary (origin 0); a scaled monitor above or below it keeps its native
+    # top in Qt, where y / scale put a bar at (3768, -2160, 3840, 0) at -1440 instead of -2160.
+    y0 = float(full.top())
+
+    def ly(v: float) -> float:
+        return taskbar_utils.physical_to_logical(v, y0, scale)
+
+    bar_top = ly(rect[1]) if rect else float(full.top())
+    bar_bottom = ly(rect[3]) if rect else float(full.bottom() + 1)
     tray = taskbar_utils.valid_rect(taskbar_info.get_tray_rect())
     if tray:
-        tray_top = tray[1] / scale
+        tray_top = ly(tray[1])
     else:
-        tray_top = _secondary_side_clock_top(taskbar_info, rect, scale, bar_top, bar_bottom)
+        tray_top = _secondary_side_clock_top(taskbar_info, rect, scale, bar_top, bar_bottom, y0)
 
     if apps is _FROM_INFO:
         apps = getattr(taskbar_info, "apps_extent", None)
     apps = taskbar_utils.valid_rect(apps)
-    apps_top = apps[1] / scale if apps else None
-    apps_bottom = apps[3] / scale if apps else None
+    apps_top = ly(apps[1]) if apps else None
+    apps_bottom = ly(apps[3]) if apps else None
 
     # Never park the widget on the Widgets button. With Center alignment it sits at the TOP of a side
     # bar (above Start): the widget may start below it. With "Top" alignment Win11 moves it down to
@@ -309,7 +327,7 @@ def side_bar_geometry(taskbar_info: TaskbarInfo, dpi_scale: float, *, apps: Any 
     widgets = (taskbar_utils.valid_rect(widgets)
                or taskbar_utils.valid_rect(getattr(taskbar_info, "widgets_rect", None)))
     if widgets is not None:
-        w_top, w_bottom = widgets[1] / scale, widgets[3] / scale
+        w_top, w_bottom = ly(widgets[1]), ly(widgets[3])
         if apps_top is not None and apps_bottom is not None:
             above = w_bottom <= apps_top
             below = w_top >= apps_bottom
@@ -324,8 +342,8 @@ def side_bar_geometry(taskbar_info: TaskbarInfo, dpi_scale: float, *, apps: Any 
     overflow = taskbar_utils.valid_rect(overflow)
     return SideBarGeometry(bar_top=bar_top, tray_top=tray_top, limit_top=limit_top,
                            apps_top=apps_top, apps_bottom=apps_bottom, end_top=end_top,
-                           overflow_top=overflow[1] / scale if overflow else None,
-                           overflow_bottom=overflow[3] / scale if overflow else None)
+                           overflow_top=ly(overflow[1]) if overflow else None,
+                           overflow_bottom=ly(overflow[3]) if overflow else None)
 
 
 def side_bar_y_limits(geo: SideBarGeometry, widget_height: int) -> Tuple[int, int]:
@@ -376,6 +394,35 @@ def user_placed_side_offset(config: Dict[str, Any]) -> bool:
     default = constants.config.defaults.DEFAULT_TRAY_OFFSET_Y
     value = config.get('tray_offset_y', default)
     return isinstance(value, int) and not isinstance(value, bool) and value != default
+
+
+def user_placed_horizontal_offset(config: Mapping) -> bool:
+    """True when the user dragged the widget along a top/bottom bar: the drop saves ``tray_offset_x``
+    (measured from the tray). The default, and the pre-1.3.0 defaults older configs still carry
+    (LEGACY_DEFAULT_TRAY_OFFSETS_X, rc.2 W6), are not a choice the user made."""
+    defaults = constants.config.defaults
+    value = config.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X)
+    if not isinstance(value, int) or isinstance(value, bool):
+        return False
+    return value != defaults.DEFAULT_TRAY_OFFSET_X and value not in defaults.LEGACY_DEFAULT_TRAY_OFFSETS_X
+
+
+def widgets_button_span_x(taskbar_info: Any, dpi_scale: float,
+                          x_origin: float = 0.0) -> Optional[Tuple[float, float]]:
+    """The Win11 Widgets/weather button's x span (logical px) on a top/bottom bar, or None when unknown.
+    Prefers the layout probe's full button box (``widgets_extent`` - the button's whole click target,
+    which reaches past the weather text), else the #200 probe's content rect (``widgets_rect``) - the
+    same preference as side_bar_geometry. ``x_origin``: the screen's Qt x origin (0 on the primary,
+    where this is exactly physical / scale; taskbar_utils.physical_to_logical)."""
+    rect = (taskbar_utils.valid_rect(getattr(taskbar_info, "widgets_extent", None))
+            or taskbar_utils.valid_rect(getattr(taskbar_info, "widgets_rect", None)))
+    if rect is None:
+        return None
+    scale = dpi_scale if dpi_scale and dpi_scale > 0 else 1.0
+    if not x_origin:
+        return rect[0] / scale, rect[2] / scale
+    return (taskbar_utils.physical_to_logical(rect[0], x_origin, scale),
+            taskbar_utils.physical_to_logical(rect[2], x_origin, scale))
 
 
 class ScreenUtils:
@@ -438,7 +485,8 @@ class PositionCalculator:
         self._last_drag_log_time: float = 0.0
 
     def calculate_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], config: Dict[str, Any],
-                           side_placement: Optional[SidePlacement] = None) -> ScreenPosition:
+                           side_placement: Optional[SidePlacement] = None,
+                           widgets_step: bool = True) -> ScreenPosition:
         """
         Calculates the widget's optimal position based on taskbar edge and tray location.
 
@@ -447,6 +495,8 @@ class PositionCalculator:
             widget_size: Tuple of (width, height) in pixels
             config: Configuration dictionary with positioning options
             side_placement: the automatic side-bar placement PositionManager decided (None = tray end)
+            widgets_step: False keeps a top/bottom bar's default spot by the tray even with a Widgets
+                button beside it (the rc.2 spot) - the #24 yield's full-bar fallback (rc.3)
             
         Returns:
             ScreenPosition with calculated x, y coordinates
@@ -509,7 +559,8 @@ class PositionCalculator:
             
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
                 # Horizontal taskbar: calculate Y position (centered in taskbar gap)
-                x, y = self._calculate_horizontal_position(taskbar_info, widget_size, config, dpi_scale)
+                x, y = self._calculate_horizontal_position(taskbar_info, widget_size, config, dpi_scale,
+                                                           widgets_step)
             elif edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
                 # Vertical taskbar: calculate X position (centered in taskbar gap)
                 x, y = self._calculate_vertical_position(taskbar_info, widget_size, config, dpi_scale,
@@ -526,8 +577,9 @@ class PositionCalculator:
             logger.error("Error calculating position: %s", e, exc_info=True)
             return self._get_safe_fallback_position(widget_size)
 
-    def _calculate_horizontal_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], 
-                                       config: Dict[str, Any], dpi_scale: float) -> Tuple[int, int]:
+    def _calculate_horizontal_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int],
+                                       config: Dict[str, Any], dpi_scale: float,
+                                       widgets_step: bool = True) -> Tuple[int, int]:
         """
         Calculate position for horizontal (top/bottom) taskbar.
         
@@ -556,7 +608,8 @@ class PositionCalculator:
         else:
             # Fallback to rect-based if we're not sure
             visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
-            y_origin = taskbar_info.rect[1] / dpi_scale
+            # Around the screen's Qt origin (#373): rect / scale on the primary.
+            y_origin = taskbar_utils.physical_to_logical(taskbar_info.rect[1], full_geom.top(), dpi_scale)
 
         # Calculate Y: center widget vertically in the *visible* taskbar gap
         y_center = y_origin + (visible_tb_height - widget_height) / 2.0
@@ -565,6 +618,11 @@ class PositionCalculator:
         # Calculate X: align to the right (system-tray side), keeping the widget clear of the tray.
         tray_rect = taskbar_info.get_tray_rect()
         offset = config.get('tray_offset_x', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
+        # Physical x -> logical x on this screen. The primary bar (the only one with a tray rect) sits
+        # at the virtual-desktop origin, where that is exactly x / dpi_scale; a secondary screen keeps
+        # its native origin in Qt (taskbar_utils.physical_to_logical), so its rects convert around it.
+        x_origin = 0.0 if tray_rect else float(full_geom.left())
+        step_boundary = None
         if tray_rect:
             # Normal taskbar: hug the tray's left edge, but floor the gap so the widget never abuts
             # the show-hidden-icons "^" chevron and steals its clicks (#161 pt1).
@@ -577,30 +635,104 @@ class PositionCalculator:
                 right_boundary = round(toolbars[0] / dpi_scale)
         else:
             # A Win11 SECONDARY taskbar (Shell_SecondaryTrayWnd) has no TrayNotifyWnd child, so
-            # get_tray_rect() is None. Its clock is shell-drawn with no HWND to hug; reserve an
-            # estimate of the clock width off the screen edge instead of landing on it (#186).
+            # get_tray_rect() is None. Its clock is shell-drawn (XAML) with no HWND to hug: hug the
+            # clock UIA last saw on THIS bar (taskbar_utils.probed_tray_rect - the side-bar path uses
+            # it too) when it lies inside the bar, in its right half - a clock with seconds is wider
+            # than any fixed reserve (#373) - else reserve an estimate of the clock width off the
+            # screen edge (#186).
             reserve = config.get('secondary_clock_reserve_px',
                                  constants.config.defaults.DEFAULT_SECONDARY_CLOCK_RESERVE_PX)
             right_boundary = (full_geom.right() + 1) - reserve
+            clock_left = self._probed_clock_left(taskbar_info, x_origin, dpi_scale)
+            if clock_left is not None:
+                right_boundary = clock_left
+                offset = max(offset, constants.layout.TRAY_EDGE_MIN_GAP_PX)
+            # A Widgets/weather button in the bar's right half belongs to the tray end even when the
+            # reserve under-estimates the clock and the button reaches past right_boundary: step left
+            # of it all the same, instead of sitting on both (#373).
+            span = widgets_button_span_x(taskbar_info, dpi_scale, x_origin)
+            bar_mid = full_geom.left() + (full_geom.width() / 2.0)
+            if span is not None and (span[0] + span[1]) / 2.0 > bar_mid:
+                step_boundary = max(float(right_boundary), span[1])
 
         # left_boundary is the right edge of the task list/app-icons region when available.
         tasklist_rect = taskbar_info.tasklist_rect
-        left_boundary = round(tasklist_rect[2] / dpi_scale) if tasklist_rect else full_geom.left()
+        # Around the screen's Qt origin (#373): x / scale only on the primary.
+        left_boundary = (round(taskbar_utils.physical_to_logical(tasklist_rect[2], full_geom.left(), dpi_scale))
+                         if tasklist_rect else full_geom.left())
 
         x = round(right_boundary - widget_width - offset)
+
+        # The Win11 Widgets/weather button beside the tray (a LEFT-aligned bar puts it there; a centred
+        # bar keeps it at the far left, where this never applies) belongs to the tray END, as on a side
+        # bar (side_bar_geometry): the DEFAULT spot sits left of it, WIDGETS_BUTTON_MIN_GAP_PX clear,
+        # instead of on its right half with the arrows touching the weather text (rc.3 VM 2026-10-29).
+        # A position the user chose (a drag's tray_offset_x) is never overridden: the user is free to
+        # sit in the gap, overlap the button or move it (#200/#24), and gets the one-time #200 nudge
+        # (main.py) when it covers the weather. The button only resizes when the weather text does, so
+        # the widget follows it the way it follows a tray that gains an icon.
+        # widgets_step=False: the #24 yield found the app buttons reaching that spot while the tray spot
+        # is still clear (a left-aligned bar full up to the Widgets button) AND that tray spot clears
+        # the weather text/icon (#466) - it stays by the tray instead of hiding (AppOverlapYield's
+        # retreat). Otherwise the yield hides it, as on any full bar.
+        # Also on a bar with no tray rect (a Win11 secondary taskbar, #373 - @emgeka's analysis): the
+        # tray_rect condition here skipped the step on every Shell_SecondaryTrayWnd, so a widget by
+        # its clock sat on a weather button beside it.
+        if widgets_step and not user_placed_horizontal_offset(config):
+            x = self._clear_of_widgets_button(
+                taskbar_info, x, widget_width,
+                right_boundary if step_boundary is None else step_boundary, dpi_scale,
+                full_geom.left(), x_origin)
 
         # Safety check: don't overlap with app icons on left
         if x < left_boundary:
             logger.warning("Calculated position overlaps app icons; snapping to safe zone.")
             x = round(left_boundary + constants.layout.DEFAULT_PADDING)
 
-        # NOTE: we deliberately do NOT auto-avoid the Win11 Widgets/weather element here. Its width
-        # changes with the weather text, so auto-repositioning would make the widget jitter left/right
-        # as the weather updates, and it would override a position the user chose. Instead the widget
-        # stays put and the user is nudged once that they can drag it (main.py, using widgets_rect). The
-        # user is always free to sit in the gap, or overlap it, or move it - their call (#200/#24).
-
         return x, y
+
+    @staticmethod
+    def _probed_clock_left(taskbar_info: Any, x_origin: float, dpi_scale: float) -> Optional[float]:
+        """The logical left edge of the clock UIA last saw on this TOP/BOTTOM bar, or None. Only a
+        rect inside the bar's current window rect and in its right half counts, so a rect probed on
+        an older layout of the same HWND (or anything that is not the clock) is never hugged - the
+        horizontal twin of _secondary_side_clock_top."""
+        try:
+            probed = taskbar_utils.valid_rect(
+                taskbar_utils.probed_tray_rect(getattr(taskbar_info, "hwnd", None)))
+        except Exception:
+            probed = None
+        rect = taskbar_utils.valid_rect(getattr(taskbar_info, "rect", None))
+        if probed is None or rect is None:
+            return None
+        inside = (probed[0] >= rect[0] and probed[2] <= rect[2]
+                  and probed[1] >= rect[1] and probed[3] <= rect[3])
+        if not inside or probed[0] <= (rect[0] + rect[2]) / 2.0:
+            return None
+        return taskbar_utils.physical_to_logical(probed[0], x_origin, dpi_scale)
+
+    @staticmethod
+    def _clear_of_widgets_button(taskbar_info: Any, x: int, widget_width: int, right_boundary: float,
+                                 dpi_scale: float, screen_left: int, x_origin: float = 0.0) -> int:
+        """``x`` moved left of the Widgets button when the button lies between the widget's default
+        spot and the tray and the widget would cover it or come within WIDGETS_BUTTON_MIN_GAP_PX of
+        it; else ``x`` unchanged (also when the spot left of it would leave the screen). ``x_origin``:
+        the screen's Qt x origin the button's physical rect converts around (0 on the primary)."""
+        span = widgets_button_span_x(taskbar_info, dpi_scale, x_origin)
+        if span is None:
+            return x
+        w_left, w_right = span
+        gap = constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
+        # Tray side only: the button ends at (or before) the tray boundary. One logical px of slack
+        # absorbs fractional-DPI rounding of the two rects.
+        if not (w_left < right_boundary and w_right <= right_boundary + 1):
+            return x
+        if x >= w_right + gap or x + widget_width + gap <= w_left:
+            return x
+        new_x = math.floor(w_left - gap - widget_width)
+        if new_x < screen_left:
+            return x
+        return new_x
 
     @staticmethod
     def _clamp_into_strip(y: int, widget_height: int, strip_top: float, strip_height: float,
@@ -688,7 +820,8 @@ class PositionCalculator:
 
         # Safety check: avoid overlapping top-side icons on vertical taskbars.
         tasklist_rect = taskbar_info.tasklist_rect
-        top_boundary = round(tasklist_rect[3] / dpi_scale) if tasklist_rect else full_geom.top()
+        top_boundary = (round(taskbar_utils.physical_to_logical(tasklist_rect[3], full_geom.top(), dpi_scale))
+                        if tasklist_rect else full_geom.top())
         if y < top_boundary:
             logger.warning("Calculated position overlaps taskbar icons; snapping to safe zone.")
             y = round(top_boundary + constants.layout.DEFAULT_PADDING)
@@ -754,7 +887,7 @@ class PositionCalculator:
                 # Keep the same tray-side gap as the auto-placement, so a user can't drag the widget
                 # flush against the "^" chevron (#161 pt1).
                 right_boundary = (round(taskbar_info.get_tray_rect()[0] / dpi_scale) - widget_width - constants.layout.TRAY_EDGE_MIN_GAP_PX) if taskbar_info.get_tray_rect() else (screen.geometry().right() - widget_width)
-                left_boundary = (round(taskbar_info.tasklist_rect[2] / dpi_scale) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().left()
+                left_boundary = (round(taskbar_utils.physical_to_logical(taskbar_info.tasklist_rect[2], screen.geometry().left(), dpi_scale)) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().left()
                 
                 constrained_x = max(left_boundary, min(desired_pos.x(), right_boundary))
                 return QPoint(constrained_x, fixed_y)
@@ -773,7 +906,7 @@ class PositionCalculator:
 
                 # Keep within the safe zone, but allow bottom-alignment as calculated choice
                 bottom_boundary = (round(taskbar_info.get_tray_rect()[1] / dpi_scale) - widget_height - constants.layout.DEFAULT_PADDING) if taskbar_info.get_tray_rect() else (screen.geometry().bottom() - widget_height)
-                top_boundary = (round(taskbar_info.tasklist_rect[3] / dpi_scale) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().top()
+                top_boundary = (round(taskbar_utils.physical_to_logical(taskbar_info.tasklist_rect[3], screen.geometry().top(), dpi_scale)) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().top()
                 
                 constrained_y = max(top_boundary, min(desired_pos.y(), bottom_boundary))
                 return QPoint(fixed_x, constrained_y)
@@ -805,9 +938,11 @@ class PositionManager(QObject):
 
     def __init__(self, window_state: WindowState, parent: Optional[QObject] = None,
                  log_tag: str = "", side_watcher_enabled: bool = True, *,
-                 app_yield_enabled: bool = True) -> None:
-        """``app_yield_enabled=False``: no #24 app-button yield (a paint-only mirror's manager, #434 -
-        mirrors don't yield in v1; the yield then never probes and never hides anything)."""
+                 app_yield_enabled: bool = True, app_yield_copy: bool = False) -> None:
+        """``app_yield_enabled=False``: no #24 app-button yield (it then never probes and never hides
+        anything). ``app_yield_copy=True``: a "Show on all taskbars" copy's manager (#229, rc.5 #373) -
+        the yield judges the copy's own taskbar with background probes (never the one-taskbar slot),
+        shows no first-yield notice and keeps no drop baseline (a copy is never dragged)."""
         super().__init__(parent)
         self._state = window_state
         if log_tag:
@@ -862,6 +997,15 @@ class PositionManager(QObject):
         # until the healthy on-top stretch (or an explorer restart) resets the backoff state.
         self._fresh_reseat_times: Deque[float] = deque(maxlen=_BURIAL_FRESH_RATE_MAX)
         self._fresh_rate_capped: bool = False
+        # (hwnd, class) of the foreground window at our last acted re-seat (seeded by the first
+        # verified on-top check, kept across reset_reseat_state; a failed read never replaces it).
+        # A burial found after the foreground moved to / from the taskbar or the desktop (Show
+        # desktop) is re-seated at once, uncharged - see _shell_foreground_switch. After such a
+        # re-seat, up to _SHOW_DESKTOP_GRACE_REBURIALS more burials within _SHOW_DESKTOP_GRACE_S
+        # are free too (one click can bury it twice with the foreground already settled).
+        self._reseat_foreground: Optional[Tuple[int, str]] = None
+        self._switch_grace_ts: float = 0.0
+        self._switch_grace_left: int = 0
         # One INFO line per burial episode when SetWindowPos refuses the neighbour (Win10).
         self._access_denied_logged: bool = False
         # One INFO line per stretch of a not-ready tray rect (see _tray_rect_ready).
@@ -907,11 +1051,21 @@ class PositionManager(QObject):
         # Persists config updates the yield makes (the "dropped on the buttons" offset, rc.2 H2).
         self.on_app_yield_persist: Optional[Callable[[Dict[str, Any]], None]] = None
         self._app_overlap_info: Optional[TaskbarInfo] = None
+        # #373: the tray-less TOP/BOTTOM bar (HWND, dock signature) whose layout was last requested in
+        # the background, and when (_refresh_trayless_bar_layout).
+        self._trayless_probe_key: Optional[tuple] = None
+        self._trayless_probe_at: float = 0.0
+        # The Widgets re-enable (widgets_toggle_generation's on_at) the primary's follow-up probe ran for.
+        self._primary_interim_probe_for: Optional[float] = None
         from netspeedtray.core.app_overlap_yield import AppOverlapYield
+        self._app_yield_copy: bool = bool(app_yield_copy)
         self._app_yield = AppOverlapYield(self._app_overlap_context, self._app_yield_changed,
-                                          self._app_yield_first, parent=self,
-                                          on_persist_drop=self._persist_app_drop,
-                                          enabled=app_yield_enabled)
+                                          None if self._app_yield_copy else self._app_yield_first,
+                                          parent=self,
+                                          on_persist_drop=None if self._app_yield_copy else self._persist_app_drop,
+                                          enabled=app_yield_enabled,
+                                          background_probes=self._app_yield_copy,
+                                          log_tag=log_tag)
 
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -1078,7 +1232,8 @@ class PositionManager(QObject):
         size = (widget.width(), widget.height())
         if size[0] <= 0:
             return
-        pos = self._calculator.calculate_position(_TrayOverride(info, tray), size, self._state.config)
+        pos = self._calculator.calculate_position(_TrayOverride(info, tray), size, self._state.config,
+                                                  widgets_step=not self._app_yield.retreated)
         if pos:
             self._apply_geometry(pos.x, pos.y)
 
@@ -1242,12 +1397,60 @@ class PositionManager(QObject):
         if widget_size[0] <= 0:
             return None
 
+        self._refresh_trayless_bar_layout(self._state.taskbar_info)
         return self._calculator.calculate_position(
             self._state.taskbar_info,
             widget_size,
             self._state.config,
             side_placement=self._side_placement_for(self._state.taskbar_info, widget_size[1]),
+            widgets_step=not self._app_yield.retreated,
         )
+
+    def _refresh_trayless_bar_layout(self, taskbar_info: Optional[TaskbarInfo]) -> None:
+        """Keep THIS bar's probed layout fresh when it has no tray rect - a Win11 secondary taskbar on
+        any edge (#373): its clock and Widgets/weather button are XAML with no HWND, so the default
+        spot can only clear them from a UIA probe of this very HWND. The #24 yield probes
+        only while it is on and the app buttons are near (and never on a side bar), so this refresh
+        is what keeps a far / side / yield-off bar's Widgets box current - for a mirror too. A
+        background probe on a new dock, then at most every TRAYLESS_BAR_LAYOUT_REFRESH_S; it never
+        takes the one-taskbar slot the side-bar placement and the yield work from. The primary bar
+        (with or without a tray rect) and classic task-list bars are left alone."""
+        try:
+            if taskbar_info is None or not getattr(taskbar_info, "hwnd", 0):
+                return
+            # The primary bar never gets the periodic refresh: even one without a TrayNotifyWnd
+            # (ExplorerPatcher / StartAllBack builds) - its probes belong to the slot owners (the #24
+            # yield, the side placement). Only Widgets turned back ON: when it answers the stand-in
+            # (last seen) box at the grace's end, one probe confirms or replaces it (#473 review).
+            if getattr(taskbar_info, "is_primary", False) is True:
+                _flips, on_at = taskbar_utils.widgets_toggle_generation()
+                if (on_at is not None and on_at != self._primary_interim_probe_for
+                        and time.monotonic() >= on_at + constants.timeouts.WIDGETS_REENABLE_GRACE_S):
+                    self._primary_interim_probe_for = on_at
+                    if taskbar_utils.taskbar_layout_interim(int(taskbar_info.hwnd)):
+                        taskbar_utils.request_background_layout_probe(int(taskbar_info.hwnd))
+                return
+            if taskbar_info.get_tray_rect() is not None:
+                return
+            if taskbar_utils.valid_rect(getattr(taskbar_info, "tasklist_rect", None)) is not None:
+                return
+            # Every edge: a SIDE bar's placement reads the same per-HWND cache (side_bar_geometry's
+            # Widgets box), and a mirror on one that nothing re-probed aged out of it - the #473 VM
+            # run's DISPLAY2 mirror dropped onto the weather button 90 s after launch.
+            # A Widgets toggle flip re-probes at once (its gen is in the key); turned back ON, once more
+            # after WIDGETS_REENABLE_GRACE_S in case Explorer had not drawn the button yet (#473 VM).
+            flips, on_at = taskbar_utils.widgets_toggle_generation()
+            key = (int(taskbar_info.hwnd), taskbar_utils.dock_signature(taskbar_info), flips)
+            now = time.monotonic()
+            grace_end = on_at + constants.timeouts.WIDGETS_REENABLE_GRACE_S if on_at is not None else None
+            follow_up = grace_end is not None and self._trayless_probe_at < grace_end <= now
+            if (key == self._trayless_probe_key and not follow_up
+                    and now - self._trayless_probe_at < constants.timeouts.TRAYLESS_BAR_LAYOUT_REFRESH_S):
+                return
+            self._trayless_probe_key, self._trayless_probe_at = key, now
+            taskbar_utils.request_background_layout_probe(int(taskbar_info.hwnd))
+        except Exception as e:  # noqa: BLE001 - never break placement over a probe request
+            self._logger.debug("tray-less bar layout refresh failed: %s", e)
 
     def _side_placement_for(self, taskbar_info: TaskbarInfo, widget_height: int) -> Optional[SidePlacement]:
         """The automatic side-bar placement for this dock, re-decided only when the dock changed (or a
@@ -1414,8 +1617,10 @@ class PositionManager(QObject):
             return None
         dpi = info.dpi_scale if info.dpi_scale > 0 else 1.0
         top = float(widget.pos().y())
+        y_origin = taskbar_utils.screen_origin(info)[1]   # Qt's screen origin (#373)
         return SideWatchContext(hwnd=int(info.hwnd), dpi=dpi, widget=(top, top + widget.height()),
-                                user_placed=user_placed_side_offset(self._state.config))
+                                user_placed=user_placed_side_offset(self._state.config),
+                                y_origin=y_origin)
 
     def note_foreground_change(self) -> None:
         """The widget saw a foreground change: a new app's button may be growing the app group toward
@@ -1431,6 +1636,11 @@ class PositionManager(QObject):
         self._app_overlap_info = taskbar_info
         self._app_yield.sync()
 
+    def is_widgets_fallback_active(self) -> bool:
+        """True while a full left-aligned bar keeps the widget at the rc.2 tray spot, on the Widgets
+        button's padding, instead of left of it (AppOverlapYield.retreated, rc.3)."""
+        return self._app_yield.retreated
+
     def is_yielding_to_apps(self) -> bool:
         """True while the widget steps aside for app buttons that reach it (#24)."""
         return self._app_yield.yielded
@@ -1444,8 +1654,8 @@ class PositionManager(QObject):
         self._app_yield.detach("shutting down")
 
     def suspend_app_yield(self) -> bool:
-        """A second launch asked for the widget (#440): no yield for the rest of this session. True
-        when the widget was yielded at that moment."""
+        """A second launch asked for the widget (#440): when it was yielded at that moment, no yield for
+        the rest of this session, and True; otherwise the yield stays on (#373) and False."""
         return self._app_yield.suspend_for_session()
 
     def _persist_app_drop(self, value: Optional[int]) -> None:
@@ -1488,30 +1698,71 @@ class PositionManager(QObject):
             return BUSY
         width = float(widget.width())
         left = float(widget.pos().x())
+        # The screen's Qt x origin: the UIA rects (physical px) convert to logical px around it
+        # (taskbar_utils.physical_to_logical, #373) - 0 on the primary, where that is rect / dpi.
+        x_origin = taskbar_utils.screen_origin(info)[0]
+        # The two default spots when a Widgets button sits beside the tray (rc.3): left of it
+        # (``stepped``) and the rc.2 spot by the tray (``tray_spot``). Both None when they coincide (no
+        # such button, a centred bar, a user's drag): the yield then has no fallback to weigh.
+        stepped_x = self._would_be_x(info, None, widgets_step=True)
+        tray_x = self._would_be_x(info, None, widgets_step=False)
         if not widget.isVisible():
             # Hidden: it is never re-placed, so its window can sit at a stale spot (rc.2 H3: 28 px
             # off after a tray-width change) - judge where it WOULD go.
-            left = self._would_be_x(info, left)
-        defaults = constants.config.defaults
-        offset = self._state.config.get("tray_offset_x", defaults.DEFAULT_TRAY_OFFSET_X)
-        drop_key = int(offset) if isinstance(offset, int) and offset != defaults.DEFAULT_TRAY_OFFSET_X else None
+            would = tray_x if self._app_yield.retreated else stepped_x
+            left = would if would is not None else left
+        stepped = tray_spot = None
+        tray_spot_clear = False
+        if stepped_x is not None and tray_x is not None and abs(stepped_x - tray_x) >= 1.0:
+            stepped, tray_spot = (stepped_x, stepped_x + width), (tray_x, tray_x + width)
+            # The full-bar fallback may use the tray spot only when it clears the weather text/icon
+            # by the usual gap; an unknown extent counts as not clear (hide rather than collide).
+            content = taskbar_utils.valid_rect(
+                taskbar_utils.taskbar_layout_widgets_content(int(info.hwnd)))
+            if content is not None:
+                c_left = taskbar_utils.physical_to_logical(content[0], x_origin, dpi)
+                c_right = taskbar_utils.physical_to_logical(content[2], x_origin, dpi)
+                tray_spot_clear = (tray_x >= c_right + constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
+                                   or tray_x + width + constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
+                                   <= c_left)
+        offset = self._state.config.get("tray_offset_x", constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
+        # A drag's offset - the same rule the placement uses, so a pre-1.3.0 default (10 / 1 / 3) is no
+        # drop key either.
+        drop_key = int(offset) if user_placed_horizontal_offset(self._state.config) else None
         saved = self._state.config.get("app_overlap_drop_offset")
+        if self._app_yield_copy:
+            # A copy is never dragged (default offsets pinned), and the saved drop it would read is
+            # the MAIN widget's: a copy seeing its own bar clear must never spend that baseline.
+            drop_key = saved = None
         try:
             from netspeedtray.core.system_events import read_taskbar_alignment
             align = read_taskbar_alignment()
         except Exception:
             align = None
-        return OverlapContext(hwnd=int(info.hwnd), dpi=dpi, widget=(left, left + width),
+        try:
+            tray = info.get_tray_rect()
+            tray_left = int(tray[0]) if tray else None
+        except Exception:
+            tray_left = None
+        layout_key = (align, tray_left, taskbar_utils.widgets_button_enabled())
+        return OverlapContext(hwnd=int(info.hwnd), dpi=dpi, widget=(left, left + width), x_origin=x_origin,
                               centered=None if align is None else align == 1,
-                              drop_key=drop_key, saved_drop=saved if isinstance(saved, int) else None)
+                              drop_key=drop_key, saved_drop=saved if isinstance(saved, int) else None,
+                              layout_key=layout_key, stepped=stepped, tray_spot=tray_spot,
+                              tray_spot_clear=tray_spot_clear)
 
-    def _would_be_x(self, info: TaskbarInfo, fallback: float) -> float:
+    def _would_be_x(self, info: TaskbarInfo, fallback: Optional[float],
+                    widgets_step: Optional[bool] = None) -> Optional[float]:
         """The x the docked widget would be placed at on ``info`` right now (its window may be stale
-        while hidden); ``fallback`` when it can't be computed."""
+        while hidden); ``fallback`` when it can't be computed. ``widgets_step`` None: as placed now
+        (the yield's full-bar fallback decides); True / False: left of / ignoring a Widgets button
+        beside the tray."""
         try:
             widget = self._state.widget
+            if widgets_step is None:
+                widgets_step = not self._app_yield.retreated
             pos = self._calculator.calculate_position(info, (widget.width(), widget.height()),
-                                                      self._state.config)
+                                                      self._state.config, widgets_step=widgets_step)
             return float(pos.x) if pos is not None else fallback
         except Exception as e:
             logger.debug("would-be position for the app yield failed: %s", e)
@@ -1761,6 +2012,8 @@ class PositionManager(QObject):
         self._burial_fresh = None
         self._fresh_reseat_times.clear()
         self._fresh_rate_capped = False
+        self._switch_grace_ts = 0.0
+        self._switch_grace_left = 0
         self._access_denied_logged = False
 
     def _taskbar_band_raised(self, tb: int, now: float) -> Optional[int]:
@@ -1862,6 +2115,11 @@ class PositionManager(QObject):
                 return False
             if above:
                 self._burial_fresh = None   # any earlier burial is over (fight window)
+                if self._reseat_foreground is None:
+                    # Seed the Show desktop baseline once, so the very first click is a switch too.
+                    seed = self._foreground_snapshot()
+                    if seed[0]:
+                        self._reseat_foreground = seed
                 now = time.monotonic()
                 if self._on_top_since is None or now - self._last_on_top_ts > _ON_TOP_MAX_GAP_S:
                     self._on_top_since = now
@@ -1904,8 +2162,9 @@ class PositionManager(QObject):
         Guards, in order (each one defers; the next event or the 1 s tick retries):
         backoff -> taskbar not topmost -> taskbar out of its normal Z-band -> widget in another
         Z-band -> already seated. The backoff applies only to a burial found within the fight
-        window of our last re-seat; a fresh burial and the Start / Task View band return skip
-        it and charge nothing. If SetWindowPos refuses the neighbour with
+        window of our last re-seat; a fresh burial, the Start / Task View band return and a
+        foreground switch to / from the taskbar or desktop (Show desktop) skip it and charge
+        nothing. If SetWindowPos refuses the neighbour with
         Access denied, see _reseat_after_access_denied.
 
         Returns True when the widget was actually re-seated.
@@ -1918,12 +2177,25 @@ class PositionManager(QObject):
             # The burial the shell leaves behind when Start / Task View closes: re-seat at once
             # and charge nothing, or quick repeated Win+Tab escalates the backoff (M1).
             band_return = bool(self._band_return_pending_ts) and                 now - self._band_return_pending_ts <= _BAND_RETURN_GRACE_S
+            # Show desktop, either way: the foreground moved to / from the taskbar or the desktop
+            # since our last re-seat. A person did that - re-seat at once, charge nothing, and do
+            # not count it toward the fresh-burial rate cap: ~13 clicks in 8 s tripped the cap and
+            # every later click left the widget under the taskbar for the 1-60 s backoff (owner,
+            # rc.7 / rc.8). A re-burier that leaves the foreground alone is classified as before.
+            foreground = self._foreground_snapshot()
+            shell_switch = not band_return and self._shell_foreground_switch(foreground)
+            # The same click can bury it again with the foreground already settled (the taskbar
+            # takes the click, the desktop follows): a few burials right after a switch re-seat
+            # are free as well, so the second one is not charged as a fight.
+            switch_grace = not (band_return or shell_switch) and self._switch_grace_left > 0 and \
+                now - self._switch_grace_ts <= _SHOW_DESKTOP_GRACE_S
+            exempt = shell_switch or switch_grace
             # Fight window: a burial first seen more than _BURIAL_FIGHT_WINDOW_S after our last
             # re-seat is a fresh one (Win10 buries the widget on every maximize AND restore) -
             # immediate and free, whatever window an earlier fight left behind. Classified once
             # per burial: while we sit out a backoff we are not re-seating, so a later check of
             # the SAME burial must stay a fight.
-            if self._burial_fresh is None:
+            if self._burial_fresh is None and not exempt:
                 fresh = bool(self._last_acted_reseat_ts) and \
                     now - self._last_acted_reseat_ts > _BURIAL_FIGHT_WINDOW_S
                 times = self._fresh_reseat_times
@@ -1936,9 +2208,9 @@ class PositionManager(QObject):
                                 "fight (backoff) until it stays on top.",
                                 len(times) + 1, now - times[0])
                 self._burial_fresh = fresh and not self._fresh_rate_capped
-            fresh = self._burial_fresh
+            fresh = bool(self._burial_fresh)
             delay = self._reseat_delay()
-            if not (band_return or fresh) and self._last_reseat_ts and \
+            if not (band_return or exempt or fresh) and self._last_reseat_ts and \
                     (now - self._last_reseat_ts) < delay:
                 self._log_deferral("backoff", "Re-seat deferred: backoff (%.0fs window).", delay)
                 return False
@@ -1980,9 +2252,20 @@ class PositionManager(QObject):
                 if not self._reseat_after_access_denied(hwnd, tb, prev, tb_band):
                     return False   # not charged; the next check retries
             self._last_acted_reseat_ts = now
+            if foreground[0]:
+                self._reseat_foreground = foreground   # a failed read keeps the last good one
             self._burial_fresh = None
             self._access_denied_logged = False
             self._deferral_logged = None
+            if exempt:
+                if shell_switch:
+                    self._switch_grace_ts = now
+                    self._switch_grace_left = _SHOW_DESKTOP_GRACE_REBURIALS
+                else:
+                    self._switch_grace_left -= 1
+                self._log_recovery(now, "Widget re-seated above the taskbar after a switch to / from the "
+                                        "desktop or taskbar (no backoff charged).")
+                return True
             if band_return:
                 self._band_return_pending_ts = 0.0   # consumed; the backoff is untouched
                 self._logger.debug("Widget re-seated above the taskbar after Start / Task View closed "
@@ -2001,6 +2284,28 @@ class PositionManager(QObject):
         except Exception as e:
             self._logger.error("Failed to re-seat the widget above the taskbar: %s", e)
             return False
+
+    @staticmethod
+    def _foreground_snapshot() -> Tuple[int, str]:
+        """(hwnd, class name) of the foreground window; (0, "") when there is none or it fails."""
+        try:
+            fg = int(win32gui.GetForegroundWindow() or 0)
+            return (fg, str(win32gui.GetClassName(fg))) if fg else (0, "")
+        except Exception:
+            return 0, ""
+
+    def _shell_foreground_switch(self, foreground: Tuple[int, str]) -> bool:
+        """
+        True when the foreground is another window than at our last acted re-seat and the taskbar
+        or the desktop is on either side of that switch: Show desktop (app -> desktop and back), a
+        click on the taskbar or the desktop. A person caused it, and each switch buys at most ONE
+        free re-seat (the snapshot is re-taken on every re-seat), so a re-burier that leaves the
+        foreground alone still meets the fight window, the rate cap and the backoff.
+        """
+        last = self._reseat_foreground
+        if last is None or not foreground[0] or foreground[0] == last[0]:
+            return False
+        return foreground[1] in _SHELL_FOREGROUND_CLASSES or last[1] in _SHELL_FOREGROUND_CLASSES
 
     def _reseat_after_access_denied(self, hwnd: int, tb: int, prev: int,
                                     tb_band: Optional[int]) -> bool:
