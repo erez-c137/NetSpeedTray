@@ -522,3 +522,37 @@ def test_record_hardware_history_card_is_live_with_memory_alone(q_app, key):
         assert page._record_card.isEnabled()
     finally:
         page.deleteLater()
+
+
+# --- review: a position set to "None" in the stacked column ----------------------------------------
+
+STACK_NONE = {
+    # RAM is the CPU slot; the user set the CPU position to None: the stacked column is GPU alone.
+    "ram_slot_none": (dict(SBS, stack_hardware_stats=True, widget_display_order=["network", "gpu", "none"],
+                           monitor_ram_enabled=True, monitor_gpu_enabled=True, show_hardware_temps=True),
+                      {"52%"}, {"RAM", "9.2/16.0G"}),
+    "vram_slot_none": (dict(SBS, stack_hardware_stats=True, widget_display_order=["network", "cpu", "none"],
+                            monitor_cpu_enabled=True, monitor_vram_enabled=True),
+                       {"37%"}, {"VRAM", "3.1/8.0G"}),
+    "cpu_gpu_slot_none": (dict(SBS, stack_hardware_stats=True, widget_display_order=["network", "none", "gpu"],
+                               monitor_cpu_enabled=True, monitor_gpu_enabled=True),
+                          {"52%"}, {"37%"}),
+}
+
+
+@pytest.mark.parametrize("tb", HORIZONTAL, ids=[t[0] for t in HORIZONTAL])
+@pytest.mark.parametrize("name", list(STACK_NONE))
+def test_a_none_position_hides_its_slot_in_the_stacked_column(q_app, name, tb):
+    """Stacked side by side with one position set to None: that slot is hidden, as in a row. It used
+    to be painted anyway in the stacked column while the layout reserved no width for it - with RAM
+    or VRAM now a slot of its own, "RAM 9.2/16.0G" under a GPU row ran ~16 px past the widget."""
+    over, want, never = STACK_NONE[name]
+    cfg = _config(over)
+    _tname, edge, thickness, dpi, small = tb
+    w, h, nw = _size(cfg, edge, thickness, dpi, small)
+    drawn, _a = _paint(cfg, w, h, nw, "horizontal", "network_only")
+    assert want <= set(drawn) and not (never & set(drawn)), (name, drawn)
+    pad = w
+    _drawn, a = _paint(cfg, w, h, nw, "horizontal", "network_only", canvas_pad=pad)
+    a[pad:pad + h, pad:pad + w] = 0
+    assert not (a > 24).any(), (name, "ink outside the widget")

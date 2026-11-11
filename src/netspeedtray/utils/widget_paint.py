@@ -180,19 +180,23 @@ def side_by_side_keys(display_order: List[str], cpu_enabled: bool, gpu_enabled: 
     """The side_by_side segments in display order: 'network', 'cpu', 'gpu', or one 'hardware' segment
     when CPU and GPU are stacked together. Shared by the paint path and the layout's size reservation.
     ``cpu_enabled`` / ``gpu_enabled`` are the SLOTS (helpers.hardware_slots: CPU or RAM, GPU or VRAM),
-    so RAM / VRAM on their own get a segment too (2.2.1)."""
+    so RAM / VRAM on their own get a segment too (2.2.1).
+    Stacking needs BOTH positions in the order: a position set to "None" hides its slot in the stacked
+    column too (the layout reserves no width for it, so painting it there clipped - #520 review)."""
     keys: List[str] = []
+    stack_hw = bool(stack_hw and cpu_enabled and gpu_enabled
+                    and "cpu" in display_order and "gpu" in display_order)
     for k in display_order:
         if k == "network":
             keys.append(k)
         elif k == "cpu" and cpu_enabled:
-            if stack_hw and gpu_enabled:
+            if stack_hw:
                 if "hardware" not in keys:
                     keys.append("hardware")
             else:
                 keys.append("cpu")
         elif k == "gpu" and gpu_enabled:
-            if stack_hw and cpu_enabled:
+            if stack_hw:
                 if "hardware" not in keys:
                     keys.append("hardware")
             else:
