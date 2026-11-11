@@ -64,6 +64,15 @@ class I18nStrings:
     # can be added later without touching the direction logic.
     RTL_LANGUAGES: set = {"he_IL"}
 
+    # Languages whose FIXED text writes numbers in the script's own digits, 0-9 in order (2.2.1, the
+    # bn_BD translator on #477: "Bengali digits in fixed strings while retaining Western digits for
+    # live numerical values"). Fixed text: a number that is part of a label or sentence - "২ বছর" (2
+    # years) in the retention ladder, a month's year in Usage history. Live values - speeds, data,
+    # percentages, temperatures, clocks - and technical names (versions, ports, IP addresses, the
+    # 2.4G / 5G band) stay Western in every language, so the widget's width references never change.
+    # Applied by utils.helpers.fixed_digits; the locale files already write their own fixed numbers.
+    FIXED_TEXT_DIGITS: Dict[str, str] = {"bn_BD": "০১২৩৪৫৬৭৮৯"}
+
     # Locale codes that need an explicit target because a bare prefix scan would pick the wrong
     # file. Windows reports script-neutral Chinese as zh_CHS/zh_CHT (LCIDs 4 and 31748), and the
     # regional Chinese codes don't say which script they use - but LANGUAGE_MAP lists zh_CN before

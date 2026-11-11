@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import QWidget, QComboBox, QLabel
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
+from netspeedtray.utils.helpers import fixed_digits
 from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 from netspeedtray.views.settings.pages.mini_graph_section import MiniGraphSection
@@ -175,7 +176,10 @@ class WidgetPage(QWidget):
             primary = app.primaryScreen()
             for i, screen in enumerate(app.screens(), start=1):
                 width, height, scale = self._native_mode(screen)
-                label = self.i18n.PREFERRED_MONITOR_ITEM.format(index=i, width=width, height=height,
+                # "Monitor 1" is a fixed label: its number in the language's own digits (Bengali "১");
+                # the resolution and scale are technical values and stay Western.
+                label = self.i18n.PREFERRED_MONITOR_ITEM.format(index=fixed_digits(i, self.i18n),
+                                                                width=width, height=height,
                                                                 scale=scale)
                 if screen is primary:
                     label = f"{label} {self.i18n.PREFERRED_MONITOR_PRIMARY_TAG}"

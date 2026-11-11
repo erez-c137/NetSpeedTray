@@ -27,24 +27,78 @@ _CJK_CANDIDATES: Dict[str, List[str]] = {
     "ko": ["Malgun Gothic", "Gulim", "Dotum", "Batang", "Microsoft YaHei"],
     "zh": ["Microsoft YaHei", "Microsoft JhengHei", "SimSun", "SimHei", "Malgun Gothic"],
     "he": ["Segoe UI", "Arial", "David", "Gisha", "Tahoma", "Miriam"],
+    # Bengali: Windows' Bengali UI face (it has Latin and digits too). Used only where matplotlib
+    # shapes complex text (matplotlib_shapes_text) - before that the graph draws English for Bengali.
+    "bn": ["Nirmala UI", "Vrinda", "Shonar Bangla"],
 }
 
 # Right-to-left scripts need bidi reshaping before matplotlib renders them (matplotlib has no bidi).
 _RTL_SCRIPTS = {"he", "ar", "fa"}
 
-# Locales whose script matplotlib cannot draw legibly, so the graph's own text (axis labels, legend,
-# peak / boot captions, empty-state text, tick day/month names) falls back to en_US. matplotlib's Agg
-# text path does no complex shaping: a Bengali font has the glyphs, but conjuncts come out as
+# Locales whose script needs complex text shaping, which matplotlib < 3.11 does not do: there the
+# graph's own text (axis labels, legend, peak / boot captions, empty-state text, tick day/month names)
+# falls back to en_US. A Bengali font has the glyphs, but unshaped, conjuncts come out as
 # letter + hasant + letter and pre-base vowel signs (ি, ে, ো) land on the wrong side - worse than
 # boxes, because it looks like text and reads as nonsense (#457). Everything Qt draws around the
-# graph (tabs, buttons, the hover readout) stays in the UI language. Remove a locale from this set
-# only once matplotlib shapes its script.
+# graph (tabs, buttons, the hover readout) stays in the UI language. matplotlib 3.11 lays text out
+# with libraqm (HarfBuzz), which shapes Bengali: there these locales draw their own text, in their
+# script's graph font (_CJK_CANDIDATES: Nirmala UI). See matplotlib_shapes_text.
 MPL_UNSHAPED_LOCALES = frozenset({"bn_BD"})
+
+_MPL_SHAPES: Optional[bool] = None
+
+
+def matplotlib_shapes_text() -> bool:
+    """True when matplotlib lays text out with complex shaping (3.11+: libraqm / HarfBuzz) - Bengali
+    conjuncts and vowel signs come out as Qt draws them. Cached; only called where the graph (and so
+    matplotlib) is already loaded."""
+    global _MPL_SHAPES
+    if _MPL_SHAPES is None:
+        try:
+            from matplotlib import ft2font
+            _MPL_SHAPES = bool(getattr(ft2font, "__libraqm_version__", None))
+        except Exception as e:  # pragma: no cover - defensive; assume the old, unshaped layout
+            logger.debug("Could not inspect matplotlib's text layout: %s", e)
+            _MPL_SHAPES = False
+    return _MPL_SHAPES
+
+
+_SCRIPT_FONT_FOUND: Dict[str, bool] = {}
+
+
+def _script_font_installed(language: str) -> bool:
+    """True when one of the graph font candidates for ``language``'s script is installed (cached per
+    script). Without one, matplotlib would draw the script in DejaVu Sans - boxes."""
+    script = str(language).lower().replace("-", "_").split("_")[0]
+    if script not in _CJK_CANDIDATES:
+        return True
+    if script not in _SCRIPT_FONT_FOUND:
+        try:
+            import matplotlib.font_manager as fm
+            installed = {f.name for f in fm.fontManager.ttflist}
+            _SCRIPT_FONT_FOUND[script] = any(name in installed for name in _CJK_CANDIDATES[script])
+        except Exception as e:  # pragma: no cover - defensive; English is the safe graph
+            logger.debug("Could not enumerate installed fonts: %s", e)
+            _SCRIPT_FONT_FOUND[script] = False
+        if not _SCRIPT_FONT_FOUND[script]:
+            logger.warning("No graph font for '%s' installed (expected one of %s): the graph draws "
+                           "English.", language, _CJK_CANDIDATES[script])
+    return _SCRIPT_FONT_FOUND[script]
+
+
+def mpl_unshaped_locales() -> frozenset:
+    """The locales whose graph text is English with THIS matplotlib: MPL_UNSHAPED_LOCALES before 3.11;
+    once matplotlib shapes text, only those whose script has no graph font installed."""
+    return frozenset(lang for lang in MPL_UNSHAPED_LOCALES if graph_text_is_english(lang))
 
 
 def graph_text_is_english(language: Optional[str]) -> bool:
-    """True when the graph's matplotlib text must be English for ``language`` (see above)."""
-    return bool(language) and str(language) in MPL_UNSHAPED_LOCALES
+    """True when the graph's matplotlib text must be English for ``language`` (see above): matplotlib
+    does not shape its script, or no font for the script is installed (Nirmala UI / Vrinda / Shonar
+    Bangla for Bengali), where shaped text would still be boxes."""
+    if not language or str(language) not in MPL_UNSHAPED_LOCALES:
+        return False
+    return not matplotlib_shapes_text() or not _script_font_installed(str(language))
 
 
 _EN_I18N = None
@@ -70,6 +124,8 @@ def _script_for_language(language: Optional[str]) -> Optional[str]:
     lang = str(language).lower().replace("-", "_").split("_")[0]
     if lang in ("ja", "ko", "zh", "he"):
         return lang
+    if lang == "bn" and matplotlib_shapes_text():
+        return lang   # only where matplotlib shapes Bengali; else the graph draws English (DejaVu Sans)
     return None
 
 

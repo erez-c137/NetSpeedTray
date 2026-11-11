@@ -39,7 +39,7 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.core import usage_history as U
 from netspeedtray.utils import styles as su
 from netspeedtray.utils.components import Win11Segmented
-from netspeedtray.utils.helpers import format_data_size, format_decimal, reveal_in_explorer
+from netspeedtray.utils.helpers import fixed_digits, format_data_size, format_decimal, reveal_in_explorer
 from netspeedtray.views.monitor.graph_host import bind_reader_thread, stop_reader_thread
 
 VIEW_DAYS, VIEW_MONTHS, VIEW_YEARS = "days", "months", "years"
@@ -352,7 +352,7 @@ class UsageHistorySheet(QDialog):
             tmpl = self._tr("USAGE_HISTORY_PERIOD_NOTE",
                             "Months follow your data-cap billing period, which starts on day {day}.")
             try:
-                self._period_note.setText(tmpl.format(day=self._reset_day))
+                self._period_note.setText(tmpl.format(day=fixed_digits(self._reset_day, self._i18n)))
             except Exception:
                 self._period_note.setText(tmpl)
         self._period_note.setVisible(show_period)
@@ -381,13 +381,15 @@ class UsageHistorySheet(QDialog):
         if r.kind == U.KIND_MONTH:
             month = self._locale.standaloneMonthName(r.start.month, QLocale.FormatType.LongFormat)
             tmpl = self._tr("USAGE_HISTORY_MONTH_FORMAT", "{month} {year}")
+            # The year in the digits Qt writes the day rows' dates in (Bengali: ২০২৬, as in ৩/১১/২০২৬).
+            year = fixed_digits(r.start.year, self._i18n)
             try:
-                return tmpl.format(month=month, year=r.start.year)
+                return tmpl.format(month=month, year=year)
             except Exception:
-                return f"{month} {r.start.year}"
+                return f"{month} {year}"
         if r.kind == U.KIND_PERIOD:
             return f"{self._short_date(r.start)} – {self._short_date(r.end)}"
-        return str(r.start.year)
+        return fixed_digits(r.start.year, self._i18n)
 
     # ------------------------------------------------------------------ export
     def _export(self) -> None:

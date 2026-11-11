@@ -91,6 +91,17 @@ def combo_chevron_url(color_hex: str) -> str:
 MENU_CHEVRON_PADDING = 32
 
 
+def menu_button_padding(vertical: int = 4, start: int = 12) -> str:
+    """``padding: ...;`` for a dropdown QToolButton drawn with ``menu_chevron_qss``: ``start`` px before
+    the text and MENU_CHEVRON_PADDING px of room for the chevron after it. Mirrored in a right-to-left
+    UI: Qt mirrors the indicator's ``subcontrol-position`` there (the chevron sits at the LEFT edge) but
+    not QSS padding, so the label ran over the chevron - in Hebrew the Monitor's adapter button showed
+    no dropdown arrow at all."""
+    end = MENU_CHEVRON_PADDING
+    left, right = (end, start) if _is_rtl() else (start, end)
+    return f"padding: {int(vertical)}px {right}px {int(vertical)}px {left}px;"
+
+
 def menu_chevron_qss(selector: str = "QToolButton") -> str:
     """QSS drawing a dropdown button's chevron as its menu indicator - the Fluent ChevronDown image the
     combos use (combo_chevron_url) - in the button's right padding (give it MENU_CHEVRON_PADDING).
@@ -444,11 +455,53 @@ def apply_text_face(widget, text) -> Optional[str]:
     return face
 
 
+_RUNS_FORMAT = "nst_text_runs_format"
+
+
+def _emoji_runs_html(font: QFont, text: str) -> Optional[str]:
+    """Rich text for system/user ``text`` with an emoji (outside the BMP: "Home🏠"), each run in the one
+    known face that has it - the emoji in Segoe UI Emoji, the rest in ``font``'s face or the face the
+    widget draws it in (utils/font_runs, the widget's own Wi-Fi name runs). None when the text has no
+    such emoji, another character outside the BMP (probing one maps a face's files for good), or a run
+    no known face has, or right-to-left letters: Qt's path, as before."""
+    from netspeedtray.utils import font_runs
+    if not any(ord(ch) > 0xFFFF for ch in text) or font_runs.resolve_family(font.family()) is None:
+        return None
+    if any(any(ord(ch) > 0xFFFF for ch in cl) and not font_runs._is_emoji(cl)
+           for cl in font_runs.clusters(text)):
+        return None
+    runs = font_runs.text_runs(font, text)
+    if any(face == font_runs.QT_PATH for face, _run in runs):
+        return None
+    import html
+    out = []
+    for face, run in runs:
+        esc = html.escape(run, quote=False)
+        out.append(esc if face is None else "<span style=\"font-family:'%s';\">%s</span>" % (
+            face.replace("'", ""), esc))
+    return "<span style=\"white-space:pre-wrap;\">%s</span>" % "".join(out)
+
+
 def set_text_in_face(label, text) -> Optional[str]:
     """``label.setText(text)`` for system/user text, in its own face (``apply_text_face``) when the UI
-    face lacks a character of it. Returns the face."""
+    face lacks a character of it. Text with an emoji (a Wi-Fi name "Home🏠") is set as rich text in
+    runs of known faces (``_emoji_runs_html``): as plain text Qt searched every installed family for the
+    emoji (852 font files). Returns the face."""
     text = str(text)
     face = apply_text_face(label, text)
+    rich = _emoji_runs_html(label.font(), text) if face is None else None
+    saved = label.property(_RUNS_FORMAT)
+    if rich is not None:
+        if saved is None:
+            label.setProperty(_RUNS_FORMAT, [int(label.textFormat().value), label.accessibleName()])
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setText(rich)
+        label.setAccessibleName(text)   # the words, not the markup
+        return None
+    if saved is not None:   # back from runs: the label's own format and accessible name
+        label.setTextFormat(Qt.TextFormat(int(saved[0])))
+        label.setAccessibleName(str(saved[1]))
+        label.setProperty(_RUNS_FORMAT, None)
     label.setText(text)
     return face
 
@@ -469,29 +522,72 @@ def add_combo_item_in_face(combo, text, user_data=None) -> None:
     popup (FontRole) when it needs one. Pair with ``keep_combo_face`` for the closed box's text."""
     text = str(text)
     combo.addItem(text, user_data)
-    face = text_face(text)
-    if face:
-        combo.setItemData(combo.count() - 1, face_font(face, combo.font()), Qt.ItemDataRole.FontRole)
-        _size_combo_by_length(combo)
+    if text_face(text):
+        _fit_combo_to_faces(combo)
 
 
-def _size_combo_by_length(combo) -> None:
-    """A combo box sizes itself by measuring every item in ITS font - the UI face's "Auto" in Bengali
-    measured in Microsoft YaHei UI is a glyph that face lacks (every family loads). Once an item has a
-    face of its own, the box is sized by its longest item's length in characters instead (an East
-    Asian wide character counts two), and no item is measured in a face that isn't its own."""
-    import unicodedata
-    from PyQt6.QtWidgets import QComboBox
-    longest = 0
-    for i in range(combo.count()):
-        t = combo.itemText(i)
-        longest = max(longest, sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in t))
+_COMBO_SIZE_BASE = "nst_combo_size_base"
+
+
+def _combo_base_font(combo) -> QFont:
+    """The box's own (UI face) font - not the face the current item may have given it - with its
+    family, size and weight set explicitly, so it holds as an item's FontRole."""
+    base = combo.property(_FACE_BASE_FONT)
+    base = QFont(base) if base is not None else QFont(combo.font())
+    return face_font(base.family(), base)
+
+
+def _fit_combo_to_faces(combo) -> None:
+    """Once an item has a face of its own (a CJK GPU name), the box must never lay out or measure an
+    item in a face that isn't the item's: a combo box measures every item in ITS font, and its popup
+    draws an item without a FontRole in the box's (or its view's) font - which follows the CURRENT
+    item's face: Bengali "Auto" measured or drawn in Microsoft YaHei UI is a glyph that face lacks, so
+    Qt searched every installed family (852 font files when the GPU list opened in bn_BD / he_IL).
+    So every item gets its own font (FontRole: the UI face or its own), the box is no longer sized by
+    measuring its items in its font, and its width is the widest item measured in the font it is
+    drawn in - as wide as the box Qt sizes for ASCII names (it was sized by a character count, ~65 px
+    wider for "Microsoft 基本显示适配器"). Without such an item (the list reloaded), the box's own
+    sizing comes back."""
+    from PyQt6.QtGui import QFontMetrics
+    from PyQt6.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox
+    texts = [combo.itemText(i) for i in range(combo.count())]
+    faces = [text_face(t) for t in texts]
+    saved = combo.property(_COMBO_SIZE_BASE)
+    view = combo.view()
+    if not any(faces):
+        if saved is not None:
+            policy, length, min_w, uniform = saved
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy(policy))
+            combo.setMinimumContentsLength(length)
+            combo.setMinimumWidth(min_w)
+            if view is not None:
+                view.setUniformItemSizes(uniform)
+            for i in range(combo.count()):
+                combo.setItemData(i, None, Qt.ItemDataRole.FontRole)
+            combo.setProperty(_COMBO_SIZE_BASE, None)
+        return
+    if saved is None:
+        saved = [combo.sizeAdjustPolicy().value, combo.minimumContentsLength(), combo.minimumWidth(),
+                 bool(view.uniformItemSizes()) if view is not None else False]
+        combo.setProperty(_COMBO_SIZE_BASE, saved)
+    # The policy FIRST: under AdjustToContents* each item change re-measures every item in the box's font.
     combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-    combo.setMinimumContentsLength(max(combo.minimumContentsLength(), longest))
-    try:   # rows sized by the first one (the Language picker's way): a relayout measures no other row
-        combo.view().setUniformItemSizes(True)
-    except Exception:
-        pass
+    combo.setMinimumContentsLength(0)
+    base = _combo_base_font(combo)
+    widest = 0
+    # The items with a face of their own first: a change to another item (the current one) can lay the
+    # list out before the loop ends, and it must not find one still without its font.
+    for i in sorted(range(len(texts)), key=lambda i: faces[i] is None):
+        f = face_font(faces[i], base) if faces[i] else base
+        combo.setItemData(i, f, Qt.ItemDataRole.FontRole)
+        widest = max(widest, QFontMetrics(f).horizontalAdvance(texts[i]))
+    opt = QStyleOptionComboBox()
+    combo.initStyleOption(opt)
+    chrome = combo.style().sizeFromContents(QStyle.ContentsType.CT_ComboBox, opt,
+                                            QSize(0, QFontMetrics(base).height()), combo).width()
+    combo.setMinimumWidth(max(int(saved[2]), chrome + widest))
+    if view is not None:   # rows sized by the first one (the Language picker's way): no row measured twice
+        view.setUniformItemSizes(True)
 
 
 def _follow_combo_face(combo, text) -> None:
@@ -527,6 +623,7 @@ def keep_combo_face(combo) -> None:
         if view is not None:
             view.setFont(QFont(view.font()))
         combo.currentTextChanged.connect(follow)
+    _fit_combo_to_faces(combo)   # the items as filled now (a reload without a face: the box's own sizing)
     follow(combo.currentText())
 
 
@@ -549,6 +646,28 @@ def tooltip_in_face(text) -> str:
         return text
     return "<span style=\"font-family:'%s'; white-space:pre-wrap;\">%s</span>" % (
         face.replace("'", ""), html.escape(text, quote=False))
+
+
+def tooltip_with_text_in_face(template: str, field: str, **values) -> str:
+    """A tooltip from a translated ``template`` holding system/user text in ``values[field]`` (the
+    process name in APP_ROW_TOOLTIP). When one face has the whole sentence - an English UI around
+    微信.exe: Microsoft YaHei UI - it is ``tooltip_in_face`` of it. When none does - a Hebrew or Bengali
+    sentence around 微信.exe - only the system text is a span in its own face and the rest stays in the
+    application (UI) face, as rich text: as plain text Qt searched every installed family for it (852
+    font files on hover, he_IL / bn_BD)."""
+    import html
+    text = template.format(**values)
+    system = str(values.get(field, "") or "")
+    face = text_face(system)
+    if face is None or text_face(text) is not None:   # the UI face, or one face for the whole sentence
+        return tooltip_in_face(text)
+    mark = "\x00"
+    try:
+        shell = template.format(**dict(values, **{field: mark}))
+    except Exception:
+        return tooltip_in_face(text)
+    span = "<span style=\"font-family:'%s';\">%s</span>" % (face.replace("'", ""), html.escape(system, quote=False))
+    return "<span style=\"white-space:pre-wrap;\">%s</span>" % html.escape(shell, quote=False).replace(mark, span)
 
 
 def symbol_face(text: str) -> Optional[str]:

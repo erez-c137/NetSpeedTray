@@ -606,9 +606,21 @@ def format_retention_label(days: int, i18n) -> str:
     if days >= 365:
         years = max(1, round(days / 365))
         return (i18n.RETENTION_YEAR_SINGULAR if years == 1
-                else i18n.RETENTION_YEARS_TEMPLATE.format(years=years))
+                else i18n.RETENTION_YEARS_TEMPLATE.format(years=fixed_digits(years, i18n)))
     months = max(1, round(days / 30))
-    return i18n.RETENTION_MONTHS_TEMPLATE.format(months=months, plural=(plural if months > 1 else ""))
+    return i18n.RETENTION_MONTHS_TEMPLATE.format(months=fixed_digits(months, i18n),
+                                                 plural=(plural if months > 1 else ""))
+
+
+def fixed_digits(value, i18n) -> str:
+    """``value`` (a number, or text) with its digits in the UI language's own digits, for a number that
+    is part of FIXED text - "২ বছর" (2 years) in Bengali - never for a live value (a speed, an amount,
+    a percentage, a clock), which stays Western in every language (I18nStrings.FIXED_TEXT_DIGITS).
+    Languages that write Western digits get ``str(value)`` unchanged."""
+    from netspeedtray.constants.i18n import I18nStrings
+    text = str(value)
+    digits = I18nStrings.FIXED_TEXT_DIGITS.get(str(getattr(i18n, "language", "") or ""))
+    return text.translate(str.maketrans("0123456789", digits)) if digits else text
 
 
 # --- Data Processing Utilities ---
