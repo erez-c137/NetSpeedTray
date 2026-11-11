@@ -260,3 +260,23 @@ def test_one_second_and_slower_keep_every_sample(rate):
     s.add_speed_data({}, now=datetime.fromtimestamp(NOW + 0.1), aggregated_up=1.0, aggregated_down=1.0)
     s.add_speed_data({}, now=datetime.fromtimestamp(NOW + 0.9), aggregated_up=3.0, aggregated_down=3.0)
     assert [p.upload for p in s.aggregated_history] == [1.0, 3.0]
+
+
+# --- the Stats sheet's "Above <throttle> for N" line ------------------------------------------
+
+@pytest.mark.parametrize("poll, expected", [(0.5, 60.0), (1.0, 60.0), (2.0, 120.0)])
+def test_time_above_throttle_temp_is_not_halved_at_half_a_second(q_app, poll, expected):
+    """hardware_history bins windows up to 6 h per second (hw_raw holds one row per metric per
+    second), so one pair stands for max(poll, 1 s): at 0.5 s, 60 s above the throttle temperature
+    read "30 s". 1 s and slower are unchanged (a 2 s poll writes one row per 2 s)."""
+    from netspeedtray.views.monitor.stats_detail import StatsDetailSheet
+    seen = []
+    sheet = SimpleNamespace(
+        _config={"throttle_temp_c": 90}, _poll=poll, _i18n=None, _copy_text_parts=[],
+        _tr=lambda key, default: default,
+        _dur=lambda secs: seen.append(secs) or f"{secs:g}s",
+        _formatter=lambda kind, unit: (lambda v: f"{v}"))
+    pairs = [(datetime.fromtimestamp(NOW + i * max(poll, 1.0)), 95.0) for i in range(60)]
+    assert StatsDetailSheet._context_line(sheet, "cpu_temp", "hw", "°C", pairs, None,
+                                          {"text_secondary": "#888888"}, {}) is not None
+    assert seen == [expected]
