@@ -31,6 +31,8 @@ def rc_params():
 @pytest.fixture
 def shaping(monkeypatch, rc_params):
     monkeypatch.setattr(mpl_fonts, "_MPL_SHAPES", True)
+    # A Bengali graph font installed (pinned: the font-missing case is its own test).
+    monkeypatch.setattr(mpl_fonts, "_SCRIPT_FONT_FOUND", {"bn": True})
 
 
 def _nirmala_path():
@@ -165,3 +167,39 @@ def test_history_starts_note_writes_its_date_like_the_ticks(monkeypatch, shaping
     bn_note = [t for t in notes["bn_BD"] if "১৭" in t]
     assert bn_note and "২০২৬" in bn_note[0] and not re.search("[0-9]", bn_note[0]), notes["bn_BD"]
     assert any(t.startswith("History starts") and "Oct 17 2026" in t for t in notes["en_US"]), notes["en_US"]
+
+
+def test_bengali_stays_english_without_a_bengali_font(monkeypatch, shaping):
+    """Shaping alone is not enough: without Nirmala UI, Vrinda or Shonar Bangla matplotlib would draw
+    the shaped Bengali in DejaVu Sans - boxes. The graph stays English there, even on 3.11."""
+    import matplotlib.font_manager as fm
+    monkeypatch.setattr(mpl_fonts, "_SCRIPT_FONT_FOUND", {})
+    no_bengali = [f for f in fm.fontManager.ttflist if f.name not in mpl_fonts._CJK_CANDIDATES["bn"]]
+    monkeypatch.setattr(fm.fontManager, "ttflist", no_bengali)
+    assert mpl_fonts.graph_text_is_english("bn_BD")
+    assert mpl_fonts.mpl_unshaped_locales() == frozenset({"bn_BD"})
+    assert mpl_fonts.graph_i18n(I18nStrings("bn_BD")).language == "en_US"
+    assert not mpl_fonts.graph_text_is_english("en_US") and not mpl_fonts.graph_text_is_english("he_IL")
+
+
+@pytest.mark.parametrize("span_days,shapes,expect,absent", [
+    (7, True, ["১৭ অক্টো", "14:05"], ["17", "১৪"]),          # Bengali graph: calendar digits Bengali
+    (400, True, ["১৭ অক্টো ২০২৬", "14:05"], ["2026"]),        # + the year past a year
+    (7, False, ["17 অক্টো", "14:05"], ["১৭"]),               # English graph (< 3.11): Western digits
+])
+def test_hover_readout_writes_calendar_digits_like_the_ticks(monkeypatch, rc_params, q_app, span_days,
+                                                             shapes, expect, absent):
+    """The Qt hover readout's date follows the graph's ticks: Bengali calendar digits where the graph
+    draws Bengali, Western where it falls back to English; the clock time stays Western."""
+    import matplotlib.dates as mdates
+    from types import SimpleNamespace
+    from netspeedtray.views.monitor.graph_hover import GraphHoverTooltip
+    monkeypatch.setattr(mpl_fonts, "_MPL_SHAPES", shapes)
+    monkeypatch.setattr(mpl_fonts, "_SCRIPT_FONT_FOUND", {"bn": True})
+    host = SimpleNamespace(_current_stat="network", config={"unit_type": "bits_decimal", "decimal_places": 1},
+                           i18n=I18nStrings("bn_BD"))
+    when = GraphHoverTooltip(host)._when(mdates.date2num(datetime(2026, 10, 17, 14, 5)), span_days)
+    for s in expect:
+        assert s in when, (s, when)
+    for s in absent:
+        assert s not in when, (s, when)

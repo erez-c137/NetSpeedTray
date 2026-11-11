@@ -63,15 +63,42 @@ def matplotlib_shapes_text() -> bool:
     return _MPL_SHAPES
 
 
+_SCRIPT_FONT_FOUND: Dict[str, bool] = {}
+
+
+def _script_font_installed(language: str) -> bool:
+    """True when one of the graph font candidates for ``language``'s script is installed (cached per
+    script). Without one, matplotlib would draw the script in DejaVu Sans - boxes."""
+    script = str(language).lower().replace("-", "_").split("_")[0]
+    if script not in _CJK_CANDIDATES:
+        return True
+    if script not in _SCRIPT_FONT_FOUND:
+        try:
+            import matplotlib.font_manager as fm
+            installed = {f.name for f in fm.fontManager.ttflist}
+            _SCRIPT_FONT_FOUND[script] = any(name in installed for name in _CJK_CANDIDATES[script])
+        except Exception as e:  # pragma: no cover - defensive; English is the safe graph
+            logger.debug("Could not enumerate installed fonts: %s", e)
+            _SCRIPT_FONT_FOUND[script] = False
+        if not _SCRIPT_FONT_FOUND[script]:
+            logger.warning("No graph font for '%s' installed (expected one of %s): the graph draws "
+                           "English.", language, _CJK_CANDIDATES[script])
+    return _SCRIPT_FONT_FOUND[script]
+
+
 def mpl_unshaped_locales() -> frozenset:
-    """The locales whose graph text is English with THIS matplotlib: MPL_UNSHAPED_LOCALES before 3.11,
-    none once matplotlib shapes text."""
-    return frozenset() if matplotlib_shapes_text() else MPL_UNSHAPED_LOCALES
+    """The locales whose graph text is English with THIS matplotlib: MPL_UNSHAPED_LOCALES before 3.11;
+    once matplotlib shapes text, only those whose script has no graph font installed."""
+    return frozenset(lang for lang in MPL_UNSHAPED_LOCALES if graph_text_is_english(lang))
 
 
 def graph_text_is_english(language: Optional[str]) -> bool:
-    """True when the graph's matplotlib text must be English for ``language`` (see above)."""
-    return bool(language) and str(language) in mpl_unshaped_locales()
+    """True when the graph's matplotlib text must be English for ``language`` (see above): matplotlib
+    does not shape its script, or no font for the script is installed (Nirmala UI / Vrinda / Shonar
+    Bangla for Bengali), where shaped text would still be boxes."""
+    if not language or str(language) not in MPL_UNSHAPED_LOCALES:
+        return False
+    return not matplotlib_shapes_text() or not _script_font_installed(str(language))
 
 
 _EN_I18N = None
