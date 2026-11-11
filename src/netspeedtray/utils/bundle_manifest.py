@@ -21,6 +21,14 @@ built, and that the installer build must not carry; its content is never read, a
 ``_MARKER_MAX_BYTES``). Directories are not listed: an empty one runs nothing, and any file in one is
 an extra file.
 
+FORMAT CONTRACT - read before changing anything here. The resource is ``{"v": 1, "exe": ...,
+"files": {...}}`` and every shipped updater (2.2.1 on) accepts ONLY ``v == 1`` and refuses an exe
+without it. So every future build MUST keep embedding a v1-readable ``NST_MANIFEST``, forever: a
+release that replaced it with a v2 (or dropped it) would have every installed portable copy refuse
+the update. Need more? Add a SECOND resource (e.g. ``NST_MANIFEST_V2``) beside the v1 one, and
+teach newer readers to prefer it. ``FORMAT_VERSION`` is what the build writes; a build-config test
+pins it to 1.
+
 This module is stdlib-only (ctypes for the resource read): the update applier imports it, and so does
 the build script, by file path, without the rest of the package.
 """
@@ -43,8 +51,10 @@ MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 _HEX = frozenset("0123456789abcdef")
 _CHUNK = 1024 * 1024
 
-# Windows file attribute bit for reparse points (junctions, symlinks, cloud placeholders).
+# Windows file attribute bit for reparse points (junctions, symlinks, cloud placeholders), and the
+# reparse-tag bit that marks a tag as a NAME SURROGATE - one that names another location.
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+_REPARSE_NAME_SURROGATE = 0x20000000
 
 
 class ManifestError(ValueError):
@@ -61,12 +71,27 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
+def _reparse_is_link(attrs: int, tag: int) -> bool:
+    """A reparse point that NAMES another location (symlink, junction, mount point), or one whose
+    tag cannot be read. Cloud-file placeholders (OneDrive, Dropbox: IO_REPARSE_TAG_CLOUD_*) are
+    reparse points WITHOUT the name-surrogate bit: their content is the file's own and is hashed
+    like any other, so they pass. The same rule as update_applier._reparse_is_link (duplicated:
+    this module is loaded by file path, without the package)."""
+    if not attrs & _FILE_ATTRIBUTE_REPARSE_POINT:
+        return False
+    return not tag or bool(tag & _REPARSE_NAME_SURROGATE)
+
+
 def _is_link_like(entry: "os.DirEntry") -> bool:
+    """A symlink, junction or mount point (never followed); unreadable counts as one (fail-safe).
+    A 2.1.7 build stages a hands-off update in Downloads, which may sit in a cloud-synced folder
+    whose files are placeholders - refusing every reparse point refused those genuine copies."""
     try:
-        if entry.is_symlink():
+        if entry.is_symlink() or getattr(entry, "is_junction", lambda: False)():
             return True
         st = entry.stat(follow_symlinks=False)
-        return bool(getattr(st, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT)
+        return _reparse_is_link(getattr(st, "st_file_attributes", 0),
+                                getattr(st, "st_reparse_tag", 0))
     except OSError:
         return True
 

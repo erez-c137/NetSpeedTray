@@ -286,3 +286,21 @@ def test_the_embed_step_refuses_an_already_signed_exe_and_keeps_the_pkg():
     src = _read("build", "ci", "embed-manifest.py")
     assert "already signed" in src
     assert "endswith(overlay)" in src, "the PyInstaller PKG must be checked after the update"
+
+
+def test_the_embed_step_writes_a_v1_manifest(tmp_path):
+    """The format contract (bundle_manifest docstring, DEPLOYING.md): every shipped updater since
+    2.2.1 accepts ONLY format v1 and refuses an exe without it, so every build must keep embedding
+    a v1 NST_MANIFEST. A v2 goes in a second resource beside it, never in place of it."""
+    import json
+    from netspeedtray.tests.unit.test_bundle_manifest import EXE, _app, _embed_module, _unsigned_pe
+    from netspeedtray.utils import bundle_manifest as bm
+    d = _app(tmp_path)
+    _unsigned_pe(d / EXE)
+    assert _embed_module().main([str(d), "--allow-non-pyinstaller"]) == 0
+    raw = bm.read_from_exe(str(d / EXE))
+    assert raw is not None, "NST_MANIFEST was not embedded"
+    m = json.loads(raw.decode("utf-8"))
+    assert m["v"] == 1, "the build must keep writing format v1 (add a second resource for v2)"
+    assert bm.RESOURCE_NAME == "NST_MANIFEST" and bm.RESOURCE_TYPE == 10
+    assert bm.parse(raw)["v"] == 1, "and the reader must keep accepting v1"

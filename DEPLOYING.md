@@ -199,6 +199,11 @@ they have one. Since 2.2.1 the signed `NetSpeedTray.exe` carries a SHA-256 of ev
 checks. Smart App Control: a clean install runs; upgrades are still being confirmed in
 [issue #333](https://github.com/erez-c137/NetSpeedTray/issues/333).
 
+**Manifest format contract.** The manifest is format v1 (`{"v": 1, ...}`), and every shipped updater
+since 2.2.1 accepts only v1 and refuses an exe without it. Every future build must therefore keep
+embedding a v1-readable `NST_MANIFEST`; a new format goes in a second resource beside it (e.g.
+`NST_MANIFEST_V2`), never in place of it. A build-config test pins the embed step to v1.
+
 ## Rollback
 
 Installing an older version over 2.2 works, but 2.2 converts the history database. Going back to 2.1.x
