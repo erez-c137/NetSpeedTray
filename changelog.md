@@ -75,7 +75,7 @@ ALSO
 
 ---
 
-## [2.2.0-rc.8] - November 10, 2026
+## [2.2.0-rc.8] - November 11, 2026
 
 *A release candidate, for testers. It's a manual download from the release page - the in-app
 updater, WinGet and the Store never offer prereleases.*
