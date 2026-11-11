@@ -570,16 +570,47 @@ def _pick_default_route(routes, state) -> Optional[_DefaultRoute]:
     return best[1] if best is not None else None
 
 
-def _iphlp_default_gateway(lib=None) -> Optional[str]:
+def _iphlp_default_gateway(lib=None, kinds=None) -> Optional[str]:
     """The IPv4 default gateway from GetIpForwardTable2 (no admin, no COM, nothing sent): None when
     the table has no default route through a router. Raises RouteTableUnavailable when the table
     itself could not be read."""
-    route = _iphlp_default_route(lib)
+    route = _iphlp_default_route(lib, kinds)
     return route.next_hop if route is not None else None
 
 
-def _iphlp_default_route(lib=None) -> Optional[_DefaultRoute]:
-    """The default route Windows uses (see _iphlp_default_gateway), with its interface."""
+def _adapter_kinds_by_luid() -> dict:
+    """{InterfaceLuid: KIND_*} from the app's one adapter classifier (utils/interface_classifier:
+    GetIfTable2's ifType + hardware flag + the name/description keywords). {} when it can't be read."""
+    try:
+        from netspeedtray.utils.interface_classifier import classify_interface, read_os_adapters
+        return {info.luid: classify_interface(info.name, info)
+                for info in read_os_adapters().values() if info.luid}
+    except Exception:
+        return {}
+
+
+def _choose_default_route(routes, state, kinds) -> Optional[_DefaultRoute]:
+    """The router the probe pings and Check connection describes: a PHYSICAL adapter's default
+    route when one is connected - so a full-tunnel VPN (its own 0.0.0.0/0 through a tunnel next hop,
+    usually at a lower metric) does not turn the "gateway" hop into a hop across the internet, where
+    loss is no longer "your Wi-Fi / LAN" - else the route Windows uses (_pick_default_route).
+    ``kinds()`` -> {luid: KIND_*}; asked only when there is a choice to make."""
+    if len(routes) <= 1:
+        return routes[0] if routes else None
+    try:
+        kind_of = kinds() or {}
+    except Exception:
+        kind_of = {}
+    physical = [r for r in routes if kind_of.get(r.luid) == constants.network.interface.KIND_PHYSICAL]
+    if physical:
+        chosen = _pick_default_route(physical, state)
+        if chosen is not None:
+            return chosen
+    return _pick_default_route(routes, state)
+
+
+def _iphlp_default_route(lib=None, kinds=None) -> Optional[_DefaultRoute]:
+    """The default route to use (see _choose_default_route), with its interface."""
     try:
         lib = lib or _route_api()
         ptr = ctypes.POINTER(_MIB_IPFORWARD_TABLE2)()
@@ -595,18 +626,18 @@ def _iphlp_default_route(lib=None) -> Optional[_DefaultRoute]:
             lib.FreeMibTable(ptr)
         except Exception:
             pass
-    if len(routes) <= 1:
-        return routes[0] if routes else None
-    return _pick_default_route(routes, lambda luid: _interface_state(lib, luid))
+    return _choose_default_route(routes, lambda luid: _interface_state(lib, luid),
+                                 kinds or _adapter_kinds_by_luid)
 
 
 _route_fallback_logged = False
 
 
 def default_gateway_ip() -> Optional[str]:
-    """The default gateway IPv4 (no admin). From the IP Helper route table - the router Windows
-    actually routes through, without loading WMI/COM (memory plan 2.5) - and through WMI only when
-    that table cannot be read at all. None if there is no default route through a router."""
+    """The default gateway IPv4 (no admin). From the IP Helper route table, without loading WMI/COM
+    (memory plan 2.5): a physical adapter's default route when there is one, else the route Windows
+    uses (_choose_default_route) - and through WMI only when that table cannot be read at all. None
+    if there is no default route through a router."""
     global _route_fallback_logged
     try:
         return _iphlp_default_gateway()
