@@ -2077,3 +2077,30 @@ def test_position_manager_hiding_off_context_and_setting_on_unchanged(q_app):
     with _left_bar_patches():
         ctx = pm._app_overlap_context()
     assert ctx.may_hide is True and ctx.stepped == STEPPED and ctx.tray_spot == TRAY_SPOT
+
+
+def test_a_probe_landing_before_the_tick_after_turning_hiding_on_does_not_blink(off_rig):
+    """Hiding turned on, and a probe lands before the 1 s tick: it hides the widget under the new setting,
+    and the tick must not then reset that yield (it showed the widget for one probe interval: a blink)."""
+    r = off_rig(clear=False)
+    r.start(left_aligned(28, overflow=True))         # hiding off: stays visible at the default spot
+    assert not r.y.yielded
+    r.may_hide = True
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, overflow=True), advance=1.0)
+    assert r.y.yielded and r.changes == 1
+    r.y.sync()                                       # the tick
+    assert r.y.yielded and r.changes == 1
+
+
+def test_a_probe_landing_before_the_tick_after_turning_hiding_off_shows_the_widget(off_rig):
+    r = off_rig(clear=False)
+    r.may_hide = True
+    r.start(left_aligned(28, overflow=True))
+    assert r.y.yielded and r.changes == 1
+    r.may_hide = False
+    r.y.note_foreground_change()
+    r.probe(left_aligned(28, overflow=True), advance=1.0)
+    assert not r.y.yielded and r.changes == 2        # the gate re-ran: shown without waiting for the tick
+    r.y.sync()
+    assert not r.y.yielded and r.changes == 2
