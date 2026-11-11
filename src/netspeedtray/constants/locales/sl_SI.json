@@ -72,6 +72,8 @@
     "GPU_ADAPTER_LABEL": "Prikazani GPU",
     "GPU_ADAPTER_DESCRIPTION": "Temperatura in moč se prikažeta le, če je njun senzor od proizvajalca tega GPU.",
     "GPU_ADAPTER_AUTO": "Samodejno (najbolj obremenjen)",
+    "HOVER_LIST_ALL_GPUS_LABEL": "Ob prehodu miške čez gradnik pokaži vse GPU-je",
+    "GPU_ON_TASKBAR_MARKER": "v opravilni vrstici",
     "TEMPERATURE_UNIT_LABEL": "Enota temperature",
     "TEMPERATURE_UNIT_CELSIUS": "Celzij (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",

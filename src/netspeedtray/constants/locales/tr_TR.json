@@ -72,6 +72,8 @@
     "GPU_ADAPTER_LABEL": "Gösterilecek GPU",
     "GPU_ADAPTER_DESCRIPTION": "Sıcaklık ve güç yalnızca sensörleri bu GPU'nun üreticisine aitse gösterilir.",
     "GPU_ADAPTER_AUTO": "Otomatik (en yoğun)",
+    "HOVER_LIST_ALL_GPUS_LABEL": "Widget'ın üzerine gelindiğinde tüm GPU'ları listele",
+    "GPU_ON_TASKBAR_MARKER": "görev çubuğunda",
     "TEMPERATURE_UNIT_LABEL": "Sıcaklık birimi",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",

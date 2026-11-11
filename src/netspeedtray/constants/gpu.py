@@ -76,6 +76,37 @@ class GpuConstants:
     ADAPTER_RECHECK_SEC: Final[float] = 5.0
     ADAPTER_RECHECK_MAX: Final[int] = 6
 
+    # The hover card's per-GPU list (#236, 2.2.1). It never runs nvidia-smi: it reuses the Automatic
+    # poll's cached reading, and only while that is recent - at most this many nvidia-smi sub-cadence
+    # intervals old (a cache nvidia-smi stopped refreshing is not shown as a live reading).
+    LIST_SMI_CACHE_MAX_AGE_POLLS: Final[float] = 3.0
+    # A listed GPU's name is elided at this many logical px, so a long driver name never widens the card.
+    LIST_NAME_MAX_WIDTH_PX: Final[int] = 170
+
+    # Hybrid (Optimus) laptops, 2.2.1: nvidia-smi goes through NVML, and asking a sleeping dGPU
+    # anything powers it up - so a 5 s nvidia-smi poll keeps it from ever sleeping (battery drain).
+    # On a laptop (battery, mobile platform role) with an NVIDIA GPU AND a GPU of another maker (the
+    # iGPU), nvidia-smi is only asked for temperature / power while the dGPU is already awake: its PDH
+    # engine utilization (per LUID, read every tick anyway - PDH and DXGI never wake a GPU, Task
+    # Manager reads the same counters) was above HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT within the hold:
+    # HYBRID_DGPU_AWAKE_HOLD_SEC, or HYBRID_DGPU_AWAKE_HOLD_WINDOWS PDH sample windows when the update
+    # rate is slow (Power Saver's 10 s). The hold rides out a game's 0 % loading-screen ticks; once
+    # the work stops the queries stop and the dGPU sleeps. A sample whose window holds our own
+    # nvidia-smi call never counts (see StatsMonitorThread._nvidia_awake), so a wake nvidia-smi itself
+    # caused can never keep the gate open, at any update rate.
+    HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT: Final[float] = 0.0   # strictly above
+    HYBRID_DGPU_AWAKE_HOLD_SEC: Final[float] = 15.0
+    HYBRID_DGPU_AWAKE_HOLD_WINDOWS: Final[float] = 3.0
+    # A hybrid whose PDH GPU utilization cannot be read polls nvidia-smi without the gate (readings
+    # never go blank): every 5 s on AC or an unknown power source, every this many seconds on battery.
+    HYBRID_BLIND_BATTERY_POLL_SEC: Final[float] = 30.0
+    # nvidia-smi that keeps failing (timeout, non-zero exit) is retried after BASE * 2^(n-1) s for the
+    # n-th failure in a row, capped at MAX - never every 5 s forever. Logged once per failure streak,
+    # at the LOG_AFTER-th failure.
+    NVIDIA_SMI_BACKOFF_BASE_SEC: Final[float] = 10.0
+    NVIDIA_SMI_BACKOFF_MAX_SEC: Final[float] = 300.0
+    NVIDIA_SMI_BACKOFF_LOG_AFTER: Final[int] = 3
+
     VENDOR_NVIDIA: Final[int] = 0x10DE
     VENDOR_AMD: Final[int] = 0x1002
     VENDOR_AMD_ALT: Final[int] = 0x1022
@@ -102,6 +133,16 @@ class GpuConstants:
             raise ValueError("SHARED_USAGE_FALLBACK_MIN_MIB must not be negative.")
         if not 0 < self.SHARED_BUDGET_FRACTION_OF_RAM <= 1:
             raise ValueError("SHARED_BUDGET_FRACTION_OF_RAM must be in (0, 1].")
+        if self.LIST_SMI_CACHE_MAX_AGE_POLLS <= 0 or self.LIST_NAME_MAX_WIDTH_PX <= 0:
+            raise ValueError("LIST_SMI_CACHE_MAX_AGE_POLLS and LIST_NAME_MAX_WIDTH_PX must be positive.")
+        if (self.HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT < 0 or self.HYBRID_DGPU_AWAKE_HOLD_SEC <= 0
+                or self.HYBRID_BLIND_BATTERY_POLL_SEC <= 0):
+            raise ValueError("HYBRID_DGPU_AWAKE_* must be non-negative / positive.")
+        if not 0 < self.NVIDIA_SMI_BACKOFF_BASE_SEC <= self.NVIDIA_SMI_BACKOFF_MAX_SEC:
+            raise ValueError("NVIDIA_SMI_BACKOFF_BASE_SEC must be in (0, NVIDIA_SMI_BACKOFF_MAX_SEC].")
+        if self.NVIDIA_SMI_BACKOFF_LOG_AFTER < 1 or self.HYBRID_DGPU_AWAKE_HOLD_WINDOWS < 2:
+            # Fewer than 2 windows: one ambiguous sample between two clean ones would close the gate.
+            raise ValueError("NVIDIA_SMI_BACKOFF_LOG_AFTER must be >= 1, HYBRID_DGPU_AWAKE_HOLD_WINDOWS >= 2.")
 
 
 # Singleton instance for easy access

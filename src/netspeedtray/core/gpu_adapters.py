@@ -42,6 +42,9 @@ class AdapterInfo(NamedTuple):
     dedicated_video_bytes: int
     shared_system_bytes: int
     software: bool                   # Basic Render Driver / WARP
+    # Displays attached to this adapter's own outputs (IDXGIAdapter::EnumOutputs) when the list was
+    # read. On a hybrid laptop, a monitor wired to the dGPU's port keeps it awake (2.2.1 Optimus gate).
+    outputs: int = 0
 
 
 def pdh_instance_luid(instance: object) -> Optional[Tuple[int, int]]:
@@ -80,6 +83,34 @@ def same_maker_siblings(adapters: Optional[Iterable[AdapterInfo]], adapter: Adap
     return [a for a in hardware_adapters(adapters or []) if a.vendor_id == adapter.vendor_id and a != adapter]
 
 
+_TRADEMARKS = re.compile(r"\((?:r|tm|c)\)|[®™©]", re.IGNORECASE)
+
+
+def display_name(name: object) -> str:
+    """A DXGI Description as the hover card lists it (#236): the (R)/(TM)/®/™ marks dropped and runs
+    of spaces collapsed - "AMD Radeon(TM) Graphics" -> "AMD Radeon Graphics". Display only: the picker
+    and the config keep the driver's own spelling."""
+    return " ".join(_TRADEMARKS.sub(" ", str(name or "")).split())
+
+
+def numbered_display_names(names: Iterable[object]) -> List[str]:
+    """``display_name`` of each, in order; names shared by two or more cards get " #1", " #2"... in
+    that order, so two identical RTX 4090s are told apart."""
+    shown = [display_name(n) for n in names]
+    counts: dict = {}
+    for s in shown:
+        counts[s.casefold()] = counts.get(s.casefold(), 0) + 1
+    seen: dict = {}
+    out = []
+    for s in shown:
+        key = s.casefold()
+        if counts[key] > 1:
+            seen[key] = seen.get(key, 0) + 1
+            s = f"{s} #{seen[key]}"
+        out.append(s)
+    return out
+
+
 def sensor_matches_vendor(text: object, vendor_id: int) -> bool:
     """Whether a sensor's hardware id / name / identifier names the maker ``vendor_id`` (see
     constants.gpu.VENDOR_SENSOR_TOKENS). An unknown vendor matches nothing."""
@@ -115,7 +146,28 @@ _IID_IDXGIFactory1 = _GUID(0x770AAE78, 0xF26F, 0x4DBA,
 # IDXGIAdapter 7-9, IDXGIAdapter1 10).
 _RELEASE = 2
 _FACTORY1_ENUM_ADAPTERS1 = 12
+_ADAPTER_ENUM_OUTPUTS = 7
 _ADAPTER1_GET_DESC1 = 10
+_MAX_OUTPUTS = 16
+
+
+def _count_outputs(adapter: ctypes.c_void_p) -> int:
+    """How many outputs (attached displays) DXGI lists for ``adapter``; 0 on any failure. Each
+    output is released at once - no device is created."""
+    try:
+        enum = _vcall(adapter, _ADAPTER_ENUM_OUTPUTS, ctypes.c_long, wintypes.UINT, ctypes.POINTER(ctypes.c_void_p))
+        n = 0
+        for j in range(_MAX_OUTPUTS):
+            output = ctypes.c_void_p()
+            hr = enum(adapter, j, ctypes.byref(output))
+            if hr < 0 or not output:
+                break
+            _release(output)
+            n += 1
+        return n
+    except Exception as e:
+        logger.debug("EnumOutputs failed: %s", e)
+        return 0
 
 
 def _vcall(obj: ctypes.c_void_p, slot: int, restype, *args_types):
@@ -168,7 +220,8 @@ def enumerate_adapters() -> Optional[List[AdapterInfo]]:
                     luid=(int(desc.AdapterLuid.HighPart) & 0xFFFFFFFF, int(desc.AdapterLuid.LowPart)),
                     dedicated_video_bytes=int(desc.DedicatedVideoMemory),
                     shared_system_bytes=int(desc.SharedSystemMemory),
-                    software=bool(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)))
+                    software=bool(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE),
+                    outputs=_count_outputs(adapter)))
             finally:
                 _release(adapter)
         return out

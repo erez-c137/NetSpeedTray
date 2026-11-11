@@ -143,9 +143,35 @@ def dump(data: dict) -> str:
     return "{\n" + ",\n".join(lines) + "\n}\n"
 
 
-def test_automatic_matches_the_pre_picker_golden(q_app):
+# On a hybrid laptop (2.2.1 Optimus gate, owner decision 2026-11-11: zero dGPU wakes at app start)
+# nvidia-smi is never run just for the VRAM total, so the one hybrid NVIDIA scenario reads DXGI's
+# dedicated size (12288 MiB) where the desktop golden has nvidia-smi's 12282 MiB - in that field only.
+LAPTOP_SCENARIO, VRAM_TOTAL, SMI_TOTAL, DXGI_TOTAL = "hybrid_intel_nvidia_smi|", 2, 12282.0, 12288.0
+
+
+def laptop_golden(golden: dict) -> dict:
+    out = json.loads(json.dumps(golden))
+    for key, rows in out.items():
+        if key.startswith(LAPTOP_SCENARIO):
+            for row in rows:
+                assert row[VRAM_TOTAL] == SMI_TOTAL
+                row[VRAM_TOTAL] = DXGI_TOTAL
+    return out
+
+
+@pytest.mark.parametrize("laptop", [False, True], ids=["desktop", "laptop"])
+def test_automatic_matches_the_pre_picker_golden(q_app, monkeypatch, laptop):
+    """On a laptop the hybrid scenarios go through the 2.2.1 Optimus gate; the golden still holds -
+    except the one hybrid NVIDIA scenario's VRAM total (laptop_golden) - pinned both ways so CI
+    never depends on whether the runner has a battery or is on it."""
     import netspeedtray.core.monitor_thread as mt
+    from netspeedtray.utils import power_utils
+    monkeypatch.setattr(power_utils, "battery_presence", lambda: laptop)
+    monkeypatch.setattr(power_utils, "platform_is_mobile", lambda: laptop)
+    monkeypatch.setattr(power_utils, "ac_line_status", lambda: 1)
     golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    if laptop:
+        golden = laptop_golden(golden)
     current = run_all(mt.StatsMonitorThread, mt)
     assert set(current) == set(golden)
     diffs = [k for k in golden if current[k] != golden[k]]

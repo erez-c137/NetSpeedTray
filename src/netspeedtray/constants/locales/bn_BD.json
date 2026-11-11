@@ -72,6 +72,8 @@
     "GPU_ADAPTER_LABEL": "যে জিপিইউ দেখানো হবে",
     "GPU_ADAPTER_DESCRIPTION": "তাপমাত্রা ও পাওয়ার শুধু তখনই দেখা যায় যখন তাদের সেন্সর এই জিপিইউ-র নির্মাতার হয়।",
     "GPU_ADAPTER_AUTO": "স্বয়ংক্রিয় (সবচেয়ে ব্যস্ত)",
+    "HOVER_LIST_ALL_GPUS_LABEL": "উইজেটের ওপর মাউস রাখলে সব জিপিইউ দেখান",
+    "GPU_ON_TASKBAR_MARKER": "টাস্কবারে",
     "TEMPERATURE_UNIT_LABEL": "তাপমাত্রার একক",
     "TEMPERATURE_UNIT_CELSIUS": "সেলসিয়াস (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "ফারেনহাইট (°F)",

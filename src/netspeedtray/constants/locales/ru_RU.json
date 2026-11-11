@@ -72,6 +72,8 @@
     "GPU_ADAPTER_LABEL": "Отображаемая видеокарта",
     "GPU_ADAPTER_DESCRIPTION": "Температура и мощность показываются, только если их датчик принадлежит производителю этой видеокарты.",
     "GPU_ADAPTER_AUTO": "Автоматически (самая загруженная)",
+    "HOVER_LIST_ALL_GPUS_LABEL": "Показывать все видеокарты при наведении на виджет",
+    "GPU_ON_TASKBAR_MARKER": "на панели задач",
     "TEMPERATURE_UNIT_LABEL": "Единица температуры",
     "TEMPERATURE_UNIT_CELSIUS": "Цельсий (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Фаренгейт (°F)",
