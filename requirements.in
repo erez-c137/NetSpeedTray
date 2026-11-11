@@ -2,12 +2,16 @@
 # Compile on WINDOWS (pip-compile on Linux drops every sys_platform == "win32" pin - Dependabot does):
 #   pip-compile --upgrade --output-file=requirements.txt requirements.in
 #   pip-compile --upgrade --output-file=dev-requirements.txt dev-requirements.in
-# Held below Qt 6.12: Qt 6.12.0 ignores the opsz axis in DirectWrite glyph advances, so the widget's
-# Segoe UI Variable (Text optical size) measures as Small - "888.8 Mbps" 64 px instead of 60, and
-# compact side-taskbar layouts drop a tier. 6.11 measures like 6.10. Both caps: PyQt6 alone lets the
-# resolver pair an ancient PyQt6 with the newest Qt binaries.
-PyQt6>=6.11,<6.12
-PyQt6-Qt6<6.12
+# Held at 6.10.x: 6.11 costs ~2.5 MB idle, 6.12 widens text.
+#   6.11: +2.5 MB USS median at idle in frozen builds (Qt's font database lists 543 families vs 323,
+#         paid at first font-db population) - 2.2.1 bump, PR #519.
+#   6.12.0: DirectWrite ignores the opsz axis in glyph advances - the widget's Segoe UI Variable Text
+#         measures as Small ("888.8 Mbps" 64 px instead of 60), compact side-bar layouts drop a tier.
+# Cap PyQt6-Qt6 and PyQt6-sip too: PyQt6 alone lets the resolver pair an old PyQt6 with the newest Qt
+# binaries. sip pinned to what 2.2.0 ships.
+PyQt6>=6.10.2,<6.11
+PyQt6-Qt6>=6.10.2,<6.11
+PyQt6-sip==13.11.0
 pywin32; sys_platform == "win32"       # Windows-only (no Linux wheels; Dependabot resolves on Linux)
 psutil
 matplotlib

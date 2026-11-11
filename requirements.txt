@@ -31,14 +31,16 @@ psutil==7.2.2
     # via -r requirements.in
 pyparsing==3.3.3
     # via matplotlib
-pyqt6==6.11.0
+pyqt6==6.10.2
     # via -r requirements.in
-pyqt6-qt6==6.11.2
+pyqt6-qt6==6.10.2
     # via
     #   -r requirements.in
     #   pyqt6
-pyqt6-sip==13.13.0
-    # via pyqt6
+pyqt6-sip==13.11.0
+    # via
+    #   -r requirements.in
+    #   pyqt6
 python-bidi==0.6.12
     # via -r requirements.in
 python-dateutil==2.9.0.post0
