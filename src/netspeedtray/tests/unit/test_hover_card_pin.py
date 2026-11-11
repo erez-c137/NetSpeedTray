@@ -32,11 +32,6 @@ from netspeedtray.views.widget.main import NetworkSpeedWidget as NSW
 EN = I18nStrings("en_US")
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 _BOUND = ("hover_card_state", "pin_hover_card", "dismiss_hover_card", "_hide_usage_hover_card",
           "_on_foreground_for_hover_card", "_on_pointer_left", "_on_immediate_hide_requested")
 

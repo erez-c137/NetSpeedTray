@@ -18,12 +18,6 @@ from netspeedtray import constants
 from netspeedtray.views.widget.layout import WidgetLayoutManager
 
 
-@pytest.fixture(scope="session", autouse=True)
-def qt_app():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
 def _screen(geo: QRect, avail: QRect):
     s = MagicMock()
     s.geometry.return_value = geo

@@ -12,12 +12,6 @@ from netspeedtray.utils.summaries import summarize_raw, summarize_rollup
 from netspeedtray.views.monitor.stats_detail import StatsDetailSheet
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 class _WS:
     """download = raw/exact; cpu = rollup (avg+max only); cpu_temp = empty (no sensor)."""
     def __init__(self):

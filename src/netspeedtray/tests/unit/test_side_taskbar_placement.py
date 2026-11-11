@@ -43,11 +43,6 @@ H = 56                       # a compact side-bar widget (3 rows + margins)
 TRAY_TOP = 908               # the owner's tray on a 1080 px bar
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 def _x0(edge, thickness):
     return 1920 - thickness if edge == RIGHT else 0
 

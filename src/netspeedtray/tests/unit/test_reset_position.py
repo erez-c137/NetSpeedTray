@@ -20,11 +20,6 @@ from netspeedtray.views.widget.main import NetworkSpeedWidget as NSW
 DEFAULTS = constants.config.defaults
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 def test_position_manager_reset_clears_the_free_spot_and_the_docked_offsets():
     cfg = {"tray_offset_y": 709, "tray_offset_x": 250, "position_x": 5, "position_y": 6}
     widget = MagicMock()

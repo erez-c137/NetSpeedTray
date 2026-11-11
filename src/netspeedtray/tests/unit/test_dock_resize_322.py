@@ -30,11 +30,6 @@ from netspeedtray.views.widget import main as widget_main
 from netspeedtray.views.widget.layout import WidgetLayoutManager
 
 
-@pytest.fixture(scope="session", autouse=True)
-def qt_app():
-    yield QApplication.instance() or QApplication([])
-
-
 SRC_DIR = Path(__file__).resolve().parents[3]          # .../src
 FONT_DIR = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
 SCREEN_W, SCREEN_H = 1920, 1080

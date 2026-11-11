@@ -19,11 +19,6 @@ E = constants.taskbar.edge
 ORIGIN_X, SCALE = 1920.0, 1.5        # a 150 % monitor right of a 1920 px primary
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 def _phys(logical_x: float) -> int:
     return int(round(ORIGIN_X + (logical_x - ORIGIN_X) * SCALE))
 

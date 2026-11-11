@@ -13,12 +13,6 @@ from netspeedtray.views.monitor.hardware.feed import HardwareFeed
 import netspeedtray.views.monitor.hardware.worker as W
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 class _FakeProc:
     def __init__(self, pid, name, cpu, rss):
         self.info = {"pid": pid, "name": name}

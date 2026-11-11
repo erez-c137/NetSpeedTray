@@ -67,12 +67,6 @@ def test_hybrid_gpu_returns_neutral(monkeypatch):
         hv.gpu_vendor.cache_clear()                 # restore real detection for other tests
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def test_graphhost_hw_styles_override_and_default(q_app):
     from unittest.mock import MagicMock
     from netspeedtray.views.monitor.graph_host import GraphHost

@@ -14,7 +14,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 
 # ONE QApplication for the whole process, created here and held by this module until exit.
-# Many test modules declare their own ``q_app``/``qt_app`` fixture (``QApplication.instance() or
+# Many test modules used to declare their own ``q_app``/``qt_app`` fixture (all removed in 2.2.1) (``QApplication.instance() or
 # QApplication([])``), several module-scoped. Whichever of them ran first in a process used to CREATE
 # the app, and was then its only owner: at that module's teardown the wrapper was released, the C++
 # QApplication was destroyed, and the next Qt test made a second one. After that recreate, PyQt6 no
@@ -35,6 +35,14 @@ def q_app():
     so this coexists with them (both return the same singleton).
     """
     return QApplication.instance() or _SESSION_APP
+
+
+@pytest.fixture(scope="session")
+def qt_app(q_app):
+    """The same session app under the other name some modules use. Test modules no longer declare their
+    own ``q_app``/``qt_app`` that only returns the app (this module creates it at import): only a
+    fixture that does EXTRA setup belongs in a test module, and it should say so."""
+    return q_app
 
 
 def dispose_widget(widget) -> None:

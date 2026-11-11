@@ -23,12 +23,6 @@ _B = constants.network.latency.BURST_SIZE
 SLOW_COLOR = constants.network.latency.VERDICT_COLORS["slow"]
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture(autouse=True)
 def _no_real_network(monkeypatch):
     """Nothing here may read the machine's real adapters or WMI."""

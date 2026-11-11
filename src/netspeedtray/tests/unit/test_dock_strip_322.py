@@ -27,12 +27,6 @@ from netspeedtray.utils.taskbar_utils import TaskbarInfo
 from netspeedtray.views.widget.layout import WidgetLayoutManager
 
 
-@pytest.fixture(scope="session", autouse=True)
-def qt_app():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
 SCREEN_W, SCREEN_H = 1920, 1080
 TOP = constants.taskbar.edge.TOP
 BOTTOM = constants.taskbar.edge.BOTTOM

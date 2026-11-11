@@ -27,12 +27,6 @@ ANCHOR = "1.1.1.1"
 _B = constants.network.latency.BURST_SIZE   # echoes per hop per cycle (2.2 D2)
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _cycles(monkeypatch, config, reply, n, gateway=GW_IP):
     """Drive the REAL _run_loop for `n` cycles. `reply(ip, cycle)` -> ms or None (timeout).
     Returns (the emitted samples, per-cycle lists of the IPs actually pinged)."""
