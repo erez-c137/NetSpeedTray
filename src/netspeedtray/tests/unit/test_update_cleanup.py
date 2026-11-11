@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from netspeedtray.core import update_applier as ua
+from netspeedtray.utils.bundle_manifest import read_from_exe as _REAL_READ_FROM_EXE
 
 
 # ----------------------------------------------------------------------------------- helpers
@@ -470,13 +471,23 @@ def checksums(monkeypatch):
     from netspeedtray.core import update_installer as ui
     from netspeedtray.utils.signature_verifier import VerifyResult
 
-    def _for(z):
+    def _for(z, manifest_of=None):
         line = f"{ui._sha256_file(str(z)).upper()} NetSpeedTray-Portable-9.9.9.zip"
         monkeypatch.setattr(ui, "_fetch_checksums", lambda url: line)
         # A real release's EXE is SignPath-signed (U8 gate); these fakes stand in for one.
         monkeypatch.setattr(ui, "verify_file", lambda path: VerifyResult(True, "trusted",
                                                                          subject_cn="SignPath Foundation"))
+        # ...and carries the manifest the build embedded (2.2.1): hashed from the folder the release
+        # zip was built from (or `manifest_of`), and returned for the exe as its resource would be.
+        _signed_manifest(monkeypatch, manifest_of or z.parent.parent / "build" / "NetSpeedTray")
     return _for
+
+
+def _signed_manifest(monkeypatch, built_from: Path):
+    from netspeedtray.utils import bundle_manifest as bm
+    payload = bm.serialize(bm.build_manifest(str(built_from), ua.APP_EXE))
+    monkeypatch.setattr(bm, "read_from_exe", lambda exe: payload)
+    return payload
 
 
 # ------------------------------------------------------------- U8: the staged EXE must be signed
@@ -558,6 +569,83 @@ def test_u8_the_updater_says_why_and_keeps_the_current_version(q_app, monkeypatc
     assert launched == []
     assert not tmp.exists(), "the unverified download is deleted"
     assert up.is_running() is False
+
+
+# ----------------------------------------- 2.2.1: the signed exe vouches for every file (manifest)
+
+def _rezip(src: Path, z: Path) -> None:
+    z.unlink()
+    with zipfile.ZipFile(z, "w") as zf:
+        for p in src.rglob("*"):
+            if p.is_file():
+                zf.write(p, p.relative_to(src).as_posix())
+
+
+def _swapped_release(tmp_path, checksums, tamper) -> Path:
+    """The threat: someone who can replace BOTH the zip and checksums.txt on a release keeps the
+    genuine signed exe - and with it the manifest SignPath signed - and changes the rest. The
+    checksum then matches (they regenerated it) and the exe's signature is genuine."""
+    z = _release_zip(tmp_path)
+    genuine = tmp_path / "genuine"
+    import shutil
+    shutil.copytree(tmp_path / "build", genuine)
+    tamper(tmp_path / "build" / "NetSpeedTray")
+    _rezip(tmp_path / "build", z)
+    checksums(z, manifest_of=genuine / "NetSpeedTray")
+    return z
+
+
+def _run(tmp_path, root, z, install=None):
+    w = _worker(tmp_path, z, app_dir=str(install or tmp_path / "missing"),
+                staging_target=str(root / "NetSpeedTray-9.9.9"))
+    staged, untrusted = [], []
+    w.staged.connect(staged.append)
+    w.untrusted.connect(untrusted.append)
+    w._run_portable()
+    return staged, untrusted
+
+
+@pytest.mark.parametrize("label, tamper", [
+    ("a changed .pyd", lambda d: (d / "_internal" / "PyQt6" / "QtCore.pyd").write_bytes(b"evil")),
+    ("a changed frozen stdlib", lambda d: (d / "_internal" / "base_library.zip").write_bytes(b"PKevil")),
+    ("an extra DLL beside the exe", lambda d: (d / "version.dll").write_bytes(b"MZevil")),
+    ("an extra module in _internal", lambda d: (d / "_internal" / "sitecustomize.pyd").write_bytes(b"x")),
+    ("a missing file", lambda d: (d / "_internal" / "python313.dll").unlink()),
+])
+def test_a_swapped_release_with_a_genuine_exe_is_refused(tmp_path, root, checksums, label, tamper):
+    install = _portable(tmp_path / "Apps", "NetSpeedTray")
+    (tmp_path / "Downloads").mkdir()
+    z = _swapped_release(tmp_path, checksums, tamper)
+    staged, untrusted = _run(tmp_path, root, z, install)
+    assert staged == [], label
+    assert len(untrusted) == 1 and untrusted[0].startswith("file manifest check failed"), untrusted
+    assert list(root.iterdir()) == [], "nothing staged for the swap"
+    assert list((tmp_path / "Downloads").iterdir()) == [], "nothing staged in Downloads"
+    assert _exe(install) == "old", "the running version is untouched"
+
+
+def test_an_exe_without_a_manifest_is_refused(tmp_path, root, checksums, monkeypatch):
+    """Every release since 2.2.1 embeds one and the updater only moves forward, so a missing one
+    is a stripped check, not an old release."""
+    from netspeedtray.utils import bundle_manifest as bm
+    (tmp_path / "Downloads").mkdir()
+    z = _release_zip(tmp_path)
+    checksums(z)
+    monkeypatch.setattr(bm, "read_from_exe", lambda exe: None)
+    staged, untrusted = _run(tmp_path, root, z)
+    assert staged == [] and untrusted == ["file manifest check failed: the exe carries no file manifest"]
+
+
+def test_the_manifest_is_read_from_the_real_exe_by_default(tmp_path, root, checksums, monkeypatch):
+    """Without a stand-in reader the check reads the extracted exe's resource for real - a fake exe
+    is not a PE, so that is a refusal, never a pass."""
+    from netspeedtray.utils import bundle_manifest as bm
+    (tmp_path / "Downloads").mkdir()
+    z = _release_zip(tmp_path)
+    checksums(z)
+    monkeypatch.setattr(bm, "read_from_exe", _REAL_READ_FROM_EXE)   # undo the fixture's stand-in
+    staged, untrusted = _run(tmp_path, root, z)
+    assert staged == [] and len(untrusted) == 1 and "could not read the manifest" in untrusted[0]
 
 
 def test_a_hands_off_update_is_staged_in_the_app_folder_not_downloads(

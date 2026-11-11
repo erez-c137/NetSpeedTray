@@ -246,3 +246,61 @@ def test_the_spec_fails_the_build_on_a_bundled_foreign_icu_dll():
     assert spec.index("_bundled_basenames = ") < guard < spec.index("pyz = PYZ(")
     assert "'icuuc.dll', 'icuin.dll'" in spec[guard:guard + 200]
     assert "raise SystemExit(" in spec[guard:guard + 300]
+
+
+# --- 2.2.1: the bundle manifest goes into the exe BEFORE anything signs it -----------------------
+
+def test_build_bat_embeds_the_manifest_after_pyinstaller_and_before_the_installer_and_zip():
+    """The exe the portable zip carries (signed by SignPath) and the one the installer packs must
+    both hold the manifest, and it must be in place before signing - after it, embedding would
+    break the signature. A failure must stop the build: a release without it fails every portable
+    user's update."""
+    bat = _read("build", "build.bat")
+    pyi = bat.index("pyinstaller --noconfirm")
+    embed = bat.index("ci\\embed-manifest.py")
+    assert pyi < embed < bat.index('if "%NST_SKIP_INSTALLER%"=="1"')   # both modes
+    assert embed < bat.index("ISCC.exe\" /DAppVersion")                 # the local installer too
+    assert embed < bat.index("Compress-Archive")
+    after = bat[embed:embed + 400]
+    assert "if errorlevel 1" in after and "exit /b 1" in after
+
+
+def test_ci_checks_the_signed_zip_against_its_manifest():
+    """The plan's open question - does signing leave the resource alone? - answered on every
+    release, with the updater's own code and signature gate, before the installer is built."""
+    ps = _read("build", "ci", "use-signed-exe.ps1")
+    i = ps.index("verify-manifest.py\")")
+    assert "--require-signed" in ps[i:i + 120]
+    assert "LASTEXITCODE" in ps[i:i + 300]
+    assert i < ps.index("Copy-Item $signedExe $target")
+
+
+def test_the_spec_fails_the_build_without_the_manifest_module():
+    """The updater imports it lazily and fails closed: a bundle without it refuses every update."""
+    spec = _read("build", "netspeedtray.spec")
+    guard = spec.index("name == 'netspeedtray.utils.bundle_manifest'")
+    assert "raise SystemExit(" in spec[guard:guard + 200]
+
+
+def test_the_embed_step_refuses_an_already_signed_exe_and_keeps_the_pkg():
+    src = _read("build", "ci", "embed-manifest.py")
+    assert "already signed" in src
+    assert "endswith(overlay)" in src, "the PyInstaller PKG must be checked after the update"
+
+
+def test_the_embed_step_writes_a_v1_manifest(tmp_path):
+    """The format contract (bundle_manifest docstring, DEPLOYING.md): every shipped updater since
+    2.2.1 accepts ONLY format v1 and refuses an exe without it, so every build must keep embedding
+    a v1 NST_MANIFEST. A v2 goes in a second resource beside it, never in place of it."""
+    import json
+    from netspeedtray.tests.unit.test_bundle_manifest import EXE, _app, _embed_module, _unsigned_pe
+    from netspeedtray.utils import bundle_manifest as bm
+    d = _app(tmp_path)
+    _unsigned_pe(d / EXE)
+    assert _embed_module().main([str(d), "--allow-non-pyinstaller"]) == 0
+    raw = bm.read_from_exe(str(d / EXE))
+    assert raw is not None, "NST_MANIFEST was not embedded"
+    m = json.loads(raw.decode("utf-8"))
+    assert m["v"] == 1, "the build must keep writing format v1 (add a second resource for v2)"
+    assert bm.RESOURCE_NAME == "NST_MANIFEST" and bm.RESOURCE_TYPE == 10
+    assert bm.parse(raw)["v"] == 1, "and the reader must keep accepting v1"

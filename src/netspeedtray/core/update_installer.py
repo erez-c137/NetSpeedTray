@@ -23,13 +23,15 @@ user's Downloads for them to copy over their folder. Settings live in %APPDATA%,
 never touches them.
 
 Since 2.2.0 (U8) the extracted NetSpeedTray.exe must ALSO pass the installer's gate - WinVerifyTrust plus
-the SignPath publisher pin - before anything is staged. This is DEFENSE IN DEPTH against a swapped or
-unsigned exe, NOT proof against a swapped release: the signature covers the bootloader exe only. The
-`_internal/` payload (the upstream DLLs/.pyd, unsigned or signed by their own vendors, and
-base_library.zip, whose stdlib .pyc load at startup) is vouched for by checksums.txt alone, so someone
-able to replace both the ZIP and checksums.txt on the release could still alter a .pyd and keep the
-signed exe. Full coverage needs a signed manifest of every file (rc2 U8 follow-up). Either gate failing
-refuses the update and leaves the current version in place.
+the SignPath publisher pin - before anything is staged. On its own that covers the bootloader exe only:
+the `_internal/` payload (the upstream DLLs/.pyd, unsigned or signed by their own vendors, and
+base_library.zip, whose stdlib .pyc load at startup) was vouched for by checksums.txt alone, so someone
+able to replace both the ZIP and checksums.txt on the release could alter a .pyd and keep the signed exe.
+
+Since 2.2.1 the signed exe closes that: the build embeds a SHA-256 of every file of the folder in the
+exe before SignPath signs it (utils/bundle_manifest.py), and after the signature check the whole
+extracted folder must match it exactly - no missing, extra or changed file, and an exe without a
+manifest is refused. Any gate failing refuses the update and leaves the current version in place.
 """
 from __future__ import annotations
 
@@ -361,6 +363,17 @@ def _expected_hash_for(checksums_text: str, filename: str) -> Optional[str]:
     return None
 
 
+def _manifest_refusal(app_folder: str, exe_path: str) -> Optional[str]:
+    """None when every file of ``app_folder`` matches the manifest inside ``exe_path`` (already
+    signature-verified); otherwise why not. Fail closed: any error is a refusal."""
+    try:
+        from netspeedtray.utils.bundle_manifest import verify_app_folder
+        verify_app_folder(app_folder, exe_path)
+        return None
+    except Exception as e:  # noqa: BLE001 - ManifestError, or anything unexpected
+        return str(e) or e.__class__.__name__
+
+
 def _unique_dir(path: str) -> str:
     """
     Return a directory path that does not currently exist, so a subsequent ``shutil.move`` renames the
@@ -391,8 +404,9 @@ class _DownloadWorker(QObject):
     as trustworthy as fetching that ZIP yourself from the release page (#195). On a match the archive is
     extracted and the app folder is staged (moved) to its final Downloads location *here*, off the UI
     thread, and ``staged`` carries that final path; the caller only reveals it and shows instructions.
-    Before staging, the extracted EXE must pass ``verify_file`` too (U8); if it does not, ``untrusted``
-    fires instead and nothing is staged.
+    Before staging, the extracted EXE must pass ``verify_file`` too (U8), and every file of the folder
+    must match the manifest embedded in that EXE (2.2.1); if either fails, ``untrusted`` fires instead
+    and nothing is staged.
     """
     progress = pyqtSignal(int)
     verified = pyqtSignal(str, bool, str)  # installer path, trusted, reason
@@ -458,9 +472,8 @@ class _DownloadWorker(QObject):
         _safe_extract(self._dest, self._extract_dir or "")
         new_exe = _locate_portable_exe(self._extract_dir or "")
         # U8: the same Authenticode + SignPath-pin gate the installer passes, on the EXE that would
-        # run next (the hands-off swap launches it). Defense in depth against a swapped or unsigned
-        # exe only - `_internal/` is still covered by the checksum alone (module docstring). It is
-        # still in this run's private temp dir
+        # run next (the hands-off swap launches it); the manifest check below then extends it to
+        # every file of the folder (module docstring). It is still in this run's private temp dir
         # (mkdtemp, see SecureUpdater.start), checked right before the move. Fail closed: nothing is
         # staged and the running version is untouched.
         result = verify_file(new_exe)
@@ -470,6 +483,16 @@ class _DownloadWorker(QObject):
             return
         logger.info("Portable update EXE signature verified (%s).", result.subject_cn)
         app_folder = os.path.dirname(new_exe)
+        # 2.2.1: the signature now vouches for every file, not just the exe. The exe just verified
+        # carries a SHA-256 of every file of its folder (embedded before SignPath signed it), and the
+        # folder must match it exactly - no missing, extra or changed file. An exe without one is
+        # refused: every release since 2.2.1 has it, and the updater only moves forward.
+        reason = _manifest_refusal(app_folder, new_exe)
+        if reason:
+            logger.warning("Portable update files do not match the exe's signed manifest: %s", reason)
+            self.untrusted.emit(f"file manifest check failed: {reason}")
+            return
+        logger.info("Portable update: every file matches the exe's signed manifest.")
         hands_off = self._hands_off_possible(app_folder)
         target = self._staging_target if hands_off else self._ready_target
         if hands_off:
@@ -789,7 +812,8 @@ class SecureUpdater(QObject):
 
     def _on_untrusted(self, reason: str) -> None:
         """Portable update: the checksum matched but the extracted EXE is not signed by the pinned
-        publisher (U8). Nothing was staged; drop the download, keep this version, and say why."""
+        publisher (U8), or a file of the folder does not match the manifest signed into that EXE
+        (2.2.1). Nothing was staged; drop the download, keep this version, and say why."""
         self._teardown_thread()
         self._close_progress()
         self._cleanup_file()
