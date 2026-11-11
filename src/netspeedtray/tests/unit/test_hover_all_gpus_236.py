@@ -646,3 +646,39 @@ def test_settings_toggle_round_trips_beside_the_picker(page, monkeypatch):
     assert not page._hover_gpus_card.isVisibleTo(page)
     page.load_settings({"monitor_gpu_enabled": True, "gpu_adapter": "AMD Radeon(TM) Graphics"})
     assert page._gpu_adapter_card.isVisibleTo(page) and not page._hover_gpus_card.isVisibleTo(page)
+
+
+# --- owner decision 2026-11-11: one source of truth for the GPU power Automatic shows ---------------
+
+UHD_IG = AdapterInfo("Intel(R) UHD Graphics 770", 0x8086, (0, APU_LUID), 128 * 2 ** 20, int(15 * GIB), False)
+
+
+def _poll_with_rapl(t, watts):
+    t._power_query, t._power_pp1_counter = 5, 7
+    with patch("win32pdh.GetFormattedCounterValue", return_value=(0, watts * 1000.0)):
+        return _poll(t)
+
+
+def test_the_igpu_row_shows_the_rapl_power_the_taskbar_shows(thread):
+    """Automatic with no sensor group: the taskbar's GPU power is Intel RAPL PP1 - the iGPU's own power
+    plane - so the iGPU's row shows that same figure, not "—"; the RTX row gets none of it."""
+    thread._gpu_adapters = [UHD_IG, RTX, BRD]
+    r = _poll_with_rapl(thread, 6.5)
+    assert r.power == 6.5
+    rtx, uhd = thread._gpu_cards(include_temp=True, include_power=True)
+    assert uhd.name == "Intel UHD Graphics 770" and uhd.power == r.power == 6.5
+    assert rtx.power is None
+    assert thread._gpu_cards(include_temp=True, include_power=False)[1].power is None
+
+
+def test_rapl_power_is_not_pinned_on_a_card_it_is_not_from(thread):
+    # An AMD APU beside the RTX: RAPL PP1 is Intel's plane - no Intel iGPU, no row gets it.
+    thread._gpu_adapters = [APU_IG, RTX, BRD]
+    _poll_with_rapl(thread, 6.5)
+    assert [c.power for c in thread._gpu_cards(True, True)] == [None, None]
+    # A picked card reads exactly the taskbar (no RAPL for a picked RTX).
+    thread._gpu_adapters = [UHD_IG, RTX, BRD]
+    thread.config = dict(thread.config, gpu_adapter=RTX.name)
+    r = _poll_with_rapl(thread, 6.5)
+    rtx, uhd = thread._gpu_cards(True, True)
+    assert r.power is None and (rtx.power, uhd.power) == (None, None)

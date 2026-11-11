@@ -746,6 +746,7 @@ class StatsMonitorThread(QThread):
             rapl_matches = _is_intel_group(source_gpu)
         else:
             rapl_matches = temp_c is None   # a temperature here came from nvidia-smi: NVIDIA's
+        rapl_w = None   # the Intel iGPU's RAPL PP1 reading, when it is what power_w shows
         if include_power and power_w is None and rapl_matches:
             try:
                 self._init_power_query()
@@ -753,14 +754,14 @@ class StatsMonitorThread(QThread):
                     win32pdh.CollectQueryData(self._power_query)
                     _, val = win32pdh.GetFormattedCounterValue(self._power_pp1_counter, win32pdh.PDH_FMT_DOUBLE)
                     if val is not None and val > 0:
-                        power_w = val / 1000.0  # mW to W
+                        power_w = rapl_w = val / 1000.0  # mW to W
             except: pass
 
         # Clamp utilization to [0, 100] - a per-engine sum can momentarily read >100%.
         util_pct = max(constants.gpu.UTIL_MIN_PERCENT, min(constants.gpu.UTIL_MAX_PERCENT, util_pct))
         # The inputs, for the hover card's per-GPU list (_gpu_cards): read once here, reused there.
         self._gpu_poll_inputs = (util_arr, dedicated_mib if dedicated_read_ok else None, shared_mib,
-                                 lhm_snapshot, selected, temp_c, power_w)
+                                 lhm_snapshot, selected, temp_c, power_w, rapl_w)
         # LHM's HardwareId-scoped sensor group is independent evidence that a physical GPU
         # exists. Keeping the row visible with 0% utilization is intentional when PDH is
         # unavailable: temperature/power remain useful and are not fabricated.
@@ -835,7 +836,13 @@ class StatsMonitorThread(QThread):
         real = gpu_adapters.hardware_adapters(self._gpu_adapters or [])
         if len(real) < 2 or self._gpu_poll_inputs is None:
             return ()
-        util_arr, dedicated_mib, shared_mib, snapshot, selected, sel_temp, sel_power = self._gpu_poll_inputs
+        (util_arr, dedicated_mib, shared_mib, snapshot, selected, sel_temp, sel_power,
+         rapl_w) = self._gpu_poll_inputs
+        # Automatic showing RAPL PP1 as the GPU power: that IS the Intel iGPU's, so its row shows the
+        # same value as the taskbar (one source of truth) - only when exactly one Intel iGPU exists.
+        intel_igpus = [a for a in real if a.vendor_id == constants.gpu.VENDOR_INTEL
+                       and gpu_adapters.is_integrated(a)]
+        rapl_card = intel_igpus[0] if rapl_w is not None and selected is None and len(intel_igpus) == 1 else None
         cards = sorted(real, key=gpu_adapters.is_integrated)   # stable: DXGI order within each side
         try:
             utils = per_adapter_engine_utilization(util_arr) if util_arr is not None else None
@@ -888,6 +895,8 @@ class StatsMonitorThread(QThread):
                 group = sensors.gpu_for(a.vendor_id, a.name, integrated) if sensors is not None else None
                 if group is not None:
                     temp, power = group.temperature, group.power
+                if a is rapl_card:
+                    power = rapl_w
                 if auto_smi_fresh and a is nvidia[0]:
                     temp = temp if temp is not None else self._nvidia_cache_temp
                     power = power if power is not None else self._nvidia_cache_power
