@@ -236,3 +236,116 @@ def test_the_build_script_end_to_end_on_a_folder(tmp_path):
     (d / "_internal" / "python313.dll").write_bytes(b"evil")
     with pytest.raises(bm.ManifestError, match="file changed"):
         bm.verify_app_folder(str(d), str(d / EXE))
+
+
+# ------------------------------------------- links vs cloud placeholders (the applier's own rule)
+
+_SYMLINK, _MOUNT_POINT, _CLOUD_6, _DEDUP = 0xA000000C, 0xA0000003, 0x9000601A, 0x80000013
+
+
+@pytest.mark.parametrize("attrs, tag, is_link", [
+    (0x20, 0, False),                    # a plain file
+    (0x420, _CLOUD_6, False),            # OneDrive / Dropbox placeholder: the file's own content
+    (0x420, _DEDUP, False),              # other non-surrogate tags: content is still hashed
+    (0x420, _SYMLINK, True),             # names another location
+    (0x430, _MOUNT_POINT, True),         # junction / mount point
+    (0x420, 0, True),                    # a reparse point whose tag could not be read: fail-safe
+])
+def test_only_name_surrogates_count_as_links(attrs, tag, is_link):
+    assert bm._reparse_is_link(attrs, tag) is is_link
+
+
+def test_the_rule_is_the_appliers(monkeypatch):
+    """Both checks must agree, or the applier would refuse what the updater accepted (or the other
+    way round)."""
+    from netspeedtray.core import update_applier as ua
+    for attrs, tag in [(0x20, 0), (0x420, _CLOUD_6), (0x420, _SYMLINK), (0x430, _MOUNT_POINT),
+                       (0x420, 0)]:
+        assert bm._reparse_is_link(attrs, tag) == ua._reparse_is_link(attrs, tag), hex(tag)
+
+
+class _Entry:
+    """A DirEntry whose stat reports a reparse point - Windows only exposes real placeholders
+    with a sync provider running, so the attribute is simulated on a real file."""
+    def __init__(self, real, attrs, tag):
+        self._real, self._attrs, self._tag = real, attrs, tag
+        self.name, self.path = real.name, real.path
+
+    def is_symlink(self):
+        return False                     # the reparse-tag rule alone must catch a link
+
+    def is_junction(self):
+        return False
+
+    def is_dir(self, follow_symlinks=True):
+        return self._real.is_dir(follow_symlinks=False)
+
+    def is_file(self, follow_symlinks=True):
+        return self._real.is_file(follow_symlinks=False)
+
+    def stat(self, follow_symlinks=True):
+        from types import SimpleNamespace
+        st = self._real.stat(follow_symlinks=False)
+        return SimpleNamespace(st_file_attributes=st.st_file_attributes | self._attrs,
+                               st_reparse_tag=self._tag, st_mode=st.st_mode, st_size=st.st_size)
+
+
+def _tag_one_file(monkeypatch, root, name, tag):
+    """os.scandir is global: wrap only listings inside ``root`` (pytest's own tmp_path cleanup
+    scans too, and must see real entries)."""
+    real_scandir = os.scandir
+    root = os.path.abspath(str(root))
+
+    class _Scan:
+        def __init__(self, path):
+            self._it = real_scandir(path)
+
+        def __enter__(self):
+            return [(_Entry(e, 0x400, tag) if e.name == name else e) for e in self._it]
+
+        def __exit__(self, *a):
+            self._it.close()
+
+    def scandir(path="."):
+        if os.path.abspath(str(path)).startswith(root):
+            return _Scan(path)
+        return real_scandir(path)
+
+    monkeypatch.setattr(bm.os, "scandir", scandir)
+
+
+def test_a_cloud_placeholder_in_the_folder_is_hashed_not_refused(tmp_path, monkeypatch):
+    """A 2.1.7 build stages a hands-off update in Downloads - in a OneDrive-synced folder its
+    files become cloud placeholders. Their content is the file's own: hash it, don't refuse."""
+    d = _app(tmp_path)
+    m = _manifest(d)
+    with monkeypatch.context() as mp:            # undone before pytest cleans tmp_path up
+        _tag_one_file(mp, d, "python313.dll", _CLOUD_6)
+        bm.verify_tree(str(d), m, EXE)
+        (d / "_internal" / "python313.dll").write_bytes(b"evil")
+        with pytest.raises(bm.ManifestError, match="file changed"):
+            bm.verify_tree(str(d), m, EXE)
+
+
+def test_a_symlink_reparse_point_is_still_refused(tmp_path, monkeypatch):
+    d = _app(tmp_path)
+    m = _manifest(d)
+    with monkeypatch.context() as mp:
+        _tag_one_file(mp, d, "python313.dll", _SYMLINK)
+        with pytest.raises(bm.ManifestError, match="link"):
+            bm.verify_tree(str(d), m, EXE)
+
+
+def test_embed_writes_its_work_file_beside_the_bundle_not_inside(tmp_path, monkeypatch):
+    """The folder is checked against the manifest right after embedding; a work file left inside
+    it (an AV holding it open) would fail the build as an unexpected file."""
+    import tempfile
+    emb = _embed_module()
+    d = _app(tmp_path)
+    _unsigned_pe(d / EXE)
+    dirs = []
+    real = tempfile.mkstemp
+    monkeypatch.setattr(tempfile, "mkstemp", lambda *a, **kw: dirs.append(kw.get("dir")) or real(*a, **kw))
+    assert emb.main([str(d), "--allow-non-pyinstaller"]) == 0
+    assert dirs and all(os.path.abspath(x) == str(tmp_path) for x in dirs), dirs
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith("nst-embed-")], "work file left"

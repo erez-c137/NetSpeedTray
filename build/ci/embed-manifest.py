@@ -78,7 +78,12 @@ def embed(exe: str, payload: bytes, bm) -> None:
     else:
         head, overlay = blob[:overlay_at], blob[overlay_at:]
 
-    fd, tmp = tempfile.mkstemp(suffix=".exe", dir=os.path.dirname(os.path.abspath(exe)))
+    # The work file goes BESIDE the bundle (dist\), never inside it: the manifest is checked against
+    # the folder right after this, and a work file left behind there (an AV holding it open) would
+    # be an "unexpected file".
+    bundle_dir = os.path.dirname(os.path.abspath(exe))
+    fd, tmp = tempfile.mkstemp(suffix=".exe", prefix="nst-embed-",
+                               dir=os.path.dirname(bundle_dir) or None)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(head)
