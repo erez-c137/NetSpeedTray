@@ -981,6 +981,20 @@ def _restart_unchanged(install_dir: str, staged_dir: str, reason: str) -> None:
     _notify_not_applied(reason, staged_dir, install_dir)
 
 
+def _staged_files_refusal(staged_dir: str) -> Optional[str]:
+    """None when every file of the staged copy matches the manifest embedded in its exe (2.2.1),
+    else why not. Only in the frozen app - a dev run has no built exe to read it from. Fail closed:
+    any error is a refusal. ``bundle_manifest`` is stdlib-only, like this module."""
+    if not getattr(sys, "frozen", False):
+        return None
+    try:
+        from netspeedtray.utils.bundle_manifest import verify_app_folder
+        verify_app_folder(staged_dir, os.path.join(staged_dir, APP_EXE))
+        return None
+    except Exception as e:
+        return "the staged copy failed its file check: %s" % (str(e) or e.__class__.__name__)
+
+
 def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional[str] = None) -> int:
     """The whole flow. Returns a process exit code (0 = applied)."""
     staged_dir = staged_dir or os.path.dirname(os.path.abspath(sys.executable))
@@ -999,6 +1013,17 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
     reason = validate(install_dir, staged_dir)
     if reason:
         logger.warning("Refusing to apply the update: %s", reason)
+        _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
+        _restart_unchanged(install_dir, staged_dir, reason)
+        return 3
+
+    # The staged copy was checked against the manifest in its signed exe before it was staged
+    # (update_installer). Check it again right before it replaces the install: an antivirus that
+    # quarantined a DLL from the staging folder in between would otherwise swap in a broken app.
+    reason = _staged_files_refusal(staged_dir)
+    if reason:
+        logger.warning("Refusing to apply the update: the staged copy no longer matches its "
+                       "manifest: %s", reason)
         _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
         _restart_unchanged(install_dir, staged_dir, reason)
         return 3

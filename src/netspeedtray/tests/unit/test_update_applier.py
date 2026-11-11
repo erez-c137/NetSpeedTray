@@ -490,6 +490,67 @@ def test_a_failed_restore_launches_nothing(tmp_path, monkeypatch, restart_spy):
     assert launched == []
 
 
+# ------------------------------------- 2.2.1: the staged copy is re-checked against its manifest
+
+@pytest.fixture
+def frozen_with_manifest(monkeypatch):
+    """The frozen applier, with the staged exe's embedded manifest stood in by one hashed from a
+    folder the test names (what the build embedded before signing)."""
+    from netspeedtray.utils import bundle_manifest as bm
+    monkeypatch.setattr(ua.sys, "frozen", True, raising=False)
+
+    def _embed(built_from: Path):
+        payload = bm.serialize(bm.build_manifest(str(built_from), ua.APP_EXE))
+        monkeypatch.setattr(bm, "read_from_exe", lambda exe: payload)
+    return _embed
+
+
+def test_a_staged_copy_that_still_matches_its_manifest_is_applied(tmp_path, restart_spy,
+                                                                  frozen_with_manifest):
+    launched, told = restart_spy
+    install = _make_install(tmp_path)
+    staged = _make_staged(tmp_path)
+    frozen_with_manifest(staged)
+    assert ua.apply_update(str(install), None, str(staged)) == 0
+    assert (install / ua.APP_EXE).read_text(encoding="utf-8") == "new"
+    assert told == []
+
+
+@pytest.mark.parametrize("damage", ["quarantined", "changed"])
+def test_a_staged_copy_damaged_after_staging_is_refused_and_the_app_restarted(
+        tmp_path, restart_spy, frozen_with_manifest, damage):
+    """An antivirus that quarantined (or a disk that corrupted) a staged DLL between the check in
+    the updater and the swap: swapping would install a broken app. Refuse, keep the install exactly
+    as it was, and restart it."""
+    launched, told = restart_spy
+    install = _make_install(tmp_path)
+    staged = _make_staged(tmp_path)
+    frozen_with_manifest(staged)
+    if damage == "quarantined":
+        (staged / "_internal" / "data.bin").unlink()
+    else:
+        (staged / "_internal" / "data.bin").write_text("tampered", encoding="utf-8")
+
+    assert ua.apply_update(str(install), None, str(staged)) == 3
+    assert (install / ua.APP_EXE).read_text(encoding="utf-8") == "old", "the install is untouched"
+    assert (install / "_internal" / "data.bin").read_text(encoding="utf-8") == "payload"
+    assert not list(tmp_path.glob("*" + ua._BACKUP_SUFFIX + "*")), "nothing was renamed aside"
+    assert launched == [os.path.join(str(install), ua.APP_EXE)], "the app must not just vanish"
+    assert len(told) == 1 and "file check" in told[0][0]
+
+
+def test_a_frozen_staged_copy_without_a_manifest_is_refused(tmp_path, restart_spy, monkeypatch):
+    """The applier IS the new version's code, and every such build embeds a manifest; none (here:
+    the dummy exe is not even a PE) is a refusal, never a pass."""
+    launched, told = restart_spy
+    monkeypatch.setattr(ua.sys, "frozen", True, raising=False)
+    install = _make_install(tmp_path)
+    staged = _make_staged(tmp_path)
+    assert ua.apply_update(str(install), None, str(staged)) == 3
+    assert (install / ua.APP_EXE).read_text(encoding="utf-8") == "old"
+    assert len(told) == 1 and "could not read the manifest" in told[0][0]
+
+
 def test_a_refusal_for_a_folder_that_is_not_ours_launches_nothing(tmp_path, restart_spy):
     launched, told = restart_spy
     victim = tmp_path / "Documents"

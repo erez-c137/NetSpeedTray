@@ -115,10 +115,11 @@ Turning the app off in Task Manager's Startup tab also stops it.
 - **Portable updates are checked differently:** the portable zip is many files, not one signed
   installer. The app checks the zip's SHA-256 against the release's `checksums.txt` (both fetched over
   HTTPS from the GitHub release), then checks the Authenticode signature and the SignPath publisher of
-  the extracted `NetSpeedTray.exe` before anything is staged; if either check fails, nothing is staged,
-  the current version keeps running and the release page opens. The rest of the bundle (`_internal\`)
-  is vouched for by the checksum only - exactly as trustworthy as downloading the zip from the release
-  page yourself.
+  the extracted `NetSpeedTray.exe`, and then every other file of the new version against a list of
+  SHA-256 hashes that the build embeds inside that exe before it is signed - so the signature vouches
+  for the whole bundle, `_internal\` included, not just the exe (since 2.2.1). A missing, extra or
+  changed file is refused. If any check fails, nothing is staged, the current version keeps running
+  and the release page opens.
 - **Pinning a version:** turn the check off as above and deploy the version you want.
 
 ## Network activity
@@ -193,7 +194,9 @@ New-NetFirewallRule -DisplayName "Block LibreHardwareMonitor web server (inbound
 Setup.exe, the portable build's `NetSpeedTray.exe` and the installed `NetSpeedTray.exe` are signed by the
 SignPath Foundation. `unins000.exe` (Inno Setup's uninstaller) and the bundled third-party files in
 `_internal\` are not signed by SignPath; the third-party files keep their own publishers' signatures where
-they have one. Smart App Control: a clean install runs; upgrades are still being confirmed in
+they have one. Since 2.2.1 the signed `NetSpeedTray.exe` carries a SHA-256 of every bundled file (an
+`RT_RCDATA` resource named `NST_MANIFEST`, covered by its signature), which the portable updater
+checks. Smart App Control: a clean install runs; upgrades are still being confirmed in
 [issue #333](https://github.com/erez-c137/NetSpeedTray/issues/333).
 
 ## Rollback
