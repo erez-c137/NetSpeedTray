@@ -938,8 +938,13 @@ def relaunch(exe: str) -> bool:
         return False
 
 
-def _notify_not_applied(reason: str, staged_dir: str, install_dir: str) -> None:
+def _notify_not_applied(reason: str, staged_dir: str, install_dir: str, *,
+                        offer_staged: bool = True) -> None:
     """Tell the user the update did not happen, why, and where the new version is waiting.
+
+    ``offer_staged=False`` when the staged copy itself is bad (it failed its file check): the
+    notice then says why and nothing else - it must not open that folder and tell the user to copy
+    it over their install by hand, which would install exactly the copy that was just refused.
 
     Shown by THIS process (the new version's code), not left for the relaunched app to read: the
     app relaunched after a refusal is the OLD version - 2.1.7 or a 2.2 beta, whose weaker pre-check
@@ -952,12 +957,13 @@ def _notify_not_applied(reason: str, staged_dir: str, install_dir: str) -> None:
         return
     try:
         from netspeedtray.core.update_notice import show_update_not_applied
-        show_update_not_applied(reason, staged_dir, install_dir)
+        show_update_not_applied(reason, staged_dir, install_dir, offer_staged=offer_staged)
     except Exception:
         logger.warning("Could not tell the user the update was not applied.", exc_info=True)
 
 
-def _restart_unchanged(install_dir: str, staged_dir: str, reason: str) -> None:
+def _restart_unchanged(install_dir: str, staged_dir: str, reason: str, *,
+                       offer_staged: bool = True) -> None:
     """After a refused swap (exit 3), or one that failed and put the original back (exit 4): start
     the user's app again - the previous instance quit to hand us the swap, so without this it just
     vanishes (and an older build re-offers the update daily, vanishing daily) - and say why.
@@ -978,7 +984,7 @@ def _restart_unchanged(install_dir: str, staged_dir: str, reason: str) -> None:
     else:
         logger.warning("The update was not applied and there is no app to restart in %s.",
                        install_dir)
-    _notify_not_applied(reason, staged_dir, install_dir)
+    _notify_not_applied(reason, staged_dir, install_dir, offer_staged=offer_staged)
 
 
 def _staged_files_refusal(staged_dir: str) -> Optional[str]:
@@ -1025,7 +1031,10 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
         logger.warning("Refusing to apply the update: the staged copy no longer matches its "
                        "manifest: %s", reason)
         _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
-        _restart_unchanged(install_dir, staged_dir, reason)
+        # Restart and say why - but never point the user at this copy to install by hand: it is
+        # the one that just failed (a missing DLL would leave them a broken app). The next update
+        # check offers the release again and downloads a fresh, re-verified copy.
+        _restart_unchanged(install_dir, staged_dir, reason, offer_staged=False)
         return 3
 
     # The previous instance has gone, but a child it spawned may still sit in the folder (its CWD
