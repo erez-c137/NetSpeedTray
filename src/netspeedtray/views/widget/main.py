@@ -1954,14 +1954,34 @@ class NetworkSpeedWidget(QWidget):
     def _refresh_hover_hardware(self) -> None:
         """Push fresh values into an open hover card's hardware rows (~1 Hz)."""
         card = self._hover_card
-        if card is None or not getattr(card, "has_hardware", False):
+        if card is None:
+            return
+        has_hardware = bool(getattr(card, "has_hardware", False))
+        if not has_hardware and not hover_gpu_list_shown(self.config, getattr(self, "gpu_cards", ()),
+                                                         self._side_bar_fit()):
             return
         now = time.monotonic()
         if now - getattr(self, "_hover_hw_refreshed", 0.0) < self._HOVER_HW_REFRESH_SEC:
             return
         self._hover_hw_refreshed = now
+        pinned = bool(getattr(self, "_hover_card_pinned", False))
         try:
+            if not has_hardware:
+                # The GPU list arrived after this card opened (the first GPU poll, GPU monitoring
+                # switched on, an eGPU plugged in): rebuilt with it. A rebuild that bails leaves this
+                # card up - it has no hardware rows that could freeze (#236 review).
+                self._show_usage_hover_card(pinned=pinned, rebuild_of=card)
+                return
             snapshot = self._hover_hardware_snapshot() if self._hover_hardware_wanted() else None
+            if not snapshot and getattr(card, "lists_gpus", False) is True:
+                # The GPU list was the card's only hardware and it went away (one GPU left, the list
+                # or GPU monitoring switched off): the usage / tips / battery rows the user opened -
+                # maybe pinned - stay, rebuilt without it; closed only when nothing is left (#236
+                # review). Before the list, a bottom-bar card never closed under the pointer.
+                self._show_usage_hover_card(pinned=pinned, rebuild_of=card)
+                if self._hover_card is card:
+                    self._hide_usage_hover_card()
+                return
             if not snapshot:
                 # Hardware turned off, display mode changed, or the bar now fits it: the rows would
                 # only freeze on their last values - close the card (the next hover rebuilds it).
@@ -1970,8 +1990,7 @@ class NetworkSpeedWidget(QWidget):
             if card.update_hardware(snapshot) is False:
                 # A GPU came or went (or the pick changed): the card needs other rows - rebuilt and
                 # swapped, the new one shown before the old one hides; a pinned card stays pinned.
-                self._show_usage_hover_card(pinned=bool(getattr(self, "_hover_card_pinned", False)),
-                                            rebuild_of=card)
+                self._show_usage_hover_card(pinned=pinned, rebuild_of=card)
                 if self._hover_card is card:
                     # The rebuild bailed (menu open, a drag, a fullscreen app): never leave the old
                     # card up frozen on its last values.

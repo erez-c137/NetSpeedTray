@@ -467,6 +467,67 @@ def test_a_rebuild_keeps_the_pin_hint_without_counting_a_show(q_app):
         fake._pin_hint_text.assert_called_once()
 
 
+@pytest.mark.parametrize("pinned", [False, True])
+def test_a_card_opened_before_the_list_arrived_gains_it(q_app, pinned):
+    """Review (2.2.1 rebase): a bottom-bar card opened before the first GPU poll (or pinned while GPU
+    monitoring was switched on) had no hardware rows, so the 1 Hz refresh skipped it and the list
+    never appeared until the next hover. It is rebuilt with the list, keeping its pin; a rebuild
+    that bails leaves it up (no hardware rows to freeze)."""
+    fake = _hover_fake(CARDS, **ALL)
+    card = MagicMock(has_hardware=False)
+    fake._hover_card, fake._hover_hw_refreshed, fake._hover_card_pinned = card, 0.0, pinned
+    fake._show_usage_hover_card = MagicMock()          # bails
+    fake._hide_usage_hover_card = MagicMock()
+    fake._refresh_hover_hardware()
+    fake._show_usage_hover_card.assert_called_once_with(pinned=pinned, rebuild_of=card)
+    fake._hide_usage_hover_card.assert_not_called()
+    # No list to gain (one GPU): nothing happens to a card without hardware.
+    fake._show_usage_hover_card.reset_mock()
+    fake.gpu_cards, fake._hover_hw_refreshed = CARDS[:1], 0.0
+    fake._refresh_hover_hardware()
+    fake._show_usage_hover_card.assert_not_called()
+
+
+def test_a_list_that_goes_away_keeps_the_users_card(q_app):
+    """Review (2.2.1 rebase): the list was a pinned bottom-bar card's only hardware and GPU
+    monitoring is switched off (or an eGPU unplugged): the card the user pinned for its usage rows is
+    rebuilt without the list, not closed. Closed only if the rebuild has nothing left to show."""
+    fake = _hover_fake((), **ALL)
+    card = MagicMock(has_hardware=True, lists_gpus=True)
+    fake._hover_card, fake._hover_hw_refreshed, fake._hover_card_pinned = card, 0.0, True
+    fake._show_usage_hover_card = MagicMock(side_effect=lambda **k: setattr(fake, "_hover_card", MagicMock()))
+    fake._hide_usage_hover_card = MagicMock()
+    fake._refresh_hover_hardware()
+    fake._show_usage_hover_card.assert_called_once_with(pinned=True, rebuild_of=card)
+    fake._hide_usage_hover_card.assert_not_called()
+    # Nothing else to show: the rebuild bails, and the frozen card closes.
+    fake._hover_card, fake._hover_hw_refreshed = card, 0.0
+    fake._show_usage_hover_card = MagicMock()
+    fake._refresh_hover_hardware()
+    fake._hide_usage_hover_card.assert_called_once()
+    # A side-bar hardware card (not only the list) still closes as before.
+    other = MagicMock(has_hardware=True, lists_gpus=False)
+    fake._hover_card, fake._hover_hw_refreshed = other, 0.0
+    fake._show_usage_hover_card = MagicMock()
+    fake._hide_usage_hover_card = MagicMock()
+    fake._refresh_hover_hardware()
+    fake._show_usage_hover_card.assert_not_called()
+    fake._hide_usage_hover_card.assert_called_once()
+
+
+def test_lists_gpus_only_for_a_card_whose_hardware_is_the_list(q_app):
+    from netspeedtray.views.usage_flyout import UsageFlyout
+    only = UsageFlyout(EN, None, None, hardware=_snap())
+    mixed = UsageFlyout(EN, None, None, hardware=dict(_snap(), cpu={"usage": 5.0}))
+    plain = UsageFlyout(EN, None, None, hardware={"cpu": {"usage": 5.0}})
+    try:
+        assert only.lists_gpus is True
+        assert mixed.lists_gpus is False and plain.lists_gpus is False
+    finally:
+        for c in (only, mixed, plain):
+            c.deleteLater()
+
+
 # --- 8. the card ---------------------------------------------------------------------------------
 
 def _texts(card):
