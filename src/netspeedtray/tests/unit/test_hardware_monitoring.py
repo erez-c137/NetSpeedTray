@@ -342,6 +342,8 @@ class TestHardwareMonitoring:
 
     def test_init_ohm_wmi_guidance_once_when_nothing_connects(self, monitor_thread):
         """When no namespace connects at all, emit the 'need v0.9.4' guidance exactly once."""
+        import netspeedtray.core.monitor_thread as mt
+        mt._OHM_GUIDANCE_LOGGED.clear()   # once per PROCESS: another test may have logged it already
         monitor_thread._wmi_ohm = None
         monitor_thread._ohm_guidance_logged = False
         monitor_thread.logger = MagicMock()
@@ -355,6 +357,26 @@ class TestHardwareMonitoring:
         guidance = [c for c in monitor_thread.logger.info.call_args_list
                     if c.args and "Remote Web Server" in str(c.args[0])]
         assert len(guidance) == 1, "guidance must be logged exactly once across retries"
+
+    def test_init_ohm_wmi_empty_namespace_guidance_once_per_process(self, monitor_thread):
+        """The 'exposes 0 sensors. Run LibreHardwareMonitor as Administrator' line is logged once
+        per PROCESS: a rebuilt monitor thread (a fresh instance flag) must not repeat it."""
+        import netspeedtray.core.monitor_thread as mt
+        mt._OHM_GUIDANCE_LOGGED.clear()
+        empty = MagicMock()
+        empty.ExecQuery.return_value = []  # 0 sensors
+        logged = []
+        for _rebuild in range(3):
+            monitor_thread._wmi_ohm = None
+            monitor_thread._ohm_guidance_logged = False   # what a new StatsMonitorThread starts with
+            monitor_thread.logger = MagicMock()
+            with patch('win32com.client.GetObject', return_value=empty), \
+                 patch('pythoncom.CoInitialize'):
+                monitor_thread._init_ohm_wmi()
+            logged += [c for c in monitor_thread.logger.info.call_args_list
+                       if c.args and "exposes 0 sensors" in str(c.args[0])]
+        assert len(logged) == 1
+        mt._OHM_GUIDANCE_LOGGED.clear()
 
     # ------------------------------------------------------------------
     # CPU temperature polling
