@@ -749,6 +749,11 @@ class _Nic:
         self.Description, self.IPAddress, self.DefaultIPGateway, self.DNSServerSearchOrder = desc, ips, gws, dns
 
 
+def _route_table_unavailable(lib=None):
+    """The fake-WMI tests run the WMI path: the IP Helper route table "cannot be read"."""
+    raise LP.RouteTableUnavailable("test")
+
+
 def _fake_wmi(monkeypatch, nics):
     import sys
     import types
@@ -759,6 +764,8 @@ def _fake_wmi(monkeypatch, nics):
             return list(nics)
     mod.WMI = _W
     monkeypatch.setitem(sys.modules, "wmi", mod)
+    monkeypatch.setattr(LP, "_iphlp_default_gateway", _route_table_unavailable)
+    monkeypatch.setattr(LP, "_iphlp_default_route", _route_table_unavailable)
 
 
 def test_network_details_reads_the_adapter_with_the_default_gateway(monkeypatch):
@@ -900,6 +907,8 @@ def _cyclic_wmi(monkeypatch, nics, fail=False):
             return self._classes_map[name]
     mod.WMI = _Namespace
     monkeypatch.setitem(sys.modules, "wmi", mod)
+    monkeypatch.setattr(LP, "_iphlp_default_gateway", _route_table_unavailable)
+    monkeypatch.setattr(LP, "_iphlp_default_route", _route_table_unavailable)
     return made
 
 
@@ -959,7 +968,13 @@ def test_wmi_class_cache_attribute_exists_in_the_pinned_wmi():
     wmi bump that renames it must fail here, not silently hand the proxies back to the cyclic GC."""
     import inspect
     import re
-    import wmi   # the real, pinned module (requirements.txt)
+    import pythoncom
+    from netspeedtray.utils.com_utils import import_wmi
+    pythoncom.CoInitialize()   # wmi's import makes a COM call; the app imports it on COM workers
+    try:
+        wmi = import_wmi()   # the real, pinned module (requirements.txt)
+    finally:
+        pythoncom.CoUninitialize()
     attr = LP.WMI_CLASS_CACHE_ATTR
     ns = wmi._wmi_namespace(object(), False)    # find_classes=False: no COM call
     assert isinstance(vars(ns).get(attr), dict), (
@@ -981,21 +996,11 @@ def test_a_missing_class_cache_is_logged_once_at_debug(monkeypatch, caplog):
     assert len(hits) == 1 and hits[0].levelno == logging.DEBUG
 
 
-def test_preload_wmi_imports_on_the_calling_thread(monkeypatch):
-    import sys
-    monkeypatch.undo()
-    ms = LP.preload_wmi()
-    assert ms is not None and ms >= 0 and "wmi" in sys.modules
-    monkeypatch.setitem(sys.modules, "wmi", None)       # unavailable: no raise
-    assert LP.preload_wmi() is None
-
-
-def test_the_app_preloads_wmi_on_the_gui_thread_before_the_widget():
-    """The exit-time 'Win32 exception occurred releasing IUnknown': wmi's import-time COM object
-    belongs to whichever thread imports wmi first, so the GUI thread must, before any worker starts."""
+def test_the_app_no_longer_preloads_wmi_at_startup():
+    """wmi loads on first use (utils/com_utils.import_wmi releases its import-time COM object on the
+    importing thread - test_lazy_com.py), so main() must not pull it in on the GUI thread."""
     from pathlib import Path
     import netspeedtray
     src = (Path(netspeedtray.__file__).resolve().parents[1] / "monitor.py").read_text(encoding="utf-8")
     main = src[src.index("def main()"):]
-    assert "preload_wmi()" in main
-    assert main.index("preload_wmi()") < main.index("NetworkSpeedWidget(")
+    assert "preload_wmi" not in main and "import wmi" not in main

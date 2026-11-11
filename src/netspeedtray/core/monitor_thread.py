@@ -25,28 +25,9 @@ try:
 except ImportError:
     win32pdh = None
 
-try:
-    import win32com
-    # A frozen install under read-only Program Files makes win32com's default gen_py cache
-    # dir (inside the bundle, `_internal\win32com\gen_py`) unwritable. Importing win32com.client
-    # then crashes while (re)building its COM cache there -- and it raises FileNotFoundError,
-    # NOT ImportError, so the old guard let it through and the app failed to start (#210).
-    # Point the generated-code cache at a writable per-user temp dir BEFORE importing
-    # win32com.client. (We only ever use late-bound GetObject("winmgmts:...") for WMI, which
-    # doesn't need this cache at all; the redirect just keeps the import from crashing.)
-    import os as _os, tempfile as _tempfile
-    try:
-        _gen_dir = _os.path.join(_tempfile.gettempdir(), "netspeedtray_win32com_gen")
-        _os.makedirs(_gen_dir, exist_ok=True)
-        win32com.__gen_path__ = _gen_dir
-    except OSError:
-        pass
-    import win32com.client
-except (ImportError, OSError):
-    # win32com is a bundled dependency, so the package import above effectively always
-    # succeeds; on the off chance win32com.client still can't load, degrade gracefully
-    # (WMI hardware monitoring disabled) instead of crashing the app.
-    win32com.client = None
+# win32com.client (and wmi) load on first use, not here: see utils/com_utils.py (memory plan 2.5).
+# _com_client() is the one seam - the LHM/OHM WMI namespace and the ACPI fallback call it.
+from netspeedtray.utils.com_utils import import_wmi, win32com_client as _com_client
 
 import subprocess
 import shutil
@@ -1122,11 +1103,16 @@ class StatsMonitorThread(QThread):
         if self._wmi_battery is False or now < self._battery_retry_at:
             self._battery_cache = (now, None)
             return None
+        if self._wmi_battery is None and not power_utils.has_battery():
+            # No battery reported (a desktop - the power tiles poll this too): nothing to read, so
+            # no WMI and the wmi module is never imported. Asked again on the next slow tick, so a
+            # battery that appears later is still picked up.
+            self._battery_cache = (now, None)
+            return None
         watts = None
         try:
             if self._wmi_battery is None:
-                import wmi  # already a dependency (LHM temps)
-                self._wmi_battery = wmi.WMI(namespace="root\\wmi")
+                self._wmi_battery = import_wmi().WMI(namespace="root\\wmi")
             discharge_mw = charge_mw = 0
             for b in self._wmi_battery.BatteryStatus():
                 # DischargeRate / ChargeRate are mW and non-zero only while that flow is real.
@@ -1264,7 +1250,10 @@ class StatsMonitorThread(QThread):
         Failures are NOT permanently cached so the probe retries each poll cycle,
         allowing the app to pick up LHM/OHM if it starts after NetSpeedTray.
         """
-        if self._wmi_ohm is not None or not win32com.client:
+        if self._wmi_ohm is not None:
+            return
+        com_client = _com_client()
+        if com_client is None:
             return
         # Probe every namespace BEFORE deciding on any user-facing guidance: a working
         # fallback (e.g. a live root\OpenHardwareMonitor) must not trigger a misleading
@@ -1276,7 +1265,7 @@ class StatsMonitorThread(QThread):
         probe_errors: List[str] = []
         for ns in ("root\\LibreHardwareMonitor", "root\\OpenHardwareMonitor"):
             try:
-                obj = win32com.client.GetObject(f"winmgmts:{ns}")
+                obj = com_client.GetObject(f"winmgmts:{ns}")
                 # Validate the namespace exposes ANY sensor, not just Temperature:
                 # a Power/Load-only source must not be rejected (issue #130). LHM
                 # running without admin rights registers the namespace but exposes 0 sensors.
@@ -1434,14 +1423,15 @@ class StatsMonitorThread(QThread):
                     self.logger.debug("Thermal PDH polling error: %s", e)
 
         # 3. WMI MSAcpi_ThermalZoneTemperature (legacy ACPI fallback)
-        if not win32com.client:
+        com_client = _com_client()
+        if com_client is None:
             return None
         try:
             if not self._wmi:
                 try:
-                    self._wmi = win32com.client.GetObject("winmgmts:\\\\.\\root\\wmi")
+                    self._wmi = com_client.GetObject("winmgmts:\\\\.\\root\\wmi")
                 except Exception:
-                    self._wmi = win32com.client.GetObject("winmgmts:root\\wmi")
+                    self._wmi = com_client.GetObject("winmgmts:root\\wmi")
             temps = self._wmi.ExecQuery("SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature")
             for idx, t in enumerate(temps):
                 raw = t.CurrentTemperature

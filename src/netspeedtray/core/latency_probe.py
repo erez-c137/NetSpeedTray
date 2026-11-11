@@ -343,23 +343,6 @@ WMI_CLASS_CACHE_ATTR = "_classes_map"
 _wmi_cache_missing_logged = False
 
 
-def preload_wmi() -> Optional[float]:
-    """Import the wmi module on the CALLING thread (the GUI thread, at startup); the import time in
-    ms, or None when wmi is unavailable. ``import wmi`` itself makes a COM object
-    (``wmi.obj = GetObject("winmgmts:")``) that lives as long as the module. Whichever thread imports
-    wmi first owns it, and when that is a worker that later calls CoUninitialize (the stats thread,
-    the probe, a Check connection's details thread), the object is released at interpreter exit after
-    its apartment is gone and pywin32 prints "Win32 exception occurred releasing IUnknown". The GUI
-    thread's apartment lasts the whole run. Measured ~11-15 ms once, after the app's own imports."""
-    t0 = time.perf_counter()
-    try:
-        import wmi  # noqa: F401  (already a dependency)
-    except Exception:
-        logger.debug("wmi not preloaded on the GUI thread.", exc_info=True)
-        return None
-    return (time.perf_counter() - t0) * 1000.0
-
-
 @contextlib.contextmanager
 def _wmi_connection() -> Iterator[Any]:
     """A ``wmi.WMI()`` connection whose COM proxies are all released by plain reference counting, on
@@ -370,9 +353,12 @@ def _wmi_connection() -> Iterator[Any]:
     the cyclic GC happens to run - possibly on another thread, or after this thread's
     CoUninitialize. Clearing the cache on the way out breaks that cycle (the only one a query leaves;
     checked live with gc.DEBUG_SAVEALL), so the Check connection's details thread no longer needs a
-    whole-heap gc.collect() before CoUninitialize. A failed query (an exception) clears it too."""
-    import wmi  # already a dependency
-    conn = wmi.WMI()
+    whole-heap gc.collect() before CoUninitialize. A failed query (an exception) clears it too.
+
+    wmi is imported here on first use, on the calling thread (utils/com_utils.import_wmi, which also
+    releases the module's own import-time COM object in that thread's apartment)."""
+    from netspeedtray.utils.com_utils import import_wmi
+    conn = import_wmi().WMI()
     try:
         yield conn
     finally:
@@ -434,8 +420,237 @@ def link_state(gateway: Optional[str]) -> str:
     return LINK_UNKNOWN if up else LINK_DOWN
 
 
+# --- the default gateway from the IP Helper route table (no WMI, no COM) ----------------------------
+_AF_INET = 2
+_AF_INET6 = 23
+
+
+class _SOCKADDR_IN(ctypes.Structure):
+    _fields_ = [("sin_family", ctypes.c_ushort), ("sin_port", ctypes.c_ushort),
+                ("sin_addr", ctypes.c_ubyte * 4), ("sin_zero", ctypes.c_ubyte * 8)]
+
+
+class _SOCKADDR_IN6(ctypes.Structure):
+    _fields_ = [("sin6_family", ctypes.c_ushort), ("sin6_port", ctypes.c_ushort),
+                ("sin6_flowinfo", ctypes.c_ulong), ("sin6_addr", ctypes.c_ubyte * 16),
+                ("sin6_scope_id", ctypes.c_ulong)]
+
+
+class _SOCKADDR_INET(ctypes.Union):
+    _fields_ = [("Ipv4", _SOCKADDR_IN), ("Ipv6", _SOCKADDR_IN6), ("si_family", ctypes.c_ushort)]
+
+
+class _IP_ADDRESS_PREFIX(ctypes.Structure):
+    _fields_ = [("Prefix", _SOCKADDR_INET), ("PrefixLength", ctypes.c_ubyte)]
+
+
+class _MIB_IPFORWARD_ROW2(ctypes.Structure):
+    """netioapi.h; 104 bytes on x64 (pinned by test_gateway_route_table.py)."""
+    _fields_ = [("InterfaceLuid", ctypes.c_uint64), ("InterfaceIndex", ctypes.c_ulong),
+                ("DestinationPrefix", _IP_ADDRESS_PREFIX), ("NextHop", _SOCKADDR_INET),
+                ("SitePrefixLength", ctypes.c_ubyte), ("ValidLifetime", ctypes.c_ulong),
+                ("PreferredLifetime", ctypes.c_ulong), ("Metric", ctypes.c_ulong),
+                ("Protocol", ctypes.c_int), ("Loopback", ctypes.c_ubyte),
+                ("AutoconfigureAddress", ctypes.c_ubyte), ("Publish", ctypes.c_ubyte),
+                ("Immortal", ctypes.c_ubyte), ("Age", ctypes.c_ulong), ("Origin", ctypes.c_int)]
+
+
+class _MIB_IPFORWARD_TABLE2(ctypes.Structure):
+    # Table[ANY_SIZE]: the rows start at offset 8 (the row's 8-byte alignment).
+    _fields_ = [("NumEntries", ctypes.c_ulong), ("Table", _MIB_IPFORWARD_ROW2 * 1)]
+
+
+class _MIB_IPINTERFACE_ROW(ctypes.Structure):
+    """netioapi.h; 168 bytes on x64. Only Metric and Connected are read."""
+    _fields_ = [("Family", ctypes.c_ushort), ("InterfaceLuid", ctypes.c_uint64),
+                ("InterfaceIndex", ctypes.c_ulong), ("MaxReassemblySize", ctypes.c_ulong),
+                ("InterfaceIdentifier", ctypes.c_uint64),
+                ("MinRouterAdvertisementInterval", ctypes.c_ulong),
+                ("MaxRouterAdvertisementInterval", ctypes.c_ulong),
+                ("AdvertisingEnabled", ctypes.c_ubyte), ("ForwardingEnabled", ctypes.c_ubyte),
+                ("WeakHostSend", ctypes.c_ubyte), ("WeakHostReceive", ctypes.c_ubyte),
+                ("UseAutomaticMetric", ctypes.c_ubyte),
+                ("UseNeighborUnreachabilityDetection", ctypes.c_ubyte),
+                ("ManagedAddressConfigurationSupported", ctypes.c_ubyte),
+                ("OtherStatefulConfigurationSupported", ctypes.c_ubyte),
+                ("AdvertiseDefaultRoute", ctypes.c_ubyte), ("RouterDiscoveryBehavior", ctypes.c_int),
+                ("DadTransmits", ctypes.c_ulong), ("BaseReachableTime", ctypes.c_ulong),
+                ("RetransmitTime", ctypes.c_ulong), ("PathMtuDiscoveryTimeout", ctypes.c_ulong),
+                ("LinkLocalAddressBehavior", ctypes.c_int), ("LinkLocalAddressTimeout", ctypes.c_ulong),
+                ("ZoneIndices", ctypes.c_ulong * 16), ("SitePrefixLength", ctypes.c_ulong),
+                ("Metric", ctypes.c_ulong), ("NlMtu", ctypes.c_ulong), ("Connected", ctypes.c_ubyte),
+                ("SupportsWakeUpPatterns", ctypes.c_ubyte), ("SupportsNeighborDiscovery", ctypes.c_ubyte),
+                ("SupportsRouterDiscovery", ctypes.c_ubyte), ("ReachableTime", ctypes.c_ulong),
+                ("TransmitOffload", ctypes.c_ubyte), ("ReceiveOffload", ctypes.c_ubyte),
+                ("DisableDefaultRoutes", ctypes.c_ubyte)]
+
+
+class RouteTableUnavailable(Exception):
+    """The route table could not be read at all (as opposed to: read, and no default route)."""
+
+
+@dataclass(frozen=True)
+class _DefaultRoute:
+    next_hop: str
+    route_metric: int
+    luid: int
+    if_index: int = 0   # InterfaceIndex - what WMI's Win32_NetworkAdapterConfiguration also reports
+
+
+_route_lib = None
+
+
+def _route_api():
+    """iphlpapi bound for the route-table calls (its own WinDLL, so these argtypes never touch the
+    ICMP binding above)."""
+    global _route_lib
+    if _route_lib is None:
+        lib = ctypes.WinDLL("iphlpapi")
+        lib.GetIpForwardTable2.restype = wintypes.DWORD
+        lib.GetIpForwardTable2.argtypes = [ctypes.c_ushort,
+                                           ctypes.POINTER(ctypes.POINTER(_MIB_IPFORWARD_TABLE2))]
+        lib.FreeMibTable.restype = None
+        lib.FreeMibTable.argtypes = [ctypes.c_void_p]
+        lib.InitializeIpInterfaceEntry.restype = None
+        lib.InitializeIpInterfaceEntry.argtypes = [ctypes.POINTER(_MIB_IPINTERFACE_ROW)]
+        lib.GetIpInterfaceEntry.restype = wintypes.DWORD
+        lib.GetIpInterfaceEntry.argtypes = [ctypes.POINTER(_MIB_IPINTERFACE_ROW)]
+        _route_lib = lib
+    return _route_lib
+
+
+def _ipv4_default_routes(table: _MIB_IPFORWARD_TABLE2) -> list:
+    """The table's IPv4 default routes (0.0.0.0/0) that go through a router, in table order. An
+    on-link default (next hop 0.0.0.0 - a WireGuard / PPP-style VPN) has no router to ping and is
+    left out, as WMI's DefaultIPGateway leaves it out; IPv6 rows are skipped (the probe pings IPv4,
+    as it always did)."""
+    rows = (_MIB_IPFORWARD_ROW2 * table.NumEntries).from_address(ctypes.addressof(table.Table))
+    out = []
+    for r in rows:
+        dest = r.DestinationPrefix
+        if dest.Prefix.si_family != _AF_INET or dest.PrefixLength != 0 or r.Loopback:
+            continue
+        if r.NextHop.si_family != _AF_INET:
+            continue
+        hop = bytes(r.NextHop.Ipv4.sin_addr)
+        if hop == b"\0\0\0\0":
+            continue
+        out.append(_DefaultRoute(socket.inet_ntoa(hop), int(r.Metric), int(r.InterfaceLuid),
+                                 int(r.InterfaceIndex)))
+    return out
+
+
+def _interface_state(lib, luid: int) -> Optional[Tuple[int, bool]]:
+    """(interface metric, connected) for an IPv4 interface, or None when it can't be read."""
+    try:
+        row = _MIB_IPINTERFACE_ROW()
+        lib.InitializeIpInterfaceEntry(ctypes.byref(row))
+        row.Family = _AF_INET
+        row.InterfaceLuid = luid
+        if lib.GetIpInterfaceEntry(ctypes.byref(row)) != 0:
+            return None
+        return int(row.Metric), bool(row.Connected)
+    except Exception:
+        return None
+
+
+def _pick_default_route(routes, state) -> Optional[_DefaultRoute]:
+    """The router Windows itself uses among several default routes: the lowest route metric plus
+    interface metric (the effective metric ``route print`` shows), skipping a route whose interface
+    reports no connection; ties keep table order. ``state(luid)`` -> (metric, connected) or None
+    (unknown: counted as connected with metric 0)."""
+    best = None
+    for i, r in enumerate(routes):
+        st = state(r.luid)
+        if st is not None and not st[1]:
+            continue
+        key = (r.route_metric + (st[0] if st is not None else 0), i)
+        if best is None or key < best[0]:
+            best = (key, r)
+    return best[1] if best is not None else None
+
+
+def _iphlp_default_gateway(lib=None, kinds=None) -> Optional[str]:
+    """The IPv4 default gateway from GetIpForwardTable2 (no admin, no COM, nothing sent): None when
+    the table has no default route through a router. Raises RouteTableUnavailable when the table
+    itself could not be read."""
+    route = _iphlp_default_route(lib, kinds)
+    return route.next_hop if route is not None else None
+
+
+def _adapter_kinds_by_luid() -> dict:
+    """{InterfaceLuid: KIND_*} from the app's one adapter classifier (utils/interface_classifier:
+    GetIfTable2's ifType + hardware flag + the name/description keywords). {} when it can't be read."""
+    try:
+        from netspeedtray.utils.interface_classifier import classify_interface, read_os_adapters
+        return {info.luid: classify_interface(info.name, info)
+                for info in read_os_adapters().values() if info.luid}
+    except Exception:
+        return {}
+
+
+def _choose_default_route(routes, state, kinds) -> Optional[_DefaultRoute]:
+    """The router the probe pings and Check connection describes: a PHYSICAL adapter's default
+    route when one is connected - so a full-tunnel VPN (its own 0.0.0.0/0 through a tunnel next hop,
+    usually at a lower metric) does not turn the "gateway" hop into a hop across the internet, where
+    loss is no longer "your Wi-Fi / LAN" - else the route Windows uses (_pick_default_route).
+    ``kinds()`` -> {luid: KIND_*}; asked only when there is a choice to make."""
+    if len(routes) <= 1:
+        return routes[0] if routes else None
+    try:
+        kind_of = kinds() or {}
+    except Exception:
+        kind_of = {}
+    physical = [r for r in routes if kind_of.get(r.luid) == constants.network.interface.KIND_PHYSICAL]
+    if physical:
+        chosen = _pick_default_route(physical, state)
+        if chosen is not None:
+            return chosen
+    return _pick_default_route(routes, state)
+
+
+def _iphlp_default_route(lib=None, kinds=None) -> Optional[_DefaultRoute]:
+    """The default route to use (see _choose_default_route), with its interface."""
+    try:
+        lib = lib or _route_api()
+        ptr = ctypes.POINTER(_MIB_IPFORWARD_TABLE2)()
+        status = lib.GetIpForwardTable2(_AF_INET, ctypes.byref(ptr))
+    except Exception as e:
+        raise RouteTableUnavailable(repr(e)) from e
+    if status != 0 or not ptr:
+        raise RouteTableUnavailable(f"GetIpForwardTable2 returned {status}")
+    try:
+        routes = _ipv4_default_routes(ptr.contents)
+    finally:
+        try:
+            lib.FreeMibTable(ptr)
+        except Exception:
+            pass
+    return _choose_default_route(routes, lambda luid: _interface_state(lib, luid),
+                                 kinds or _adapter_kinds_by_luid)
+
+
+_route_fallback_logged = False
+
+
 def default_gateway_ip() -> Optional[str]:
-    """The default gateway IPv4, via WMI (no admin). None if not found."""
+    """The default gateway IPv4 (no admin). From the IP Helper route table, without loading WMI/COM
+    (memory plan 2.5): a physical adapter's default route when there is one, else the route Windows
+    uses (_choose_default_route) - and through WMI only when that table cannot be read at all. None
+    if there is no default route through a router."""
+    global _route_fallback_logged
+    try:
+        return _iphlp_default_gateway()
+    except RouteTableUnavailable as e:
+        if not _route_fallback_logged:
+            _route_fallback_logged = True
+            logger.debug("Route table unavailable (%s): default gateway via WMI.", e)
+    return _wmi_default_gateway_ip()
+
+
+def _wmi_default_gateway_ip() -> Optional[str]:
+    """The default gateway IPv4 via WMI: the first IP-enabled adapter's IPv4 DefaultIPGateway.
+    Needs COM initialised on the calling thread. None if not found."""
     try:
         with _wmi_connection() as conn:
             for nic in conn.Win32_NetworkAdapterConfiguration(IPEnabled=True):
@@ -465,26 +680,48 @@ def _strs(values: Any) -> Tuple[str, ...]:
 
 def network_details() -> Optional[NetworkDetails]:
     """Adapter, addresses, IPv4 gateway and DNS servers of the adapter that has the default gateway -
-    the same adapter, found the same way (the first IP-enabled one with an IPv4 gateway), as
-    ``default_gateway_ip``. One read-only WMI query, no admin, nothing sent on the network. Needs COM
-    initialised on the calling thread. None when no adapter has an IPv4 gateway (or WMI failed).
-    IPv6 link-local addresses (fe80::) are left out: they are not reachable from anywhere else."""
+    the adapter the route table's default route goes out of (by interface index: a docked laptop has
+    Ethernet and Wi-Fi on one LAN with the SAME gateway, and Windows routes through the lower
+    metric), else the one holding the gateway ``default_gateway_ip`` reports, else the first
+    IP-enabled one with an IPv4 gateway. One read-only WMI query (plus the route-table read),
+    no admin, nothing sent on the network. Needs COM initialised on the calling thread. None when
+    no adapter has an IPv4 gateway (or WMI failed). IPv6 link-local addresses (fe80::) are left out: they are not reachable from anywhere else."""
+    try:
+        route = _iphlp_default_route()   # the route table, not a second WMI query
+    except Exception:
+        route = None
+    routed = route.next_hop if route is not None else None
+    routed_if = route.if_index if route is not None else 0
+
+    def _if_index(nic) -> int:
+        try:
+            return int(getattr(nic, "InterfaceIndex", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
     try:
         with _wmi_connection() as conn:
+            found = []
             for nic in conn.Win32_NetworkAdapterConfiguration(IPEnabled=True):
                 gws = [g for g in _strs(getattr(nic, "DefaultIPGateway", None)) if ":" not in g]
                 if not gws:
                     continue
-                addrs = _strs(getattr(nic, "IPAddress", None))
-                return NetworkDetails(
-                    adapter=str(getattr(nic, "Description", "") or ""),
-                    ipv4=tuple(a for a in addrs if ":" not in a),
-                    ipv6=tuple(a for a in addrs if ":" in a and not a.lower().startswith("fe80:")),
-                    gateway=gws[0],
-                    dns=_strs(getattr(nic, "DNSServerSearchOrder", None)))
+                found.append((nic, gws))
+                if routed is None or (routed_if and _if_index(nic) == routed_if):
+                    break
+            if not found:
+                return None
+            # The routed interface; else the adapter holding the routed gateway; else the first one.
+            nic, gws = next(((n, g) for n, g in found if routed_if and _if_index(n) == routed_if),
+                            next(((n, g) for n, g in found if routed in g), found[0]))
+            addrs = _strs(getattr(nic, "IPAddress", None))
+            return NetworkDetails(
+                adapter=str(getattr(nic, "Description", "") or ""),
+                ipv4=tuple(a for a in addrs if ":" not in a),
+                ipv6=tuple(a for a in addrs if ":" in a and not a.lower().startswith("fe80:")),
+                gateway=routed if routed in gws else gws[0],
+                dns=_strs(getattr(nic, "DNSServerSearchOrder", None)))
     except Exception:
         return None
-    return None
 
 
 class LatencyProbe(QThread):
@@ -496,8 +733,8 @@ class LatencyProbe(QThread):
     _TIMEOUT_MS = 1000
     _GATEWAY_REFRESH_SEC = 60.0
     # A lost echo from a gateway resolved at least this long ago re-checks which gateway is current
-    # (a network switch with no event we hear about); bounded so a real outage costs one WMI query
-    # per this many seconds, not one per cycle.
+    # (a network switch with no event we hear about); bounded so a real outage costs one route-table
+    # read (microseconds; a WMI query only where that table is unreadable) per this many seconds.
     _GATEWAY_RECHECK_ON_LOSS_SEC = 10.0
     _ERROR_LOG_INTERVAL_SEC = 60.0
 
@@ -596,10 +833,12 @@ class LatencyProbe(QThread):
         return self._gateway
 
     def run(self) -> None:
-        # This thread calls wmi.WMI() (via default_gateway_ip) which needs COM initialized PER THREAD -
-        # without it, wmi raises "CoInitialize has not been called", default_gateway_ip swallows it, and
-        # the gateway probe (the privacy-preserving default) silently never produces a reading. Mirror
-        # StatsMonitorThread, which inits COM on its own thread for the same reason.
+        # default_gateway_ip reads the IP Helper route table (no COM), but falls back to wmi.WMI() when
+        # that table can't be read - and WMI needs COM initialized PER THREAD: without it, wmi raises
+        # "CoInitialize has not been called", the lookup swallows it, and the gateway probe (the
+        # privacy-preserving default) silently never produces a reading. Mirror StatsMonitorThread,
+        # which inits COM on its own thread for the same reason. (pythoncom alone is ~0.5 MB; wmi and
+        # win32com.client are only imported if the fallback ever runs.)
         try:
             import pythoncom
             pythoncom.CoInitialize()

@@ -65,7 +65,7 @@ def _no_other_sources():
     """
     return (
         patch("netspeedtray.core.monitor_thread.win32pdh", None),
-        patch("netspeedtray.core.monitor_thread.win32com.client", None),
+        patch("netspeedtray.core.monitor_thread._com_client", return_value=None),
     )
 
 
@@ -182,7 +182,7 @@ class TestAcpiPlaceholderZonesAreNotSensors:
         thread._wmi_ohm = None
         return (
             patch("netspeedtray.core.monitor_thread.win32pdh", pdh),
-            patch("netspeedtray.core.monitor_thread.win32com.client", None),
+            patch("netspeedtray.core.monitor_thread._com_client", return_value=None),
         )
 
     def test_a_fixed_round_kelvin_zone_is_ignored(self, thread):

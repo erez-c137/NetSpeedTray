@@ -32,10 +32,8 @@ from typing import Optional
 
 from netspeedtray.constants import hardware
 
-try:
-    import wmi  # pywin32-backed; only present on Windows installs
-except ImportError:  # pragma: no cover - exercised on non-Windows CI
-    wmi = None
+# wmi is imported on first use (read_design_capacity_mwh, on the monitor thread), never at
+# import time: this module is also read by the GUI thread's hover card (utils/com_utils.py).
 
 MODE_DISCHARGE = "discharge"
 MODE_CHARGE = "charge"
@@ -162,12 +160,12 @@ def read_design_capacity_mwh() -> Optional[int]:
             return None
         total = 0
         try:
-            if wmi is not None:
-                root = wmi.WMI(namespace="root\\wmi")
-                for battery in root.query("SELECT DesignedCapacity FROM BatteryStaticData"):
-                    capacity = int(getattr(battery, "DesignedCapacity", 0) or 0)
-                    if p.DESIGN_CAPACITY_MIN_MWH <= capacity <= p.DESIGN_CAPACITY_MAX_MWH:
-                        total += capacity
+            from netspeedtray.utils.com_utils import import_wmi
+            root = import_wmi().WMI(namespace="root\\wmi")
+            for battery in root.query("SELECT DesignedCapacity FROM BatteryStaticData"):
+                capacity = int(getattr(battery, "DesignedCapacity", 0) or 0)
+                if p.DESIGN_CAPACITY_MIN_MWH <= capacity <= p.DESIGN_CAPACITY_MAX_MWH:
+                    total += capacity
         except Exception:
             total = 0
         if total > 0:
