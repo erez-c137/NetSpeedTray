@@ -141,6 +141,7 @@ def test_manual_menu_check_is_a_no_op_under_policy(policy):
     NetworkSpeedWidget.check_for_updates(fake)
     fake.update_checker.check_now.assert_not_called()
     fake.update_checker.up_to_date.connect.assert_not_called()
+    assert not getattr(fake, "_manual_update_check", False)   # no manual reply armed
 
 
 # ------------------------------------------------------------------------- tray menu item

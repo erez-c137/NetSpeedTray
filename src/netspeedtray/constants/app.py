@@ -68,6 +68,24 @@ class AppConstants:
     # It removes the previous version's folder after a portable update, and that folder is the
     # rollback until the new version has shown it can start - so not immediately (#260).
     UPDATE_JANITOR_DELAY_MS: Final[int] = 10_000
+    # Automatic update checks while the app keeps running (a PC that sleeps instead of rebooting can
+    # run one instance for weeks). Each tick only asks UpdateChecker.should_check(), which still
+    # enforces the 24 h interval, the user's toggle and the IT policy - so this is how promptly a due
+    # check happens, not how often GitHub is contacted.
+    UPDATE_RECHECK_INTERVAL_MS: Final[int] = 3 * 60 * 60 * 1000
+    # After a wake from sleep the network is often not back yet; wait this long before the check.
+    UPDATE_RESUME_CHECK_DELAY_MS: Final[int] = 60_000
+    # A periodic / after-resume check offers an update with a non-modal flyout (never a dialog the
+    # user did not ask for); it stays this long. While a fullscreen app, a modal dialog or a nested
+    # event loop is up, the offer waits and is retried this often.
+    UPDATE_FLYOUT_DISMISS_MS: Final[int] = 30_000
+    UPDATE_OFFER_RETRY_MS: Final[int] = 60_000
+    # ...and also while nobody is there to see it (#508 review): the session locked / a screen saver
+    # (SHQueryUserNotificationState), or no keyboard/mouse input for this long. An auto-dismissing
+    # flyout shown to an empty room - after an unattended wake, say - is an offer lost for a day.
+    UPDATE_OFFER_MAX_IDLE_S: Final[int] = 120
+    # "Not now" in the update dialog snoozes that version's automatic offers this long (seconds).
+    UPDATE_NOT_NOW_SNOOZE_S: Final[int] = 3 * 24 * 60 * 60
     # How long after the event loop starts the crash log's fault handler stays on (netspeedtray/
     # crash_log.py): long enough to cover the widget's first show and stats ticks, short enough
     # that handled access violations later in the run are never logged as crashes.
