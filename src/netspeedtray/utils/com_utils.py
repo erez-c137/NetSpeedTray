@@ -51,15 +51,19 @@ def win32com_client() -> Optional[ModuleType]:
     the old module-level import did."""
     global _client_unavailable
     mod = sys.modules.get("win32com.client")
-    if mod is not None:
+    # Only a FINISHED import: a module sits in sys.modules from the moment its body starts running,
+    # so while another worker is still importing it (the Check connection's details thread in
+    # import_wmi, say) this fast path would hand the stats thread a half-built module without
+    # GetObject. Such a caller takes the import below, which waits for the import to finish.
+    if mod is not None and not getattr(getattr(mod, "__spec__", None), "_initializing", False):
         return mod
     with _lock:
         if _client_unavailable:
             return None
         try:
             _redirect_gen_path()
-            import win32com.client
-            return win32com.client
+            import importlib
+            return importlib.import_module("win32com.client")
         except (ImportError, OSError) as e:
             _client_unavailable = True
             logger.debug("win32com.client unavailable: %s", e)
