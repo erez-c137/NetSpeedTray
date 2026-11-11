@@ -313,6 +313,8 @@ class StatsMonitorThread(QThread):
         self._gpu_sensor_asleep: bool = False
         self._gpu_window_sec: float = 0.0
         self._nvidia_gate_blind_logged: bool = False
+        # Whether the last DXGI list had an NVIDIA card - its going away drops nvidia-smi's total.
+        self._nvidia_dxgi_seen: bool = False
         # monotonic time of the last \GPU Engine CollectQueryData: the next utilization sample covers
         # (this, next collection], which is how a sample that spans our own nvidia-smi call is told.
         self._gpu_collect_at: Optional[float] = None
@@ -774,6 +776,16 @@ class StatsMonitorThread(QThread):
         # Outside the gate on purpose: once the total is known it applies on every poll, whatever the
         # reason nvidia-smi did or did not run this time round.
         if selected is None:
+            # The cached total survives a failed nvidia-smi call (2.2.1) - so it must not outlive the
+            # card: an NVIDIA eGPU unplugged mid-session would otherwise leave its "/ 8.0 GB" on the
+            # remaining GPU's memory. Dropped only when DXGI HAD an NVIDIA card and no longer does: a
+            # card DXGI never lists (a TCC-mode compute GPU) keeps nvidia-smi's total, as before.
+            if self._gpu_adapters is not None:
+                nvidia_listed = any(a.vendor_id == constants.gpu.VENDOR_NVIDIA
+                                    for a in gpu_adapters.hardware_adapters(self._gpu_adapters))
+                if self._nvidia_dxgi_seen and not nvidia_listed:
+                    self._nvidia_cache_vram_total = None
+                self._nvidia_dxgi_seen = nvidia_listed
             if vram_total is None and self._nvidia_cache_vram_total is not None:
                 vram_total = self._nvidia_cache_vram_total
             elif vram_total is None and self._nvidia_smi_path:
