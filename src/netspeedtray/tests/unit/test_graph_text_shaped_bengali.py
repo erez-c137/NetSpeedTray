@@ -132,3 +132,36 @@ def test_rendered_bengali_graph_draws_bengali_text(monkeypatch, shaping):
         face = ft2font.FT2Font(path)
         missing = sorted({c for t in texts for c in t if not c.isspace() and face.get_char_index(ord(c)) == 0})
         assert not missing, missing
+
+
+def test_history_starts_note_writes_its_date_like_the_ticks(monkeypatch, shaping):
+    """The graph's other calendar date - the "History starts <date>" note on a range before the first
+    record - follows the ticks' digits: a Bengali graph wrote "১৭ অক্টো" on its axis and "17 অক্টো
+    2026" in its note. The English graph's note is unchanged."""
+    from matplotlib.figure import Figure
+    from netspeedtray.constants import styles as style_constants
+    from netspeedtray.views.graph.renderer import GraphRenderer
+
+    def _bare_init(self):
+        self.figure = Figure(figsize=(8, 6), dpi=100)
+        self.canvas = MagicMock()
+        self.ax_download = self.figure.add_subplot(2, 1, 1)
+        self.ax_upload = self.figure.add_subplot(2, 1, 2)
+        self.axes = [self.ax_download, self.ax_upload]
+        self._is_dark_mode = False
+        self._current_text_color = style_constants.LIGHT_MODE_TEXT_COLOR
+        self._current_grid_color = style_constants.GRID_COLOR_LIGHT
+
+    monkeypatch.setattr(GraphRenderer, "_init_matplotlib", _bare_init)
+    end = datetime(2025, 12, 10, 12)
+    start = end - timedelta(days=7)
+    pad = [(start, 0.0, 0.0), (end, 0.0, 0.0)]
+    earliest = {"earliest": datetime(2026, 10, 17, 8)}   # after the range, in another year
+    notes = {}
+    for lang in ("bn_BD", "en_US"):
+        r = GraphRenderer(MagicMock(), I18nStrings(lang))
+        r.render(pad, start, end, "TIMELINE_WEEK", stat_type="network", hw_styles=earliest)
+        notes[lang] = [t.get_text() for ax in r.figure.axes for t in ax.texts if t.get_text().strip()]
+    bn_note = [t for t in notes["bn_BD"] if "১৭" in t]
+    assert bn_note and "২০২৬" in bn_note[0] and not re.search("[0-9]", bn_note[0]), notes["bn_BD"]
+    assert any(t.startswith("History starts") and "Oct 17 2026" in t for t in notes["en_US"]), notes["en_US"]
