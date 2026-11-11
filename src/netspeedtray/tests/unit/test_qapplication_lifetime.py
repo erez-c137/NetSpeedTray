@@ -39,12 +39,14 @@ def test_the_session_application_is_the_only_one(q_app):
 def test_a_module_q_app_fixture_running_first_does_not_destroy_the_application():
     """test_app_overlap_yield.py's module-scoped autouse q_app, first in the process, then the probe
     above: without the session-held app, the probe sees stale child wrappers (every time)."""
+    # Any test in a module with a module-scoped q_app fixture works; renaming this one fails loudly.
     first = "src/netspeedtray/tests/unit/test_app_overlap_yield.py::test_owner_centred_bar_group_is_start_to_last_app"
     probe = ("src/netspeedtray/tests/unit/test_qapplication_lifetime.py::"
              "test_a_destroyed_parent_releases_its_cpp_created_child_wrappers")
     same_app = "src/netspeedtray/tests/unit/test_qapplication_lifetime.py::test_the_session_application_is_the_only_one"
     env = dict(os.environ)
     env.pop("PYTEST_XDIST_WORKER", None)
+    env.pop("PYTEST_ADDOPTS", None)   # e.g. a developer's -n auto would clash with -p no:xdist
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist", first, probe, same_app],
         cwd=str(REPO), env=env, capture_output=True, text=True, timeout=180)
