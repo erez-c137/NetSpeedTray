@@ -1666,12 +1666,17 @@ class PositionManager(QObject):
     def _app_overlap_context(self):
         """The yield's view of the widget. A string when it must not yield (the reason, for the log):
         not a native Win11 TOP/BOTTOM bar (side bars, ExplorerPatcher / Win10 bars with a real task
-        list), floating, or the user turned the setting off; NO_TASKBAR with no taskbar at all (only
+        list), floating, or the user turned the setting off and the bar has no second default spot
+        (with one, the context carries ``may_hide=False``: the full-bar fallback only); NO_TASKBAR with no taskbar at all (only
         reached once holding_for_taskbar's own hold has run out - _execute_refresh returns before it);
         BUSY while the widget is dragged or its menu is open."""
         from netspeedtray.core.app_overlap_yield import BUSY, NO_TASKBAR, OverlapContext
-        if not self._state.config.get("hide_when_apps_cover", constants.config.defaults.DEFAULT_HIDE_WHEN_APPS_COVER):
-            return "the 'Hide while app buttons cover the widget' setting is off"
+        # Off (2.2.1 item 6): no hiding, but the full-bar fallback still keeps the widget off the app
+        # buttons when the tray spot is clear - so a context (may_hide=False) is built while there IS a
+        # second default spot (or the fallback holds one); everywhere else the yield stays detached and
+        # probe-free, as before.
+        may_hide = bool(self._state.config.get("hide_when_apps_cover",
+                                               constants.config.defaults.DEFAULT_HIDE_WHEN_APPS_COVER))
         if self.is_floating():
             return "the widget is floating (Free Move or a display without a taskbar)"
         info = self._app_overlap_info or self._state.taskbar_info
@@ -1725,6 +1730,8 @@ class PositionManager(QObject):
                 tray_spot_clear = (tray_x >= c_right + constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
                                    or tray_x + width + constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
                                    <= c_left)
+        if not may_hide and stepped is None and not self._app_yield.retreated:
+            return "the 'Hide while app buttons cover the widget' setting is off"
         offset = self._state.config.get("tray_offset_x", constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
         # A drag's offset - the same rule the placement uses, so a pre-1.3.0 default (10 / 1 / 3) is no
         # drop key either.
@@ -1749,7 +1756,7 @@ class PositionManager(QObject):
                               centered=None if align is None else align == 1,
                               drop_key=drop_key, saved_drop=saved if isinstance(saved, int) else None,
                               layout_key=layout_key, stepped=stepped, tray_spot=tray_spot,
-                              tray_spot_clear=tray_spot_clear)
+                              tray_spot_clear=tray_spot_clear, may_hide=may_hide)
 
     def _would_be_x(self, info: TaskbarInfo, fallback: Optional[float],
                     widgets_step: Optional[bool] = None) -> Optional[float]:
