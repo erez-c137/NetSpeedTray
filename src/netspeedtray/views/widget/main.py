@@ -1292,7 +1292,7 @@ class NetworkSpeedWidget(QWidget):
                 return
 
             render_widget(
-                painter, self.rect(), self.renderer, self.renderer.config,
+                painter, self.rect(), self.renderer, self.layout_manager.paint_config(self.renderer.config),
                 self._build_metrics(),
                 layout_mode=self._cached_layout_mode,
                 cycle_mode=self._current_cycle_mode,

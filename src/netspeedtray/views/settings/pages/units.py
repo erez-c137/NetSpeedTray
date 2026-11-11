@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QWidget
 
 from netspeedtray import constants
 from netspeedtray.utils.components import Win11Toggle, Win11Segmented, SettingCard, Win11ComboBox
+from netspeedtray.utils.helpers import line_spacing_px
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout, as_int
 
 class UnitsPage(QWidget):
@@ -74,9 +75,13 @@ class UnitsPage(QWidget):
         layout.addWidget(SettingCard(self.i18n.SHORT_UNIT_LABELS_LABEL, control=self.short_unit_labels))
 
         # Extra px between the upload/download rows on top of the font's line height; 1 = old fixed gap.
-        self.line_spacing = Win11Segmented([(f"{v:+d}" if v else "0", v) for v in range(-4, 5)])
+        defaults = constants.config.defaults
+        self.line_spacing = Win11Segmented([(f"{v:+d}" if v else "0", v)
+                                            for v in range(defaults.LINE_SPACING_MIN, defaults.LINE_SPACING_MAX + 1)])
         self.line_spacing.valueChanged.connect(self.on_change)
         layout.addWidget(SettingCard(self._tr("LINE_SPACING_LABEL", "Line spacing (px)"),
+                                     description=self._tr("LINE_SPACING_DESCRIPTION",
+                                                          "Gap between the upload and download rows"),
                                      control=self.line_spacing))
 
         layout.addStretch()
@@ -102,9 +107,12 @@ class UnitsPage(QWidget):
         self.hide_arrows.setChecked(config.get("hide_arrows", False))
         self.hide_unit_suffix.setChecked(config.get("hide_unit_suffix", False))
         self.short_unit_labels.setChecked(config.get("short_unit_labels", constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS))
-        spacing = as_int(config.get("line_spacing"), constants.config.defaults.DEFAULT_LINE_SPACING)
-        if not -4 <= spacing <= 4:     # the control has no segment for it and would keep no value
-            spacing = constants.config.defaults.DEFAULT_LINE_SPACING
+        # The renderer's and the layout's rule (line_spacing_px), plus the range: the control has no
+        # segment for a value outside it and would keep no value at all.
+        defaults = constants.config.defaults
+        spacing = line_spacing_px(config.get("line_spacing"))
+        if not defaults.LINE_SPACING_MIN <= spacing <= defaults.LINE_SPACING_MAX:
+            spacing = defaults.DEFAULT_LINE_SPACING
         self.line_spacing.setValue(spacing)
 
 

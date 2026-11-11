@@ -466,7 +466,7 @@ def test_display_enums_are_segmented_and_round_trip(q_app, mock_i18n, mock_callb
 
 
 @pytest.mark.parametrize("stored,shown", [(-4, -4), (0, 0), (4, 4), (None, 1), ("junk", 1),
-                                          (50, 1), (-9, 1)])
+                                          (50, 1), (-9, 1), ("3", 1), (2.5, 1), (True, 1)])
 def test_line_spacing_round_trips_and_defaults(q_app, mock_i18n, mock_callback, stored, shown):
     """Line spacing: -4..+4 px as a segmented control; a missing or unreadable value shows the
     default (1, the gap the widget always had)."""

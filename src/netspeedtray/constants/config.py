@@ -169,6 +169,8 @@ class ConfigConstants:
     DEFAULT_HIDE_UNIT_SUFFIX: Final[bool] = False
     # Extra px between the two speed rows on top of the font's line height (negative = tighter).
     DEFAULT_LINE_SPACING: Final[int] = 1
+    LINE_SPACING_MIN: Final[int] = -4
+    LINE_SPACING_MAX: Final[int] = 4
     DEFAULT_SHORT_UNIT_LABELS: Final[bool] = False
     DEFAULT_DECIMAL_PLACES: Final[int] = 1
     DEFAULT_TEXT_ALIGNMENT: Final[str] = "center"
@@ -513,7 +515,8 @@ class ConfigConstants:
         "swap_upload_download": {"type": bool, "default": DEFAULT_SWAP_UPLOAD_DOWNLOAD},
         "hide_arrows": {"type": bool, "default": DEFAULT_HIDE_ARROWS},
         "hide_unit_suffix": {"type": bool, "default": DEFAULT_HIDE_UNIT_SUFFIX},
-        "line_spacing": {"type": int, "default": DEFAULT_LINE_SPACING, "min": -4, "max": 4},
+        "line_spacing": {"type": int, "default": DEFAULT_LINE_SPACING,
+                         "min": LINE_SPACING_MIN, "max": LINE_SPACING_MAX},
         "background_color": {"type": str, "default": DEFAULT_BACKGROUND_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "background_opacity": {"type": int, "default": DEFAULT_BACKGROUND_OPACITY, "min": 0, "max": 100},
         "short_unit_labels": {"type": bool, "default": DEFAULT_SHORT_UNIT_LABELS},

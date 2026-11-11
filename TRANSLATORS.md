@@ -74,8 +74,9 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - New, all locales: the Monitor → Network graph's empty-range notes - `NET_GRAPH_NO_HISTORY_YET` (nothing recorded yet), `NET_GRAPH_HISTORY_STARTS` (the range ends before the first record; **keep `{date}`**, e.g. "Oct 01") and `NET_GRAPH_NO_TRAFFIC` (two lines: history exists, but this period had none because the PC was off, idle or paused).
 > - New, all locales: `PREFERRED_MONITOR_ITEM` ("Monitor {index}: {width}x{height}" in Settings > Widget > Preferred Monitor - was hard-coded English; **keep `{index}`, `{width}`, `{height}`**), `PREFERRED_MONITOR_PRIMARY_TAG` ("(primary)"), `SETTINGS_NOT_CONNECTED_TAG` ("(not connected)" - after a saved monitor that is unplugged right now) and `INTERFACE_GROUP_NOT_CONNECTED` (the heading over selected network adapters that aren't present right now, in Settings > Network).
 
-> 🆕 **Pending native review (line spacing, #455):** non-English values are AI-assisted.
+> 🆕 **Pending native review (line spacing, #455):** non-English values are AI-assisted, except Bengali (`bn_BD`), which still has the English placeholder - it landed after this PR was opened.
 > - `LINE_SPACING_LABEL` - Settings > Appearance > Interface layout: the gap between the widget's upload and download rows, picked from -4 to +4 pixels. Use your word processor's "line spacing" term; keep `(px)` as is. Sentence case.
+> - `LINE_SPACING_DESCRIPTION` - the muted line under it ("Gap between the upload and download rows"), so it's clear the setting moves only those two rows. Use the same upload/download words as your `SWAP_UPLOAD_DOWNLOAD_LABEL`.
 
 ## How translation works in NetSpeedTray
 
