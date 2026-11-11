@@ -168,14 +168,19 @@ class GraphHoverTooltip(QObject):
         """The readout's timestamp. Past a day of visible range the time alone is ambiguous - Week /
         Month / All showed "14:00:00" with no hint of which day - so the localized date leads (and the
         year, past a year); seconds only where a sample is a second."""
-        from netspeedtray.views.graph.time_axis import localized_strftime
+        from netspeedtray.utils.mpl_fonts import graph_text_is_english
+        from netspeedtray.views.graph.time_axis import _calendar_digits, localized_strftime
         dt = mdates.num2date(x_num)
         if not span_days or span_days < 1.0:
             return dt.strftime("%H:%M:%S")
         lang = getattr(self._host.i18n, "language", None)
-        date = localized_strftime(dt, "%b %d", lang, shape=False)
+        # The calendar numbers in the digits the graph's ticks use (Bengali "১৭ অক্টো" where the graph
+        # draws Bengali; Western where it falls back to English); the names stay the UI language's,
+        # and the clock time stays Western (a live value).
+        digits = None if graph_text_is_english(lang) else lang
+        date = localized_strftime(dt, _calendar_digits(dt, "%b %d", digits), lang, shape=False)
         if span_days >= 365:
-            date = f"{date} {dt.year}"
+            date = f"{date} {dt.strftime(_calendar_digits(dt, '%Y', digits))}"
         return f"{date}  {dt.strftime('%H:%M')}"
 
     def _format(self, x_num: float, rows: List[Tuple[str, float, str]],
