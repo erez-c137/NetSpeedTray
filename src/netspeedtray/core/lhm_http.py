@@ -391,7 +391,9 @@ class SourceOutage:
     further failures inside an outage are silent: the outage is one episode. A source that flaps
     (LHM restarting, a sleep/resume) cannot flood the log: an outage starting within ``quiet_s`` of
     the last reported one is logged at DEBUG and counted, and the next reported outage says how many
-    were folded into it. Its "back" line follows its "lost" line's level. Not thread-safe: one per
+    were folded into it; a folded outage that outlasts ``quiet_s`` is reported then ("still lost"), so
+    the caller should keep calling ``failed()`` while the source stays down. Its "back" line follows
+    its "lost" line's level. Not thread-safe: one per
     owner, used on the owner's (monitor) thread."""
 
     def __init__(self, logger_: logging.Logger, what: str, *, quiet_s: float = 600.0,
@@ -423,10 +425,23 @@ class SourceOutage:
         return first
 
     def failed(self, reason: str) -> None:
-        """Record a failed read. Logs only at the start of an outage of a source that has worked."""
-        if not self.ever_ok or self._lost_at is not None:
+        """Record a failed read. Logs only at the start of an outage of a source that has worked - or
+        once more, when an outage folded to DEBUG outlasts ``quiet_s``: that is no flap, and without
+        the line the log's last word on the source would be the previous outage's "is back"."""
+        if not self.ever_ok:
             return
         now = self._clock()
+        if self._lost_at is not None:
+            if not self._lost_reported and now - (self._last_report or 0.0) >= self.quiet_s:
+                others = self._folded - 1   # this outage was counted as folded when it began
+                folded = (f" ({others} shorter outage(s) since the last report)" if others > 0 else "")
+                self.logger.info("Hardware monitor: %s is still lost after %.0f s (%s)%s; its "
+                                 "readings show N/A or fall back until it returns.",
+                                 self.what, now - self._lost_at, reason, folded)
+                self._last_report = now
+                self._lost_reported = True
+                self._folded = 0
+            return
         self._lost_at = now
         if self._last_report is None or now - self._last_report >= self.quiet_s:
             folded = (f" ({self._folded} shorter outage(s) since the last report)"

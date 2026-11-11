@@ -596,3 +596,29 @@ def test_a_flapping_source_is_rate_limited():
     outage.failed("refused")
     assert len(log.info.call_args_list) == 2
     assert "19 shorter outage(s)" in (log.info.call_args.args[0] % log.info.call_args.args[1:])
+
+
+def test_a_folded_outage_that_never_ends_is_reported_once_the_quiet_window_passes():
+    """An outage folded to DEBUG (it began within quiet_s of a reported one) that then lasts for good
+    must still reach the INFO log, or the support log's last word on the source is "is back"."""
+    from unittest.mock import MagicMock
+    from netspeedtray.core.lhm_http import SourceOutage
+    now = [1000.0]
+    log = MagicMock()
+    outage = SourceOutage(log, "the source", quiet_s=600.0, clock=lambda: now[0])
+    outage.succeeded()
+    outage.failed("refused")                   # reported: INFO
+    now[0] += 30
+    outage.succeeded()                         # back: INFO
+    now[0] += 30
+    outage.failed("refused")                   # within quiet_s: folded to DEBUG ...
+    for _ in range(100):                       # ... and it never comes back
+        now[0] += 10
+        outage.failed("refused")
+    infos = [c.args[0] % c.args[1:] for c in log.info.call_args_list]
+    assert len(infos) == 2, infos
+    assert "still lost" in infos[1]
+    now[0] += 5
+    outage.succeeded()
+    backs = [c for c in log.log.call_args_list if c.args[0] == logging.INFO]
+    assert len(backs) == 2                     # the promoted outage's "back" is INFO too
