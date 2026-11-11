@@ -176,9 +176,12 @@ class AppRow(QFrame):
         self._apply_row_style()   # keep selection/hover styling fresh across theme changes
         # Qt does NOT expose a tooltip to screen readers, so also set the accessible name from the same
         # content - otherwise an assistive reader announces a blank frame for the tab's primary control.
-        summary = self._tr("APP_ROW_TOOLTIP", "{name} - {conn} connections, {active} active, {hosts} hosts") \
-            .format(name=name, conn=conn, active=est, hosts=hosts)
-        self.setToolTip(su.tooltip_in_face(summary))
+        template = self._tr("APP_ROW_TOOLTIP", "{name} - {conn} connections, {active} active, {hosts} hosts")
+        summary = template.format(name=name, conn=conn, active=est, hosts=hosts)
+        # The process name in its own face, the sentence in the UI face (a Hebrew / Bengali sentence
+        # around 微信.exe has no one face).
+        self.setToolTip(su.tooltip_with_text_in_face(template, "name", name=name, conn=conn, active=est,
+                                                     hosts=hosts))
         self.setAccessibleName(summary)
 
     def _tr(self, key: str, default: str) -> str:
