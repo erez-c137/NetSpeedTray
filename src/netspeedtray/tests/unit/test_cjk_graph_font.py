@@ -125,31 +125,25 @@ def _mpl_visual_glyphs(path, text):
     return [int(gid(i)) for i in sorted(items, key=lambda i: i.x)]
 
 
-def _qt_visual_glyphs(path, text):
-    """The same through Qt's text layout (HarfBuzz + Qt's bidi) - what every Qt label shows."""
-    from PyQt6.QtGui import QFont, QFontDatabase, QTextLayout
-    fid = QFontDatabase.addApplicationFont(path)
-    if fid < 0:
-        pytest.skip(f"Qt cannot load {path}")
-    font = QFont(QFontDatabase.applicationFontFamilies(fid)[0])
-    font.setPixelSize(24)
-    lay = QTextLayout(text, font)
-    lay.beginLayout()
-    line = lay.createLine()
-    lay.endLayout()
-    pairs = [(p.x(), int(g)) for run in line.glyphRuns() for g, p in zip(run.glyphIndexes(), run.positions())]
-    return [g for _, g in sorted(pairs)]
+def _display_order_glyphs(path, text):
+    """The glyphs of `text` in Unicode bidi DISPLAY order (python-bidi), left to right - what Qt shows
+    for these strings (checked against QTextLayout's glyph runs when this test was written; Qt itself
+    is not used here: adding a font to the session's offscreen font database changes later tests)."""
+    from bidi.algorithm import get_display
+    from matplotlib.ft2font import FT2Font
+    font = FT2Font(path)
+    return [int(font.get_char_index(ord(c))) for c in get_display(text)]
 
 
 @pytest.mark.parametrize("text", ["מהירות הורדה", " ↑ אתחול", "שיא 12.3 Mbps"])
-def test_hebrew_graph_text_reads_in_the_same_order_as_qt(q_app, text):
-    """What matplotlib DRAWS for shape_rtl(text) must be what Qt draws for the logical text. String
-    checks alone passed while matplotlib 3.11 (which does its own bidi) drew every Hebrew graph label
-    reversed: shape_rtl's python-bidi display order was reordered a second time."""
+def test_hebrew_graph_text_is_drawn_in_display_order(text):
+    """What matplotlib DRAWS for shape_rtl(text) must read in display order. String checks alone passed
+    while matplotlib 3.11 (which does its own bidi) drew every Hebrew graph label reversed: shape_rtl's
+    python-bidi display order was reordered a second time."""
     import matplotlib.font_manager as fm
     from netspeedtray.utils.mpl_fonts import shape_rtl
     try:
         path = fm.findfont(fm.FontProperties(family="Segoe UI"), fallback_to_default=False)
     except Exception:
         pytest.skip("Segoe UI not installed")
-    assert _mpl_visual_glyphs(path, shape_rtl(text, "he_IL")) == _qt_visual_glyphs(path, text)
+    assert _mpl_visual_glyphs(path, shape_rtl(text, "he_IL")) == _display_order_glyphs(path, text)
