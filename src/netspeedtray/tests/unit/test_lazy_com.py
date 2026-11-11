@@ -165,17 +165,41 @@ def test_network_details_describe_the_adapter_of_the_routed_gateway(monkeypatch)
     fake.WMI = lambda: types.SimpleNamespace(
         Win32_NetworkAdapterConfiguration=lambda IPEnabled=True: list(nics))
     monkeypatch.setitem(sys.modules, "wmi", fake)
-    monkeypatch.setattr(LP, "_iphlp_default_gateway", lambda lib=None: "192.168.0.1")
+    monkeypatch.setattr(LP, "_iphlp_default_route", lambda lib=None: LP._DefaultRoute("192.168.0.1", 0, 1))
     d = LP.network_details()
     assert (d.adapter, d.gateway, d.ipv4) == ("Wi-Fi", "192.168.0.1", ("192.168.0.20",))
     # A routed gateway no adapter reports (or no readable route table): WMI's first adapter.
-    monkeypatch.setattr(LP, "_iphlp_default_gateway", lambda lib=None: "10.0.0.1")
+    monkeypatch.setattr(LP, "_iphlp_default_route", lambda lib=None: LP._DefaultRoute("10.0.0.1", 0, 1))
     assert LP.network_details().adapter == "Ethernet"
 
     def _unreadable(lib=None):
         raise LP.RouteTableUnavailable("x")
-    monkeypatch.setattr(LP, "_iphlp_default_gateway", _unreadable)
+    monkeypatch.setattr(LP, "_iphlp_default_route", _unreadable)
     assert LP.network_details().adapter == "Ethernet"
+
+
+def test_network_details_follow_the_routed_interface_when_two_adapters_share_a_gateway(monkeypatch):
+    """A docked laptop: Ethernet and Wi-Fi on one LAN, both with gateway 192.168.1.1. Windows routes
+    through the lower metric (Ethernet here, interface 7); WMI lists Wi-Fi first. Matching on the
+    gateway IP alone described the Wi-Fi adapter (its address, its DNS) for the Ethernet route."""
+    def nic(desc, ip, idx):
+        return types.SimpleNamespace(Description=desc, IPAddress=(ip,), DefaultIPGateway=("192.168.1.1",),
+                                     DNSServerSearchOrder=("192.168.1.1",), InterfaceIndex=idx)
+    nics = [nic("Wi-Fi", "192.168.1.30", 12), nic("Ethernet", "192.168.1.20", 7)]
+    fake = types.ModuleType("wmi")
+    fake.WMI = lambda: types.SimpleNamespace(
+        Win32_NetworkAdapterConfiguration=lambda IPEnabled=True: list(nics))
+    monkeypatch.setitem(sys.modules, "wmi", fake)
+    monkeypatch.setattr(LP, "_iphlp_default_route",
+                        lambda lib=None: LP._DefaultRoute("192.168.1.1", 0, 99, 7))
+    d = LP.network_details()
+    assert (d.adapter, d.ipv4, d.gateway) == ("Ethernet", ("192.168.1.20",), "192.168.1.1")
+
+
+def test_the_route_carries_its_interface_index():
+    tbl = _table([(AF_INET, 0, "192.168.1.1", 0, 10)])
+    tbl.Table[0].InterfaceIndex = 7
+    assert LP._iphlp_default_route(_FakeLib(tbl)).if_index == 7
 
 
 def test_the_real_route_table_reads_without_wmi():
@@ -265,3 +289,28 @@ def test_import_wmi_honours_a_missing_module(monkeypatch):
     fake = types.ModuleType("wmi")
     monkeypatch.setitem(sys.modules, "wmi", fake)
     assert com_utils.import_wmi() is fake
+
+
+def test_a_half_imported_win32com_client_is_not_handed_out(monkeypatch):
+    """Two workers' first use at once: while one is still running win32com.client's module body (it
+    is in sys.modules from the start), the other must wait for the finished module, not get a
+    half-built one without GetObject."""
+    import importlib.machinery
+    import threading
+    from netspeedtray.utils import com_utils
+    half = types.ModuleType("win32com.client")
+    half.__spec__ = importlib.machinery.ModuleSpec("win32com.client", None)
+    half.__spec__._initializing = True
+    monkeypatch.setitem(sys.modules, "win32com.client", half)
+    got = []
+    with com_utils._lock:                       # the other worker, mid-import
+        t = threading.Thread(target=lambda: got.append(com_utils.win32com_client()), daemon=True)
+        t.start()
+        t.join(0.3)
+        assert got == [], "a half-imported win32com.client was handed out"
+        half.__spec__._initializing = False     # that import finishes
+    t.join(5)
+    assert got and got[0] is not None
+    # A finished import takes the fast path, no lock.
+    with com_utils._lock:
+        assert com_utils.win32com_client() is half

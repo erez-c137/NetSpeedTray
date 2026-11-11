@@ -765,6 +765,7 @@ def _fake_wmi(monkeypatch, nics):
     mod.WMI = _W
     monkeypatch.setitem(sys.modules, "wmi", mod)
     monkeypatch.setattr(LP, "_iphlp_default_gateway", _route_table_unavailable)
+    monkeypatch.setattr(LP, "_iphlp_default_route", _route_table_unavailable)
 
 
 def test_network_details_reads_the_adapter_with_the_default_gateway(monkeypatch):
@@ -907,6 +908,7 @@ def _cyclic_wmi(monkeypatch, nics, fail=False):
     mod.WMI = _Namespace
     monkeypatch.setitem(sys.modules, "wmi", mod)
     monkeypatch.setattr(LP, "_iphlp_default_gateway", _route_table_unavailable)
+    monkeypatch.setattr(LP, "_iphlp_default_route", _route_table_unavailable)
     return made
 
 

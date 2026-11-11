@@ -494,6 +494,7 @@ class _DefaultRoute:
     next_hop: str
     route_metric: int
     luid: int
+    if_index: int = 0   # InterfaceIndex - what WMI's Win32_NetworkAdapterConfiguration also reports
 
 
 _route_lib = None
@@ -534,7 +535,8 @@ def _ipv4_default_routes(table: _MIB_IPFORWARD_TABLE2) -> list:
         hop = bytes(r.NextHop.Ipv4.sin_addr)
         if hop == b"\0\0\0\0":
             continue
-        out.append(_DefaultRoute(socket.inet_ntoa(hop), int(r.Metric), int(r.InterfaceLuid)))
+        out.append(_DefaultRoute(socket.inet_ntoa(hop), int(r.Metric), int(r.InterfaceLuid),
+                                 int(r.InterfaceIndex)))
     return out
 
 
@@ -552,7 +554,7 @@ def _interface_state(lib, luid: int) -> Optional[Tuple[int, bool]]:
         return None
 
 
-def _pick_default_route(routes, state) -> Optional[str]:
+def _pick_default_route(routes, state) -> Optional[_DefaultRoute]:
     """The router Windows itself uses among several default routes: the lowest route metric plus
     interface metric (the effective metric ``route print`` shows), skipping a route whose interface
     reports no connection; ties keep table order. ``state(luid)`` -> (metric, connected) or None
@@ -564,7 +566,7 @@ def _pick_default_route(routes, state) -> Optional[str]:
             continue
         key = (r.route_metric + (st[0] if st is not None else 0), i)
         if best is None or key < best[0]:
-            best = (key, r.next_hop)
+            best = (key, r)
     return best[1] if best is not None else None
 
 
@@ -572,6 +574,12 @@ def _iphlp_default_gateway(lib=None) -> Optional[str]:
     """The IPv4 default gateway from GetIpForwardTable2 (no admin, no COM, nothing sent): None when
     the table has no default route through a router. Raises RouteTableUnavailable when the table
     itself could not be read."""
+    route = _iphlp_default_route(lib)
+    return route.next_hop if route is not None else None
+
+
+def _iphlp_default_route(lib=None) -> Optional[_DefaultRoute]:
+    """The default route Windows uses (see _iphlp_default_gateway), with its interface."""
     try:
         lib = lib or _route_api()
         ptr = ctypes.POINTER(_MIB_IPFORWARD_TABLE2)()
@@ -588,7 +596,7 @@ def _iphlp_default_gateway(lib=None) -> Optional[str]:
         except Exception:
             pass
     if len(routes) <= 1:
-        return routes[0].next_hop if routes else None
+        return routes[0] if routes else None
     return _pick_default_route(routes, lambda luid: _interface_state(lib, luid))
 
 
@@ -641,14 +649,24 @@ def _strs(values: Any) -> Tuple[str, ...]:
 
 def network_details() -> Optional[NetworkDetails]:
     """Adapter, addresses, IPv4 gateway and DNS servers of the adapter that has the default gateway -
-    the adapter whose gateway is the one ``default_gateway_ip`` reports (the route table), else the
-    first IP-enabled one with an IPv4 gateway. One read-only WMI query (plus the route-table read),
+    the adapter the route table's default route goes out of (by interface index: a docked laptop has
+    Ethernet and Wi-Fi on one LAN with the SAME gateway, and Windows routes through the lower
+    metric), else the one holding the gateway ``default_gateway_ip`` reports, else the first
+    IP-enabled one with an IPv4 gateway. One read-only WMI query (plus the route-table read),
     no admin, nothing sent on the network. Needs COM initialised on the calling thread. None when
     no adapter has an IPv4 gateway (or WMI failed). IPv6 link-local addresses (fe80::) are left out: they are not reachable from anywhere else."""
     try:
-        routed = _iphlp_default_gateway()   # the route table, not a second WMI query
+        route = _iphlp_default_route()   # the route table, not a second WMI query
     except Exception:
-        routed = None
+        route = None
+    routed = route.next_hop if route is not None else None
+    routed_if = route.if_index if route is not None else 0
+
+    def _if_index(nic) -> int:
+        try:
+            return int(getattr(nic, "InterfaceIndex", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
     try:
         with _wmi_connection() as conn:
             found = []
@@ -657,12 +675,13 @@ def network_details() -> Optional[NetworkDetails]:
                 if not gws:
                     continue
                 found.append((nic, gws))
-                if routed is None or routed in gws:
+                if routed is None or (routed_if and _if_index(nic) == routed_if):
                     break
             if not found:
                 return None
-            # The adapter holding the gateway default_gateway_ip() reports; else the first one.
-            nic, gws = next(((n, g) for n, g in found if routed in g), found[0])
+            # The routed interface; else the adapter holding the routed gateway; else the first one.
+            nic, gws = next(((n, g) for n, g in found if routed_if and _if_index(n) == routed_if),
+                            next(((n, g) for n, g in found if routed in g), found[0]))
             addrs = _strs(getattr(nic, "IPAddress", None))
             return NetworkDetails(
                 adapter=str(getattr(nic, "Description", "") or ""),
