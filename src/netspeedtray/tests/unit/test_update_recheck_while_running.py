@@ -5,7 +5,8 @@ Before this, the only automatic check ran once, 5 s after launch - a PC that sle
 rebooting could run one instance for weeks and never hear of a new release. Now a periodic tick
 and a wake from sleep both ask UpdateChecker.should_check() (24 h interval, user toggle, IT policy)
 and only then check_now(). What they find is offered with a non-modal flyout (never a dialog the
-user did not ask for); the 5 s startup check and the manual menu check keep the dialog.
+user did not ask for) - and so is what the 5 s startup check finds; only the manual menu check
+shows the dialog. "Not now" persists (config ``update_snooze``) and never holds back a newer release.
 
 Driven against the real NetworkSpeedWidget methods with a lightweight fake ``self`` (the pattern of
 test_update_manual_check_wiring.py / test_native_event_resume.py). No network: the checker is a mock,
@@ -30,6 +31,13 @@ from netspeedtray.views.widget.main import (
 SNOOZE = constants.app.UPDATE_NOT_NOW_SNOOZE_S
 
 
+def _snoozed(version, seconds_left):
+    """An ``update_snooze`` value with ``seconds_left`` until it expires."""
+    from netspeedtray.core.update_checker import format_snooze
+    start = datetime.now(timezone.utc) - timedelta(seconds=SNOOZE - seconds_left)
+    return format_snooze(version, SNOOZE, start)
+
+
 def _bind(fake, *names):
     for n in names:
         setattr(fake, n, types.MethodType(getattr(W, n), fake))
@@ -45,7 +53,7 @@ def _fake(should_check=True, **overrides):
         _update_dialog_open=False,
         _manual_update_check=False,
         _update_auto_source=None,
-        _update_dismissed_at={},
+        config={"update_snooze": ""},
         _pending_update_offer=None,
         _show_update_dialog=MagicMock(),
         _show_pending_update_offer=MagicMock(),
@@ -157,11 +165,51 @@ def test_automatic_result_is_offered_by_flyout_not_dialog():
     assert fake._update_auto_source is None      # consumed
 
 
-def test_startup_result_keeps_the_dialog():
-    fake = _fake(_update_auto_source=None)       # the 5 s startup check sets no source
+@pytest.mark.parametrize("source", ["startup", None])
+def test_startup_result_is_a_flyout_not_a_dialog(source):
+    """No unrequested modal at all (#508 2nd review): what the 5 s startup check finds - or any
+    result nobody claimed - goes through the same flyout and gates as the periodic check."""
+    fake = _fake(_update_auto_source=source)
     _available(fake)
-    fake._show_update_dialog.assert_called_once()
-    fake._show_pending_update_offer.assert_not_called()
+    fake._show_update_dialog.assert_not_called()
+    fake._show_pending_update_offer.assert_called_once()
+
+
+def test_startup_check_runs_through_the_automatic_path(q_app, monkeypatch):
+    """_setup_timers schedules the 5 s check as _run_automatic_update_check("startup") - the same
+    quit / prompt-open / updater-running guards as the periodic tick, and the source that makes its
+    result a flyout."""
+    from netspeedtray.core import update_checker as uc
+    monkeypatch.setattr(uc, "update_check_disabled_by_policy", lambda: False)
+    shots = []
+    monkeypatch.setattr("netspeedtray.views.widget.main.QTimer.singleShot",
+                        lambda ms, *a: shots.append((ms, a[-1])))
+
+    class _Real(QObject):
+        pass
+
+    host = _Real()
+    for k, v in dict(config={"check_for_updates": True}, i18n=MagicMock(), logger=MagicMock(),
+                     position_manager=MagicMock(), _state_watcher_timer=MagicMock(),
+                     _cycle_timer=MagicMock(), widget_state=MagicMock(), update_config=MagicMock(),
+                     _show_usage_alert=MagicMock(), _execute_refresh=MagicMock(),
+                     _run_automatic_update_check=MagicMock()).items():
+        setattr(host, k, v)
+    _bind(host, "_on_update_available", "_on_update_check_up_to_date", "_on_update_check_failed",
+          "_show_pending_update_offer")
+    try:
+        W._setup_timers(host)
+        startup = [fn for ms, fn in shots if ms == 5000]
+        assert len(startup) == 1
+        startup[0]()
+        host._run_automatic_update_check.assert_called_once_with("startup")
+    finally:
+        for name in ("_update_recheck_timer", "_update_resume_check_timer",
+                     "_update_offer_retry_timer", "_usage_alert_timer"):
+            t = getattr(host, name, None)
+            if t is not None:
+                t.stop()
+        host.deleteLater()
 
 
 def test_manual_result_shows_the_dialog():
@@ -181,7 +229,8 @@ def test_result_while_a_prompt_is_open_does_not_stack_a_second():
 # --- "Not now" snoozes for 3 days ------------------------------------------------------------------
 
 def test_not_now_snoozes_automatic_offers_for_three_days():
-    fake = _fake(_update_dismissed_at={"2.2.1": time.time() - 3600}, _update_auto_source="periodic")
+    fake = _fake(config={"update_snooze": _snoozed("2.2.1", SNOOZE - 3600)},
+                 _update_auto_source="periodic")
     _available(fake, "v2.2.1")
     fake._show_pending_update_offer.assert_not_called()
     fake._update_auto_source = "periodic"
@@ -190,21 +239,70 @@ def test_not_now_snoozes_automatic_offers_for_three_days():
 
 
 def test_not_now_expires_after_three_days():
-    fake = _fake(_update_dismissed_at={"2.2.1": time.time() - SNOOZE - 60}, _update_auto_source="resume")
+    fake = _fake(config={"update_snooze": _snoozed("2.2.1", -60)}, _update_auto_source="resume")
     _available(fake, "v2.2.1")
     fake._show_pending_update_offer.assert_called_once()
 
 
-def test_not_now_also_snoozes_the_startup_dialog_path():
-    fake = _fake(_update_dismissed_at={"2.2.1": time.time() - 60})
+def test_not_now_also_holds_the_startup_offer():
+    """Persisted: the snooze holds after a restart, where the startup check is the first to ask."""
+    fake = _fake(config={"update_snooze": _snoozed("2.2.1", 60)}, _update_auto_source="startup")
     _available(fake, "v2.2.1")
     fake._show_update_dialog.assert_not_called()
+    fake._show_pending_update_offer.assert_not_called()
 
 
 def test_manual_check_still_shows_a_snoozed_version():
-    fake = _fake(_update_dismissed_at={"2.2.1": time.time()}, _manual_update_check=True)
+    fake = _fake(config={"update_snooze": _snoozed("2.2.1", SNOOZE)}, _manual_update_check=True)
     _available(fake, "v2.2.1")
     fake._show_update_dialog.assert_called_once()
+
+
+@pytest.mark.parametrize("snooze, version, held", [
+    ("", "2.2.1", False),
+    (None, "2.2.1", False),
+    ("garbage", "2.2.1", False),
+    ("2.2.1@not-a-time", "2.2.1", False),
+    ("2.2.1@2026-11-14T15:00:00Z", "2.2.1", True),       # same version, 2 days left
+    ("2.2.1@2026-11-14T15:00:00Z", "v2.2.1", True),
+    ("2.2.1@2026-11-14T15:00:00Z", "2.2.2", False),      # a NEWER release is never held back
+    ("2.2.1@2026-11-14T15:00:00Z", "2.2.1-rc.1", True),  # older than the snoozed one: held
+    ("2.2.1@2026-11-12T14:59:00Z", "2.2.1", False),      # expired a minute ago
+    ("2.2.1@2026-12-30T00:00:00Z", "2.2.1", False),      # beyond one snooze: a clock set back
+])
+def test_snooze_suppresses(snooze, version, held):
+    from netspeedtray.core.update_checker import snooze_suppresses
+    now = datetime(2026, 11, 12, 15, 0, 0, tzinfo=timezone.utc)
+    assert snooze_suppresses(snooze, version, SNOOZE, now) is held
+
+
+def test_format_snooze_round_trips_and_matches_the_schema():
+    import re
+    from netspeedtray.core.update_checker import format_snooze, snooze_suppresses, SNOOZE_REGEX
+    now = datetime(2026, 11, 11, 15, 0, 0, tzinfo=timezone.utc)
+    value = format_snooze("v2.2.1", SNOOZE, now)
+    assert value == "2.2.1@2026-11-14T15:00:00Z"
+    assert re.fullmatch(SNOOZE_REGEX, value)
+    assert snooze_suppresses(value, "2.2.1", SNOOZE, now + timedelta(days=2))
+    assert not snooze_suppresses(value, "2.2.1", SNOOZE, now + timedelta(days=3, seconds=1))
+    rules = constants.config.defaults.VALIDATION_SCHEMA["update_snooze"]
+    assert rules["regex"] == SNOOZE_REGEX and rules["default"] == ""
+    assert constants.config.defaults.DEFAULT_CONFIG["update_snooze"] == ""
+
+
+def test_the_snooze_survives_a_config_round_trip(tmp_path):
+    """Saved, reloaded, validated: the snooze comes back; a mangled value resets to the default."""
+    from netspeedtray.utils.config import ConfigManager
+    cm = ConfigManager(tmp_path / "NetSpeedTray_Config.json")
+    cfg = cm.load()
+    assert cfg.get("update_snooze") == ""
+    cfg["update_snooze"] = "2.2.1@2026-11-14T15:00:00Z"
+    cm.save(cfg)
+    assert ConfigManager(tmp_path / "NetSpeedTray_Config.json").load()["update_snooze"] == \
+        "2.2.1@2026-11-14T15:00:00Z"
+    cfg["update_snooze"] = "2.2.1@tomorrow"
+    cm.save(cfg)
+    assert ConfigManager(tmp_path / "NetSpeedTray_Config.json").load()["update_snooze"] == ""
 
 
 def test_show_dialog_marks_open_and_records_not_now_time(monkeypatch):
@@ -222,12 +320,13 @@ def test_show_dialog_marks_open_and_records_not_now_time(monkeypatch):
             seen["open_during_exec"] = fake._update_dialog_open
 
     monkeypatch.setattr(update_dialog, "UpdateDialog", _FakeDialog)
-    fake = _fake(i18n=MagicMock())
-    before = time.time()
+    fake = _fake(i18n=MagicMock(), update_config=MagicMock())
     W._show_update_dialog(fake, "v2.2.1", "u")
     assert seen["open_during_exec"] is True
     assert fake._update_dialog_open is False
-    assert before <= fake._update_dismissed_at["2.2.1"] <= time.time()
+    saved = fake.update_config.call_args[0][0]["update_snooze"]   # persisted, not in memory
+    assert saved.startswith("2.2.1@") and fake.config["update_snooze"] == saved
+    assert fake._update_recently_dismissed("2.2.1") and not fake._update_recently_dismissed("2.2.2")
 
 
 def test_a_dialog_supersedes_a_waiting_automatic_offer(monkeypatch):
@@ -245,7 +344,8 @@ def test_a_dialog_supersedes_a_waiting_automatic_offer(monkeypatch):
             pass
 
     monkeypatch.setattr(update_dialog, "UpdateDialog", _FakeDialog)
-    fake = _fake(i18n=MagicMock(), _pending_update_offer=("v2.2.1", "u", "", "", ""))
+    fake = _fake(i18n=MagicMock(), update_config=MagicMock(),
+                 _pending_update_offer=("v2.2.1", "u", "", "", ""))
     W._show_update_dialog(fake, "v2.2.1", "u")
     assert fake._pending_update_offer is None
 
@@ -264,7 +364,7 @@ class _Host(QObject):
         self._update_dialog_open = False
         self._manual_update_check = False
         self._update_auto_source = None
-        self._update_dismissed_at = {}
+        self.config = {"update_snooze": ""}
         self._pending_update_offer = None
         self._show_pending_update_offer = MagicMock()
         _bind(self, "check_for_updates", "_on_update_available", "_on_update_check_up_to_date",
@@ -280,7 +380,8 @@ class _Host(QObject):
 
     def _show_update_dialog(self, latest, *_a):            # the user answers "Not now"
         self.dialogs.append(latest)
-        self._update_dismissed_at[latest.lstrip("vV")] = time.time()
+        from netspeedtray.core.update_checker import format_snooze
+        self.config["update_snooze"] = format_snooze(latest, SNOOZE)
 
     def _on_up_to_date_manual(self):
         self.boxes.append("up to date")

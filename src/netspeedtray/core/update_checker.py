@@ -6,7 +6,7 @@ when a result is available.
 """
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -124,6 +124,38 @@ def _parse_version(version_str: str) -> Tuple[int, ...]:
 def is_newer(latest: str, current: str) -> bool:
     """Return True if latest version is strictly newer than current."""
     return _parse_version(latest) > _parse_version(current)
+
+
+# "Not now" in the update dialog, persisted (config ``update_snooze``): "<version>@<until, UTC>", e.g.
+# "2.2.1@2026-11-14T15:00:00Z", or "" for none. The config schema validates the same shape
+# (SNOOZE_REGEX), so a hand-edited or truncated value resets to "" instead of reaching the parser.
+SNOOZE_TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+SNOOZE_REGEX = r"(|[0-9A-Za-z.+\-]{1,64}@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"
+
+
+def format_snooze(version: str, snooze_s: float, now: Optional[datetime] = None) -> str:
+    """The ``update_snooze`` value for answering "Not now" to ``version`` at ``now``."""
+    now = now or datetime.now(timezone.utc)
+    until = now + timedelta(seconds=snooze_s)
+    return f"{version.lstrip('vV').strip()}@{until.strftime(SNOOZE_TIME_FORMAT)}"
+
+
+def snooze_suppresses(snooze: Optional[str], version: str, snooze_s: float,
+                      now: Optional[datetime] = None) -> bool:
+    """True while ``update_snooze`` holds an automatic offer of ``version`` back: the snoozed version
+    is the same or newer (a NEWER release is always offered) and its until-time is still ahead - but
+    never further ahead than one snooze (a clock set back must not extend it). Never raises."""
+    try:
+        if not snooze or "@" not in snooze:
+            return False
+        snoozed, _, until_text = snooze.rpartition("@")
+        if not snoozed or is_newer(version, snoozed):
+            return False
+        until = datetime.strptime(until_text, SNOOZE_TIME_FORMAT).replace(tzinfo=timezone.utc)
+        left = (until - (now or datetime.now(timezone.utc))).total_seconds()
+        return 0 < left <= snooze_s + 60
+    except (ValueError, TypeError, OverflowError):
+        return False
 
 
 def select_release_assets(assets) -> Tuple[str, str]:

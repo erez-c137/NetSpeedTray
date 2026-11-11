@@ -253,8 +253,7 @@ class NetworkSpeedWidget(QWidget):
         self._update_offer_retry_timer: Optional[QTimer] = None
         self._update_dialog_open: bool = False        # never stack a second update prompt
         self._manual_update_check: bool = False       # the result in flight answers the menu item
-        self._update_auto_source: Optional[str] = None  # "periodic"/"resume" while such a check is out
-        self._update_dismissed_at: Dict[str, float] = {}  # version -> time of "Not now" (snoozes it)
+        self._update_auto_source: Optional[str] = None  # "startup"/"periodic"/"resume" while one is out
         self._pending_update_offer: Optional[tuple] = None  # a flyout offer waiting out fullscreen etc.
         self._update_flyout = None
         self.app_icon: QIcon
@@ -437,7 +436,9 @@ class NetworkSpeedWidget(QWidget):
         self.update_checker.up_to_date.connect(self._on_update_check_up_to_date)
         self.update_checker.check_failed.connect(self._on_update_check_failed)
         if self.update_checker.should_check():
-            QTimer.singleShot(5000, self.update_checker.check_now)
+            # Offered like every automatic check: a flyout behind the same gates (fullscreen, nobody
+            # at the screen, a modal up), never a dialog the user did not ask for (#508).
+            QTimer.singleShot(5000, lambda: self._run_automatic_update_check("startup"))
         # The startup check runs once; a PC that sleeps instead of rebooting keeps this instance for
         # weeks, so re-ask periodically and after a wake (both gated by should_check's 24 h interval).
         try:
@@ -2895,19 +2896,19 @@ class NetworkSpeedWidget(QWidget):
             self.logger.debug("Automatic update check (%s) failed to start: %s", reason, e)
 
     def _update_recently_dismissed(self, version: str) -> bool:
-        """'Not now' snoozes a version for UPDATE_NOT_NOW_SNOOZE_S (automatic offers only)."""
-        at = (getattr(self, "_update_dismissed_at", None) or {}).get(version.lstrip("vV"))
-        if at is None:
-            return False
-        elapsed = time.time() - at
-        return 0 <= elapsed < constants.app.UPDATE_NOT_NOW_SNOOZE_S   # a clock set back re-offers
+        """'Not now' (config ``update_snooze``, survives restarts) holds automatic offers of that
+        version back for UPDATE_NOT_NOW_SNOOZE_S; a newer release is offered at once."""
+        from netspeedtray.core.update_checker import snooze_suppresses
+        config = getattr(self, "config", None) or {}
+        return snooze_suppresses(config.get("update_snooze", ""), version,
+                                 constants.app.UPDATE_NOT_NOW_SNOOZE_S)
 
     def _on_update_available(self, latest_version: str, release_url: str, body: str = "",
                              installer_url: str = "", portable_url: str = "") -> None:
-        """Handle update available - from a manual menu check (dialog), the 5 s startup check
-        (dialog, unchanged) or a periodic / after-resume check (a non-modal flyout that opens the
+        """Handle update available - from a manual menu check (the dialog) or an automatic one (the
+        5 s startup check, the periodic tick, after a resume: a non-modal flyout that opens the
         dialog only when clicked). One persistent handler for all; see check_for_updates."""
-        manual, source = self._take_update_check_context()
+        manual, _source = self._take_update_check_context()
         if getattr(self, "_update_dialog_open", False):
             self.logger.info("Update %s found while an update prompt is open; not stacking another.",
                              latest_version)
@@ -2921,9 +2922,6 @@ class NetworkSpeedWidget(QWidget):
         if self._update_recently_dismissed(latest_version):
             self.logger.info("Update %s was answered 'Not now' recently; not re-offering yet.",
                              latest_version)
-            return
-        if source is None:   # the 5 s startup check: as before
-            self._show_update_dialog(*offer)
             return
         self._pending_update_offer = offer
         self._show_pending_update_offer()
@@ -3020,9 +3018,14 @@ class NetworkSpeedWidget(QWidget):
             self._update_dialog_open = False
 
         if dlg.action == UpdateDialog.ACTION_DISMISS:
-            dismissed = getattr(self, "_update_dismissed_at", None)
-            if dismissed is not None:
-                dismissed[latest] = time.time()   # snoozes automatic offers (UPDATE_NOT_NOW_SNOOZE_S)
+            # Snoozes automatic offers of this version (UPDATE_NOT_NOW_SNOOZE_S), across restarts.
+            from netspeedtray.core.update_checker import format_snooze
+            snooze = format_snooze(latest, constants.app.UPDATE_NOT_NOW_SNOOZE_S)
+            try:
+                self.config["update_snooze"] = snooze
+                self.update_config({"update_snooze": snooze})
+            except Exception as e:
+                self.logger.warning("Could not save the update snooze: %s", e)
         if dlg.action == UpdateDialog.ACTION_DOWNLOAD:
             self._start_secure_update(installer_url, release_url,
                                       portable_url=portable_url, latest_version=latest)

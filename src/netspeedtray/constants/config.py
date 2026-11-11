@@ -413,6 +413,9 @@ class ConfigConstants:
         "check_for_updates": True,
         "skipped_version": None,
         "last_update_check": None,
+        # "Not now" in the update dialog: "<version>@<until, UTC>" ("" = none). Holds automatic offers of
+        # that version (never a newer one) back until then, across restarts (#508).
+        "update_snooze": "",
         "first_run_v2_seen": False,
         "first_run_ever": True,
         "tooltip_hint_shown_count": 0,     # gesture-hint tooltip fades after a few sessions
@@ -581,6 +584,9 @@ class ConfigConstants:
         "check_for_updates": {"type": bool, "default": True},
         "skipped_version": {"type": (str, type(None)), "default": None},
         "last_update_check": {"type": (str, type(None)), "default": None},
+        # Same shape as core/update_checker.SNOOZE_REGEX (pinned by test_update_recheck_while_running).
+        "update_snooze": {"type": str, "default": "",
+                          "regex": r"(|[0-9A-Za-z.+\-]{1,64}@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"},
         "first_run_v2_seen": {"type": bool, "default": False},
         "first_run_ever": {"type": bool, "default": True},
         "tooltip_hint_shown_count": {"type": int, "default": 0, "min": 0},
