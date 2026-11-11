@@ -378,6 +378,45 @@ class TestHardwareMonitoring:
         assert len(logged) == 1
         mt._OHM_GUIDANCE_LOGGED.clear()
 
+    def test_wmi_source_lost_mid_session_logs_one_line_each_way(self, monitor_thread):
+        """#511 follow-up: a working LHM/OHM WMI connection that drops mid-session was DEBUG only,
+        and every reconnect repeated "connected to ..." at INFO. Now: one INFO when it is lost, one
+        when it is back, nothing per failed poll in between."""
+        import logging as _logging
+        import netspeedtray.core.monitor_thread as mt
+        log = MagicMock()
+        monitor_thread.logger = log
+        monitor_thread._ohm_outage.logger = log
+        monitor_thread._ohm_guidance_logged = True      # the 'not found' guidance is not under test
+        monitor_thread._wmi = MagicMock()
+        monitor_thread._wmi.ExecQuery.return_value = []
+        sensor = MagicMock(Value=55.0)
+        state = {"up": True}
+
+        def query(_q):
+            if not state["up"]:
+                raise Exception("RPC server is unavailable")
+            return [sensor]
+        ohm = MagicMock()
+        ohm.ExecQuery.side_effect = query
+        with patch('win32com.client.GetObject', return_value=ohm), patch.object(mt, 'win32pdh', None):
+            assert monitor_thread._poll_cpu_temperature() == 55.0
+            state["up"] = False
+            for _ in range(5):
+                monitor_thread._poll_cpu_temperature()
+            state["up"] = True
+            for _ in range(3):
+                assert monitor_thread._poll_cpu_temperature() == 55.0
+
+        def info_lines(needle):
+            lines = [c.args[0] % c.args[1:] for c in log.info.call_args_list if c.args]
+            lines += [c.args[1] % c.args[2:] for c in log.log.call_args_list
+                      if c.args and c.args[0] == _logging.INFO]
+            return [line for line in lines if needle in line]
+        assert len(info_lines("connected to")) == 1     # the first connection only
+        assert len(info_lines("lost the LibreHardwareMonitor/OpenHardwareMonitor WMI")) == 1
+        assert len(info_lines("WMI source is back after")) == 1
+
     # ------------------------------------------------------------------
     # CPU temperature polling
     # ------------------------------------------------------------------

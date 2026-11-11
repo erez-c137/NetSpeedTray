@@ -6,6 +6,7 @@ listening, a server that never answers, one that trickles bytes, something that 
 port - live in the socket layer and are invisible to a mocked ``urlopen``.
 """
 import json
+import logging
 import socket
 import threading
 import time
@@ -535,3 +536,63 @@ def test_package_still_beats_core_max():
         sensor("Core Max", "/intelcpu/0/temperature/0", "Temperature", "71.0 °C"),
         sensor("CPU Package", "/intelcpu/0/temperature/1", "Temperature", "72.0 °C"))))
     assert snapshot.cpu_temp == 72.0
+
+
+# --------------------------------------------------------------------------------------------
+# #511 follow-up: a source that was working and is lost mid-session is one INFO episode
+# --------------------------------------------------------------------------------------------
+
+def _info_lines(caplog, needle):
+    return [r.getMessage() for r in caplog.records
+            if r.levelname == "INFO" and needle in r.getMessage()]
+
+
+def test_a_working_web_server_lost_and_back_logs_one_line_each(caplog):
+    client = _client(1, cache_seconds=0.0, failure_backoff_seconds=0.0)
+    with caplog.at_level("DEBUG", logger="NetSpeedTray.LhmHttp"):
+        with patch.object(client, "_fetch_json", return_value=_CPU_POWER_TREE):
+            assert client.get_snapshot() is not None
+        with patch.object(client, "_fetch_json", side_effect=OSError("refused")):
+            for _ in range(5):                      # one outage, many failed polls
+                assert client.get_snapshot() is None
+        with patch.object(client, "_fetch_json", return_value=_CPU_POWER_TREE):
+            for _ in range(3):
+                assert client.get_snapshot() is not None
+    assert len(_info_lines(caplog, "reading the LibreHardwareMonitor")) == 1
+    lost = _info_lines(caplog, "lost the LibreHardwareMonitor web server")
+    assert len(lost) == 1 and "refused" in lost[0]
+    assert len(_info_lines(caplog, "web server is back after")) == 1
+
+
+def test_a_web_server_that_never_worked_logs_no_lost_line(caplog):
+    client = _client(1, failure_backoff_seconds=0.0)
+    with caplog.at_level("DEBUG", logger="NetSpeedTray.LhmHttp"):
+        with patch.object(client, "_fetch_json", side_effect=OSError("refused")):
+            for _ in range(3):
+                client.get_snapshot()
+    assert not [r for r in caplog.records if "lost" in r.getMessage() or "is back" in r.getMessage()]
+
+
+def test_a_flapping_source_is_rate_limited():
+    """LHM restarting every few seconds must not write two INFO lines per flap: an outage within
+    quiet_s of the last reported one is DEBUG, and the next reported one carries the count."""
+    from unittest.mock import MagicMock
+    from netspeedtray.core.lhm_http import SourceOutage
+    now = [1000.0]
+    log = MagicMock()
+    outage = SourceOutage(log, "the source", quiet_s=600.0, clock=lambda: now[0])
+    assert outage.succeeded() is True          # first good read: the caller's own line
+    for _ in range(20):                        # 20 flaps, 10 s apart
+        outage.failed("refused")
+        outage.failed("refused")               # repeats inside an outage are silent
+        now[0] += 5
+        assert outage.succeeded() is False
+        now[0] += 5
+    infos = [c.args[0] for c in log.info.call_args_list]
+    assert len(infos) == 1 and "lost" in infos[0]
+    backs = [c for c in log.log.call_args_list if c.args[0] == logging.INFO]
+    assert len(backs) == 1                     # only the reported outage's "back" is INFO
+    now[0] += 600
+    outage.failed("refused")
+    assert len(log.info.call_args_list) == 2
+    assert "19 shorter outage(s)" in (log.info.call_args.args[0] % log.info.call_args.args[1:])

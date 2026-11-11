@@ -17,7 +17,7 @@ import re
 import socket
 import time
 from dataclasses import dataclass
-from typing import Any, Iterator, Optional, Tuple
+from typing import Any, Callable, Iterator, Optional, Tuple
 
 from netspeedtray import constants
 
@@ -383,6 +383,65 @@ class _DeadlineHTTPConnection(http.client.HTTPConnection):
         self.sock = sock
 
 
+class SourceOutage:
+    """One INFO line when a sensor source that WAS working is lost mid-session, and one when it comes
+    back - the once-per-episode style of #511's ``FailureEpisode``, for a source that is optional.
+
+    Nothing is logged before the source has worked once (that is "not found", logged elsewhere), and
+    further failures inside an outage are silent: the outage is one episode. A source that flaps
+    (LHM restarting, a sleep/resume) cannot flood the log: an outage starting within ``quiet_s`` of
+    the last reported one is logged at DEBUG and counted, and the next reported outage says how many
+    were folded into it. Its "back" line follows its "lost" line's level. Not thread-safe: one per
+    owner, used on the owner's (monitor) thread."""
+
+    def __init__(self, logger_: logging.Logger, what: str, *, quiet_s: float = 600.0,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.logger = logger_
+        self.what = what
+        self.quiet_s = float(quiet_s)
+        self._clock = clock
+        self.ever_ok = False
+        self._lost_at: Optional[float] = None
+        self._lost_reported = False
+        self._last_report: Optional[float] = None
+        self._folded = 0     # outages logged at DEBUG since the last reported one
+
+    @property
+    def lost(self) -> bool:
+        return self._lost_at is not None
+
+    def succeeded(self) -> bool:
+        """Record a good read. Returns True on the FIRST one ever (the caller logs its own
+        "connected" line); a recovery logs the "back" line here and returns False."""
+        first = not self.ever_ok
+        self.ever_ok = True
+        if self._lost_at is not None:
+            level = logging.INFO if self._lost_reported else logging.DEBUG
+            self.logger.log(level, "Hardware monitor: %s is back after %.0f s.",
+                            self.what, self._clock() - self._lost_at)
+            self._lost_at = None
+        return first
+
+    def failed(self, reason: str) -> None:
+        """Record a failed read. Logs only at the start of an outage of a source that has worked."""
+        if not self.ever_ok or self._lost_at is not None:
+            return
+        now = self._clock()
+        self._lost_at = now
+        if self._last_report is None or now - self._last_report >= self.quiet_s:
+            folded = (f" ({self._folded} shorter outage(s) since the last report)"
+                      if self._folded else "")
+            self.logger.info("Hardware monitor: lost %s, which was working (%s)%s; its readings "
+                             "show N/A or fall back until it returns.", self.what, reason, folded)
+            self._last_report = now
+            self._lost_reported = True
+            self._folded = 0
+        else:
+            self._folded += 1
+            self._lost_reported = False
+            self.logger.debug("Hardware monitor: lost %s again (%s).", self.what, reason)
+
+
 class LhmHttpClient:
     """Small client with a per-poll cache and a quiet failure backoff.
 
@@ -421,6 +480,7 @@ class LhmHttpClient:
         self._retry_after = 0.0
         self._last_failure: Optional[str] = None
         self.status: str = constants.lhm.STATUS_UNKNOWN
+        self._outage = SourceOutage(logger, "the LibreHardwareMonitor web server")
 
     @property
     def url(self) -> str:
@@ -443,6 +503,8 @@ class LhmHttpClient:
         self._cached = None
         self._retry_after = 0.0
         self.status = constants.lhm.STATUS_UNKNOWN
+        # Another endpoint: its first good read is a "reading ... at <url>" line, not a recovery.
+        self._outage = SourceOutage(logger, "the LibreHardwareMonitor web server")
 
     def reset_backoff(self) -> None:
         """Forget a remembered failure so the next call tries the endpoint again."""
@@ -498,9 +560,11 @@ class LhmHttpClient:
             if reason != self._last_failure:
                 self._last_failure = reason
                 self._log_failure(e, reason)
+            self._outage.failed(f"{type(e).__name__}: {e}")
             return None
-        if self._last_failure is not None or self._cached is None:
-            # Once per transition to "available" - a line the support bundle should show.
+        if self._outage.succeeded():
+            # The first good read from this endpoint - a line the support bundle should show. A
+            # recovery after an outage is SourceOutage's "is back" line instead.
             logger.info("Hardware monitor: reading the LibreHardwareMonitor web server at %s.", self.url)
         self._last_failure = None
         self._cached = snapshot
