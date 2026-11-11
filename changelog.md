@@ -187,6 +187,20 @@ polish.
   and an exit with unsaved buffered rows logs one WARNING. Logging only - no write, retry or cap
   behavior changed.*
 
+- **Clicking Show desktop over and over no longer leaves the widget hidden.** Each click on the
+  taskbar's Show desktop button briefly puts the widget under the taskbar, and NetSpeedTray puts it
+  back. After about a dozen quick clicks it mistook that for another program fighting it over the
+  top spot and backed off, so the widget stayed hidden until you clicked the desktop. In every 2.2
+  prerelease since rc.2. ([#506])
+
+  *Under the hood: the fresh-burial rate cap from #424 (more than 12 burials in 15 s) charged every
+  further burial to the 1 -> 60 s re-seat backoff, which only clears after 10 s on top. Each re-seat
+  now snapshots the foreground window; a burial that follows a foreground change to or from the
+  taskbar or the desktop (`Shell_TrayWnd`, `Shell_SecondaryTrayWnd`, `Progman`, `WorkerW`) is the
+  user's doing - re-seated at once, never charged and not counted toward the cap - plus up to two
+  more burials within 1 s of it (one click can bury twice). A re-burier that doesn't change the
+  foreground, or a switch between two ordinary apps, is classified exactly as before.*
+
 - A test that drew different random data on every run and could fail on a rare draw. ([#501])
 
 ### Localization
@@ -213,6 +227,7 @@ polish.
 [#503]: https://github.com/erez-c137/NetSpeedTray/issues/503
 [#504]: https://github.com/erez-c137/NetSpeedTray/pull/504
 [#505]: https://github.com/erez-c137/NetSpeedTray/pull/505
+[#506]: https://github.com/erez-c137/NetSpeedTray/pull/506
 [#507]: https://github.com/erez-c137/NetSpeedTray/pull/507
 [#509]: https://github.com/erez-c137/NetSpeedTray/pull/509
 [#510]: https://github.com/erez-c137/NetSpeedTray/pull/510
