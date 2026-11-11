@@ -83,8 +83,8 @@ class StatsController(QObject):
     gpu_power_updated = pyqtSignal(object)
     ram_info_updated = pyqtSignal(float, float) # (used, total) in GB
     vram_info_updated = pyqtSignal(float, float) # (used, total) in GB
-    # Network identity (Wi-Fi band / SSID). object carries a NetworkIdentity (or None) so the widget
-    # can render the band tag and detect the Location-gated SSID case. Sub-polled ~5s, not per tick.
+    # Network identity (Wi-Fi band / SSID). The worker sends a cached NetworkIdentity (or None),
+    # refreshed on network changes or by its safety interval, to the widget.
     network_identity_updated = pyqtSignal(object)
     # The routing (primary) interface changed - a network switch. The latency probe re-resolves its
     # cached default gateway on it.

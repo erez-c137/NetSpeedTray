@@ -9,3 +9,9 @@ fonttools>=4.61.0   # Explicitly added to enforce Security CVE fix
 pillow>=13.0.0      # Security: 56 Dependabot alerts (3 critical) fixed in 13.0.0
 truststore           # HTTPS verified by Windows (fetches missing roots on demand) - update checks on fresh installs
 python-bidi          # RTL (Hebrew) bidi reshaping for matplotlib graph labels (item 6)
+
+# SSID-only WinRT API and network-change notifications (no location-gated fallback).
+winrt-runtime==3.2.1 ; sys_platform == "win32"
+winrt-Windows.Foundation==3.2.1 ; sys_platform == "win32"
+winrt-Windows.Foundation.Collections==3.2.1 ; sys_platform == "win32"
+winrt-Windows.Networking.Connectivity==3.2.1 ; sys_platform == "win32"

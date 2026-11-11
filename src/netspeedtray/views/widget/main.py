@@ -262,7 +262,6 @@ class NetworkSpeedWidget(QWidget):
         self.gpu_usage: float = float('nan')
         self.network_identity: Optional[object] = None  # NetworkIdentity|None: Wi-Fi band/SSID, set by update_network_identity (v2.1)
         self._identity_reserve_sig_last: object = None  # last identity reserve signature (band-shown, ssid); re-layout on change
-        self._location_prompt_shown: bool = False  # SSID Location nudge shown at most once per session
         self._widgets_nudge_shown: bool = False  # #200 Widgets/weather overlap nudge, once per session
         self.gpu_present: bool = False  # LATCHES True once any poll detects GPU counters (never flips
         #                                 back - a GPU doesn't vanish), so the Monitor's GPU tile shows
@@ -958,6 +957,9 @@ class NetworkSpeedWidget(QWidget):
         self.logger.info("Resuming widget updates")
         self.is_paused = False
         self._paused_histories = None
+        monitor = getattr(self, "monitor_thread", None)
+        if monitor is not None:
+            monitor.request_network_identity_update()
         self.update()
 
 
@@ -1001,18 +1003,14 @@ class NetworkSpeedWidget(QWidget):
     def update_network_identity(self, identity: Optional[object]) -> None:
         """Update the connected network's identity (Wi-Fi band / SSID) and repaint if shown.
 
-        `identity` is a NetworkIdentity (or None). Sub-polled ~5s in StatsMonitorThread, never on the
-        hot path. The on-widget rendering + width reserve land with the identity element (KICKOFF §3);
-        for now we store the value so the paint path can read it and repaint when the feature is on.
+        `identity` is a NetworkIdentity (or None), cached on the stats worker and refreshed on
+        network changes or by its safety interval. Store it for the paint path and update the layout.
         """
         if self.is_paused:
             return
         self.network_identity = identity
         if not self.config.get("show_network_identity", False):
             return
-        # The user asked for the network name but Windows Location is off (SSID came back blocked):
-        # explain once why, and how, rather than silently showing nothing.
-        self._maybe_prompt_location(identity)
         # The reserved identity slot depends on which band shows (alert_only flips on/off 2.4G) and on
         # the SSID text (variable width). Both change only on a network change (rare), so re-lay out on
         # that transition - keeping the widget tight - and otherwise just repaint.
@@ -1349,8 +1347,7 @@ class NetworkSpeedWidget(QWidget):
     def _identity_ssid_text(self) -> Optional[str]:
         """The truncated SSID / connection name to draw, or None (off, band-only mode, or unavailable).
 
-        Location-gated: for Wi-Fi with Location off, `NetworkIdentity.name` is None (ssid_blocked) and
-        this returns None - the band still shows and Settings explains why (never a blank/fake name).
+        A missing connected-profile name stays unavailable; it is not replaced with a stale SSID.
         """
         if not self.config.get("show_network_identity", False):
             return None
@@ -2907,35 +2904,6 @@ class NetworkSpeedWidget(QWidget):
                 open_external(LHM_RELEASES_URL)
         except Exception as e:
             self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
-
-    def _maybe_prompt_location(self, identity: Optional[object]) -> None:
-        """One-time, honest explainer when the user wants the SSID but Windows Location is off.
-
-        Fires at most once per session and is suppressible forever. Only when the network name was
-        actually requested (ssid/both mode) and actually blocked - never for band-only users.
-        """
-        try:
-            if identity is None or not getattr(identity, "ssid_blocked", False):
-                return
-            if self.config.get("identity_mode", "band") not in ("ssid", "both"):
-                return
-            if self._location_prompt_shown or self.config.get("location_onboarding_dismissed", False):
-                return
-            self._location_prompt_shown = True
-            from netspeedtray.views.location_onboarding_dialog import (
-                LocationOnboardingDialog, LOCATION_SETTINGS_URI,
-            )
-            dlg = LocationOnboardingDialog(self.i18n, self)
-            dlg.exec()
-            if dlg.dismissed_forever():
-                self.update_config({"location_onboarding_dismissed": True})
-            if dlg.action == LocationOnboardingDialog.ACTION_OPEN_LOCATION:
-                from PyQt6.QtGui import QDesktopServices
-                from PyQt6.QtCore import QUrl
-                QDesktopServices.openUrl(QUrl(LOCATION_SETTINGS_URI))
-        except Exception as e:
-            self.logger.error("Error showing location onboarding: %s", e, exc_info=True)
-
 
     def _maybe_nudge_widgets_overlap(self, taskbar_info) -> None:
         """One-time heads-up (#200): if the widget currently overlaps the Win11 Widgets/weather panel's

@@ -14,6 +14,7 @@ import time
 from ctypes import wintypes
 from dataclasses import dataclass
 from typing import Optional
+from uuid import UUID
 
 import psutil
 
@@ -21,12 +22,9 @@ from netspeedtray import constants
 
 logger = logging.getLogger("NetSpeedTray.NetworkUtils")
 
-# Windows error code returned by WlanQueryInterface for the SSID / BSS-scan opcodes when the
-# Location privacy permission is off (Win11 24H2/25H2). The band (channel) opcode is NOT gated.
-_ERROR_ACCESS_DENIED = 5
-# WLAN_INTF_OPCODE values (wlanapi.h).
-_WLAN_OPCODE_CURRENT_CONNECTION = 7   # SSID / profile — Location-GATED
-_WLAN_OPCODE_CHANNEL_NUMBER = 8       # channel — Location-FREE
+# Only query the channel number. Never request current_connection (opcode 7): it
+# includes BSSID and is location-gated on recent Windows versions.
+_WLAN_OPCODE_CHANNEL_NUMBER = 8
 
 
 def guid_to_friendly_name(guid: str) -> Optional[str]:
@@ -160,11 +158,10 @@ def get_primary_interface_name() -> Optional[str]:
 
 # --- Network identity (v2.1): Wi-Fi band / SSID on the widget --------------------------------
 #
-# Design note (verified live on Win11 26200, 2026-07-03 — see releases/v2.1/KICKOFF.md §2):
-# Windows 11 gates SSID retrieval and BSS scanning behind the Location privacy permission. The
-# *band*, however, is derived from the channel number (WLAN_INTF_OPCODE_CHANNEL_NUMBER), which is
-# Location-FREE. So band is the always-available default; SSID is opt-in and degrades cleanly to
-# `ssid_blocked=True` (rather than a misleading blank) when Location is off.
+# SSIDs are read through WinRT WlanConnectionProfileDetails.GetConnectedSsid,
+# Microsoft's recommended API when only the connected name is needed. Do not fall
+# back to WlanQueryInterface(current_connection), scanning, or GetLanIdentifiers.
+# https://learn.microsoft.com/windows/win32/nativewifi/wi-fi-access-location-changes
 
 
 @dataclass(frozen=True)
@@ -173,39 +170,31 @@ class NetworkIdentity:
 
     Attributes:
         name:         SSID (Wi-Fi) or the active connection's friendly name (wired); None if unknown
-                      or, for Wi-Fi, blocked by the Location gate.
+                      or unavailable from the connected profile.
         band:         "2.4G" / "5G" / "6G" for Wi-Fi, else None. Available without Location permission.
         is_wireless:  True if the active interface is a connected WLAN adapter.
-        ssid_blocked: True when the SSID could not be read because Windows Location permission is off
-                      (the widget should surface an opt-in "enable Location" nudge, not a blank).
         connected:    True if there is an active internet-facing interface at all.
     """
     name: Optional[str] = None
     band: Optional[str] = None
     is_wireless: bool = False
-    ssid_blocked: bool = False
     connected: bool = False
 
 
 class _GUID(ctypes.Structure):
-    _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
-                ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+    # Fixed-width fields also keep the ABI testable on non-Windows hosts.
+    _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+                ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
 
 
 class _WLAN_INTERFACE_INFO(ctypes.Structure):
     _fields_ = [("InterfaceGuid", _GUID),
-                ("strInterfaceDescription", wintypes.WCHAR * 256),
-                ("isState", wintypes.DWORD)]
+                ("strInterfaceDescription", ctypes.c_uint16 * 256),
+                ("isState", ctypes.c_uint32)]
 
 
-class _WLAN_INTERFACE_INFO_LIST(ctypes.Structure):
-    # A flexible-array header; index InterfaceInfo[i] up to dwNumberOfItems (we size [8], plenty).
-    _fields_ = [("dwNumberOfItems", wintypes.DWORD),
-                ("dwIndex", wintypes.DWORD),
-                ("InterfaceInfo", _WLAN_INTERFACE_INFO * 8)]
-
-
-_WLAN_INTERFACE_STATE_CONNECTED = 1  # wlan_interface_state_connected
+class _WLAN_INTERFACE_INFO_LIST_HEADER(ctypes.Structure):
+    _fields_ = [("dwNumberOfItems", ctypes.c_uint32), ("dwIndex", ctypes.c_uint32)]
 
 
 # SSID display (v2.1 item 2). SSIDs can be up to 32 chars; cap the on-widget length and ellipsize so a
@@ -258,10 +247,10 @@ def resolve_band_presentation(band: Optional[str], band_display: str) -> "tuple[
 def band_from_channel(channel: int) -> Optional[str]:
     """Map an 802.11 channel number to a coarse band tag.
 
-    2.4 GHz = channels 1-14; 5 GHz = 32-177. 6 GHz reuses 1-233 and therefore *collides* with the
-    2.4 GHz range on channel number alone — the unambiguous 6 GHz discriminator is the BSS center
-    frequency, which is Location-gated. So 2.4/5 are reliable Location-free; 6 GHz is best-effort
-    only when Location is granted. Returns None for a non-positive/unknown channel.
+    Channels 1-14 are labeled 2.4G and 32-177 are labeled 5G. Because 6 GHz channel numbers
+    overlap these ranges, a channel number alone cannot distinguish all 6 GHz connections and
+    may label them as 2.4G or 5G. This function does not query the BSS center frequency.
+    Returns None for channels outside these ranges.
     """
     if 1 <= channel <= 14:
         return "2.4G"
@@ -273,101 +262,142 @@ def band_from_channel(channel: int) -> Optional[str]:
 def _wired_identity() -> NetworkIdentity:
     """Fallback identity for a wired / non-Wi-Fi link: the active interface friendly name."""
     name = get_primary_interface_name()
-    return NetworkIdentity(name=name, band=None, is_wireless=False,
-                           ssid_blocked=False, connected=name is not None)
+    return NetworkIdentity(name=name, band=None, is_wireless=False, connected=name is not None)
 
 
-def get_connected_network_identity() -> NetworkIdentity:
-    """Resolve the connected network's identity (band + SSID) for the widget.
+def _get_network_information():
+    # Lazy import: these Windows-only packages are not available on Linux, and
+    # identity sensing is optional. The frozen build explicitly bundles them.
+    from winrt.windows.networking.connectivity import NetworkInformation
+    return NetworkInformation
 
-    Never raises: any failure (no adapter, WLAN service down, ctypes error, non-Windows) degrades to
-    a wired fallback or an empty ``NetworkIdentity``. Call on a slow (~5s) sub-poll — never on the
-    per-paint or per-tick hot path.
-    """
-    if sys.platform != "win32":
-        return _wired_identity()
 
+def _get_connected_wifi_profile(network_information):
+    """Prefer the internet WLAN profile; still show Wi-Fi behind a VPN or offline."""
+    primary = network_information.get_internet_connection_profile()
+    if primary is not None and primary.is_wlan_connection_profile:
+        if int(primary.get_network_connectivity_level()) != 0:
+            return primary
+    # get_connection_profiles can contain disconnected profiles. Never display a
+    # remembered SSID after disconnect, or mistake a VPN profile name for an SSID.
+    for profile in network_information.get_connection_profiles():
+        if (profile.is_wlan_connection_profile
+                and int(profile.get_network_connectivity_level()) != 0):
+            return profile
+    return None
+
+
+def _get_wifi_band(adapter_id) -> Optional[str]:
+    """Read only the location-free channel opcode, for the SAME adapter as the SSID."""
     handle = wintypes.HANDLE()
-    p_list = ctypes.POINTER(_WLAN_INTERFACE_INFO_LIST)()
+    data = ctypes.c_void_p()
+    opened = False
+    try:
+        guid = _GUID.from_buffer_copy(UUID(str(adapter_id)).bytes_le)
+        wlanapi = ctypes.windll.wlanapi
+        negotiated = wintypes.DWORD()
+        if wlanapi.WlanOpenHandle(2, None, ctypes.byref(negotiated), ctypes.byref(handle)) != 0:
+            return None
+        opened = True
+        size = wintypes.DWORD()
+        opcode_type = wintypes.DWORD()
+        rc = wlanapi.WlanQueryInterface(
+            handle, ctypes.byref(guid), _WLAN_OPCODE_CHANNEL_NUMBER, None,
+            ctypes.byref(size), ctypes.byref(data), ctypes.byref(opcode_type))
+        if rc == 0 and data and size.value >= ctypes.sizeof(ctypes.c_uint32):
+            channel = ctypes.cast(data, ctypes.POINTER(ctypes.c_uint32)).contents.value
+            return band_from_channel(channel)
+    except Exception as e:
+        logger.debug("Wi-Fi channel unavailable: %s", e)
+    finally:
+        if data:
+            try:
+                wlanapi.WlanFreeMemory(data)
+            except Exception:
+                pass
+        if opened:
+            try:
+                wlanapi.WlanCloseHandle(handle, None)
+            except Exception:
+                pass
+    return None
+
+
+def _native_band_identity() -> NetworkIdentity:
+    """Keep the band available when WinRT fails, without reading a native SSID.
+
+    WlanEnumInterfaces exposes connection state and adapter GUIDs. The existing
+    channel-only reader then reads the first connected adapter's band.
+    """
+    handle = wintypes.HANDLE()
+    interfaces_ptr = ctypes.c_void_p()
+    opened = False
     try:
         wlanapi = ctypes.windll.wlanapi
-    except (OSError, AttributeError):
-        # No WLAN API available on this SKU — treat as wired.
-        return _wired_identity()
-
-    try:
         negotiated = wintypes.DWORD()
         if wlanapi.WlanOpenHandle(2, None, ctypes.byref(negotiated), ctypes.byref(handle)) != 0:
             return _wired_identity()
-    except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"WlanOpenHandle failed: {e}")
-        return _wired_identity()
-
-    try:
-        if wlanapi.WlanEnumInterfaces(handle, None, ctypes.byref(p_list)) != 0 or not p_list:
+        opened = True
+        rc = wlanapi.WlanEnumInterfaces(handle, None, ctypes.byref(interfaces_ptr))
+        if rc != 0 or not interfaces_ptr:
             return _wired_identity()
-        iface_list = p_list.contents
-        connected = next(
-            (iface_list.InterfaceInfo[i] for i in range(min(iface_list.dwNumberOfItems, 8))
-             if iface_list.InterfaceInfo[i].isState == _WLAN_INTERFACE_STATE_CONNECTED),
-            None,
-        )
-        if connected is None:
-            # A WLAN adapter exists but nothing is associated (airplane mode / unplugged USB NIC).
-            return _wired_identity()
-
-        guid = connected.InterfaceGuid
-
-        # Band — Location-FREE (channel number opcode).
-        band: Optional[str] = None
-        p_data = ctypes.c_void_p()
-        data_size = wintypes.DWORD()
-        opcode_type = wintypes.DWORD()
-        if wlanapi.WlanQueryInterface(handle, ctypes.byref(guid), _WLAN_OPCODE_CHANNEL_NUMBER,
-                                      None, ctypes.byref(data_size), ctypes.byref(p_data),
-                                      ctypes.byref(opcode_type)) == 0 and p_data:
-            channel = ctypes.cast(p_data, ctypes.POINTER(wintypes.ULONG)).contents.value
-            band = band_from_channel(channel)
-            wlanapi.WlanFreeMemory(p_data)
-
-        # SSID — Location-GATED (current-connection opcode); detect ERROR_ACCESS_DENIED cleanly.
-        ssid: Optional[str] = None
-        ssid_blocked = False
-        p_conn = ctypes.c_void_p()
-        rc = wlanapi.WlanQueryInterface(handle, ctypes.byref(guid), _WLAN_OPCODE_CURRENT_CONNECTION,
-                                        None, ctypes.byref(data_size), ctypes.byref(p_conn),
-                                        ctypes.byref(opcode_type))
-        if rc == _ERROR_ACCESS_DENIED:
-            ssid_blocked = True
-        elif rc == 0 and p_conn:
-            # WLAN_CONNECTION_ATTRIBUTES.wlanAssociationAttributes.dot11Ssid: uSSIDLength@offset,
-            # then 32 SSID bytes. Parse defensively from the raw buffer.
-            try:
-                buf = ctypes.cast(p_conn, ctypes.POINTER(ctypes.c_ubyte * data_size.value)).contents
-                # isState(4) + wlanConnectionMode(4) + strProfileName(256*2) = 520 bytes precede
-                # wlanAssociationAttributes; dot11Ssid = ULONG length + 32 bytes.
-                assoc = 520
-                ssid_len = int.from_bytes(bytes(buf[assoc:assoc + 4]), "little")
-                if 0 < ssid_len <= 32:
-                    raw = bytes(buf[assoc + 4:assoc + 4 + ssid_len])
-                    ssid = raw.decode("utf-8", "replace") or None
-            except Exception as e:  # pragma: no cover - defensive parse
-                logger.debug(f"SSID parse failed: {e}")
-            finally:
-                wlanapi.WlanFreeMemory(p_conn)
-
-        return NetworkIdentity(name=ssid, band=band, is_wireless=True,
-                               ssid_blocked=ssid_blocked, connected=True)
-    except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"get_connected_network_identity failed: {e}")
-        return _wired_identity()
+        header = ctypes.cast(interfaces_ptr, ctypes.POINTER(_WLAN_INTERFACE_INFO_LIST_HEADER)).contents
+        address = interfaces_ptr.value + ctypes.sizeof(_WLAN_INTERFACE_INFO_LIST_HEADER)
+        interfaces = (_WLAN_INTERFACE_INFO * header.dwNumberOfItems).from_address(address)
+        for interface in interfaces:
+            if interface.isState == 1:  # wlan_interface_state_connected
+                adapter_id = UUID(bytes_le=bytes(interface.InterfaceGuid))
+                return NetworkIdentity(band=_get_wifi_band(adapter_id), is_wireless=True, connected=True)
+    except Exception as e:
+        logger.debug("Native Wi-Fi band unavailable: %s", e)
     finally:
-        if p_list:
+        if interfaces_ptr:
             try:
-                ctypes.windll.wlanapi.WlanFreeMemory(p_list)
+                wlanapi.WlanFreeMemory(interfaces_ptr)
             except Exception:
                 pass
+        if opened:
+            try:
+                wlanapi.WlanCloseHandle(handle, None)
+            except Exception:
+                pass
+    return _wired_identity()
+
+
+def get_connected_network_identity(*, include_ssid: bool = True,
+                                   include_band: bool = True) -> NetworkIdentity:
+    """Read a fresh connected profile without any location-gated Wi-Fi API.
+
+    Call from the initialized monitoring thread, normally via NetworkIdentityMonitor.
+    Only the SSID-only WinRT API reads the name; a missing dependency or failed read
+    never falls back to opcode 7, scans, or location-permission prompts. A channel
+    failure must not hide an otherwise valid SSID, and vice versa.
+    """
+    if sys.platform != "win32":
+        return _wired_identity()
+    try:
+        profile = _get_connected_wifi_profile(_get_network_information())
+    except Exception as e:
+        logger.debug("Connected Wi-Fi profile unavailable: %s", e)
+        return _native_band_identity() if include_band else _wired_identity()
+    if profile is None:
+        return _wired_identity()
+
+    ssid = None
+    if include_ssid:
         try:
-            ctypes.windll.wlanapi.WlanCloseHandle(handle, None)
-        except Exception:
-            pass
+            details = profile.wlan_connection_profile_details
+            ssid = details.get_connected_ssid() if details is not None else None
+            ssid = ssid or None
+        except Exception as e:
+            # An unavailable name is not evidence that Location permission is needed.
+            logger.debug("Connected Wi-Fi name unavailable: %s", e)
+    band = None
+    if include_band:
+        try:
+            adapter = profile.network_adapter
+            if adapter is not None:
+                band = _get_wifi_band(adapter.network_adapter_id)
+        except Exception as e:
+            logger.debug("Connected Wi-Fi adapter unavailable: %s", e)
+    return NetworkIdentity(name=ssid, band=band, is_wireless=True, connected=True)
