@@ -55,10 +55,6 @@ def mock_i18n():
         setattr(i18n, k, v)
     return i18n
 
-@pytest.fixture(scope="session")
-def q_app():
-    """Provides a QApplication instance for the test session."""
-    return QApplication.instance() or QApplication([])
 
 def test_initialization_loads_icon_and_menu(mock_widget, mock_i18n, q_app):
     """Tests that initialization loads the icon and creates the menu."""

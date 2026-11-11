@@ -13,12 +13,6 @@ from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.views.monitor import graph_host as GH
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def test_hw_styles_follow_os_theme_not_config(q_app, monkeypatch):
     cfg = {"dark_mode": True}                       # stale config insists on dark...
     host = GH.GraphHost(MagicMock(), cfg, I18nStrings("en_US"))

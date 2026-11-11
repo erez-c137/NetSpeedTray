@@ -11,12 +11,6 @@ from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.utils.widget_renderer import WidgetRenderer
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _renderer():
     return WidgetRenderer({}, I18nStrings("en_US"))
 

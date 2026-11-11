@@ -39,11 +39,6 @@ SLOT = 45                                  # the legacy Start window's height on
 X0, X1 = 1872, 1920
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def layout():
     """The REAL layout cache with a synchronous, controllable worker."""

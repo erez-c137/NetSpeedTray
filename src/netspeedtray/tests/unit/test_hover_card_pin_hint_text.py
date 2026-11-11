@@ -30,11 +30,6 @@ WIDGET_TERM = {
 LOCALES = sorted(p.stem for p in LOCALES_DIR.glob("*.json"))
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 def _hint(locale: str) -> str:
     return json.loads((LOCALES_DIR / f"{locale}.json").read_text(encoding="utf-8"))["HOVER_CARD_PIN_HINT"]
 
