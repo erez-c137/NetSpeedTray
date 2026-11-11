@@ -166,6 +166,32 @@ def localized_strftime(dt, fmt: str, language: Optional[str], shape: bool = True
     return text
 
 
+_CALENDAR_DIRECTIVES = ("%d", "%m", "%Y", "%y")
+
+
+def _calendar_digits(dt, fmt: str, language: Optional[str]) -> str:
+    """``fmt`` with its calendar numbers (day, month, year) already filled in, in the language's
+    fixed-text digits (helpers.fixed_digits: "শনি ১৭" in a Bengali graph, like the Usage history's
+    ৩/১১/২০২৬) - they are calendar labels. Clock times and the value axis stay Western (live values).
+    ``language`` is the GRAPH's language: en_US where the graph falls back to English (matplotlib
+    < 3.11 for Bengali), so the fallback keeps every digit Western. Unchanged for other languages."""
+    from netspeedtray.constants.i18n import I18nStrings
+    if not language or str(language) not in I18nStrings.FIXED_TEXT_DIGITS:
+        return fmt
+    from types import SimpleNamespace
+    from netspeedtray.utils.helpers import fixed_digits
+    lang = SimpleNamespace(language=str(language))
+    try:   # localized_strftime's day/month order first: it matches the literal "%b %d"
+        if fmt == "%b %d" and _locale_names(str(language))[2]:
+            fmt = "%d %b"
+    except Exception:
+        pass
+    for directive in _CALENDAR_DIRECTIVES:
+        if directive in fmt:
+            fmt = fmt.replace(directive, fixed_digits(dt.strftime(directive), lang).replace("%", "%%"))
+    return fmt
+
+
 class TimeAxisFormatter(Formatter):
     """Formats ticks with the format matching the locator's current step, with weekday and month
     names in ``language`` (the app's UI language; None keeps strftime's names)."""
@@ -183,7 +209,8 @@ class TimeAxisFormatter(Formatter):
         return fmt
 
     def _format(self, x, fmt: str) -> str:
-        return localized_strftime(mdates.num2date(x, self.tz), fmt, self.language)
+        dt = mdates.num2date(x, self.tz)
+        return localized_strftime(dt, _calendar_digits(dt, fmt, self.language), self.language)
 
     def format_ticks(self, values):
         fmt = self._fmt()
