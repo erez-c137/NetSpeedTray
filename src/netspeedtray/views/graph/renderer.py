@@ -1646,7 +1646,8 @@ class GraphRenderer(QObject):
                 linewidths=0, clip_on=False, zorder=12, label="_value_axis_clip_markers",
                 gid="value_axis_clip_markers")]
             peak = max(ry for _, ry in runs)
-            # Through _lbl like every axis label: matplotlib does no bidi, so Hebrew would read reversed.
+            # Through _lbl like every axis label: matplotlib < 3.11 does no bidi, so Hebrew would read
+            # reversed (shape_rtl passes it through on 3.11+, which reorders it itself).
             text = self._lbl(f"{self.i18n.GRAPH_PEAK_SHORT} {format_decimal(peak * scale, self.i18n, 1)} "
                              f"{unit or self.i18n.MBITS_UNIT}")
             artists.append(ax.text(

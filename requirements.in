@@ -1,5 +1,13 @@
 # Core application dependencies for NetSpeedTray
-PyQt6
+# Compile on WINDOWS (pip-compile on Linux drops every sys_platform == "win32" pin - Dependabot does):
+#   pip-compile --upgrade --output-file=requirements.txt requirements.in
+#   pip-compile --upgrade --output-file=dev-requirements.txt dev-requirements.in
+# Held below Qt 6.12: Qt 6.12.0 ignores the opsz axis in DirectWrite glyph advances, so the widget's
+# Segoe UI Variable (Text optical size) measures as Small - "888.8 Mbps" 64 px instead of 60, and
+# compact side-taskbar layouts drop a tier. 6.11 measures like 6.10. Both caps: PyQt6 alone lets the
+# resolver pair an ancient PyQt6 with the newest Qt binaries.
+PyQt6>=6.11,<6.12
+PyQt6-Qt6<6.12
 pywin32; sys_platform == "win32"       # Windows-only (no Linux wheels; Dependabot resolves on Linux)
 psutil
 matplotlib
@@ -8,4 +16,5 @@ wmi; sys_platform == "win32"           # Windows-only (needs pywin32)
 fonttools>=4.61.0   # Explicitly added to enforce Security CVE fix
 pillow>=13.0.0      # Security: 56 Dependabot alerts (3 critical) fixed in 13.0.0
 truststore           # HTTPS verified by Windows (fetches missing roots on demand) - update checks on fresh installs
-python-bidi          # RTL (Hebrew) bidi reshaping for matplotlib graph labels (item 6)
+python-bidi          # RTL (Hebrew) bidi reshaping for matplotlib graph labels (item 6); matplotlib 3.11+ does its own (mpl_fonts.shape_rtl)
+python-dateutil<3    # via matplotlib. 3.0 (Oct 2026) rewrote dateutil.tz and pulls in tzdata, 4.0 followed 11 days later; nothing we need - revisit once settled

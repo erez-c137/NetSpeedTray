@@ -138,7 +138,7 @@ def test_monitoring_on_or_session_view_still_says_collecting(renderer, stat):
 
 def test_hebrew_messages_are_shaped_for_matplotlib(monkeypatch):
     """matplotlib has no bidi: Hebrew must go through shape_rtl like every other graph label."""
-    from netspeedtray.utils.mpl_fonts import shape_rtl
+    from netspeedtray.utils.mpl_fonts import matplotlib_does_bidi, shape_rtl
     monkeypatch.setattr(GraphRenderer, "_init_matplotlib", _bare_init)
     he = I18nStrings("he_IL")
     r = GraphRenderer(MagicMock(), he)
@@ -147,7 +147,8 @@ def test_hebrew_messages_are_shaped_for_matplotlib(monkeypatch):
                              (RECORDING, "COLLECTING_DATA_MESSAGE")):
         _render(r, "hwcombined", "TIMELINE_24_HOURS", history_off)
         shaped = shape_rtl(getattr(he, key), "he_IL")
-        assert shaped != getattr(he, key) and shaped in _texts(r.figure)
+        # reshaped on matplotlib < 3.11; 3.11+ does its own bidi and gets the logical text
+        assert (shaped != getattr(he, key)) is not matplotlib_does_bidi() and shaped in _texts(r.figure)
     ax = r.figure.add_subplot(1, 1, 1)
     end = datetime.now()
     ax.set_xlim(end - timedelta(hours=2), end)
