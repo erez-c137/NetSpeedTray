@@ -230,6 +230,26 @@ def test_show_dialog_marks_open_and_records_not_now_time(monkeypatch):
     assert before <= fake._update_dismissed_at["2.2.1"] <= time.time()
 
 
+def test_a_dialog_supersedes_a_waiting_automatic_offer(monkeypatch):
+    """Automatic offer queued (user idle / fullscreen), then a manual check shows the dialog and the
+    user answers "Not now": the queued offer must not re-offer the same release on its next retry."""
+    from netspeedtray.views import update_dialog
+
+    class _FakeDialog:
+        ACTION_DISMISS, ACTION_DOWNLOAD, ACTION_SKIP = "dismiss", "download", "skip"
+
+        def __init__(self, *a, **k):
+            self.action = self.ACTION_DISMISS
+
+        def exec(self):
+            pass
+
+    monkeypatch.setattr(update_dialog, "UpdateDialog", _FakeDialog)
+    fake = _fake(i18n=MagicMock(), _pending_update_offer=("v2.2.1", "u", "", "", ""))
+    W._show_update_dialog(fake, "v2.2.1", "u")
+    assert fake._pending_update_offer is None
+
+
 # --- HIGH 1: no leftover manual boxes ----------------------------------------------------------------
 
 class _Host(QObject):

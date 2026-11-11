@@ -3009,6 +3009,10 @@ class NetworkSpeedWidget(QWidget):
         from netspeedtray.views.update_dialog import UpdateDialog
         latest = latest_version.lstrip("vV")
         dlg = UpdateDialog(self.i18n, constants.app.VERSION, latest, body, parent=self)
+        # This dialog answers any automatic offer still waiting out a fullscreen app / an idle
+        # desk (#508 review): left queued, its retry re-offered the release a minute after the user
+        # chose "Not now" here, or while the download they just started was running.
+        self._pending_update_offer = None
         self._update_dialog_open = True
         try:
             dlg.exec()   # nested event loop: timers still fire, hence the open flag
