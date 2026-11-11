@@ -982,11 +982,12 @@ class GraphRenderer(QObject):
         elif earliest is None:
             text = getattr(self.i18n, "NET_GRAPH_NO_HISTORY_YET", "No history recorded yet.")
         elif end_time is not None and earliest > end_time:
-            from netspeedtray.views.graph.time_axis import localized_strftime
+            # The graph's language (self.i18n): its calendar digits match the time-axis ticks.
+            from netspeedtray.views.graph.time_axis import calendar_strftime
             lang = getattr(self.i18n, "language", None)
-            date = localized_strftime(earliest, "%b %d", lang, shape=False)
+            date = calendar_strftime(earliest, "%b %d", lang, shape=False)
             if end_time.year != earliest.year:
-                date = f"{date} {earliest.year}"
+                date = f"{date} {calendar_strftime(earliest, '%Y', lang, shape=False)}"
             text = getattr(self.i18n, "NET_GRAPH_HISTORY_STARTS", "History starts {date}.").format(date=date)
         else:
             text = getattr(self.i18n, "NET_GRAPH_NO_TRAFFIC",

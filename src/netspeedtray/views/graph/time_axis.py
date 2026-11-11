@@ -192,6 +192,13 @@ def _calendar_digits(dt, fmt: str, language: Optional[str]) -> str:
     return fmt
 
 
+def calendar_strftime(dt, fmt: str, language: Optional[str], shape: bool = True) -> str:
+    """``localized_strftime`` with the calendar numbers in the language's fixed-text digits
+    (``_calendar_digits``): every date the GRAPH draws (the time-axis ticks, the "History starts"
+    note), so one Bengali graph never writes "১৭ অক্টো" on its axis and "17 অক্টো" in its note."""
+    return localized_strftime(dt, _calendar_digits(dt, fmt, language), language, shape)
+
+
 class TimeAxisFormatter(Formatter):
     """Formats ticks with the format matching the locator's current step, with weekday and month
     names in ``language`` (the app's UI language; None keeps strftime's names)."""
@@ -209,8 +216,7 @@ class TimeAxisFormatter(Formatter):
         return fmt
 
     def _format(self, x, fmt: str) -> str:
-        dt = mdates.num2date(x, self.tz)
-        return localized_strftime(dt, _calendar_digits(dt, fmt, self.language), self.language)
+        return calendar_strftime(mdates.num2date(x, self.tz), fmt, self.language)
 
     def format_ticks(self, values):
         fmt = self._fmt()
