@@ -649,12 +649,16 @@ def calculate_monotone_cubic_interpolation(x_coords: List[float], y_coords: List
                for dxi, dyi in zip([b - a for a, b in zip(x, x[1:])], [b - a for a, b in zip(y, y[1:])])]
 
     # 2-3. Inner tangents (Fritsch-Carlson): 0 at a local extremum (secants of different signs),
-    # else the harmonic-style mean that keeps the curve from overshooting.
+    # else the harmonic-style mean that keeps the curve from overshooting. A NaN secant (a NaN sample)
+    # counts as an extremum too: `<= 0` is False for NaN, and the mean's denominator could then be
+    # max(0, nan) + 2 * min(0, nan) = 0 - numpy returned NaN there, plain floats raise
+    # ZeroDivisionError and the whole graph vanished (#488). With the product > 0 both secants share
+    # a sign and are non-zero, so the denominator cannot be 0.
     tangents = [0.0] * n
     for i in range(1, n - 1):
         m_prev = secants[i - 1]
         m_next = secants[i]
-        if m_prev * m_next <= 0:
+        if not (m_prev * m_next > 0):
             tangents[i] = 0.0
         else:
             tangents[i] = (3 * m_prev * m_next) / (max(m_next, m_prev) + 2 * min(m_next, m_prev))
@@ -687,6 +691,62 @@ def calculate_monotone_cubic_interpolation(x_coords: List[float], y_coords: List
     return interp_x, interp_y
 
 
+def neutral_cwd() -> Optional[str]:
+    """A working directory for processes the app starts: the Windows system folder.
+
+    The app chdir's into its own folder at startup (monitor.py), and a child inherits that CWD -
+    which Windows holds open for the child's whole life, so the portable updater cannot rename the
+    folder while any child is alive, even after the app itself has exited (2.1.7's PowerShell probe
+    did exactly that in the 2.2.0-rc.7 rehearsal). A browser or Explorer window the app opens can
+    live for hours. Starting them in the system folder keeps the install folder free.
+
+    %SystemRoot%, then %windir% (an empty variable counts as missing), then GetSystemDirectoryW.
+    None (inherit, the old behaviour) only if none of them names an existing folder."""
+    for var in ("SystemRoot", "windir"):
+        root = (os.environ.get(var) or "").strip()
+        if root:
+            sys_dir = os.path.join(root, "System32")
+            if os.path.isdir(sys_dir):
+                return sys_dir
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(260)
+            n = ctypes.windll.kernel32.GetSystemDirectoryW(buf, len(buf))
+            if 0 < n < len(buf) and os.path.isdir(buf.value):
+                return buf.value
+        except Exception:
+            pass
+    return None
+
+
+def open_external(target: str) -> None:
+    """Open a URL or folder with its default handler, in ``neutral_cwd()`` rather than the app's
+    folder. Never raises.
+
+    On Windows this is ``os.startfile(target, cwd=...)`` and nothing else. There is deliberately no
+    ``webbrowser.open`` fallback there: its Windows default IS ``os.startfile`` (no cwd), so it
+    could only fail the same way, and its other candidates are browsers started as plain children
+    in the inherited CWD - the very process that holds the install folder (review L3). A failure
+    is logged; the user can still open the link by hand. Off Windows (dev boxes), webbrowser."""
+    log = logging.getLogger("NetSpeedTray.helpers")
+    if sys.platform == "win32":
+        try:
+            cwd = neutral_cwd()
+            if cwd:
+                os.startfile(target, cwd=cwd)          # type: ignore[attr-defined, call-arg]
+            else:
+                os.startfile(target)                   # type: ignore[attr-defined]
+        except Exception as e:
+            log.warning("Could not open %r: %s", target, e)
+        return
+    try:
+        import webbrowser
+        webbrowser.open(target)
+    except Exception as e:
+        log.debug("webbrowser.open(%r) failed: %s", target, e)
+
+
 def reveal_in_explorer(path: str) -> None:
     """Open File Explorer on the folder holding ``path``, with the file selected. Never raises.
 
@@ -702,6 +762,6 @@ def reveal_in_explorer(path: str) -> None:
         import subprocess
         explorer = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "explorer.exe")
         target = os.path.normpath(str(path)).replace('"', "")
-        subprocess.Popen(f'"{explorer}" /select,"{target}"')
+        subprocess.Popen(f'"{explorer}" /select,"{target}"', cwd=neutral_cwd())
     except Exception as e:
         logging.getLogger("NetSpeedTray.helpers").debug("reveal_in_explorer failed: %s", e)

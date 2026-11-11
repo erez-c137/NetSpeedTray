@@ -20,7 +20,7 @@ from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont, QPaintEvent, QPainter, QColor
 from netspeedtray.utils.styles import (
     toggle_style, slider_style, font as token_font, semantic_colors, get_accent_color,
-    timeline_pills_style, prefers_reduced_motion, is_dark_mode, ui_font, ui_family_css, icon_font_family, symbol_face, set_ui_text, face_for_text,
+    timeline_pills_style, prefers_reduced_motion, is_dark_mode, ui_font, ui_family_css, icon_font_family, symbol_face, set_ui_text, face_for_text, set_text_in_face, apply_text_face,
 )
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray import constants
@@ -156,7 +156,9 @@ class Win11Toggle(QWidget):
 
 
     def _create_label_widget(self, text: str) -> QLabel:
-        label = QLabel(text, self)
+        # No text in the constructor: an adapter name (以太网) laid out in the UI face first makes Qt
+        # search every installed family. The text goes in last, in its own face (set_text_in_face).
+        label = QLabel(self)
         # The UI face (#149: never an unintended serif fallback), ONE family - a family list loads every
         # installed font family (utils/styles.ui_family). Small cut: what this label drew in until 2.2.0.
         label.setFont(ui_font(point_size=10, optical="Small"))
@@ -167,6 +169,7 @@ class Win11Toggle(QWidget):
             label_qss += f" color: {self._label_text_color};"
         label.setStyleSheet(label_qss)
         label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        set_text_in_face(label, text)
         return label
 
 
@@ -285,7 +288,7 @@ class Win11Toggle(QWidget):
 
         if self._label_widget:
             if has_internal_label:
-                self._label_widget.setText(text)
+                set_text_in_face(self._label_widget, text)
                 self._label_widget.setVisible(True)
             else: 
                 self._label_widget.setVisible(False)
@@ -303,6 +306,7 @@ class Win11Toggle(QWidget):
             if self._label_text_color:
                 label_qss += f" color: {self._label_text_color};"
             self._label_widget.setStyleSheet(label_qss)
+            apply_text_face(self._label_widget, self._label_widget.text())   # the new sheet dropped its face
 
 
     def sizeHint(self) -> QSize:

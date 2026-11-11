@@ -88,7 +88,8 @@ class _ElidingMenuButton(QToolButton):
 
     def set_label(self, label: str) -> None:
         self._label = str(label)
-        self.setToolTip(self._label)
+        su.apply_text_face(self, self._label)   # an adapter name (以太网) in its own face, before measuring
+        self.setToolTip(su.tooltip_in_face(self._label))
         self.setAccessibleName(self._label)
         self._apply()
         self.updateGeometry()
@@ -436,7 +437,8 @@ class NetworkHeader(QWidget):
         group.setExclusive(True)
         all_label = self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces")
         for label, data in [(all_label, "all")] + [(n, n) for n in names]:
-            act = self._iface_menu.addAction(label)
+            act = self._iface_menu.addAction("")
+            su.action_text_in_face(act, label, self._iface_menu.font())   # adapter names: their own face
             act.setCheckable(True)
             act.setChecked(data == self._iface_value)
             act.triggered.connect(lambda _checked=False, d=data, l=label: self._select_iface(d, l))

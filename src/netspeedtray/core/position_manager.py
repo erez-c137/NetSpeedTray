@@ -69,6 +69,10 @@ _GetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int]
 # keeps the taskbar's owner cluster where it is (the #200 clipping came from dragging it
 # up). With that insertion point the re-seat no longer has to recognise popups at all.
 _SHELL_TASKBAR_CLASSES = ("Shell_TrayWnd", "Shell_SecondaryTrayWnd")
+# The taskbar and the desktop. Show desktop (and a click on the taskbar or the desktop) moves the
+# foreground to or from one of these, and the shell can bury the widget on every click: a burial
+# that comes with such a switch is the user's doing, never a fight (see reseat_above_taskbar).
+_SHELL_FOREGROUND_CLASSES = frozenset(_SHELL_TASKBAR_CLASSES + ("Progman", "WorkerW"))
 _GW_HWNDPREV = 3
 _SWP_NOOWNERZORDER = 0x0200
 _RESEAT_SWP_FLAGS = (win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
@@ -148,6 +152,10 @@ _BURIAL_FIGHT_WINDOW_S = constants.timeouts.BURIAL_FIGHT_WINDOW_MS / 1000.0
 # ... unless fresh burials come faster than a person can cause them (rationale with the constants).
 _BURIAL_FRESH_RATE_MAX = constants.timeouts.BURIAL_FRESH_RATE_MAX
 _BURIAL_FRESH_RATE_WINDOW_S = constants.timeouts.BURIAL_FRESH_RATE_WINDOW_MS / 1000.0
+# ... and never for a Show desktop click (foreground to / from the taskbar or desktop), nor for the
+# few re-burials right after it (rationale with the constants).
+_SHOW_DESKTOP_GRACE_S = constants.timeouts.SHOW_DESKTOP_GRACE_MS / 1000.0
+_SHOW_DESKTOP_GRACE_REBURIALS = constants.timeouts.SHOW_DESKTOP_GRACE_REBURIALS
 # A recovery this close to a dock / tray change logs at DEBUG and keeps the INFO line (rc.2 W8).
 _BURIAL_LOG_SETTLE_S = constants.timeouts.BURIAL_LOG_SETTLE_MS / 1000.0
 _ERROR_ACCESS_DENIED = 5
@@ -989,6 +997,15 @@ class PositionManager(QObject):
         # until the healthy on-top stretch (or an explorer restart) resets the backoff state.
         self._fresh_reseat_times: Deque[float] = deque(maxlen=_BURIAL_FRESH_RATE_MAX)
         self._fresh_rate_capped: bool = False
+        # (hwnd, class) of the foreground window at our last acted re-seat (seeded by the first
+        # verified on-top check, kept across reset_reseat_state; a failed read never replaces it).
+        # A burial found after the foreground moved to / from the taskbar or the desktop (Show
+        # desktop) is re-seated at once, uncharged - see _shell_foreground_switch. After such a
+        # re-seat, up to _SHOW_DESKTOP_GRACE_REBURIALS more burials within _SHOW_DESKTOP_GRACE_S
+        # are free too (one click can bury it twice with the foreground already settled).
+        self._reseat_foreground: Optional[Tuple[int, str]] = None
+        self._switch_grace_ts: float = 0.0
+        self._switch_grace_left: int = 0
         # One INFO line per burial episode when SetWindowPos refuses the neighbour (Win10).
         self._access_denied_logged: bool = False
         # One INFO line per stretch of a not-ready tray rect (see _tray_rect_ready).
@@ -1995,6 +2012,8 @@ class PositionManager(QObject):
         self._burial_fresh = None
         self._fresh_reseat_times.clear()
         self._fresh_rate_capped = False
+        self._switch_grace_ts = 0.0
+        self._switch_grace_left = 0
         self._access_denied_logged = False
 
     def _taskbar_band_raised(self, tb: int, now: float) -> Optional[int]:
@@ -2096,6 +2115,11 @@ class PositionManager(QObject):
                 return False
             if above:
                 self._burial_fresh = None   # any earlier burial is over (fight window)
+                if self._reseat_foreground is None:
+                    # Seed the Show desktop baseline once, so the very first click is a switch too.
+                    seed = self._foreground_snapshot()
+                    if seed[0]:
+                        self._reseat_foreground = seed
                 now = time.monotonic()
                 if self._on_top_since is None or now - self._last_on_top_ts > _ON_TOP_MAX_GAP_S:
                     self._on_top_since = now
@@ -2138,8 +2162,9 @@ class PositionManager(QObject):
         Guards, in order (each one defers; the next event or the 1 s tick retries):
         backoff -> taskbar not topmost -> taskbar out of its normal Z-band -> widget in another
         Z-band -> already seated. The backoff applies only to a burial found within the fight
-        window of our last re-seat; a fresh burial and the Start / Task View band return skip
-        it and charge nothing. If SetWindowPos refuses the neighbour with
+        window of our last re-seat; a fresh burial, the Start / Task View band return and a
+        foreground switch to / from the taskbar or desktop (Show desktop) skip it and charge
+        nothing. If SetWindowPos refuses the neighbour with
         Access denied, see _reseat_after_access_denied.
 
         Returns True when the widget was actually re-seated.
@@ -2152,12 +2177,25 @@ class PositionManager(QObject):
             # The burial the shell leaves behind when Start / Task View closes: re-seat at once
             # and charge nothing, or quick repeated Win+Tab escalates the backoff (M1).
             band_return = bool(self._band_return_pending_ts) and                 now - self._band_return_pending_ts <= _BAND_RETURN_GRACE_S
+            # Show desktop, either way: the foreground moved to / from the taskbar or the desktop
+            # since our last re-seat. A person did that - re-seat at once, charge nothing, and do
+            # not count it toward the fresh-burial rate cap: ~13 clicks in 8 s tripped the cap and
+            # every later click left the widget under the taskbar for the 1-60 s backoff (owner,
+            # rc.7 / rc.8). A re-burier that leaves the foreground alone is classified as before.
+            foreground = self._foreground_snapshot()
+            shell_switch = not band_return and self._shell_foreground_switch(foreground)
+            # The same click can bury it again with the foreground already settled (the taskbar
+            # takes the click, the desktop follows): a few burials right after a switch re-seat
+            # are free as well, so the second one is not charged as a fight.
+            switch_grace = not (band_return or shell_switch) and self._switch_grace_left > 0 and \
+                now - self._switch_grace_ts <= _SHOW_DESKTOP_GRACE_S
+            exempt = shell_switch or switch_grace
             # Fight window: a burial first seen more than _BURIAL_FIGHT_WINDOW_S after our last
             # re-seat is a fresh one (Win10 buries the widget on every maximize AND restore) -
             # immediate and free, whatever window an earlier fight left behind. Classified once
             # per burial: while we sit out a backoff we are not re-seating, so a later check of
             # the SAME burial must stay a fight.
-            if self._burial_fresh is None:
+            if self._burial_fresh is None and not exempt:
                 fresh = bool(self._last_acted_reseat_ts) and \
                     now - self._last_acted_reseat_ts > _BURIAL_FIGHT_WINDOW_S
                 times = self._fresh_reseat_times
@@ -2170,9 +2208,9 @@ class PositionManager(QObject):
                                 "fight (backoff) until it stays on top.",
                                 len(times) + 1, now - times[0])
                 self._burial_fresh = fresh and not self._fresh_rate_capped
-            fresh = self._burial_fresh
+            fresh = bool(self._burial_fresh)
             delay = self._reseat_delay()
-            if not (band_return or fresh) and self._last_reseat_ts and \
+            if not (band_return or exempt or fresh) and self._last_reseat_ts and \
                     (now - self._last_reseat_ts) < delay:
                 self._log_deferral("backoff", "Re-seat deferred: backoff (%.0fs window).", delay)
                 return False
@@ -2214,9 +2252,20 @@ class PositionManager(QObject):
                 if not self._reseat_after_access_denied(hwnd, tb, prev, tb_band):
                     return False   # not charged; the next check retries
             self._last_acted_reseat_ts = now
+            if foreground[0]:
+                self._reseat_foreground = foreground   # a failed read keeps the last good one
             self._burial_fresh = None
             self._access_denied_logged = False
             self._deferral_logged = None
+            if exempt:
+                if shell_switch:
+                    self._switch_grace_ts = now
+                    self._switch_grace_left = _SHOW_DESKTOP_GRACE_REBURIALS
+                else:
+                    self._switch_grace_left -= 1
+                self._log_recovery(now, "Widget re-seated above the taskbar after a switch to / from the "
+                                        "desktop or taskbar (no backoff charged).")
+                return True
             if band_return:
                 self._band_return_pending_ts = 0.0   # consumed; the backoff is untouched
                 self._logger.debug("Widget re-seated above the taskbar after Start / Task View closed "
@@ -2235,6 +2284,28 @@ class PositionManager(QObject):
         except Exception as e:
             self._logger.error("Failed to re-seat the widget above the taskbar: %s", e)
             return False
+
+    @staticmethod
+    def _foreground_snapshot() -> Tuple[int, str]:
+        """(hwnd, class name) of the foreground window; (0, "") when there is none or it fails."""
+        try:
+            fg = int(win32gui.GetForegroundWindow() or 0)
+            return (fg, str(win32gui.GetClassName(fg))) if fg else (0, "")
+        except Exception:
+            return 0, ""
+
+    def _shell_foreground_switch(self, foreground: Tuple[int, str]) -> bool:
+        """
+        True when the foreground is another window than at our last acted re-seat and the taskbar
+        or the desktop is on either side of that switch: Show desktop (app -> desktop and back), a
+        click on the taskbar or the desktop. A person caused it, and each switch buys at most ONE
+        free re-seat (the snapshot is re-taken on every re-seat), so a re-burier that leaves the
+        foreground alone still meets the fight window, the rate cap and the backoff.
+        """
+        last = self._reseat_foreground
+        if last is None or not foreground[0] or foreground[0] == last[0]:
+            return False
+        return foreground[1] in _SHELL_FOREGROUND_CLASSES or last[1] in _SHELL_FOREGROUND_CLASSES
 
     def _reseat_after_access_denied(self, hwnd: int, tb: int, prev: int,
                                     tb_band: Optional[int]) -> bool:

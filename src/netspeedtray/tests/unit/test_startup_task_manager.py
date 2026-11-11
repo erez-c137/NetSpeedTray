@@ -11,6 +11,7 @@ so Settings reported ON and the app never started. The reporter fixed it by enab
 Real HKCU values under a throwaway app name, removed afterwards.
 """
 import logging
+import os
 import sys
 import winreg
 from unittest.mock import patch
@@ -24,7 +25,10 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows registr
 
 _RUN = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _APPROVED = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
-_NAME = "NST-Test-308-TaskManager"
+# One throwaway name per test process: the values live in the user's shared HKCU keys, so parallel
+# workers (pytest -n) and two suites run at once must never set or delete each other's entry.
+_PREFIX = "NST-Test-308-TaskManager-"
+_NAME = f"{_PREFIX}{os.getpid()}"
 _ENABLED = bytes([2] + [0] * 11)
 _DISABLED = bytes([3, 0, 0, 0, 0x6C, 0x2B, 0x01, 0xAA, 0x8D, 0xCB, 0xDA, 0x01])
 
@@ -50,9 +54,32 @@ def _delete(path, name):
         pass
 
 
+def _sweep_dead_runs_values():
+    """Remove this test's values left by a run that was killed before its cleanup (their pid is gone).
+    Only names with this test's prefix - never the real NetSpeedTray entries, never a live run's."""
+    import psutil
+    for path in (_RUN, _APPROVED):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
+                names, i = [], 0
+                while True:
+                    try:
+                        names.append(winreg.EnumValue(k, i)[0])
+                    except OSError:
+                        break
+                    i += 1
+        except OSError:
+            continue
+        for name in names:
+            pid = name[len(_PREFIX):]
+            if name.startswith(_PREFIX) and pid.isdigit() and not psutil.pid_exists(int(pid)):
+                _delete(path, name)
+
+
 @pytest.fixture
 def mgr():
     """A StartupManager whose app name is a throwaway, so the real NetSpeedTray entries are untouched."""
+    _sweep_dead_runs_values()
     with patch.object(constants.app, "APP_NAME", _NAME):
         m = StartupManager()
         try:

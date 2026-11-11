@@ -34,6 +34,14 @@ def dlg(qtbot, monkeypatch):
     return d
 
 
+def _on_screen(dlg):
+    # The live preview applies only while Settings is shown (a hidden dialog - one kept alive after
+    # Cancel for a running backup - never emits); offscreen, so nothing flashes up.
+    from PyQt6.QtCore import Qt
+    dlg.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    dlg.show()
+
+
 def _page(dlg, index: int) -> QWidget:
     dlg._build_all_pages()   # pages are built lazily (on first visit)
     return dlg.stack.widget(index).widget()
@@ -176,6 +184,7 @@ def test_graph_reveals_still_work_after_the_move(dlg):
 
 
 def test_graph_change_updates_the_live_preview(dlg, qtbot):
+    _on_screen(dlg)
     seen = []
     dlg.preview_widget.set_config = lambda cfg: seen.append(cfg)
     g = dlg.widget_page.mini_graph_section
@@ -185,6 +194,7 @@ def test_graph_change_updates_the_live_preview(dlg, qtbot):
 
 
 def test_graph_style_change_updates_the_live_preview(dlg, qtbot):
+    _on_screen(dlg)
     seen = []
     dlg.preview_widget.set_config = lambda cfg: seen.append(cfg)
     g = dlg.widget_page.mini_graph_section
@@ -374,6 +384,7 @@ def test_advanced_keeps_its_low_frequency_sections(dlg):
 
 
 def test_interaction_toggle_live_applies(dlg, qtbot):
+    _on_screen(dlg)
     emitted = []
     dlg.settings_changed.connect(lambda cfg: emitted.append(cfg))
     dlg.general_page.pause_in_menu.setChecked(True)

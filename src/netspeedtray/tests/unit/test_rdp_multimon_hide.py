@@ -73,6 +73,7 @@ def test_fullscreen_check_does_not_short_circuit_a_spanning_rdp_window(q_app):
     try:
         for cls, expected_calls in ((RDP, 1), ("Notepad", 0)):
             with patch("win32gui.IsWindow", return_value=True), \
+                    patch("win32gui.IsWindowVisible", return_value=True), \
                     patch("win32gui.GetWindowRect", return_value=SPAN), \
                     patch("win32gui.GetClassName", return_value=cls), \
                     patch("win32api.MonitorFromWindow", return_value=2), \

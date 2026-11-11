@@ -138,6 +138,7 @@ def _fake_widget(keep_visible, free_float_active):
     w.config = {"keep_visible_fullscreen": keep_visible}
     w.position_manager = MagicMock()
     w.position_manager.is_free_float_active.return_value = free_float_active
+    w.logger = MagicMock()   # an instance attribute, so not on the spec
     return w
 
 

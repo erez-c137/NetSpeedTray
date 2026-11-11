@@ -17,7 +17,7 @@ import math
 from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor, QFontMetrics
+from PyQt6.QtGui import QPainter, QColor
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
 )
@@ -164,21 +164,21 @@ class AppRow(QFrame):
         # otherwise squash every user app's bar to a stub. log1p keeps small counts differentiated.
         frac = (math.log1p(conn) / math.log1p(max_conn)) if max_conn > 0 else 0.0
 
-        fm = QFontMetrics(self._name.font())
-        self._name.setText(fm.elidedText(name, Qt.TextElideMode.ElideRight, _NAME_W))
-        self._bar.set_value(frac, active)
-        self._count.setText(str(conn))
         # Dim idle apps so the eye lands on what's actually talking. Re-resolve colors each tick so
         # a mid-session light/dark switch is picked up (the bar already re-reads per paint).
         c = su.semantic_colors()
         name_color = c["text_primary"] if active else c["text_secondary"]
         self._name.setStyleSheet(f"color: {name_color}; background: transparent;")
+        # After the sheet: a process name the UI face lacks (微信.exe) gets its own face, measured in it.
+        su.set_elided_text_in_face(self._name, name, _NAME_W)
+        self._bar.set_value(frac, active)
+        self._count.setText(str(conn))
         self._apply_row_style()   # keep selection/hover styling fresh across theme changes
         # Qt does NOT expose a tooltip to screen readers, so also set the accessible name from the same
         # content - otherwise an assistive reader announces a blank frame for the tab's primary control.
         summary = self._tr("APP_ROW_TOOLTIP", "{name} - {conn} connections, {active} active, {hosts} hosts") \
             .format(name=name, conn=conn, active=est, hosts=hosts)
-        self.setToolTip(summary)
+        self.setToolTip(su.tooltip_in_face(summary))
         self.setAccessibleName(summary)
 
     def _tr(self, key: str, default: str) -> str:

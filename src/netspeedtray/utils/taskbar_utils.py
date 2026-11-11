@@ -31,6 +31,7 @@ from PyQt6.QtGui import QScreen
 from PyQt6.QtWidgets import QApplication
 
 from netspeedtray import constants
+from netspeedtray.utils import dwm
 # Screen names are logged pseudonymized: the support bundle's MANIFEST promises
 # no display names ship (v2.1.5 item 7).
 from netspeedtray.utils.config import stable_pseudonym
@@ -1821,15 +1822,34 @@ def is_rdp_client_covering_monitor(hwnd: int, class_name: str,
         return False
 
 
+def is_window_on_screen(hwnd: int) -> bool:
+    """
+    True when ``hwnd`` is a live window that is actually drawn: it exists, is visible, and is not
+    DWM-cloaked. A foreground reading that fails this (NULL during an activation hand-off, a window
+    already destroyed, an invisible or cloaked monitor-sized helper) says nothing about whether a
+    fullscreen app still covers the taskbar, so the fullscreen gate treats it as no information
+    rather than as "not covered" (#503).
+    """
+    try:
+        if not hwnd or not win32gui.IsWindow(hwnd) or not win32gui.IsWindowVisible(hwnd):
+            return False
+    except Exception:
+        return False
+    return not dwm.is_cloaked(int(hwnd))
+
+
 def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo], hwnd_to_check: int) -> bool:
     """
     Checks if the taskbar is obstructed by a specific window.
-    
+
     The goal is simple: widget should be visible whenever the taskbar is visible.
     Only TRUE fullscreen windows (covering the entire monitor) should hide the widget.
+    An invisible or DWM-cloaked window covers nothing, whatever its rect (#503).
     """
     try:
         if not hwnd_to_check or not win32gui.IsWindow(hwnd_to_check) or not taskbar_info or not taskbar_info.hwnd:
+            return False
+        if not is_window_on_screen(hwnd_to_check):
             return False
 
         # Ignore our own windows (e.g., context menu popups)

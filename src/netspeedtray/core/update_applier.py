@@ -13,7 +13,8 @@ the new copy applies the update itself:
     1. download + verify + extract
     2. launch staged NetSpeedTray.exe
        --apply-update <install> --wait-pid <own pid>
-    3. quit  ---------------------------> 4. wait for <pid> to exit
+    3. quit  ---------------------------> 4. wait for <pid> to exit, then (bounded) for anything
+                                             it left running in <install> (its children's CWD)
                                           5. rename <install> -> <install>.previous-<ts>
                                           6. copy   <staged>  -> <install>, verify the copy
                                           7. record the outcome in the marker, launch
@@ -118,9 +119,23 @@ _PLAUSIBLE_BACKUP_EPOCH = 1672531200
 # for it to actually go. Beyond that something is wrong, and we refuse rather than force anything.
 _EXIT_TIMEOUT_SEC = 30.0
 # Windows - and AV, and Explorer - can hold a directory handle for a moment after a process exits,
-# so the rename is retried rather than treated as fatal on the first failure.
-_SWAP_RETRY_SEC = 8.0
+# so the rename is retried rather than treated as fatal on the first failure. With backoff: the
+# first retries are quick (a scanner letting go), later ones every couple of seconds. 8 s was too
+# short on a slow VM (2.1.7 -> 2.2.0-rc.7 rehearsal, 2026-11-10: WinError 32 for the whole window).
+_SWAP_RETRY_SEC = 20.0
 _SWAP_RETRY_STEP = 0.25
+_SWAP_RETRY_STEP_MAX = 2.0
+
+# A folder is "in use" not only by processes running FROM it: a process whose working directory is
+# inside it holds it just as firmly (Windows keeps a handle on every process's CWD), so it cannot
+# be renamed. The previous instance chdir's into its own folder at startup, so every child it
+# spawned inherits that CWD - and a child can outlive it: 2.1.7's PowerShell Widgets-button probe
+# (spawned every ~35 s, slow to start on a slow machine) was seen running 5-10 s after 2.1.7 had
+# exited, and in one run held the folder past the whole rename window. So, once the previous
+# instance has gone, the applier also waits - bounded, never killing anything - for every process
+# that still runs from, or sits in, the install folder (``_install_holders``).
+_HOLDER_WAIT_SEC = 30.0
+_HOLDER_POLL_SEC = 0.5
 
 # The previous install is renamed to `<install>.previous-<ts>`. Builds up to 2.2.0-beta.3 named it
 # `<install>.old-<ts>` and, at every start, rmtree'd ANY `<install>.old-*` sibling with no check of
@@ -241,20 +256,135 @@ def validate(install_dir: str, staged_dir: str) -> Optional[str]:
     return None
 
 
-def _rename_with_retry(src: str, dst: str, timeout: float = _SWAP_RETRY_SEC) -> None:
-    """os.rename with a short retry, for handles that outlive the process that held them."""
+Holder = Tuple[int, str, str]                     # (pid, process name, why it holds the folder)
+
+
+def _install_holders(install_dir: str, wait_pid: Optional[int] = None,
+                     exited_at: Optional[float] = None,
+                     started_at: Optional[float] = None) -> List[Holder]:
+    """Processes that keep ``install_dir`` from being renamed: any whose executable or working
+    directory is inside it, plus - when its working directory cannot be read - any child of the
+    previous instance (``wait_pid``) created during that instance's lifetime (``started_at`` <=
+    created <= ``exited_at``, epoch seconds). This process is never one.
+
+    Both bounds matter because Windows never updates a process's parent PID after the parent dies,
+    and PIDs are reused: long-lived system processes (csrss, wininit, winlogon) report parents
+    that died at boot. Had the previous instance been given one of those PIDs, they would look
+    like its orphans - and every update would wait out the whole bound. Created BEFORE the
+    previous instance started means not its child. Without ``started_at`` (its creation time
+    could not be read) the orphan rule is off entirely; the CWD/exe rules still apply.
+
+    psutil is imported lazily (it ships in every build; this module otherwise stays stdlib-only).
+    Without it, or on any failure, the answer is "none known" - the rename retry still applies."""
+    try:
+        import psutil
+    except Exception:                                    # pragma: no cover - always bundled
+        return []
+    me = os.getpid()
+    out: List[Holder] = []
+    try:
+        procs = list(psutil.process_iter(["pid", "name", "ppid", "exe", "create_time"]))
+    except Exception:
+        logger.debug("Could not list processes.", exc_info=True)
+        return []
+    for p in procs:
+        try:
+            info = p.info
+            pid = info.get("pid")
+            if pid in (None, 0, 4, me):
+                continue
+            name = info.get("name") or "?"
+            exe = info.get("exe") or ""
+            if exe and _is_within(exe, install_dir):
+                out.append((pid, name, "runs from it"))
+                continue
+            try:
+                cwd = p.cwd()
+            except psutil.NoSuchProcess:
+                continue
+            except Exception:                            # AccessDenied, zombie, anything else
+                cwd = None
+            if cwd and _is_within(cwd, install_dir):
+                out.append((pid, name, "working directory is inside it"))
+            elif (cwd is None and wait_pid and started_at is not None
+                  and info.get("ppid") == wait_pid
+                  and started_at <= (info.get("create_time") or 0)
+                  and (exited_at is None or (info.get("create_time") or 0) <= exited_at)):
+                out.append((pid, name, "left running by the previous version"))
+        except Exception:
+            continue
+    return out
+
+
+def _process_create_time(pid: Optional[int]) -> Optional[float]:
+    """When ``pid`` was created (epoch seconds), or None if it is gone or cannot be read. Read
+    while the previous instance is still alive, it bounds which processes can be its orphans."""
+    if not pid:
+        return None
+    try:
+        import psutil
+        return float(psutil.Process(pid).create_time())
+    except Exception:
+        return None
+
+
+def _describe_holders(holders: List[Holder]) -> str:
+    return ", ".join("%s (pid %d: %s)" % (n, pid, why) for pid, n, why in holders[:5])
+
+
+def _wait_for_install_holders(install_dir: str, wait_pid: Optional[int] = None,
+                              exited_at: Optional[float] = None,
+                              timeout: float = _HOLDER_WAIT_SEC,
+                              started_at: Optional[float] = None) -> List[Holder]:
+    """Wait (bounded) until nothing holds ``install_dir``. Returns what still holds it on timeout,
+    else []. Never kills anything: an orphaned child of the previous version finishes on its own in
+    seconds, and anything else (a browser started from the old app, a terminal sitting in the
+    folder) is not ours to stop - the swap then fails and falls back, naming it."""
     deadline = time.monotonic() + timeout
+    seen: Optional[set] = None
+    while True:
+        holders = _install_holders(install_dir, wait_pid, exited_at, started_at)
+        if not holders:
+            if seen:
+                logger.info("Nothing holds the install folder any more.")
+            return []
+        key = {(pid, n) for pid, n, _ in holders}
+        if key != seen:
+            logger.info("Waiting for process(es) still using the install folder: %s",
+                        _describe_holders(holders))
+            seen = key
+        if time.monotonic() >= deadline:
+            logger.warning("Still in use after %.0fs: %s", timeout, _describe_holders(holders))
+            return holders
+        time.sleep(_HOLDER_POLL_SEC)
+
+
+def _rename_with_retry(src: str, dst: str, timeout: float = _SWAP_RETRY_SEC) -> None:
+    """os.rename with a backing-off retry, for handles that outlive the process that held them.
+    On failure the error names whatever still holds ``src``, when that can be found."""
+    deadline = time.monotonic() + timeout
+    step = _SWAP_RETRY_STEP
     last: Optional[BaseException] = None
+    attempts = 0
     while True:
         try:
             os.rename(src, dst)
+            if attempts:
+                logger.info("Renamed the install folder after %d retr%s.", attempts,
+                            "y" if attempts == 1 else "ies")
             return
         except OSError as e:
             last = e
+            attempts += 1
+            if attempts == 1:
+                logger.info("The install folder is in use (%s); retrying for up to %.0fs.", e, timeout)
             if time.monotonic() >= deadline:
                 break
-            time.sleep(_SWAP_RETRY_STEP)
-    raise RuntimeError("could not rename %s -> %s within %.0fs: %s" % (src, dst, timeout, last))
+            time.sleep(step)
+            step = min(step * 2, _SWAP_RETRY_STEP_MAX)
+    held = _install_holders(src)
+    raise RuntimeError("could not rename %s -> %s within %.0fs: %s%s" % (
+        src, dst, timeout, last, ("; in use by " + _describe_holders(held)) if held else ""))
 
 
 def _backup_path(install_dir: str) -> str:
@@ -857,10 +987,14 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
     logger.info("Apply-update requested: install=%s staged=%s pid=%s",
                 install_dir, staged_dir, wait_pid)
 
+    # Before the wait: once it has exited its creation time is gone, and without it the orphan
+    # rule in _install_holders stays off (a stale parent PID must not match - review M1).
+    started_at = _process_create_time(wait_pid)
     if wait_pid and not _wait_for_exit(wait_pid):
         logger.warning("The previous instance did not exit; refusing to swap.")
         _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
         return 2
+    exited_at = time.time()
 
     reason = validate(install_dir, staged_dir)
     if reason:
@@ -868,6 +1002,11 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
         _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
         _restart_unchanged(install_dir, staged_dir, reason)
         return 3
+
+    # The previous instance has gone, but a child it spawned may still sit in the folder (its CWD
+    # is inherited). Wait for those - bounded - before the rename; whatever is left after that,
+    # the rename's own retry and the restore-and-explain fallback below still cover.
+    _wait_for_install_holders(install_dir, wait_pid, exited_at, started_at=started_at)
 
     try:
         backup = swap(install_dir, staged_dir)
@@ -908,7 +1047,8 @@ _STAGED_MARKER_NAME = "staged_update.json"
 
 # A recorded folder younger than this is deferred, never deleted: the marker is written the
 # moment the handoff COMMITS, and the applier then runs FROM that folder for up to ~30 s of
-# pid-wait plus the whole folder swap. A duplicate launch in that window (the user restarting
+# pid-wait, ~30 s more waiting for processes still in the install folder (_HOLDER_WAIT_SEC), a
+# rename retry of up to ~20 s (_SWAP_RETRY_SEC) and the whole folder swap - under two minutes. A duplicate launch in that window (the user restarting
 # the app they just watched vanish) must not gut it (review C1). Generous on purpose - a
 # deferred folder is only untidy for one more launch; a gutted one becomes a broken install
 # with its backup deleted.

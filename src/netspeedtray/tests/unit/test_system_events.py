@@ -69,7 +69,8 @@ def test_immediate_hide_signal_emitted(system_handler):
          patch('win32gui.GetClassName', return_value='SomeFullscreenApp'), \
          patch('win32gui.GetWindowRect', return_value=(0, 0, 1920, 1080)), \
          patch('win32api.GetMonitorInfo', return_value={'Monitor': (0, 0, 1920, 1080)}), \
-         patch('win32gui.IsWindow', return_value=True):
+         patch('win32gui.IsWindow', return_value=True), \
+         patch('win32gui.IsWindowVisible', return_value=True):
 
         # Simulate the event
         system_handler._on_foreground_change_immediate(hwnd=999)
@@ -105,6 +106,7 @@ def test_fullscreen_poll_hides_when_foreground_is_fullscreen(system_handler):
 
     with patch('win32gui.GetForegroundWindow', return_value=555), \
          patch('win32gui.IsWindow', return_value=True), \
+         patch('win32gui.IsWindowVisible', return_value=True), \
          patch('win32gui.GetWindowRect', return_value=(0, 0, 1920, 1080)), \
          patch('win32api.GetMonitorInfo', return_value={'Monitor': (0, 0, 1920, 1080)}), \
          patch('win32api.MonitorFromWindow', return_value=1), \
@@ -142,6 +144,7 @@ def test_fullscreen_poll_shows_on_exit_edge(system_handler):
 
     with patch('win32gui.GetForegroundWindow', return_value=42), \
          patch('win32gui.IsWindow', return_value=True), \
+         patch('win32gui.IsWindowVisible', return_value=True), \
          patch('win32gui.GetWindowRect', return_value=(100, 100, 800, 600)), \
          patch('win32api.GetMonitorInfo', return_value={'Monitor': (0, 0, 1920, 1080)}), \
          patch('win32api.MonitorFromWindow', return_value=1):

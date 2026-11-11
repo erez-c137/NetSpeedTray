@@ -13,6 +13,19 @@ os.environ.setdefault("QT_SCALE_FACTOR", "1")  # pin DPI for render determinism
 import pytest
 from PyQt6.QtWidgets import QApplication
 
+# ONE QApplication for the whole process, created here and held by this module until exit.
+# Many test modules declare their own ``q_app``/``qt_app`` fixture (``QApplication.instance() or
+# QApplication([])``), several module-scoped. Whichever of them ran first in a process used to CREATE
+# the app, and was then its only owner: at that module's teardown the wrapper was released, the C++
+# QApplication was destroyed, and the next Qt test made a second one. After that recreate, PyQt6 no
+# longer releases the wrappers of C++-created children (a scroll area's viewport, a combo's line
+# edit, ...) when their Python-created parent is destroyed, so those stale wrappers stay in sip's
+# address map. A later object allocated at a reused address (a QBoxLayout) was then handed back by
+# findChildren(QWidget) as the old QWidget wrapper, and name_controls' accessibleName() read it as a
+# widget: an access violation or "Negative size passed to PyUnicode_New" (PR #505, parallel order).
+# The product creates exactly one QApplication (monitor.py) and never hits this.
+_SESSION_APP = QApplication.instance() or QApplication([])
+
 
 @pytest.fixture(scope="session")
 def q_app():
@@ -21,7 +34,7 @@ def q_app():
     pytest-qt's own ``qtbot``/``qapp`` fixtures reuse ``QApplication.instance()``,
     so this coexists with them (both return the same singleton).
     """
-    return QApplication.instance() or QApplication([])
+    return QApplication.instance() or _SESSION_APP
 
 
 def dispose_widget(widget) -> None:
@@ -71,6 +84,15 @@ def _isolate_update_marker(tmp_path, monkeypatch):
     # test's own Downloads stand-in (or tmp_path itself) - never the real Downloads.
     monkeypatch.setattr(update_applier, "_downloads_dirs", raising=False, value=
                         lambda: [str(tmp_path / "Downloads"), str(tmp_path)])
+
+
+@pytest.fixture(autouse=True)
+def _no_real_shell_launch(monkeypatch):
+    """No test may open a real browser or Explorer window on the machine running the suite:
+    ``os.startfile`` (behind ``helpers.open_external``, the guided-copy folder reveal and
+    ``webbrowser.open`` on Windows) is a no-op here. A test that checks a launch fakes it itself."""
+    if hasattr(os, "startfile"):
+        monkeypatch.setattr(os, "startfile", lambda *a, **k: None)
 
 
 class _NoLhmWebServer:

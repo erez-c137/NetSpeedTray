@@ -871,3 +871,151 @@ def test_hour_rollup_applies_the_readers_cap_to_garbled_legacy_minutes(conn):
     _writer(conn).run_maintenance(NOW)
     assert conn.execute("SELECT sample_count FROM net_hour").fetchone()[0] == 3600
     assert _est(conn, "net_hour", 3600) == pytest.approx(36_000)
+
+
+# --------------------------------------------------------------------------------------------
+# log hygiene: a storage outage is ONE episode, not a line per tick (full disk, 2026-10-29)
+# --------------------------------------------------------------------------------------------
+
+def _disk_full(conn):
+    conn.execute("CREATE TEMP TRIGGER boom BEFORE INSERT ON main.net_raw "
+                 "BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END")
+
+
+def test_a_failing_persist_logs_one_error_then_one_recovery_line(conn, caplog):
+    log = logging.getLogger("test.writer_v8.episode")
+    w = _writer(conn, log=log)
+    t = [1000.0]
+    w._persist_episode._clock = lambda: t[0]
+    w.start_session(NOW)
+    _disk_full(conn)
+    with caplog.at_level(logging.DEBUG, logger=log.name):
+        for i in range(30):   # 30 ticks 10 s apart: under the 10 min reminder
+            w.add_net_sample(W.NetSample(NOW + 1 + i, 1000, {"nic": (5, 6)}))
+            assert not w.flush(NOW + 1 + i)
+            t[0] += 10
+        conn.execute("DROP TRIGGER temp.boom")
+        assert w.flush(NOW + 40)
+        assert w.flush(NOW + 41)   # a healthy tick after the recovery logs nothing more
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1 and "disk is full" in errors[0].getMessage()
+    assert errors[0].getMessage().startswith("v8 persist failed (rows kept for the next tick)")
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert infos == ["v8 persist recovered after 30 failure(s) over 300 s"]
+    assert conn.execute("SELECT SUM(up_bytes) FROM net_raw").fetchone()[0] == 150   # nothing lost
+
+
+def test_a_long_outage_repeats_one_warning_per_interval_with_the_count(conn, caplog):
+    log = logging.getLogger("test.writer_v8.episode2")
+    w = _writer(conn, log=log)
+    t = [0.0]
+    w._persist_episode._clock = lambda: t[0]
+    w.start_session(NOW)
+    _disk_full(conn)
+    with caplog.at_level(logging.INFO, logger=log.name):
+        for i in range(181):   # 30 min of 10 s ticks
+            w.add_net_sample(W.NetSample(NOW + 1 + i, 1000, {"nic": (5, 6)}))
+            w.flush(NOW + 1 + i)
+            t[0] += 10
+    assert len([r for r in caplog.records if r.levelno >= logging.ERROR]) == 1
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 3   # at 10, 20 and 30 min
+    assert warnings[0].startswith("v8 persist still failing: 61 failures over 600 s")
+
+
+def test_pending_cap_warns_once_per_episode_and_reports_the_dropped_total(conn, caplog, monkeypatch):
+    monkeypatch.setattr(W, "MAX_PENDING_ROWS", 5)
+    log = logging.getLogger("test.writer_v8.trim")
+    w = _writer(conn, log=log)
+    w.start_session(NOW)
+    _disk_full(conn)
+    with caplog.at_level(logging.INFO, logger=log.name):
+        for episode in range(2):
+            base = NOW + 100 * episode
+            for i in range(20):   # one row per sample into a cap of 5
+                w.add_hw_sample(base + i, "cpu", 1.0)
+            w.add_net_sample(W.NetSample(base + 50, 1000, {"nic": (5, 6)}))
+            assert not w.flush(base + 50)
+            if episode == 0:
+                conn.execute("DROP TRIGGER temp.boom")
+                assert w.flush(base + 60)
+                _disk_full(conn)
+    cap = [r.getMessage() for r in caplog.records if "over the cap" in r.getMessage()]
+    # episode 1: one warning + the total in the recovery line; episode 2: one warning again
+    assert len(cap) == 3
+    assert cap[1].startswith("v8 persist recovered after 1 failure(s)")
+    assert cap[1].endswith("; 16 pending row(s) were dropped over the cap meanwhile")   # 21 rows, cap 5
+    assert "being dropped" in cap[0] and "being dropped" in cap[2]
+    assert w.pending_rows() == 5
+
+
+def test_failure_episode_on_its_own():
+    rec = []
+
+    class L:
+        def __getattr__(self, level):
+            return lambda msg, *a: rec.append((level, msg % a))
+    t = [0.0]
+    ep = W.FailureEpisode(L(), "Thing", repeat_warn_s=60, clock=lambda: t[0])
+    ep.succeeded()                       # no episode: silent
+    for _ in range(3):
+        ep.failed(OSError("nope"))
+        t[0] += 30
+    ep.succeeded()
+    ep.succeeded()
+    assert [lvl for lvl, _ in rec] == ["error", "debug", "warning", "info"]
+    assert rec[0][1] == "Thing failed: nope"
+    assert rec[2][1] == "Thing still failing: 3 failures over 60 s (latest: nope)"
+    assert rec[3][1] == "Thing recovered after 3 failure(s) over 90 s"
+
+
+def test_a_different_error_mid_episode_is_logged_once_at_error():
+    rec = []
+
+    class L:
+        def __getattr__(self, level):
+            return lambda msg, *a: rec.append((level, msg % a))
+    t = [0.0]
+    ep = W.FailureEpisode(L(), "Thing", repeat_warn_s=10_000, clock=lambda: t[0])
+    full = sqlite3.OperationalError("database or disk is full")
+    io = sqlite3.OperationalError("disk I/O error")
+    for exc in (full, full, io, io, full, io, sqlite3.DatabaseError("database disk image is malformed")):
+        ep.failed(exc)
+        t[0] += 10
+    errors = [m for lvl, m in rec if lvl == "error"]
+    assert errors == [
+        "Thing failed: database or disk is full",
+        "Thing failing with a different error (failure 3, 20 s in): OperationalError: disk I/O error",
+        "Thing failing with a different error (failure 7, 60 s in): "
+        "DatabaseError: database disk image is malformed",
+    ]
+    assert [lvl for lvl, _ in rec].count("debug") == 4
+    ep.succeeded()
+    rec.clear()
+    ep.failed(io)   # a new episode starts fresh: its first error is logged again
+    assert rec == [("error", "Thing failed: disk I/O error")]
+
+
+def test_end_session_while_still_failing_warns_with_the_unsaved_rows(conn, caplog):
+    log = logging.getLogger("test.writer_v8.exit")
+    w = _writer(conn, log=log)
+    w.start_session(NOW)
+    _disk_full(conn)
+    for i in range(3):
+        w.add_net_sample(W.NetSample(NOW + 1 + i, 1000, {"nic": (5, 6)}))
+        assert not w.flush(NOW + 1 + i)
+    with caplog.at_level(logging.WARNING, logger=log.name):
+        w.end_session(NOW + 10)
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == ["v8 writer: 3 buffered rows not saved at exit after 4 failure(s)."]
+
+
+def test_a_clean_end_session_logs_no_unsaved_rows_warning(conn, caplog):
+    log = logging.getLogger("test.writer_v8.exit_ok")
+    w = _writer(conn, log=log)
+    w.start_session(NOW)
+    w.add_net_sample(W.NetSample(NOW + 1, 1000, {"nic": (5, 6)}))
+    with caplog.at_level(logging.WARNING, logger=log.name):
+        w.end_session(NOW + 10)
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
