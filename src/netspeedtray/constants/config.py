@@ -245,7 +245,7 @@ class ConfigConstants:
     DEFAULT_HARDWARE_IN_HOVER_CARD: Final[bool] = False
     # #236 (2.2.1): on a PC with two or more GPUs, the hover card lists every one of them (name, usage,
     # temperature, power, memory) in place of its single GPU/VRAM rows. Inert with one GPU or with GPU
-    # monitoring off. Owner-pending default (design Q1): on.
+    # monitoring off. On by default (owner decision 2026-11-10, design Q1).
     DEFAULT_HOVER_LIST_ALL_GPUS: Final[bool] = True
     # CPU/GPU label SHAPE and COLOUR are two settings (2.2): the style is "icons" | "text", the
     # colour "brand" | "match_text" | "custom". The pre-2.2 three-way style (icons_colored /
