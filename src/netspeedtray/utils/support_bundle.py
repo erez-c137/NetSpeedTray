@@ -12,7 +12,9 @@ Privacy:
 - Config is bundled as-is. It contains only user preferences -- no PII.
   Window-position coordinates (`position_x`, `position_y`, etc.) ARE
   included; they're exactly the diagnostic data we need for multi-monitor
-  bug reports (#133, #138).
+  bug reports (#133, #138). The picked GPU (`gpu_adapter`) is redacted.
+- GPU model strings in logs are replaced with <gpu-N> placeholders at export
+  time (the local log keeps them - it is the user's own).
 - App Activity data is NEVER included -- it's the highest-PII data the
   app touches (per-process names + remote IPs/ports).
 - System info contains versions and monitor sizes only -- no display names,
@@ -21,14 +23,16 @@ Privacy:
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import platform
+import re
 import sys
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtGui import QGuiApplication
 
@@ -64,10 +68,13 @@ _CONFIG_KEYS_TO_STRIP: tuple = ()
 #   - lhm_username / lhm_password_protected are the LibreHardwareMonitor web-server credentials (G2). The
 #     password is only ever a per-user DPAPI blob, useless off this account - but a credential never
 #     ships in any form. "<redacted>" still says that one is set (useful when triaging a 401).
+#   - gpu_adapter is the picked GPU's model string ("" = Automatic). The MANIFEST promises no GPU model;
+#     "<redacted-gpu>" still tells triage that a specific card was picked.
 # We keep the diagnostic SHAPE (how many interfaces, that a host was set) but never the literal name.
 # IMPORTANT: any NEW config field that can hold a name/path/host/ID must be added here.
 _CONFIG_LIST_KEYS_TO_REDACT: tuple = ("selected_interfaces", "excluded_interfaces")
 _CONFIG_VALUE_KEYS_TO_REDACT: tuple = ("latency_public_host", "lhm_username", "lhm_password_protected")
+_CONFIG_GPU_KEY = "gpu_adapter"
 
 
 def _sanitize_config(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -88,6 +95,8 @@ def _sanitize_config(config: Dict[str, Any]) -> Dict[str, Any]:
     for key in _CONFIG_VALUE_KEYS_TO_REDACT:
         if sanitized.get(key):
             sanitized[key] = "<redacted>"
+    if sanitized.get(_CONFIG_GPU_KEY):
+        sanitized[_CONFIG_GPU_KEY] = "<redacted-gpu>"
     # A rollback carries keys written by a NEWER build (preserved by config item 4c); the
     # allowlists above structurally cannot know them, so their VALUES must not ship (review
     # C8). The key name stays - THAT a newer-build setting exists is the useful diagnostic.
@@ -215,6 +224,76 @@ def _scrub_log_text(text: str) -> str:
     return "".join(scrubbed_lines)
 
 
+# The INFO lines monitor_thread writes with GPU model names in them. Their names are harvested from the
+# logs themselves too, so a card that is gone now (an unplugged eGPU, a swapped card) is still
+# redacted from the older lines that named it.
+_LOG_GPU_LIST_RE = re.compile(r"GPU adapters changed: (\[[^\r\n]*\])")
+_LOG_PICKED_GPU_RE = re.compile(
+    r"""Picked GPU ('(?:[^'\\\r\n]|\\.)*'|"(?:[^"\\\r\n]|\\.)*") is not present""")
+# A real adapter name is never this short; a hand-edited one-letter `gpu_adapter` must not shred
+# every log line that happens to contain that letter.
+_GPU_NAME_MIN_LEN = 4
+
+
+def _gpu_names_in_logs(texts: List[str]) -> List[str]:
+    """GPU names from the "GPU adapters changed: [...]" and "Picked GPU '...'" log lines. A line
+    that does not parse as the Python literal it was logged as is skipped (never raises)."""
+    names: List[str] = []
+    for text in texts:
+        for match in _LOG_GPU_LIST_RE.finditer(text):
+            try:
+                value = ast.literal_eval(match.group(1))
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                continue
+            if isinstance(value, list):
+                names.extend(v for v in value if isinstance(v, str))
+        for match in _LOG_PICKED_GPU_RE.finditer(text):
+            try:
+                value = ast.literal_eval(match.group(1))
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                continue
+            if isinstance(value, str):
+                names.append(value)
+    return names
+
+
+def _gpu_names_to_redact(config: Dict[str, Any]) -> List[str]:
+    """Every GPU model string the logs can carry: the real DXGI adapters present now plus the
+    config's picked GPU (which may be a card no longer installed). Never raises - a failed
+    enumeration falls back to the config value alone."""
+    names: List[str] = []
+    try:
+        from netspeedtray.core import gpu_adapters
+        adapters = gpu_adapters.enumerate_adapters()
+        if adapters:
+            names.extend(a.name for a in gpu_adapters.hardware_adapters(adapters))
+    except Exception as e:  # noqa: BLE001 - diagnostics must never break the bundle
+        logger.debug("GPU enumeration for bundle redaction failed: %s", type(e).__name__)
+    picked = config.get(_CONFIG_GPU_KEY)
+    if isinstance(picked, str):
+        names.append(picked)
+    return names
+
+
+def _build_gpu_redactor(names: List[str]):
+    """A text -> text function replacing each GPU name with a stable <gpu-N> token.
+
+    Same name (case and surrounding space ignored) -> same token; longest names are matched
+    first so a name that is a substring of another ("Radeon Graphics" inside "AMD Radeon
+    Graphics") cannot split the longer one. Numbering follows first appearance in `names`.
+    """
+    tokens: Dict[str, str] = {}
+    for name in names:
+        key = str(name).strip().lower()
+        if len(key) >= _GPU_NAME_MIN_LEN and key not in tokens:
+            tokens[key] = f"<gpu-{len(tokens) + 1}>"
+    if not tokens:
+        return lambda text: text
+    by_length = sorted(tokens, key=len, reverse=True)
+    pattern = re.compile("|".join(re.escape(k) for k in by_length), re.IGNORECASE)
+    return lambda text: pattern.sub(lambda m: tokens.get(m.group(0).lower(), "<gpu>"), text)
+
+
 def _list_log_files() -> List[Path]:
     """Returns all NetSpeedTray log files (current + rotated backups), plus the in-app updater's
     installer log when one exists - 2.1.6 started writing it precisely so bundles would carry it."""
@@ -262,7 +341,14 @@ def build_support_bundle(
     sanitized_config = _sanitize_config(config)
     system_info = _collect_system_info(config)
 
-    log_files = _list_log_files()
+    log_texts: List[Tuple[str, str]] = []
+    for log_path in _list_log_files():
+        try:
+            log_texts.append((log_path.name, log_path.read_text(encoding="utf-8", errors="replace")))
+        except OSError as e:
+            logger.warning("Could not read log %s: %s", log_path.name, e)
+    redact_gpu_names = _build_gpu_redactor(
+        _gpu_names_to_redact(config) + _gpu_names_in_logs([text for _, text in log_texts]))
 
     with zipfile.ZipFile(destination_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         # 1. System info
@@ -275,14 +361,9 @@ def build_support_bundle(
         )
 
         # 3. Log files (each scrubbed through ObfuscatingFormatter again)
-        for log_path in log_files:
-            try:
-                raw = log_path.read_text(encoding="utf-8", errors="replace")
-            except OSError as e:
-                logger.warning("Could not read log %s: %s", log_path.name, e)
-                continue
-            scrubbed = _scrub_log_text(raw)
-            zf.writestr(f"logs/{log_path.name}", scrubbed)
+        for log_name, raw in log_texts:
+            scrubbed = _scrub_log_text(redact_gpu_names(raw))
+            zf.writestr(f"logs/{log_name}", scrubbed)
 
         # 4. Manifest
         manifest = (
@@ -293,8 +374,9 @@ def build_support_bundle(
             "  system_info.txt   - App version, OS, monitor layout (no display names),\n"
             "                      whether the app runs as admin, its Windows compatibility\n"
             "                      flags, and its Task Manager startup state\n"
-            "  config.json       - Your settings (interface names, ping host and the\n"
-            "                      LibreHardwareMonitor user name/password redacted)\n"
+            "  config.json       - Your settings (interface names, ping host, the picked\n"
+            "                      GPU and the LibreHardwareMonitor user name/password\n"
+            "                      redacted)\n"
             "  logs/             - Log files, including the in-app updater's installer log,\n"
             "                      scrubbed for paths/usernames/IPs/MACs/GUIDs/hostnames\n"
             "\n"
@@ -309,6 +391,8 @@ def build_support_bundle(
             "    The placeholder is a one-way hash, so repeated log lines still\n"
             "    correlate but never contain the name.\n"
             "  - Display device names in logs (e.g. DISPLAY-1a2b3c4d).\n"
+            "  - GPU model names in logs (e.g. <gpu-1>; the same GPU keeps the\n"
+            "    same number within one bundle).\n"
             "\n"
             "It is safe to attach this file to a GitHub issue.\n"
         )
@@ -316,6 +400,6 @@ def build_support_bundle(
 
     logger.info(
         "Support bundle built: %s (%d log files included)",
-        destination_zip.name, len(log_files),
+        destination_zip.name, len(log_texts),
     )
     return destination_zip
