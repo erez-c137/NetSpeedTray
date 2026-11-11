@@ -267,6 +267,7 @@
     "GRAPH_CAPTION_PEAK_PER_HOUR": "Pic par heure",
     "GRAPH_CAPTION_PEAK_PER_DAY": "Pic par jour",
     "FORCE_MB_LABEL": "Forcer l'affichage en Mo",
+    "UPDATE_MODE_REALTIME_LABEL": "Temps réel (0,5s)",
     "UPDATE_MODE_AGGRESSIVE_LABEL": "Agressif (1s)",
     "UPDATE_MODE_BALANCED_LABEL": "Équilibré (2s)",
     "UPDATE_MODE_EFFICIENT_LABEL": "Efficace (5s)",

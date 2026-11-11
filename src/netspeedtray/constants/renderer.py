@@ -7,6 +7,11 @@ from netspeedtray.constants.color import color # Import the master color palette
 class RendererConstants:
     """Defines constants for rendering the widget display."""
     MIN_GRAPH_POINTS: Final[int] = 2
+    # The in-memory graph series (mini graph, Monitor session view) never hold more than one point per
+    # this many seconds. At the 0.5 s update rate (#456) the two half-second samples of a wall-clock
+    # second merge into one point (the average of their rates), so the graph keeps the 1 s window
+    # length, point budget and smoothing cost while the widget's numbers still update every 0.5 s.
+    GRAPH_MIN_SAMPLE_SECONDS: Final[float] = 1.0
     MIN_SPEED_FOR_COLOR: Final[float] = 0.01
     LINE_WIDTH: Final[int] = 1
     

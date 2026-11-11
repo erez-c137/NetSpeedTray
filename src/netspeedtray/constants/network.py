@@ -86,7 +86,13 @@ class NetworkSpeedConstants:
     # and link_speed / link_duplex metrics: sampled on this slow sub-cadence by the monitor thread,
     # not every poll - link state changes rarely, and the writer rate-limits the metrics anyway.
     LINK_STATS_POLL_INTERVAL_SEC: Final[float] = 5.0
-    
+    # The display spike filter's rolling baseline (controller._update_rate_display): the last N polls
+    # per interface, and never less than SPIKE_BASELINE_MIN_SECONDS of them - so the 0.5 s preset
+    # (#456) keeps the 20 s baseline the 1 s default has (40 polls) instead of halving it. The slower
+    # presets keep their 20 polls, exactly as before.
+    SPIKE_BASELINE_SAMPLES: Final[int] = 20
+    SPIKE_BASELINE_MIN_SECONDS: Final[float] = 20.0
+
     # These are now i18n keys
     DEFAULT_UNIT_BITS: Final[str] = "BITS_LABEL"
     DEFAULT_UNIT_BYTES: Final[str] = "BPS_LABEL"

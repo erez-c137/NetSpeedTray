@@ -444,7 +444,7 @@ class NetworkSpeedWidget(QWidget):
             
             # Background Monitoring Thread
             # The monitor thread's sleep loop is the only sampling pacer. The rate is one of the
-            # 1/2/5/10 s presets (the config migration put it there); the shared resolver is the same
+            # UpdateMode presets (the config migration put it there); the shared resolver is the same
             # clamp every seconds-per-sample computation uses, so they can never disagree.
             effective_interval = resolve_poll_interval_seconds(
                 self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE))

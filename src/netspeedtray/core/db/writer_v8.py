@@ -28,7 +28,8 @@ steps.md``. The schema and the tier-watermark contract are in ``schema_v8.py``.
 * ``net_raw``: one row per interface with the EXACT byte delta the controller counted for the
   odometer (``byte_deltas`` - pre-spike-filter, negative-diff clamped, sanity capped; #348) over the
   measured interval ``dt_ms`` (the controller's ``sample_elapsed``). Never a rate: the live poll rate
-  has no say over stored volume, so a 1/2/5/10 s preset change cannot skew it. All-zero rows are not
+  has no say over stored volume, so an update-rate preset change cannot skew it (at 0.5 s two
+  intervals end in most seconds and merge, below - still about one row per interface per second). All-zero rows are not
   written unless flagged (coverage comes from ``app_sessions``, not from rows). Two intervals that END in the same
   second merge into one row (bytes and ``dt_ms`` add) instead of one being dropped.
 * ``FLAG_GAP`` when ``dt_ms`` is past the controller's validity threshold

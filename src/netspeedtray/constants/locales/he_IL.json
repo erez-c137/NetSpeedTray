@@ -267,6 +267,7 @@
     "GRAPH_CAPTION_PEAK_PER_HOUR": "שיא לפי שעה",
     "GRAPH_CAPTION_PEAK_PER_DAY": "שיא לפי יום",
     "FORCE_MB_LABEL": "הצג תמיד מגה-בייט",
+    "UPDATE_MODE_REALTIME_LABEL": "זמן אמת (0.5s)",
     "UPDATE_MODE_AGGRESSIVE_LABEL": "אגרסיבי (1s)",
     "UPDATE_MODE_BALANCED_LABEL": "מאוזן (2s)",
     "UPDATE_MODE_EFFICIENT_LABEL": "חסכוני (5s)",

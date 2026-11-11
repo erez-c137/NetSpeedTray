@@ -267,6 +267,7 @@
     "GRAPH_CAPTION_PEAK_PER_HOUR": "Vrh na uro",
     "GRAPH_CAPTION_PEAK_PER_DAY": "Vrh na dan",
     "FORCE_MB_LABEL": "Vsili prikaz v MB",
+    "UPDATE_MODE_REALTIME_LABEL": "Realni čas (0,5s)",
     "UPDATE_MODE_AGGRESSIVE_LABEL": "Agresivno (1s)",
     "UPDATE_MODE_BALANCED_LABEL": "Uravnoteženo (2s)",
     "UPDATE_MODE_EFFICIENT_LABEL": "Učinkovito (5s)",
