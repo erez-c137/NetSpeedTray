@@ -1666,12 +1666,17 @@ class PositionManager(QObject):
     def _app_overlap_context(self):
         """The yield's view of the widget. A string when it must not yield (the reason, for the log):
         not a native Win11 TOP/BOTTOM bar (side bars, ExplorerPatcher / Win10 bars with a real task
-        list), floating, or the user turned the setting off; NO_TASKBAR with no taskbar at all (only
+        list), floating, or the user turned the setting off and the bar has no second default spot
+        (with one, the context carries ``may_hide=False``: the full-bar fallback only); NO_TASKBAR with no taskbar at all (only
         reached once holding_for_taskbar's own hold has run out - _execute_refresh returns before it);
         BUSY while the widget is dragged or its menu is open."""
         from netspeedtray.core.app_overlap_yield import BUSY, NO_TASKBAR, OverlapContext
-        if not self._state.config.get("hide_when_apps_cover", constants.config.defaults.DEFAULT_HIDE_WHEN_APPS_COVER):
-            return "the 'Hide while app buttons cover the widget' setting is off"
+        # Off (2.2.1 item 6): no hiding, but the full-bar fallback still keeps the widget off the app
+        # buttons when the tray spot is clear - so a context (may_hide=False) is built while there IS a
+        # second default spot (or the fallback holds one); everywhere else the yield stays detached and
+        # probe-free, as before.
+        may_hide = bool(self._state.config.get("hide_when_apps_cover",
+                                               constants.config.defaults.DEFAULT_HIDE_WHEN_APPS_COVER))
         if self.is_floating():
             return "the widget is floating (Free Move or a display without a taskbar)"
         info = self._app_overlap_info or self._state.taskbar_info
@@ -1713,18 +1718,33 @@ class PositionManager(QObject):
             left = would if would is not None else left
         stepped = tray_spot = None
         tray_spot_clear = False
+        text_known = True
         if stepped_x is not None and tray_x is not None and abs(stepped_x - tray_x) >= 1.0:
             stepped, tray_spot = (stepped_x, stepped_x + width), (tray_x, tray_x + width)
             # The full-bar fallback may use the tray spot only when it clears the weather text/icon
             # by the usual gap; an unknown extent counts as not clear (hide rather than collide).
             content = taskbar_utils.valid_rect(
                 taskbar_utils.taskbar_layout_widgets_content(int(info.hwnd)))
+            text_known = content is not None
             if content is not None:
                 c_left = taskbar_utils.physical_to_logical(content[0], x_origin, dpi)
                 c_right = taskbar_utils.physical_to_logical(content[2], x_origin, dpi)
                 tray_spot_clear = (tray_x >= c_right + constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
                                    or tray_x + width + constants.layout.WIDGETS_BUTTON_MIN_GAP_PX
                                    <= c_left)
+        align_read = False
+        if not may_hide and stepped is None and not self._app_yield.retreated:
+            # No second spot known. On the PRIMARY bar that can be only because nothing probed its
+            # layout: with hiding off nothing else does (the tray-less refresh skips the primary, and
+            # the #200 probe stops for good once its nudge was shown), so the widget would never learn
+            # the Widgets button it must step left of. A left-aligned bar with Widgets on is the one
+            # layout that can have it beside the tray: watch it (probe, never hide). Two registry reads,
+            # as every tick with the setting on; no UIA here (the yield's own rate-limited probes).
+            align = self._read_taskbar_alignment()
+            align_read = True
+            if not (getattr(info, "is_primary", False) is True and align == 0
+                    and taskbar_utils.widgets_button_enabled()):
+                return "the 'Hide while app buttons cover the widget' setting is off"
         offset = self._state.config.get("tray_offset_x", constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
         # A drag's offset - the same rule the placement uses, so a pre-1.3.0 default (10 / 1 / 3) is no
         # drop key either.
@@ -1734,11 +1754,8 @@ class PositionManager(QObject):
             # A copy is never dragged (default offsets pinned), and the saved drop it would read is
             # the MAIN widget's: a copy seeing its own bar clear must never spend that baseline.
             drop_key = saved = None
-        try:
-            from netspeedtray.core.system_events import read_taskbar_alignment
-            align = read_taskbar_alignment()
-        except Exception:
-            align = None
+        if not align_read:
+            align = self._read_taskbar_alignment()
         try:
             tray = info.get_tray_rect()
             tray_left = int(tray[0]) if tray else None
@@ -1749,7 +1766,17 @@ class PositionManager(QObject):
                               centered=None if align is None else align == 1,
                               drop_key=drop_key, saved_drop=saved if isinstance(saved, int) else None,
                               layout_key=layout_key, stepped=stepped, tray_spot=tray_spot,
-                              tray_spot_clear=tray_spot_clear)
+                              tray_spot_clear=tray_spot_clear, may_hide=may_hide,
+                              tray_spot_text_known=text_known)
+
+    @staticmethod
+    def _read_taskbar_alignment():
+        """TaskbarAl (0 left, 1 centre), or None when it can't be read."""
+        try:
+            from netspeedtray.core.system_events import read_taskbar_alignment
+            return read_taskbar_alignment()
+        except Exception:
+            return None
 
     def _would_be_x(self, info: TaskbarInfo, fallback: Optional[float],
                     widgets_step: Optional[bool] = None) -> Optional[float]:
