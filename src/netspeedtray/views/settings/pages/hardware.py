@@ -66,8 +66,9 @@ class HardwarePage(QWidget):
         self.monitor_cpu.toggled.connect(self._on_monitor_toggled)
         layout.addWidget(SettingCard(self.i18n.MONITOR_CPU_LABEL, control=self.monitor_cpu))
 
+        # RAM / VRAM are monitors of their own (2.2.1): they show without CPU / GPU monitoring.
         self.monitor_ram = Win11Toggle(label_text="")
-        self.monitor_ram.toggled.connect(self.on_change)
+        self.monitor_ram.toggled.connect(self._on_monitor_toggled)
         self._ram_card = SettingCard(self.i18n.MONITOR_RAM_LABEL, control=self.monitor_ram)
         layout.addWidget(self._ram_card)
 
@@ -76,7 +77,7 @@ class HardwarePage(QWidget):
         layout.addWidget(SettingCard(self.i18n.MONITOR_GPU_LABEL, control=self.monitor_gpu))
 
         self.monitor_vram = Win11Toggle(label_text="")
-        self.monitor_vram.toggled.connect(self.on_change)
+        self.monitor_vram.toggled.connect(self._on_monitor_toggled)
         self._vram_card = SettingCard(self.i18n.MONITOR_VRAM_LABEL, control=self.monitor_vram)
         layout.addWidget(self._vram_card)
 
@@ -93,14 +94,12 @@ class HardwarePage(QWidget):
         layout.addWidget(self._gpu_adapter_card)
         self._gpu_adapter_card.setVisible(False)
 
-        # #250: "RAM"/"VRAM" in front of the memory values. Only meaningful when one of them shows,
-        # so the RAM/VRAM toggles re-sync its enabled state too.
+        # #250: "RAM"/"VRAM" in front of the memory values. Only meaningful when one of them shows
+        # (the RAM/VRAM toggles re-sync its enabled state via _on_monitor_toggled).
         self.show_memory_labels = Win11Toggle(label_text="")
         self.show_memory_labels.toggled.connect(self.on_change)
         self._mem_labels_card = SettingCard(self.i18n.SHOW_MEMORY_LABELS_LABEL, control=self.show_memory_labels)
         layout.addWidget(self._mem_labels_card)
-        self.monitor_ram.toggled.connect(lambda _on: self._sync_dependent_cards())
-        self.monitor_vram.toggled.connect(lambda _on: self._sync_dependent_cards())
 
         self.show_temps = Win11Toggle(label_text="")
         self.show_temps.toggled.connect(self.on_change)
@@ -157,7 +156,7 @@ class HardwarePage(QWidget):
         # Where the readouts show (side-taskbar design phase C): first under Appearance, because it is
         # the biggest "how hardware looks" choice - on the taskbar, or only in the hover card, leaving
         # a clean speed-only widget. Keeps the Widget page's Display Mode for when it is turned off.
-        # Greyed with CPU and GPU both off (nothing to move; RAM/VRAM ride on those lines).
+        # Greyed with CPU, GPU, RAM and VRAM all off (nothing to move).
         self.hardware_in_hover_card = Win11Toggle(label_text="")
         self.hardware_in_hover_card.toggled.connect(self.on_change)
         self._hover_card_card = SettingCard(self.i18n.HARDWARE_IN_HOVER_CARD_LABEL,
@@ -574,19 +573,24 @@ class HardwarePage(QWidget):
         eff.setOpacity(1.0 if enabled else 0.4)
 
     def _sync_dependent_cards(self) -> None:
-        """Several readouts ride on the CPU/GPU utilization lines, so gray their toggles out when there's
-        nowhere for them to render (Win11 dependent-control pattern): temperature & power need at least
-        one of CPU/GPU on; RAM rides on the CPU line, and VRAM on the GPU line, so each is grayed when its
-        host monitor is off - otherwise turning on RAM with CPU off promised something that never shows."""
+        """Gray out the toggles that have nowhere to render (Win11 dependent-control pattern):
+        temperature & power ride on the CPU/GPU utilization lines, so they need at least one of CPU/GPU
+        on. RAM and VRAM are never grayed - since 2.2.1 each shows on its own, without CPU / GPU
+        monitoring (a memory-only row). The GPU picker serves GPU and VRAM alike (VRAM follows the
+        pick), the hover-card switch any of the four readouts, and the memory labels RAM or VRAM."""
         cpu_on, gpu_on = self.monitor_cpu.isChecked(), self.monitor_gpu.isChecked()
+        ram_on, vram_on = self.monitor_ram.isChecked(), self.monitor_vram.isChecked()
         has_util = cpu_on or gpu_on
+        any_hw = has_util or ram_on or vram_on
         self._set_card_enabled(self._temps_card, has_util)
         self._set_card_enabled(self._power_card, has_util)
-        self._set_card_enabled(self._hover_card_card, has_util)
-        self._set_card_enabled(self._ram_card, cpu_on)
-        self._set_card_enabled(self._vram_card, gpu_on)
-        self._set_card_enabled(self._gpu_adapter_card, gpu_on)
-        mem_on = (cpu_on and self.monitor_ram.isChecked()) or (gpu_on and self.monitor_vram.isChecked())
+        self._set_card_enabled(self._hover_card_card, any_hw)
+        self._set_card_enabled(self._ram_card, True)
+        self._set_card_enabled(self._vram_card, True)
+        self._set_card_enabled(self._gpu_adapter_card, gpu_on or vram_on)
+        # The labels switch only changes memory shown BESIDE a usage row (RAM with CPU, VRAM with GPU):
+        # a memory-only row always draws its "RAM" / "VRAM" (a bare number would not say what it is).
+        mem_on = (ram_on and cpu_on) or (vram_on and gpu_on)
         self._set_card_enabled(self._mem_labels_card, mem_on)
         # A greyed card says why (rc.2 G6). Qt shows a tooltip on a disabled widget, and the card's
         # children (the dimmed toggle) carry none of their own, so hovering anywhere on it explains.
@@ -595,24 +599,20 @@ class HardwarePage(QWidget):
                                     else f"{needs_util}\n\n{self.i18n.SHOW_HARDWARE_TEMPS_TOOLTIP}")
         self._power_card.setToolTip(self.i18n.SHOW_HARDWARE_POWER_TOOLTIP if has_util
                                     else f"{needs_util}\n\n{self.i18n.SHOW_HARDWARE_POWER_TOOLTIP}")
-        self._hover_card_card.setToolTip("" if has_util else needs_util)
-        self._ram_card.setToolTip("" if cpu_on else self.i18n.HARDWARE_NEEDS_CPU_TOOLTIP)
-        self._vram_card.setToolTip("" if gpu_on else self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP)
-        self._gpu_adapter_card.setToolTip("" if gpu_on else self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP)
-        self._mem_labels_card.setToolTip("" if mem_on else self._mem_labels_reason(cpu_on, gpu_on))
+        self._hover_card_card.setToolTip("" if any_hw else needs_util)
+        self._ram_card.setToolTip("")
+        self._vram_card.setToolTip("")
+        self._gpu_adapter_card.setToolTip("" if (gpu_on or vram_on) else self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP)
+        self._mem_labels_card.setToolTip("" if mem_on else self._mem_labels_reason(cpu_on, gpu_on, ram_on, vram_on))
 
-    def _mem_labels_reason(self, cpu_on: bool, gpu_on: bool) -> str:
-        """Why the memory-labels card is greyed, for the switches as they are now (L5): the memory
-        readouts are off, or they are on but their host monitor (CPU for RAM, GPU for VRAM) is off."""
-        ram, vram = self.monitor_ram.isChecked(), self.monitor_vram.isChecked()
-        needs_cpu, needs_gpu = ram and not cpu_on, vram and not gpu_on
-        if needs_cpu and needs_gpu:
-            return self.i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB   # "Turn on CPU or GPU monitoring..."
-        if needs_cpu:
-            return self.i18n.HARDWARE_NEEDS_CPU_TOOLTIP
-        if needs_gpu:
-            return self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP
-        return self.i18n.SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP
+    def _mem_labels_reason(self, cpu_on: bool, gpu_on: bool, ram_on: bool, vram_on: bool) -> str:
+        """Why the memory-labels card is greyed (existing strings only): no memory readout is on, or
+        each one that is on is a memory-only row (its usage monitor is off) that always shows its label."""
+        if not (ram_on or vram_on):
+            return self.i18n.SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP          # "Turn on RAM or VRAM usage..."
+        if vram_on and not ram_on:
+            return self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP                   # "Turn on GPU monitoring..."
+        return self.i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB             # "Turn on CPU or GPU monitoring..."
 
     def get_settings(self) -> Dict[str, Any]:
         return {

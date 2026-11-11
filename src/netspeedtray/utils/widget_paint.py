@@ -25,7 +25,9 @@ from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QImage
 
 from netspeedtray import constants
-from netspeedtray.utils.widget_renderer import RenderConfig, WidgetRenderer
+from netspeedtray.utils.helpers import hardware_slots
+from netspeedtray.utils.widget_renderer import (MEMORY_ONLY_LABELS, RenderConfig, WidgetRenderer,
+                                                compact_hw_label_width, memory_only_row_width)
 
 
 @dataclass
@@ -162,11 +164,13 @@ def _draw_graph(painter: QPainter, renderer: WidgetRenderer, width: int, height:
         renderer.draw_mini_graph(painter, width, height, config, list(metrics.net_history), layout,
                                  series="upload" if mode == "network_upload" else "download")
     elif mode == "cpu_only":
-        renderer.draw_mini_graph(painter, width, height, config, list(metrics.cpu_history),
-                                 layout, is_hardware=True, hardware_color=constants.graph.CPU_LINE_COLOR)
+        if config.monitor_cpu_enabled:   # RAM alone (2.2.1) has no CPU-usage series to graph
+            renderer.draw_mini_graph(painter, width, height, config, list(metrics.cpu_history),
+                                     layout, is_hardware=True, hardware_color=constants.graph.CPU_LINE_COLOR)
     elif mode == "gpu_only":
-        renderer.draw_mini_graph(painter, width, height, config, list(metrics.gpu_history),
-                                 layout, is_hardware=True, hardware_color=constants.graph.GPU_LINE_COLOR)
+        if config.monitor_gpu_enabled:   # VRAM alone (2.2.1) has no GPU-usage series to graph
+            renderer.draw_mini_graph(painter, width, height, config, list(metrics.gpu_history),
+                                     layout, is_hardware=True, hardware_color=constants.graph.GPU_LINE_COLOR)
     else:
         renderer.draw_mini_graph(painter, width, height, config, list(metrics.net_history), layout)
 
@@ -174,19 +178,25 @@ def _draw_graph(painter: QPainter, renderer: WidgetRenderer, width: int, height:
 def side_by_side_keys(display_order: List[str], cpu_enabled: bool, gpu_enabled: bool,
                       stack_hw: bool) -> List[str]:
     """The side_by_side segments in display order: 'network', 'cpu', 'gpu', or one 'hardware' segment
-    when CPU and GPU are stacked together. Shared by the paint path and the layout's size reservation."""
+    when CPU and GPU are stacked together. Shared by the paint path and the layout's size reservation.
+    ``cpu_enabled`` / ``gpu_enabled`` are the SLOTS (helpers.hardware_slots: CPU or RAM, GPU or VRAM),
+    so RAM / VRAM on their own get a segment too (2.2.1).
+    Stacking needs BOTH positions in the order: a position set to "None" hides its slot in the stacked
+    column too (the layout reserves no width for it, so painting it there clipped - #520 review)."""
     keys: List[str] = []
+    stack_hw = bool(stack_hw and cpu_enabled and gpu_enabled
+                    and "cpu" in display_order and "gpu" in display_order)
     for k in display_order:
         if k == "network":
             keys.append(k)
         elif k == "cpu" and cpu_enabled:
-            if stack_hw and gpu_enabled:
+            if stack_hw:
                 if "hardware" not in keys:
                     keys.append("hardware")
             else:
                 keys.append("cpu")
         elif k == "gpu" and gpu_enabled:
-            if stack_hw and cpu_enabled:
+            if stack_hw:
                 if "hardware" not in keys:
                     keys.append("hardware")
             else:
@@ -194,19 +204,45 @@ def side_by_side_keys(display_order: List[str], cpu_enabled: bool, gpu_enabled: 
     return keys
 
 
-def stacked_segment_height(key: str, line_height: int, ram_enabled: bool, vram_enabled: bool) -> int:
+def stacked_segment_height(key: str, line_height: int, ram_enabled: bool, vram_enabled: bool,
+                           cpu_enabled: bool = True, gpu_enabled: bool = True) -> int:
     """Height of one side_by_side segment when a side taskbar stacks the segments top-to-bottom.
 
     Matches what the renderer paints: the network readout is two rows + 1px (draw_network_speeds);
     CPU and GPU are one row each, plus a row of its own for the RAM/VRAM, stacked CPU+GPU included
     (draw_hardware_stats, memory_below). Worst case, so a reading that arrives later never clips.
+    A slot whose usage monitor is off (``cpu_enabled`` / ``gpu_enabled`` False) is its one
+    memory-only row (2.2.1).
     """
     if key == "network":
         return line_height * 2 + 1
+
+    def rows(usage_on: bool, memory_on: bool) -> int:
+        return int(usage_on) + int(memory_on) if (usage_on or memory_on) else 0
+    cpu_rows, gpu_rows = rows(cpu_enabled, ram_enabled), rows(gpu_enabled, vram_enabled)
     if key == "hardware":
-        return line_height * (2 + (1 if ram_enabled else 0) + (1 if vram_enabled else 0))
-    has_memory = ram_enabled if key == "cpu" else vram_enabled
-    return line_height * (2 if has_memory else 1)
+        return line_height * (cpu_rows + gpu_rows)
+    return line_height * max(1, cpu_rows if key == "cpu" else gpu_rows)
+
+
+def _stacked_heights(config: RenderConfig, keys: List[str], line_height: int) -> List[int]:
+    return [stacked_segment_height(k, line_height, config.monitor_ram_enabled, config.monitor_vram_enabled,
+                                   config.monitor_cpu_enabled, config.monitor_gpu_enabled) for k in keys]
+
+
+def _slot_keys(config: RenderConfig, order: Optional[List[str]] = None) -> List[str]:
+    """side_by_side_keys for this config: the CPU / GPU slots (CPU or RAM, GPU or VRAM)."""
+    cpu_slot, gpu_slot = hardware_slots(config)
+    return side_by_side_keys(list(order if order is not None else config.widget_display_order),
+                             cpu_slot, gpu_slot, getattr(config, "stack_hardware_stats", False))
+
+
+def _slot_stat(config: RenderConfig, key: str) -> str:
+    """The stat a CPU / GPU slot shows: 'CPU' / 'GPU' with its usage monitor on, else its memory
+    alone, 'RAM' / 'VRAM' (a memory-only row)."""
+    if key == "cpu":
+        return "CPU" if config.monitor_cpu_enabled else "RAM"
+    return "GPU" if config.monitor_gpu_enabled else "VRAM"
 
 
 # --- Side (LEFT/RIGHT) taskbar: the "fits" ladder ------------------------------------------------
@@ -271,18 +307,20 @@ def _max_w(fm: Any, items: List[str]) -> int:
 
 
 def side_hardware_stats(config: RenderConfig, mode: str) -> List[str]:
-    """The CPU/GPU stats a mode puts on the bar, in display order ('CPU'/'GPU')."""
+    """The CPU/GPU stats a mode puts on the bar, in display order: 'CPU'/'GPU', or 'RAM'/'VRAM' for a
+    slot whose usage monitor is off and whose memory is on (a memory-only row, 2.2.1)."""
     order = list(getattr(config, "widget_display_order", None) or ["network", "cpu", "gpu"])
+    cpu_slot, gpu_slot = hardware_slots(config)
     if mode == "side_by_side":   # its segments, display order included ('none' drops one)
-        keys = side_by_side_keys(order, config.monitor_cpu_enabled, config.monitor_gpu_enabled,
-                                 getattr(config, "stack_hardware_stats", False))
-        return [s for k in keys for s in (["CPU", "GPU"] if k == "hardware" else [k.upper()])
+        keys = _slot_keys(config, order)
+        return [_slot_stat(config, s) for k in keys for s in (["cpu", "gpu"] if k == "hardware" else [k])
                 if k != "network"]
     want = {"cpu_only": {"cpu"}, "gpu_only": {"gpu"}, "combined": {"cpu", "gpu"}}.get(mode)
     if want is None:
-        want = {k for k, on in (("cpu", config.monitor_cpu_enabled), ("gpu", config.monitor_gpu_enabled)) if on}
+        want = {"cpu", "gpu"}
+    want = {k for k in want if (cpu_slot if k == "cpu" else gpu_slot)}
     ranked = sorted(want, key=lambda k: order.index(k) if k in order else 99)
-    return [k.upper() for k in ranked]
+    return [_slot_stat(config, k) for k in ranked]
 
 
 def _mem_reference(mem_totals: Tuple[Optional[float], Optional[float]]) -> str:
@@ -298,30 +336,48 @@ def _mem_reference(mem_totals: Tuple[Optional[float], Optional[float]]) -> str:
 
 def _hw_rows_width(config: RenderConfig, fm: Any, stats: List[str], memory_below: bool,
                    mem_ref: str) -> int:
-    """Width of today's hardware rows as ``draw_hardware_stats`` lays them out (its ``seg_w``)."""
+    """Width of today's hardware rows as ``draw_hardware_stats`` lays them out (its ``seg_w``). A
+    'RAM' / 'VRAM' stat is a memory-only row (side_hardware_stats)."""
     if not stats:
         return 0
     from netspeedtray.utils.helpers import memory_label_width, hw_suffix_reference
     style = config.hardware_label_style
-    label_col = (_max_w(fm, stats) + 4) if style == "text" else 14
+    stat_rows = [s for s in stats if s not in MEMORY_ONLY_LABELS]
+    mem_only = len(stat_rows) < len(stats)
+    if not stat_rows:
+        label_col = 0
+    else:
+        label_col = (_max_w(fm, stat_rows) + 4) if style == "text" else 14
     pct_col = fm.horizontalAdvance("100%")
     temps, power = config.show_hardware_temps, config.show_hardware_power
     suffix_ref = hw_suffix_reference(temps, power, config.temperature_unit)
     suffix_col = (fm.horizontalAdvance(" ") + fm.horizontalAdvance(suffix_ref)) if suffix_ref else 0
     any_mem = ("CPU" in stats and config.monitor_ram_enabled) or ("GPU" in stats and config.monitor_vram_enabled)
-    mem_num = fm.horizontalAdvance(mem_ref) if any_mem else 0
+    mem_num = fm.horizontalAdvance(mem_ref) if (any_mem or mem_only) else 0
     mem_label = memory_label_width(fm) if (config.show_memory_labels and any_mem) else 0
     inline = len(stats) > 1 and not memory_below
     mem_col = (fm.horizontalAdvance("  ") + mem_label + mem_num) if (any_mem and inline) else 0
     below = (label_col + mem_label + mem_num) if (any_mem and not inline) else 0
-    return max(label_col + pct_col + suffix_col + mem_col, below)
+    stat_col = (label_col + pct_col + suffix_col + mem_col) if stat_rows else 0
+    return max(stat_col, below, memory_only_row_width(fm, mem_num, _lone_memory_label(stats)) if mem_only else 0)
+
+
+def _lone_memory_label(stats: List[str]) -> Optional[str]:
+    """The word a memory-only row sizes its label cell for when it is the only row of its segment
+    (draw_hardware_stats: RAM alone or VRAM alone), else None - the shared "VRAM " cell."""
+    if len(stats) == 1 and stats[0] in MEMORY_ONLY_LABELS:
+        return (constants.renderer.MEMORY_LABEL_RAM if stats[0] == "RAM"
+                else constants.renderer.MEMORY_LABEL_VRAM)
+    return None
 
 
 def _hw_details_enabled(config: RenderConfig, stats: List[str]) -> bool:
-    """Something beyond the bare percent is on for these stats (memory, temperature or power)."""
+    """Something beyond the bare percent is on for these stats (memory, temperature or power). A
+    memory-only stat always has some: its compact row shows the percent, the card the GB values."""
     return bool(stats) and bool(config.show_hardware_temps or config.show_hardware_power
                                 or ("CPU" in stats and config.monitor_ram_enabled)
-                                or ("GPU" in stats and config.monitor_vram_enabled))
+                                or ("GPU" in stats and config.monitor_vram_enabled)
+                                or any(s in MEMORY_ONLY_LABELS for s in stats))
 
 
 def side_bar_fit(config: RenderConfig, metrics: Any, arrow_metrics: Any, i18n: Any, width: int, *,
@@ -368,9 +424,9 @@ def side_bar_fit(config: RenderConfig, metrics: Any, arrow_metrics: Any, i18n: A
     # Hardware: today's rows as the side bar stacks them, else compact "[icon] 37%" rows.
     mem_ref = _mem_reference(mem_totals)
     if mode == "side_by_side":
-        keys = side_by_side_keys(config.widget_display_order, config.monitor_cpu_enabled,
-                                 config.monitor_gpu_enabled, getattr(config, "stack_hardware_stats", False))
-        groups = [["CPU", "GPU"] if k == "hardware" else [k.upper()] for k in keys if k != "network"]
+        keys = _slot_keys(config)
+        groups = [[_slot_stat(config, "cpu"), _slot_stat(config, "gpu")] if k == "hardware"
+                  else [_slot_stat(config, k)] for k in keys if k != "network"]
         hw_full = all(_hw_rows_width(config, fm, g, True, mem_ref) <= inner for g in groups)
         stats = [s for g in groups for s in g]
     elif mode in _HARDWARE_MODES:
@@ -381,8 +437,7 @@ def side_bar_fit(config: RenderConfig, metrics: Any, arrow_metrics: Any, i18n: A
         hw_full = all(_hw_rows_width(config, fm, [s], False, mem_ref) <= inner for s in stats)
     else:
         stats, hw_full = [], True
-    icon_col = (_max_w(fm, stats or ["CPU"]) if config.hardware_label_style == "text"
-                else constants.renderer.HW_ICON_SIZE_PX)
+    icon_col = compact_hw_label_width(fm, stats or ["CPU"], config.hardware_label_style)
     hw_inline = icon_col + constants.renderer.COMPACT_HW_ICON_GAP_PX + fm.horizontalAdvance("100%") <= inner
     hw_percent_sign = hw_inline or fm.horizontalAdvance("100%") <= inner
 
@@ -414,7 +469,7 @@ def _rows_band(rows: int, line_height: int) -> int:
 def _hw_band(config: RenderConfig, fit: SideBarFit, stats: List[str], line_height: int) -> int:
     """Height of a hardware mode's rows on the bar: today's rows (memory on a row of its own), or the
     compact ones (one row per stat, two when the icon goes over the value)."""
-    if fit.hw_full_fits:
+    if fit.hw_full_fits:   # a memory-only stat ('RAM' / 'VRAM') is its one row
         mem_rows = sum(1 for s in stats if (s == "CPU" and config.monitor_ram_enabled)
                        or (s == "GPU" and config.monitor_vram_enabled))
         return line_height * (len(stats) + mem_rows)
@@ -448,11 +503,9 @@ def side_classic_height(config: RenderConfig, line_height: int) -> int:
     if split_active(config) and mode == "network_only":
         height = 2 * height + constants.renderer.GRAPH_SPLIT_GAP
     if mode == "side_by_side":
-        keys = side_by_side_keys(config.widget_display_order, config.monitor_cpu_enabled,
-                                 config.monitor_gpu_enabled, getattr(config, "stack_hardware_stats", False))
+        keys = _slot_keys(config)
         if len(keys) > 1:
-            height = (sum(stacked_segment_height(k, line_height, config.monitor_ram_enabled,
-                                                 config.monitor_vram_enabled) for k in keys)
+            height = (sum(_stacked_heights(config, keys, line_height))
                       + constants.layout.WIDGET_SEGMENT_GAP_STACKED_PX * (len(keys) - 1) + margin * 4)
     return height
 
@@ -486,7 +539,9 @@ def _draw_side_compact(painter: QPainter, renderer: WidgetRenderer, width: int, 
         if fit.hw_full_fits:
             _draw_foreground(painter, renderer, width, height, config, metrics, mode, layout, None)
         else:
-            values = {"CPU": metrics.cpu_usage, "GPU": metrics.gpu_usage}
+            values = {"CPU": metrics.cpu_usage, "GPU": metrics.gpu_usage,
+                      "RAM": _memory_percent(metrics.ram_used, metrics.ram_total),
+                      "VRAM": _memory_percent(metrics.vram_used, metrics.vram_total)}
             renderer.draw_hardware_compact(painter, [(s, values[s]) for s in stats], width, height,
                                            config, inline=fit.hw_inline, percent_sign=fit.hw_percent_sign)
         return
@@ -535,10 +590,46 @@ def _draw_side_compact(painter: QPainter, renderer: WidgetRenderer, width: int, 
         renderer.draw_network_compact(painter, up_bytes, dw_bytes, width, height, config, fit)
 
 
+def _memory_percent(used: Optional[float], total: Optional[float]) -> Optional[float]:
+    """Memory used as a percent of its total (the compact side-bar value of a memory-only stat), or
+    None - N/A - while either is unknown."""
+    try:
+        if used is None or total is None or not float(total) > 0:
+            return None
+        pct = float(used) / float(total) * 100.0
+        return pct if math.isfinite(pct) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _draw_hw(painter: QPainter, renderer: WidgetRenderer, width: int, height: int, config: RenderConfig,
+             metrics: WidgetMetrics, layout: str, cpu: bool, gpu: bool, **kwargs: Any) -> None:
+    """draw_hardware_stats for the CPU slot (``cpu``) and/or the GPU slot (``gpu``). A slot whose usage
+    monitor is on paints its usage row (+ its memory when that is on), exactly as before 2.2.1; one
+    whose usage monitor is off but whose memory is on paints a memory-only row (ram_only/vram_only)."""
+    cpu_on, gpu_on = cpu and config.monitor_cpu_enabled, gpu and config.monitor_gpu_enabled
+    ram_on, vram_on = cpu and config.monitor_ram_enabled, gpu and config.monitor_vram_enabled
+    if cpu_on:
+        kwargs["cpu_power"] = metrics.cpu_power
+    if gpu_on:
+        kwargs["gpu_power"] = metrics.gpu_power
+    if ram_on and not cpu_on:
+        kwargs["ram_only"] = True
+    if vram_on and not gpu_on:
+        kwargs["vram_only"] = True
+    renderer.draw_hardware_stats(painter, metrics.cpu_usage if cpu_on else None,
+                                 metrics.gpu_usage if gpu_on else None, width, height, config,
+                                 metrics.cpu_temp if cpu_on else None, metrics.gpu_temp if gpu_on else None,
+                                 (metrics.ram_used, metrics.ram_total) if ram_on else None,
+                                 (metrics.vram_used, metrics.vram_total) if vram_on else None,
+                                 layout, **kwargs)
+
+
 def _draw_segment(painter: QPainter, renderer: WidgetRenderer, key: str, width: int, height: int,
                   config: RenderConfig, metrics: WidgetMetrics, layout: str, x_offset: int = 0,
                   y_offset: int = 0, slot_width: Optional[int] = None, memory_below: bool = False) -> None:
     """Paint the text/stats of one side_by_side segment (the network graph is the caller's)."""
+    cpu_slot, gpu_slot = hardware_slots(config)
     if key == "network":
         up_bytes, dw_bytes = metrics.net_bytes()
         renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout,
@@ -547,23 +638,15 @@ def _draw_segment(painter: QPainter, renderer: WidgetRenderer, key: str, width: 
                                      identity_color=metrics.identity_band_color,
                                      identity_solid=metrics.identity_band_solid,
                                      identity_ssid=metrics.identity_ssid, y_offset=y_offset)
-    elif key == "cpu" and config.monitor_cpu_enabled:
-        ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
-        renderer.draw_hardware_stats(painter, metrics.cpu_usage, None, width, height, config,
-                                     metrics.cpu_temp, None, ram, None, layout,
-                                     x_offset=x_offset, cpu_power=metrics.cpu_power, y_offset=y_offset)
-    elif key == "gpu" and config.monitor_gpu_enabled:
-        vram = (metrics.vram_used, metrics.vram_total) if config.monitor_vram_enabled else None
-        renderer.draw_hardware_stats(painter, None, metrics.gpu_usage, width, height, config,
-                                     None, metrics.gpu_temp, None, vram, layout,
-                                     x_offset=x_offset, gpu_power=metrics.gpu_power, y_offset=y_offset)
+    elif key == "cpu" and cpu_slot:
+        _draw_hw(painter, renderer, width, height, config, metrics, layout, True, False,
+                 x_offset=x_offset, y_offset=y_offset)
+    elif key == "gpu" and gpu_slot:
+        _draw_hw(painter, renderer, width, height, config, metrics, layout, False, True,
+                 x_offset=x_offset, y_offset=y_offset)
     elif key == "hardware":
-        ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
-        vram = (metrics.vram_used, metrics.vram_total) if config.monitor_vram_enabled else None
-        renderer.draw_hardware_stats(painter, metrics.cpu_usage, metrics.gpu_usage, width, height, config,
-                                     metrics.cpu_temp, metrics.gpu_temp, ram, vram, layout,
-                                     x_offset=x_offset, cpu_power=metrics.cpu_power, gpu_power=metrics.gpu_power,
-                                     y_offset=y_offset, memory_below=memory_below)
+        _draw_hw(painter, renderer, width, height, config, metrics, layout, True, True,
+                 x_offset=x_offset, y_offset=y_offset, memory_below=memory_below)
 
 
 def _draw_stacked(painter: QPainter, renderer: WidgetRenderer, width: int, height: int,
@@ -572,8 +655,7 @@ def _draw_stacked(painter: QPainter, renderer: WidgetRenderer, width: int, heigh
     (network over CPU/GPU), each centered in the band the layout reserved for it. For the same reason
     the RAM/VRAM goes on a row of its own instead of inline after stacked CPU+GPU."""
     line_height = renderer.metrics.height()
-    bands = [stacked_segment_height(k, line_height, config.monitor_ram_enabled, config.monitor_vram_enabled)
-             for k in keys]
+    bands = _stacked_heights(config, keys, line_height)
     gap = constants.layout.WIDGET_SEGMENT_GAP_STACKED_PX
     y = max(0, (height - sum(bands) - gap * (len(bands) - 1)) // 2)
     for key, band in zip(keys, bands):
@@ -592,8 +674,7 @@ def _draw_side_by_side(painter: QPainter, renderer: WidgetRenderer, width: int, 
                        network_width: Optional[int]) -> None:
     """Multi-segment side-by-side painting (network + cpu/gpu/combined laid out in a row, or stacked
     on a side taskbar)."""
-    active_keys = side_by_side_keys(config.widget_display_order, config.monitor_cpu_enabled,
-                                    config.monitor_gpu_enabled, getattr(config, "stack_hardware_stats", False))
+    active_keys = _slot_keys(config)
     if not active_keys:
         active_keys = ["network"]
 
@@ -670,19 +751,11 @@ def _draw_foreground(painter: QPainter, renderer: WidgetRenderer, width: int, he
                                      identity_solid=metrics.identity_band_solid,
                                      identity_ssid=metrics.identity_ssid)
     elif mode == "cpu_only":
-        ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
-        renderer.draw_hardware_stats(painter, metrics.cpu_usage, None, width, height, config,
-                                     metrics.cpu_temp, None, ram, None, layout, cpu_power=metrics.cpu_power)
+        _draw_hw(painter, renderer, width, height, config, metrics, layout, True, False)
     elif mode == "gpu_only":
-        vram = (metrics.vram_used, metrics.vram_total) if config.monitor_vram_enabled else None
-        renderer.draw_hardware_stats(painter, None, metrics.gpu_usage, width, height, config,
-                                     None, metrics.gpu_temp, None, vram, layout, gpu_power=metrics.gpu_power)
+        _draw_hw(painter, renderer, width, height, config, metrics, layout, False, True)
     elif mode == "combined":
-        ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
-        vram = (metrics.vram_used, metrics.vram_total) if config.monitor_vram_enabled else None
-        renderer.draw_hardware_stats(painter, metrics.cpu_usage, metrics.gpu_usage, width, height, config,
-                                     metrics.cpu_temp, metrics.gpu_temp, ram, vram, layout,
-                                     cpu_power=metrics.cpu_power, gpu_power=metrics.gpu_power)
+        _draw_hw(painter, renderer, width, height, config, metrics, layout, True, True)
 
 
 def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, config: RenderConfig,

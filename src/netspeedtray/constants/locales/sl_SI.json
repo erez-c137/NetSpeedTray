@@ -75,7 +75,6 @@
     "TEMPERATURE_UNIT_LABEL": "Enota temperature",
     "TEMPERATURE_UNIT_CELSIUS": "Celzij (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",
-    "HARDWARE_NEEDS_CPU_TOOLTIP": "Za uporabo vklopite nadzor CPU",
     "HARDWARE_NEEDS_GPU_TOOLTIP": "Za uporabo vklopite nadzor GPU",
     "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP": "Za uporabo vklopite prikaz porabe RAM-a ali VRAM-a",
     "HARDWARE_LABEL_STYLE_ICONS": "Ikone",

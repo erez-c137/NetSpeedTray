@@ -75,7 +75,6 @@
     "TEMPERATURE_UNIT_LABEL": "তাপমাত্রার একক",
     "TEMPERATURE_UNIT_CELSIUS": "সেলসিয়াস (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "ফারেনহাইট (°F)",
-    "HARDWARE_NEEDS_CPU_TOOLTIP": "এটি ব্যবহার করতে সিপিইউ মনিটরিং চালু করুন",
     "HARDWARE_NEEDS_GPU_TOOLTIP": "এটি ব্যবহার করতে জিপিইউ মনিটরিং চালু করুন",
     "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP": "এটি ব্যবহার করতে র‍্যাম বা ভির‍্যামের ব্যবহার চালু করুন",
     "HARDWARE_LABEL_STYLE_ICONS": "আইকন",

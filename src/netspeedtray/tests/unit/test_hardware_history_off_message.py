@@ -81,6 +81,17 @@ def test_toggle_layout_gpu_view_with_only_cpu_recorded(renderer):
     assert COLLECTING in _texts(renderer.figure)
 
 
+@pytest.mark.parametrize("stat", ["hwcombined", "hwseparate"])
+def test_ram_only_recording_is_collecting_not_off(renderer, stat):
+    """2.2.1: RAM is recorded without CPU/GPU monitoring - its graph will fill, so an empty range is
+    "collecting", not "history is off"; with RAM off as well it is off."""
+    _render(renderer, stat, "TIMELINE_24_HOURS", history_off={**MON_OFF, "ram": None})
+    texts = _texts(renderer.figure)
+    assert COLLECTING in texts and OFF not in texts
+    _render(renderer, stat, "TIMELINE_24_HOURS", history_off={**MON_OFF, "ram": "monitor"})
+    assert OFF in _texts(renderer.figure)
+
+
 NO_HISTORY = I18N.NET_GRAPH_NO_HISTORY_YET
 NO_TRAFFIC = I18N.NET_GRAPH_NO_TRAFFIC
 
@@ -156,10 +167,14 @@ def test_hebrew_messages_are_shaped_for_matplotlib(monkeypatch):
 
 
 @pytest.mark.parametrize("cfg, off", [
-    ({}, MON_OFF),                                                        # 2.2 defaults
-    ({"monitor_cpu_enabled": True}, {"cpu": None, "gpu": "monitor"}),
-    ({"monitor_gpu_enabled": True}, {"cpu": "monitor", "gpu": None}),
-    ({"monitor_cpu_enabled": True, "monitor_gpu_enabled": True, "record_hardware_history": False}, REC_OFF),
+    ({}, {**MON_OFF, "ram": "monitor"}),                                  # 2.2 defaults
+    ({"monitor_cpu_enabled": True}, {"cpu": None, "gpu": "monitor", "ram": "monitor"}),
+    ({"monitor_gpu_enabled": True}, {"cpu": "monitor", "gpu": None, "ram": "monitor"}),
+    ({"monitor_cpu_enabled": True, "monitor_gpu_enabled": True, "record_hardware_history": False},
+     {**REC_OFF, "ram": "monitor"}),
+    # 2.2.1: RAM is recorded on its own switch, CPU monitoring off or not.
+    ({"monitor_ram_enabled": True}, {**MON_OFF, "ram": None}),
+    ({"monitor_ram_enabled": True, "record_hardware_history": False}, {**MON_OFF, "ram": "record"}),
 ])
 def test_graph_host_derives_reasons_from_the_writer_rule(q_app, cfg, off):
     from netspeedtray.views.monitor.graph_host import GraphHost

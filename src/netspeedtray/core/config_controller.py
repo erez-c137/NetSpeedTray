@@ -121,7 +121,8 @@ class ConfigController:
             # Rule 2: Fallback to network-only if cycle mode has no hardware monitors to rotate through.
             # cpu_only/gpu_only are ephemeral internal cycle states, never persisted to config.
             # side_by_side gracefully degrades to network-only at render time and is never downgraded here.
-            if current_mode == "cycle" and not cpu_enabled and not gpu_enabled:
+            # RAM / VRAM rotate on their own too (2.2.1: a phase per slot, CPU or RAM / GPU or VRAM).
+            if current_mode == "cycle" and not (cpu_enabled or ram_enabled or gpu_enabled or vram_enabled):
                 self.logger.info(f"Display mode '{current_mode}' is no longer valid. Falling back to network-only.")
                 updated_config['widget_display_mode'] = "network_only"
 

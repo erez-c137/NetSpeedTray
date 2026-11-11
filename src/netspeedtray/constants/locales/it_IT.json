@@ -75,7 +75,6 @@
     "TEMPERATURE_UNIT_LABEL": "Unità di temperatura",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",
-    "HARDWARE_NEEDS_CPU_TOOLTIP": "Attiva il monitoraggio della CPU per usare questa opzione",
     "HARDWARE_NEEDS_GPU_TOOLTIP": "Attiva il monitoraggio della GPU per usare questa opzione",
     "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP": "Attiva l'utilizzo RAM o VRAM per usare questa opzione",
     "HARDWARE_LABEL_STYLE_ICONS": "Icone",

@@ -75,7 +75,6 @@
     "TEMPERATURE_UNIT_LABEL": "יחידת טמפרטורה",
     "TEMPERATURE_UNIT_CELSIUS": "צלזיוס (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "פרנהייט (°F)",
-    "HARDWARE_NEEDS_CPU_TOOLTIP": "הפעל ניטור CPU כדי להשתמש באפשרות זו",
     "HARDWARE_NEEDS_GPU_TOOLTIP": "הפעל ניטור GPU כדי להשתמש באפשרות זו",
     "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP": "הפעל הצגת שימוש ב-RAM או ב-VRAM כדי להשתמש באפשרות זו",
     "HARDWARE_LABEL_STYLE_ICONS": "סמלים",
