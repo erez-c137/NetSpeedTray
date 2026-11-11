@@ -12,6 +12,15 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    # Qt is held at 6.10.x - see the "held at 6.10.x" note in requirements.in (6.11 costs ~2.5 MB
+    # idle, 6.12 widens text; #519). Lift these together with that pin. PyQt6-sip is pinned to what
+    # PyQt6 6.10 ships with and only ever moves with PyQt6, so its updates are ignored outright.
+    ignore:
+      - dependency-name: "PyQt6"
+        versions: [">=6.11"]
+      - dependency-name: "PyQt6-Qt6"
+        versions: [">=6.11"]
+      - dependency-name: "PyQt6-sip"
     groups:
       # Runtime pins move together; a bump here needs a real smoke test either way.
       runtime:
