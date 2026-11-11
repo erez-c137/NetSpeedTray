@@ -6,7 +6,8 @@
 .DESCRIPTION
     Only the exe is taken. Before copying it checks that the signed zip's payload is the same file
     set as dist\NetSpeedTray (portable.marker is the zip's only extra), that the signed exe carries
-    the same version resource, and that its Authenticode signature is Valid. Afterwards it checks
+    the same version resource, that its Authenticode signature is Valid, and that the zip matches the
+    bundle manifest signed into the exe (build/ci/verify-manifest.py, 2.2.1). Afterwards it checks
     the copied exe again. Any mismatch fails the release before an installer is built.
 #>
 param(
@@ -53,6 +54,13 @@ try {
     $sig = Get-AuthenticodeSignature $signedExe
     Write-Host "Signed exe from the zip: $($sig.Status) - $($sig.SignerCertificate.Subject)"
     if ($sig.Status -ne "Valid") { throw "NetSpeedTray.exe from the signed zip is not validly signed: $($sig.Status) ($($sig.StatusMessage))" }
+
+    # 2.2.1: the signed exe must still carry the bundle manifest (embedded by build.bat before
+    # signing), and the zip SignPath returned must match it file for file - exactly what every
+    # portable user's updater will check. Runs the updater's own code, with its signature gate.
+    $python = Join-Path $RootDir ".venv\Scripts\python.exe"
+    & $python (Join-Path $RootDir "build\ci\verify-manifest.py") $zips[0].FullName --require-signed
+    if ($LASTEXITCODE -ne 0) { throw "The signed portable zip failed the bundle-manifest check (see above)." }
 
     Copy-Item $signedExe $target -Force
 }

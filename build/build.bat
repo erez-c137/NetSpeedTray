@@ -102,6 +102,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Bundle manifest (2.2.1): a SHA-256 of every file in dist\NetSpeedTray, embedded in the exe as a
+:: resource BEFORE anything signs it, so the exe's signature vouches for _internal too. The portable
+:: updater refuses a new version whose files do not match it. Here, right after PyInstaller, so the
+:: installer (local) and the zip (both modes) carry the same exe; portable.marker is added later and
+:: is deliberately outside the manifest. No release may ship without it: any failure stops the build.
+echo Embedding the bundle manifest...
+"%VENV_DIR%\Scripts\python.exe" "%BUILD_DIR%ci\embed-manifest.py" "%DIST_DIR%\NetSpeedTray" >> "%LOG_FILE%" 2>&1
+if errorlevel 1 (
+    echo ERROR: Embedding the bundle manifest failed. Check !LOG_FILE!
+    exit /b 1
+)
+
 :: NST_SKIP_INSTALLER=1 is the release CI's mode (release.yml): build the exe and the portable zip
 :: only, and KEEP dist\NetSpeedTray (without portable.marker). CI sends the zip to SignPath, copies
 :: the signed NetSpeedTray.exe back over dist\NetSpeedTray\NetSpeedTray.exe and compiles the

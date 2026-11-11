@@ -359,6 +359,12 @@ if not any(name == 'truststore' or name.startswith('truststore.') for name, *_ i
     raise SystemExit("[netspeedtray.spec] FATAL: 'truststore' is missing from the bundle "
                      "(pip install -r requirements.txt). Update checks would fail on fresh installs.")
 print('[netspeedtray.spec] truststore bundled: HTTPS verified by Windows.')
+# 2.2.1: the portable updater checks every file against the manifest signed into the new exe, and
+# fails closed: without this module every portable update would be refused. It is imported lazily
+# (inside functions), so make sure the analysis found it.
+if not any(name == 'netspeedtray.utils.bundle_manifest' for name, *_ in a.pure):
+    raise SystemExit("[netspeedtray.spec] FATAL: 'netspeedtray.utils.bundle_manifest' is missing "
+                     "from the bundle. Every portable update would be refused.")
 
 # Regression guard (#425): Qt6Core.dll imports icuuc.dll/icuin.dll by bare name and must get
 # Windows' own copies from System32. PyInstaller never bundles those, so any ICU DLL in the
