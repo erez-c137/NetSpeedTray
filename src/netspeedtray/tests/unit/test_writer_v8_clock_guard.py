@@ -120,18 +120,27 @@ def test_sleep_the_monotonic_clock_did_not_count_is_like_app_off_time(tmp_path, 
 
 
 def test_a_month_of_nightly_sleep_with_a_sleep_blind_monotonic_clock_keeps_pruning(tmp_path):
-    """r3 case B, end to end: 30 days, 16 h awake + 8 h asleep, monotonic excluding sleep."""
+    """r3 case B, end to end: 30 days, 16 h awake + 8 h asleep, monotonic excluding sleep.
+
+    Passes come every 4 awake hours, not hourly: what the guard judges is the gap between consecutive
+    passes, and the first pass after each night still sees the full 8 h wall-ahead-of-monotonic lead -
+    the case under test. Hourly passes added nothing but 4x the commits (65-94 s with real fsync).
+    Every pass must also actually DELETE rows: a guard that restarted the continuity week each night
+    still returns a "pruned" key (with 0), which the old count could not tell apart."""
     c, w = _build(tmp_path / "m.db", days=40)
-    mono, wall, untrusted, pruned_passes = 1000.0, NOW + 3600, 0, 0
+    step_h = 4
+    mono, wall, untrusted, passes, idle_prunes = 1000.0, NOW + 3600, 0, 0, 0
     for day in range(30):
-        for h in range(16):
+        for h in range(0, 16, step_h):
             out = w.run_maintenance(now_ts=wall, retention_days=31, mono=mono)
             untrusted += out.get("clock_untrusted", 0)
-            pruned_passes += "pruned" in out
-            wall += 3600
-            mono += 3600
+            passes += 1
+            idle_prunes += out.get("pruned", 0) <= 0     # each pass ages out >= 1 hour row
+            wall += step_h * 3600
+            mono += step_h * 3600
         wall += 8 * 3600
-    assert untrusted == 0 and pruned_passes == 30 * 16
+    assert passes == 30 * 16 // step_h
+    assert untrusted == 0 and idle_prunes == 0
 
 
 def test_a_fresh_stamp_starts_the_prunes_continuity_week(tmp_path):
