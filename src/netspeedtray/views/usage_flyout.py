@@ -427,6 +427,13 @@ class UsageFlyout(QWidget):
     def has_hardware(self) -> bool:
         return bool(self._hw_values)
 
+    @property
+    def lists_gpus(self) -> bool:
+        """The card lists every GPU (#236) - and nothing else in its hardware section: a list that
+        goes away then leaves the rest of the card (usage, tips, battery) to rebuild, not to close."""
+        return (getattr(self, "_gpu_list_sig", None) is not None
+                and all(k[0] == "gpus" for k in self._hw_values))
+
     def update_hardware(self, hardware: Optional[dict]) -> Optional[bool]:
         """Refresh the hardware rows in place (the card stays up while the pointer rests on the widget).
         Keys: cpu/gpu -> {usage, temp, power}; ram/vram -> (used_gb, total_gb); vram_shared -> True
