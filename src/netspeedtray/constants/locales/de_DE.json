@@ -267,6 +267,7 @@
     "GRAPH_CAPTION_PEAK_PER_HOUR": "Spitze pro Stunde",
     "GRAPH_CAPTION_PEAK_PER_DAY": "Spitze pro Tag",
     "FORCE_MB_LABEL": "MB-Anzeige erzwingen",
+    "UPDATE_MODE_REALTIME_LABEL": "Echtzeit (0,5s)",
     "UPDATE_MODE_AGGRESSIVE_LABEL": "Aggressiv (1s)",
     "UPDATE_MODE_BALANCED_LABEL": "Ausgeglichen (2s)",
     "UPDATE_MODE_EFFICIENT_LABEL": "Effizient (5s)",

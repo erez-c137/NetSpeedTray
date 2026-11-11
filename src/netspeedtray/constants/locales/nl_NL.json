@@ -267,6 +267,7 @@
     "GRAPH_CAPTION_PEAK_PER_HOUR": "Piek per uur",
     "GRAPH_CAPTION_PEAK_PER_DAY": "Piek per dag",
     "FORCE_MB_LABEL": "Altijd megabytes tonen",
+    "UPDATE_MODE_REALTIME_LABEL": "Realtime (0,5s)",
     "UPDATE_MODE_AGGRESSIVE_LABEL": "Agressief (1s)",
     "UPDATE_MODE_BALANCED_LABEL": "Gebalanceerd (2s)",
     "UPDATE_MODE_EFFICIENT_LABEL": "Efficiënt (5s)",

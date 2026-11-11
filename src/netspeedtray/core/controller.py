@@ -6,6 +6,7 @@ including network speeds, CPU utilization, and GPU utilization.
 """
 
 import logging
+import math
 import time
 from typing import Dict, Any, List, Optional, TYPE_CHECKING, Tuple
 
@@ -17,6 +18,7 @@ from netspeedtray.core import usage_snapshot
 from netspeedtray.utils.config import stable_pseudonym
 from netspeedtray.utils.network_utils import get_primary_interface_name
 from netspeedtray.utils.interface_classifier import InterfaceClassifier, get_classifier
+from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
@@ -460,6 +462,15 @@ class StatsController(QObject):
             self.logger.warning("Network bytes for this poll were not recorded in the %s: %s",
                                 sink, e, exc_info=True)
 
+    @staticmethod
+    def _spike_baseline_len(update_interval: Any) -> int:
+        """Polls in the spike filter's rolling baseline at this update rate: SPIKE_BASELINE_SAMPLES,
+        or enough polls to span SPIKE_BASELINE_MIN_SECONDS when the rate is faster than 1 s (0.5 s,
+        #456 -> 40) - the baseline is a time window, not a poll count, at sub-second rates."""
+        spd = constants.network.speed
+        poll = resolve_poll_interval_seconds(update_interval)
+        return max(spd.SPIKE_BASELINE_SAMPLES, int(math.ceil(spd.SPIKE_BASELINE_MIN_SECONDS / poll)))
+
     def _update_rate_display(self, current_counters: Dict[str, Any], prev_counters: Dict[str, Any],
                              time_diff: float, rate_span: float, update_interval: float) -> None:
         """The rate display for one poll: re-prime across gaps, else per-interface rates over
@@ -487,6 +498,7 @@ class StatsController(QObject):
         # (current_speed_data -> widget text, mini graph, in-memory session deques) stays smoothed.
         measured_speed_data: Dict[str, Tuple[float, float]] = {}
 
+        baseline_len = self._spike_baseline_len(update_interval)
         for name, current in current_counters.items():
             last = prev_counters.get(name)
             if last:
@@ -515,7 +527,11 @@ class StatsController(QObject):
 
                 if name not in self.recent_speeds:
                     from collections import deque
-                    self.recent_speeds[name] = deque(maxlen=20)
+                    self.recent_speeds[name] = deque(maxlen=baseline_len)
+                elif self.recent_speeds[name].maxlen != baseline_len:
+                    # The update rate changed: keep the newest samples, resize to the new rate's window.
+                    from collections import deque
+                    self.recent_speeds[name] = deque(self.recent_speeds[name], maxlen=baseline_len)
 
                 recent_history = self.recent_speeds[name]
                 if recent_history and len(recent_history) >= 5:

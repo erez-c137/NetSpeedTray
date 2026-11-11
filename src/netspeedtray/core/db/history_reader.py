@@ -1589,6 +1589,9 @@ class V8HistoryReader(_ReaderBase):
         win = max(0.0, (end_time - start_time).total_seconds())
         st, et = int(start_time.timestamp()), int(end_time.timestamp())
         bounds = self._tier_bounds(self._HW, "h")
+        # hw_raw holds at most one row per metric per SECOND (schema_v8.RAW_TS_RESOLUTION_SECONDS), so a
+        # sub-second poll (0.5 s, #456) still expects one row per second - not one per poll.
+        poll_interval = max(float(poll_interval), float(S8.RAW_TS_RESOLUTION_SECONDS))
 
         def run(cur):
             def raw_vals():

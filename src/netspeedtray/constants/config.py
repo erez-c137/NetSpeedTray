@@ -446,7 +446,7 @@ class ConfigConstants:
         "config_version": {"type": str, "default": CONFIG_SCHEMA_VERSION},
         "start_with_windows": {"type": bool, "default": DEFAULT_START_WITH_WINDOWS},
         "language": {"type": (str, type(None)), "default": None, "choices": list(I18nStrings.LANGUAGE_MAP.keys()) + [None]},
-        # Seconds between samples: one of the four slider presets (1/2/5/10). `_migrate_config` snaps
+        # Seconds between samples: one of the slider presets (0.5/1/2/5/10). `_migrate_config` snaps
         # any other persisted value onto the ladder first, so this only catches a bad in-memory value.
         "update_rate": {"type": (int, float), "default": DEFAULT_UPDATE_RATE, "choices": list(UpdateMode.PRESETS)},
         "font_family": {"type": str, "default": DEFAULT_FONT_FAMILY},

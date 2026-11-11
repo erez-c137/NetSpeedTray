@@ -63,6 +63,13 @@ FLAG_GAP = 2             # interval longer than the poll rate (missed polls, sle
 FLAG_RESUMED = 4         # RESERVED (nothing sets it yet): the system resumed from sleep in the interval
 FLAG_FIRST_SAMPLE = 8    # RESERVED (nothing sets it yet): first sample of a session
 
+# Raw-tier timestamp resolution. ``ts`` is whole epoch seconds and both raw tables key on it: at most
+# one hw_raw row per metric per second (INSERT OR IGNORE - the second's first sample wins) and one
+# net_raw row per interface per second (intervals ending in the same second merge). So at the 0.5 s
+# update rate (#456) a raw ROW count is a count of seconds, not of polls - coverage math must expect
+# one row per max(poll, this), or 0.5 s reads as 50 % coverage.
+RAW_TS_RESOLUTION_SECONDS = 1
+
 # Tier watermarks (metadata keys, value = unix epoch seconds as text). "Every row of this tier older
 # than the watermark has been rolled up into the next-coarser tier", written in the SAME transaction
 # as the roll-up that moves the rows. Readers answer a range with exactly one tier per sub-range:

@@ -267,6 +267,7 @@
     "GRAPH_CAPTION_PEAK_PER_HOUR": "시간 단위 정점",
     "GRAPH_CAPTION_PEAK_PER_DAY": "일 단위 정점",
     "FORCE_MB_LABEL": "MB 단위로 강제 표시",
+    "UPDATE_MODE_REALTIME_LABEL": "실시간 (0.5초)",
     "UPDATE_MODE_AGGRESSIVE_LABEL": "적극적 (1초)",
     "UPDATE_MODE_BALANCED_LABEL": "균형적 (2초)",
     "UPDATE_MODE_EFFICIENT_LABEL": "효율적 (5초)",

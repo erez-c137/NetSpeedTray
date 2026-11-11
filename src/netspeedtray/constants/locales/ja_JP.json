@@ -267,6 +267,7 @@
     "GRAPH_CAPTION_PEAK_PER_HOUR": "毎時のピーク",
     "GRAPH_CAPTION_PEAK_PER_DAY": "日ごとのピーク",
     "FORCE_MB_LABEL": "常にメガバイトを表示",
+    "UPDATE_MODE_REALTIME_LABEL": "リアルタイム (0.5秒)",
     "UPDATE_MODE_AGGRESSIVE_LABEL": "高頻度 (1秒)",
     "UPDATE_MODE_BALANCED_LABEL": "標準 (2秒)",
     "UPDATE_MODE_EFFICIENT_LABEL": "効率的 (5秒)",

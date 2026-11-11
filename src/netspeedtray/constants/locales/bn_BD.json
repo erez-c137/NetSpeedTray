@@ -267,6 +267,7 @@
     "GRAPH_CAPTION_PEAK_PER_HOUR": "প্রতি ঘণ্টায় সর্বোচ্চ",
     "GRAPH_CAPTION_PEAK_PER_DAY": "প্রতিদিনে সর্বোচ্চ",
     "FORCE_MB_LABEL": "সর্বদা মেগাবাইটে দেখান",
+    "UPDATE_MODE_REALTIME_LABEL": "রিয়েল-টাইম (০.৫ সেকেন্ড)",
     "UPDATE_MODE_AGGRESSIVE_LABEL": "দ্রুত (১ সেকেন্ড)",
     "UPDATE_MODE_BALANCED_LABEL": "ভারসাম্যপূর্ণ (২ সেকেন্ড)",
     "UPDATE_MODE_EFFICIENT_LABEL": "সাশ্রয়ী (৫ সেকেন্ড)",

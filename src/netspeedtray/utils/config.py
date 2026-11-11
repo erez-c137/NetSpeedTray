@@ -423,7 +423,8 @@ class ConfigManager:
         except Exception as e:
             self.logger.debug("keep_data migration skipped: %s", e)
 
-        # update_rate (2.2): SMART mode is gone and the slider offers exactly 1/2/5/10 s. SMART was
+        # update_rate (2.2): SMART mode is gone and the slider offers exactly the UpdateMode presets
+        # (1/2/5/10 s; 0.5 s added back in 2.2.1, #456). SMART was
         # persisted as the sentinel -1.0 (and, before that, 0) and sampled at a fixed 2.0 s, so any
         # non-positive rate becomes 2.0 - the cadence that user actually had, not the 1 s default.
         # Every other value snaps to the nearest preset (10 s stays 10 s; ties go to the faster one,
@@ -435,7 +436,7 @@ class ConfigManager:
             new_rate = snap_update_rate(old_rate)
             if type(old_rate) is not float or old_rate != new_rate:   # NaN != NaN: rewritten too
                 migrated["update_rate"] = new_rate
-                self.logger.info("Migrated update_rate %r -> %s s (the 1/2/5/10 s presets)",
+                self.logger.info("Migrated update_rate %r -> %s s (the update-rate presets)",
                                  old_rate, new_rate)
                 changes_made = True
 

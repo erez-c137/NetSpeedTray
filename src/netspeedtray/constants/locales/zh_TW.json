@@ -267,6 +267,7 @@
     "GRAPH_CAPTION_PEAK_PER_HOUR": "每小時峰值",
     "GRAPH_CAPTION_PEAK_PER_DAY": "每日峰值",
     "FORCE_MB_LABEL": "永遠以 MB 顯示",
+    "UPDATE_MODE_REALTIME_LABEL": "即時 (0.5 秒)",
     "UPDATE_MODE_AGGRESSIVE_LABEL": "積極 (1 秒)",
     "UPDATE_MODE_BALANCED_LABEL": "平衡 (2 秒)",
     "UPDATE_MODE_EFFICIENT_LABEL": "節能 (5 秒)",

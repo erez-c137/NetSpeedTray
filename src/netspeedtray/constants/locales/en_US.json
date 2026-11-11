@@ -267,6 +267,7 @@
     "GRAPH_CAPTION_PEAK_PER_HOUR": "Peak per hour",
     "GRAPH_CAPTION_PEAK_PER_DAY": "Peak per day",
     "FORCE_MB_LABEL": "Always show megabytes",
+    "UPDATE_MODE_REALTIME_LABEL": "Real-time (0.5s)",
     "UPDATE_MODE_AGGRESSIVE_LABEL": "Aggressive (1s)",
     "UPDATE_MODE_BALANCED_LABEL": "Balanced (2s)",
     "UPDATE_MODE_EFFICIENT_LABEL": "Efficient (5s)",
