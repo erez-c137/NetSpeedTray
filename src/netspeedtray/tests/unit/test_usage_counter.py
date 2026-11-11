@@ -126,7 +126,11 @@ def test_persist_enqueues_when_due():
     assert task == "persist_usage"
     # cum_up, cum_down, anchor_up, anchor_down, period_key, ts, counter snapshot, re-key memory
     assert len(payload) == 8
-    assert payload[6] is None  # no counters fed -> leave the stored snapshot untouched
+    # Bytes with no counters to pair: the total moved past the stored snapshot, so it is deleted
+    # (CLEAR_SNAPSHOT) - never left beside a total it no longer matches. (A zero-byte poll with no
+    # counters leaves it untouched: test_odometer_accuracy.)
+    from netspeedtray.core import usage_snapshot
+    assert payload[6] == usage_snapshot.CLEAR_SNAPSHOT
     assert payload[7] == ""    # no period left yet -> no re-key memory stored
 
 
