@@ -10,7 +10,9 @@ now starts at 0.5). This file pins the places a sub-second rate reaches beyond t
 * history stays one net_raw row per interface per second (two 0.5 s intervals merge) and a 0.5 s
   poll is not a gap;
 * hardware coverage at 0.5 s reads ~100 %, not 50 % (hw_raw keeps one row per metric per second);
-* the mini-graph buffer keeps its memory cap (it covers less time at 0.5 s, it never grows).
+* the in-memory graph series (mini graph, Monitor session view) hold one point per wall-clock
+  second at 0.5 s - the average of that second's samples - so the graph window, the 5000-point cap
+  and the points per window are the same as at 1 s, while the widget's numbers update every 0.5 s.
 """
 import json
 import logging
@@ -173,17 +175,88 @@ def test_hardware_coverage_at_half_a_second_is_not_halved(conn, tmp_path):
         rc.close()
 
 
-# --- the mini graph -------------------------------------------------------------------------
+# --- the mini graph: one point per second at 0.5 s -------------------------------------------
 
-def test_graph_buffer_keeps_its_memory_cap_at_half_a_second():
-    fake = SimpleNamespace(config={"update_rate": 0.5}, logger=logging.getLogger("t"))
-    assert WidgetState._get_graph_buffer_points(fake) == 5000           # capped, never larger
-    fake.config["update_rate"] = 1.0
-    assert WidgetState._get_graph_buffer_points(fake) == 5000
+class _Series:
+    """WidgetState's graph-series feeders on a plain object (no DB worker, no QObject)."""
+    _append_graph_point = getattr(WidgetState, "_append_graph_point", None)   # None on pre-#456 code
+    add_speed_data = WidgetState.add_speed_data
+    add_hardware_stat = WidgetState.add_hardware_stat
+
+    def __init__(self, rate, maxlen=5000):
+        from collections import deque
+        self.config = {"update_rate": rate}
+        self.aggregated_history = deque(maxlen=maxlen)
+        self.cpu_history, self.gpu_history, self.ram_history = (deque(maxlen=maxlen) for _ in range(3))
 
 
-def test_graph_window_counts_half_second_samples():
+def _feed(series, start, step, n, up=lambda i: 1000.0 * i, cpu=lambda i: float(i % 100)):
+    for i in range(n):
+        ts = datetime.fromtimestamp(start + i * step)
+        series.add_speed_data({}, now=ts, aggregated_up=up(i), aggregated_down=2 * up(i))
+        series.add_hardware_stat("cpu", cpu(i), now=ts, persist=False)
+
+
+def _span_s(series):
+    return (series[-1].timestamp - series[0].timestamp).total_seconds()
+
+
+def test_graph_points_per_window_are_the_same_at_half_a_second_as_at_one():
     from netspeedtray.utils.widget_renderer import RenderConfig
-    rc = RenderConfig.from_dict({**constants.config.defaults.DEFAULT_CONFIG,
-                                 "update_rate": 0.5, "history_minutes": 3})
-    assert rc.max_samples == 360                      # 3 min of 0.5 s samples
+    for minutes in (3, 30, 120):
+        cfg = {**constants.config.defaults.DEFAULT_CONFIG, "history_minutes": minutes}
+        half = RenderConfig.from_dict({**cfg, "update_rate": 0.5}).max_samples
+        one = RenderConfig.from_dict({**cfg, "update_rate": 1.0}).max_samples
+        assert half == one == minutes * 60
+    fake = SimpleNamespace(config={"update_rate": 0.5}, logger=logging.getLogger("t"))
+    half_buf = WidgetState._get_graph_buffer_points(fake)
+    fake.config["update_rate"] = 1.0
+    assert half_buf == WidgetState._get_graph_buffer_points(fake) == 5000   # same cap, never larger
+
+
+def test_half_second_samples_become_one_graph_point_per_second():
+    s = _Series(0.5)
+    _feed(s, NOW + 0.25, 0.5, 600)                    # 300 s of 0.5 s samples, two per second
+    assert len(s.aggregated_history) == len(s.cpu_history) == 300
+    # Each point is the plain average of its second's two samples (rates and percentages alike).
+    p = s.aggregated_history[10]                      # samples 20 and 21
+    assert (p.upload, p.download) == (pytest.approx(20_500.0), pytest.approx(41_000.0))
+    assert s.cpu_history[10].value == pytest.approx(20.5)
+    # Stamped with the newest sample of its second.
+    assert p.timestamp == datetime.fromtimestamp(NOW + 0.25 + 21 * 0.5)
+    # The same number of points as 1 s sampling over the same time: the 5 min window is 5 min.
+    one = _Series(1.0)
+    _feed(one, NOW + 0.25, 1.0, 300)
+    assert len(one.aggregated_history) == 300
+    assert _span_s(s.aggregated_history) == pytest.approx(_span_s(one.aggregated_history), abs=1.0)
+
+
+def test_full_buffer_spans_the_same_time_at_half_a_second_as_at_one():
+    """The 5000-point buffer: ~83 min of history at 1 s, and the SAME at 0.5 s (was ~42 min)."""
+    half, one = _Series(0.5, maxlen=5000), _Series(1.0, maxlen=5000)
+    _feed(half, NOW + 0.25, 0.5, 12_000)              # 6000 s at 0.5 s
+    _feed(one, NOW + 0.25, 1.0, 6_000)                # 6000 s at 1 s
+    assert len(half.aggregated_history) == len(one.aggregated_history) == 5000
+    assert _span_s(half.aggregated_history) == pytest.approx(_span_s(one.aggregated_history), abs=1.0)
+    assert _span_s(half.cpu_history) >= 4998
+
+
+def test_the_open_second_is_shown_and_then_finalised():
+    s = _Series(0.5)
+    t = NOW + 0.1
+    s.add_speed_data({}, now=datetime.fromtimestamp(t), aggregated_up=100.0, aggregated_down=10.0)
+    assert [(p.upload, p.download) for p in s.aggregated_history] == [(100.0, 10.0)]   # shown at once
+    s.add_speed_data({}, now=datetime.fromtimestamp(t + 0.5), aggregated_up=300.0, aggregated_down=30.0)
+    assert [(p.upload, p.download) for p in s.aggregated_history] == [(200.0, 20.0)]   # replaced: average
+    s.add_speed_data({}, now=datetime.fromtimestamp(t + 1.0), aggregated_up=50.0, aggregated_down=5.0)
+    assert [(p.upload, p.download) for p in s.aggregated_history] == [(200.0, 20.0), (50.0, 5.0)]
+
+
+@pytest.mark.parametrize("rate", [1.0, 2.0, 10.0])
+def test_one_second_and_slower_keep_every_sample(rate):
+    """Unchanged at 1 s and slower: two samples in one wall-clock second (a stall, then a catch-up)
+    stay two points - merging is only the 0.5 s preset's."""
+    s = _Series(rate)
+    s.add_speed_data({}, now=datetime.fromtimestamp(NOW + 0.1), aggregated_up=1.0, aggregated_down=1.0)
+    s.add_speed_data({}, now=datetime.fromtimestamp(NOW + 0.9), aggregated_up=3.0, aggregated_down=3.0)
+    assert [p.upload for p in s.aggregated_history] == [1.0, 3.0]
