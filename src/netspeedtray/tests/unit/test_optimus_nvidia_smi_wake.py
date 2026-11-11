@@ -347,3 +347,18 @@ def test_nvidia_smi_na_clears_the_cached_reading(q_app, monkeypatch, clock):
     clock.t += 5
     r = _tick(t, clock, IGPU_BUSY)
     assert (r.temp, r.power, r.vram_total) == (None, None, 8188.0)
+
+
+# --- rebase review: the kept total never outlives its card -------------------------------------
+
+def test_the_cached_total_goes_with_an_unplugged_nvidia_card(q_app, monkeypatch, clock):
+    """A failed call now keeps the cached total (it is a card property) - so an NVIDIA eGPU unplugged
+    mid-session must not leave its total on the remaining GPU's memory ("0.1 / 8.0 GB")."""
+    t = _thread([UHD, RTX, BRD], False, monkeypatch)
+    assert _tick(t, clock, DGPU_BUSY).vram_total == 8188.0
+    t._gpu_adapters = [UHD, BRD]                         # the eGPU is gone (DXGI re-read)
+    monkeypatch.setattr(gpu_adapters, "enumerate_adapters", lambda: [UHD, BRD])
+    t._run_child.side_effect = subprocess.CalledProcessError(9, "nvidia-smi")
+    clock.t += 5
+    r = _tick(t, clock, {_eng(IG_LUID, 10): 25.0})
+    assert r.vram_total != 8188.0
