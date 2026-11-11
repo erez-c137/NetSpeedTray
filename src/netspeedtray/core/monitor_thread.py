@@ -97,10 +97,10 @@ def hardware_collection_gates(config: Dict[str, Any], force: bool) -> Tuple[bool
 def memory_collection_gates(config: Dict[str, Any], force: bool) -> Tuple[bool, bool]:
     """(collect_ram, collect_vram) for one poll. RAM/VRAM have their own switches, independent of
     CPU/GPU utilization: gating them on the CPU/GPU switches alone meant a config with RAM (or VRAM)
-    on and CPU (or GPU) off collected no memory data at all (rc.2 G5). Settings greys the RAM/VRAM
-    toggles out while their host monitor is off, which only stops NEW such configs - existing ones
-    keep the switch on. Where the data is SHOWN is still each view's call (the taskbar paints RAM on
-    the CPU line), and recording keeps its own consent gate (controller.hardware_persist_allowed)."""
+    on and CPU (or GPU) off collected no memory data at all (rc.2 G5). Since 2.2.1 that is a real
+    setup: RAM shows without CPU monitoring and VRAM without GPU monitoring (a memory-only row), and
+    VRAM alone polls only the adapter-memory counters (see run). Recording keeps its own consent gate
+    (controller.hardware_persist_allowed)."""
     collect_cpu, collect_gpu = hardware_collection_gates(config, force)
     return (collect_cpu or bool(config.get('monitor_ram_enabled', False)),
             collect_gpu or bool(config.get('monitor_vram_enabled', False)))
@@ -367,6 +367,12 @@ class StatsMonitorThread(QThread):
         # Set by update_config (GUI thread); the PDH handles are owned by run()'s thread, so the actual
         # cleanup/re-init is deferred to the loop (see update_config / run).
         self._hw_queries_dirty: bool = False
+        # Whether the GPU query should carry the \GPU Engine(*) utilization wildcard - by far its most
+        # expensive counter (one instance per process per engine). VRAM shown without GPU monitoring
+        # (2.2.1) needs only the adapter-memory counters, so run() clears this then and the query is
+        # rebuilt without it; _gpu_query_has_util records what the live query was built with.
+        self._gpu_util_wanted: bool = True
+        self._gpu_query_has_util: bool = True
 
         # PDH Query for CPU thermal zones
         self._thermal_query: Optional[int] = None
@@ -484,11 +490,14 @@ class StatsMonitorThread(QThread):
             # Deliberately NOT filtered by engtype: a large share of instances report a blank
             # engtype, and "Compute" is not a distinct value, so filtering to 3D would zero out
             # exactly the compute/CUDA workloads this is meant to surface.
-            try:
-                self._gpu_util_counter = win32pdh.AddCounter(
-                    self._gpu_query, r"\GPU Engine(*)\Utilization Percentage")
-            except Exception as e:
-                self.logger.debug("Failed to add GPU Engine wildcard counter: %s", e)
+            # Skipped for VRAM alone (2.2.1): memory needs only the adapter-memory counters below.
+            self._gpu_query_has_util = bool(self._gpu_util_wanted)
+            if self._gpu_query_has_util:
+                try:
+                    self._gpu_util_counter = win32pdh.AddCounter(
+                        self._gpu_query, r"\GPU Engine(*)\Utilization Percentage")
+                except Exception as e:
+                    self.logger.debug("Failed to add GPU Engine wildcard counter: %s", e)
 
             # 2. VRAM (\GPU Adapter Memory(*)\Dedicated Usage)
             try:
@@ -530,12 +539,17 @@ class StatsMonitorThread(QThread):
             # the query, and forgetting that this machine has a GPU would blink the Monitor's GPU
             # tiles out until the next non-idle tick.
 
-    def _poll_gpu_hybrid(self, include_temp: bool = True, include_power: bool = False) -> GpuPollResult:
+    def _poll_gpu_hybrid(self, include_temp: bool = True, include_power: bool = False,
+                         memory_only: bool = False) -> GpuPollResult:
         """
         Collects GPU stats using a hybrid approach:
         - Utilization & VRAM via Universal PDH (all vendors)
         - Temperature via LHM web server (v0.9.5+) → LHM v0.9.4/OHM WMI (all vendors) → nvidia-smi (NVIDIA)
         - Power via LHM web server → LHM/OHM WMI (all vendors) → nvidia-smi (NVIDIA) → PDH RAPL PP1 (Intel iGPU)
+
+        ``memory_only`` (VRAM shown without GPU monitoring, 2.2.1): never starts nvidia-smi - not even
+        for the total VRAM. The total is then nvidia-smi's if an earlier poll already cached it, else the
+        NVIDIA card's DXGI dedicated size (what Task Manager shows), so the readout keeps its "/12.0G".
         Returns: GpuPollResult named tuple
         """
         now_mono = time.monotonic()
@@ -733,7 +747,7 @@ class StatsMonitorThread(QThread):
         if selected is None:
             # On a hybrid the total alone is never a reason to call (owner decision 2026-11-11: zero
             # wakes at app start): DXGI's below until a temperature / power query brings nvidia-smi's.
-            need_smi_vram_total = self._nvidia_cache_vram_total is None and not hybrid
+            need_smi_vram_total = self._nvidia_cache_vram_total is None and not hybrid and not memory_only
             if self._nvidia_smi_path and (need_smi_temp or need_smi_power or need_smi_vram_total):
                 now_mono = time.monotonic()
                 if ((now_mono - self._nvidia_last_poll) >= self._nvidia_interval_now
@@ -766,7 +780,7 @@ class StatsMonitorThread(QThread):
                     temp_c = self._nvidia_cache_temp
                 if need_smi_power and power_w is None and self._nvidia_cache_power is not None:
                     power_w = self._nvidia_cache_power
-        elif smi_matches and self._nvidia_smi_path:
+        elif smi_matches and self._nvidia_smi_path and not memory_only:
             # A picked NVIDIA card: its OWN nvidia-smi line (by name), never the first line. On a
             # hybrid, only while it is awake: asleep, its cached total (if any) and DXGI's below.
             if hybrid and not (need_smi_temp or need_smi_power):
@@ -795,7 +809,8 @@ class StatsMonitorThread(QThread):
             if vram_total is None and self._nvidia_cache_vram_total is not None:
                 vram_total = self._nvidia_cache_vram_total
             elif vram_total is None and self._nvidia_smi_path:
-                # nvidia-smi has not given a total (a hybrid's asleep dGPU, or nvidia-smi failing):
+                # nvidia-smi has not given a total (a hybrid's asleep dGPU, VRAM alone
+                # with no subprocess, or nvidia-smi failing):
                 # the one NVIDIA card's DXGI dedicated size - what Task Manager shows - not N/A.
                 nvidia = [a for a in gpu_adapters.hardware_adapters(self._gpu_adapters or [])
                           if a.vendor_id == constants.gpu.VENDOR_NVIDIA]
@@ -1946,19 +1961,25 @@ class StatsMonitorThread(QThread):
                     stats['ram_used'] = mem.used / (1024**3) # GB
                     stats['ram_total'] = mem.total / (1024**3) # GB
 
-                # 3. GPU / VRAM (Optional - skipped entirely in RDP sessions). VRAM alone still needs
-                # the PDH GPU poll; temperature / power / utilization are only asked for with the GPU on.
+                # 3. GPU / VRAM (Optional - skipped entirely in RDP sessions). VRAM alone (2.2.1) polls
+                # only the PDH adapter-memory counters: no engine-utilization wildcard, no temperature /
+                # power sources, no nvidia-smi - those are only asked for with the GPU on.
                 list_gpus = _collect_gpu and not _in_rdp and bool(self.config.get(
                     'hover_list_all_gpus', constants.config.defaults.DEFAULT_HOVER_LIST_ALL_GPUS))
                 if not list_gpus:
                     stats['gpu_cards'] = ()   # GPU collection or the list switched off: clear it
                 if (_collect_gpu or _collect_vram) and not _in_rdp:
                     try:
+                        if self._gpu_query and self._gpu_query_has_util != _collect_gpu:
+                            self._cleanup_gpu_query()          # rebuilt below with / without the wildcard
+                            self._gpu_query_retry_after = 0.0
+                        self._gpu_util_wanted = _collect_gpu
                         include_temp = _collect_gpu and (
                             bool(self.config.get('show_hardware_temps', False)) or _force_hw)
                         include_power = _collect_gpu and (
                             bool(self.config.get('show_hardware_power', False)) or _force_hw)
-                        gpu = self._poll_gpu_hybrid(include_temp=include_temp, include_power=include_power)
+                        gpu = self._poll_gpu_hybrid(include_temp=include_temp, include_power=include_power,
+                                                    memory_only=not _collect_gpu)
 
                         if _collect_gpu:
                             stats['gpu'] = gpu.util

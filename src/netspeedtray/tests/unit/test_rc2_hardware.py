@@ -137,7 +137,8 @@ def test_vram_only_config_collects_vram_without_temps_or_util(thread):
     stats, gpu, _ = _one_tick(thread, {"monitor_vram_enabled": True, "show_hardware_temps": True})
     assert stats["vram_used"] == pytest.approx(2.0)
     assert "gpu" not in stats and "gpu_temp" not in stats and "ram_used" not in stats
-    gpu.assert_called_once_with(include_temp=False, include_power=False)
+    # 2.2.1: VRAM alone is a memory-only poll - no utilization wildcard, no nvidia-smi.
+    gpu.assert_called_once_with(include_temp=False, include_power=False, memory_only=True)
 
 
 def test_controller_forwards_ram_and_vram_without_cpu_or_gpu(q_app):
@@ -258,8 +259,9 @@ def test_throttle_slider_shows_fahrenheit_and_stores_celsius(page):
 def test_greyed_cards_say_why(page):
     page.load_settings({"monitor_cpu_enabled": False, "monitor_gpu_enabled": False,
                         "monitor_ram_enabled": True, "monitor_vram_enabled": True})
-    assert page._ram_card.toolTip() == EN.HARDWARE_NEEDS_CPU_TOOLTIP
-    assert page._vram_card.toolTip() == EN.HARDWARE_NEEDS_GPU_TOOLTIP
+    # 2.2.1: RAM / VRAM show without CPU / GPU monitoring, so they are never greyed.
+    assert page._ram_card.isEnabled() and page._ram_card.toolTip() == ""
+    assert page._vram_card.isEnabled() and page._vram_card.toolTip() == ""
     assert page._temps_card.toolTip().startswith(EN.RECORD_HARDWARE_HISTORY_INACTIVE_SUB)
     assert EN.SHOW_HARDWARE_TEMPS_TOOLTIP in page._temps_card.toolTip()
     assert EN.SHOW_HARDWARE_POWER_TOOLTIP in page._power_card.toolTip()
@@ -268,18 +270,25 @@ def test_greyed_cards_say_why(page):
     assert page._temps_card.toolTip() == EN.SHOW_HARDWARE_TEMPS_TOOLTIP
 
 
-@pytest.mark.parametrize("cpu, gpu, ram, vram, reason", [
-    (False, False, False, False, "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP"),   # no memory readout on
-    (True, True, False, False, "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP"),
-    (False, True, True, False, "HARDWARE_NEEDS_CPU_TOOLTIP"),              # RAM on, CPU off (L5)
-    (True, False, False, True, "HARDWARE_NEEDS_GPU_TOOLTIP"),              # VRAM on, GPU off
-    (False, False, True, True, "RECORD_HARDWARE_HISTORY_INACTIVE_SUB"),    # both hosts off
-])
-def test_memory_labels_tooltip_names_the_actual_reason(page, cpu, gpu, ram, vram, reason):
+@pytest.mark.parametrize("cpu, gpu", [(False, False), (True, True)])
+def test_memory_labels_tooltip_names_the_actual_reason(page, cpu, gpu):
+    """Greyed only while neither memory readout is on - CPU / GPU monitoring no longer matter (2.2.1)."""
     page.load_settings({"monitor_cpu_enabled": cpu, "monitor_gpu_enabled": gpu,
-                        "monitor_ram_enabled": ram, "monitor_vram_enabled": vram})
+                        "monitor_ram_enabled": False, "monitor_vram_enabled": False})
     assert not page._mem_labels_card.isEnabled()
-    assert page._mem_labels_card.toolTip() == getattr(EN, reason)
+    assert page._mem_labels_card.toolTip() == EN.SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP
+
+
+@pytest.mark.parametrize("ram, vram", [(True, False), (False, True), (True, True)])
+def test_memory_labels_and_gpu_picker_follow_ram_vram_alone(page, ram, vram):
+    page.load_settings({"monitor_cpu_enabled": False, "monitor_gpu_enabled": False,
+                        "monitor_ram_enabled": ram, "monitor_vram_enabled": vram})
+    assert page._mem_labels_card.isEnabled() and page._mem_labels_card.toolTip() == ""
+    assert page._ram_card.isEnabled() and page._vram_card.isEnabled()
+    assert page._hover_card_card.isEnabled()
+    # The GPU picker serves VRAM too (VRAM follows the pick); temps / power still need CPU or GPU.
+    assert page._gpu_adapter_card.isEnabled() is vram
+    assert not page._temps_card.isEnabled() and not page._power_card.isEnabled()
 
 
 def test_fahrenheit_throttle_floor_is_the_celsius_off_stop(page):
