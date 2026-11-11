@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from typing import Optional, Tuple
 
 from PyQt6.QtCore import Qt, QRect, pyqtSignal
@@ -383,7 +384,11 @@ class UsageFlyout(QWidget):
             name = str(g.get("name") or "GPU")
             name_lbl = self._label("", tokens.TYPE_BODY_STRONG, self._c["text_primary"])
             # Windows' text (a Han adapter name) in its own face, no font fallback list (rc.7).
-            su.set_elided_text_in_face(name_lbl, name, self._GPU_NAME_MAX_W)
+            # Two identical cards are "Name #1" / "Name #2" (gpu_adapters.numbered_display_names): only
+            # the name is elided, the number always stays visible - else both read "NVIDIA GeForce RT…".
+            number = re.search(r" #\d+$", name)
+            su.set_elided_text_in_face(name_lbl, name, self._GPU_NAME_MAX_W,
+                                       keep_suffix=number.group(0) if number else "")
             name_lbl.setAccessibleName(name)
             box.addWidget(name_lbl)
             self._hw_values[("gpus", gid, "name")] = name_lbl

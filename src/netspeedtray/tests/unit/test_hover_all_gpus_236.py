@@ -682,3 +682,44 @@ def test_rapl_power_is_not_pinned_on_a_card_it_is_not_from(thread):
     r = _poll_with_rapl(thread, 6.5)
     rtx, uhd = thread._gpu_cards(True, True)
     assert r.power is None and (rtx.power, uhd.power) == (None, None)
+
+
+# --- live test (twins, 2026-11-11): the duplicate number is never elided away ----------------------
+
+def test_two_identical_long_names_keep_their_numbers_visible(q_app, monkeypatch):
+    """Live twins scenario: both "NVIDIA GeForce RTX 4090 #1/#2" rendered "NVIDIA GeForce RTX 409…" -
+    the number was elided away. Only the name is elided now; the number always shows, same budget."""
+    from netspeedtray.views.usage_flyout import UsageFlyout
+    names = gpu_adapters.numbered_display_names(["NVIDIA GeForce RTX 4090 Laptop GPU Founders Edition"] * 2)
+    twins = (CARDS[0]._replace(luid=(0, 1), name=names[0]), CARDS[0]._replace(luid=(0, 2), name=names[1]))
+    card = UsageFlyout(EN, None, None, hardware=_snap(twins))
+    try:
+        one, two = (card._hw_values[("gpus", (0, k), "name")] for k in (1, 2))
+        assert one.text().endswith("… #1") and two.text().endswith("… #2")
+        assert one.text() != two.text()
+        assert one.sizeHint().width() <= UsageFlyout._GPU_NAME_MAX_W + 8
+        assert one.accessibleName() == names[0]
+    finally:
+        card.deleteLater()
+
+    # A Han name keeps its own face on the same path, number kept too.
+    from netspeedtray.utils import styles as su
+    monkeypatch.setattr(su, "text_face", lambda text: "Microsoft YaHei UI" if "显卡" in str(text) else None)
+    han = gpu_adapters.numbered_display_names(["显卡" * 30] * 2)
+    card = UsageFlyout(EN, None, None, hardware=_snap((CARDS[0]._replace(luid=(0, 1), name=han[0]),
+                                                       CARDS[0]._replace(luid=(0, 2), name=han[1]))))
+    try:
+        lbl = card._hw_values[("gpus", (0, 2), "name")]
+        assert lbl.text().endswith("… #2") and lbl.font().family() == "Microsoft YaHei UI"
+    finally:
+        card.deleteLater()
+
+
+def test_set_elided_text_in_face_keeps_a_suffix_only_when_it_ends_the_text(q_app):
+    from PyQt6.QtWidgets import QLabel
+    from netspeedtray.utils import styles as su
+    lbl = QLabel()
+    su.set_elided_text_in_face(lbl, "Short #1", 500, keep_suffix=" #1")
+    assert lbl.text() == "Short #1"                                  # fits: untouched
+    su.set_elided_text_in_face(lbl, "A very long adapter name " * 5, 80, keep_suffix=" #1")
+    assert lbl.text().endswith("…")                                   # suffix not at the end: plain elide
