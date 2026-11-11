@@ -80,9 +80,11 @@ ALSO
 *A release candidate, for testers. It's a manual download from the release page - the in-app
 updater, WinGet and the Store never offer prereleases.*
 
-Two fixes: the portable version's in-app update could fail to swap its folder (found by
-rehearsing a real 2.1.7 updating itself to 2.2), and the widget could flash over a fullscreen app
-or blink out on the desktop every few seconds.
+The portable version's in-app update could fail to swap its folder (found by rehearsing a real
+2.1.7 updating itself to 2.2), and the widget could flash over a fullscreen app or blink out on the
+desktop every few seconds. Also: GPU temperature on PCs with two GPUs, data usage after a normal
+quit, the mini graph on a bad sample, GPU names in support bundles, quieter logs and Turkish
+polish.
 
 ### Fixed
 
@@ -122,12 +124,99 @@ or blink out on the desktop every few seconds.
   hide or show writes a DEBUG log line with the reason, window class and process id (no titles),
   and a hold that gives up writes one INFO line naming the window class.*
 
+- **GPU temperature on PCs with two GPUs comes from the right card.** On a Ryzen with integrated
+  graphics plus a GeForce, read through LibreHardwareMonitor, the widget could show the GeForce's
+  load and power next to the integrated GPU's voltage-regulator temperature (38 °C while the
+  GeForce sat at 26 °C). Temperature and power now always come from the same card. Thanks to
+  @balciseri for the sensor dump. ([#236], [#496])
+
+  *Under the hood: the LHM 0.9.4 / OpenHardwareMonitor WMI fallback took the first `gpu`
+  temperature row and, in a separate query, the first power row, with nothing grouping them by
+  card (2.1.7 did the same, so this is not a regression). The fallback now reuses the web-server
+  path's per-card grouping (`lhm_http.gpu_groups()`). Within a card: GPU Core > Hot Spot > other
+  sensors > VR / VRM / VDDC / memory / junction / liquid / PLX - ranked last, not excluded, so an
+  APU whose only sensor is "GPU VR SoC" still shows it. Once one card has supplied a reading, WMI
+  only completes that card, nvidia-smi only fills in for an NVIDIA card and RAPL PP1 only for an
+  Intel one. Automatic's card choice, utilization (busiest engine on any adapter, #239) and VRAM
+  are unchanged. One visible side effect: AMD cards on the WMI fallback now report "GPU Package"
+  power (the whole package) instead of "GPU Core", matching what the LHM web-server path already
+  reported.*
+
+- **Data usage counts traffic while the app was closed, after a normal quit too.** The data-usage
+  counter is meant to pick up what moved while NetSpeedTray wasn't running (an update restart, a
+  quit and relaunch, or the time before sign-in after a Fast Startup shutdown). It only did after
+  a crash: every normal quit threw away the reading it recovers from. ([#509])
+
+  *Under the hood: the odometer held the controller's last-counters dict by reference, and
+  `controller.cleanup()` cleared it in place before the final persist ran, so every clean exit
+  stored `"counters": {}` and the next launch logged "nothing recovered (no snapshot)". The
+  controller now rebinds the dict and the odometer copies counters on entry. Review found a
+  second case: in auto mode with no route at launch, bytes added without counters could be
+  persisted beside the old snapshot, and a kill before the next persist would recover the same
+  window twice; such a persist now deletes the snapshot (at worst an under-count of the unsaved
+  tail, never a double count).*
+
+- **The mini graph keeps drawing through a bad sample.** One NaN sample (a regression from #488)
+  made the graph vanish, logging an error on every repaint until it scrolled out. Narrow Trend
+  graphs on a long history also cost 30-50 ms per series per sample (also #488); now 1-2 ms.
+  ([#510])
+
+  *Under the hood: the numpy-free monotone spline divided by zero on a NaN tangent; NaN now gives
+  a flat tangent (finite input stays bit-identical to the numpy version). The graph scale and
+  Detailed's 95th-percentile clip use finite samples only, and an inf point is held at the top
+  edge. Narrow Trend graphs computed the full O(n x window) smoothing; the drawn points are now
+  computed directly (bit-identical) and the auto-fit from a stride-`half // 8` lattice (at most
+  0.09% low, inside the axis's 15% headroom). Also: a Settings dialog kept alive after Cancel
+  (backup still running) could re-apply the cancelled live preview when a field lost focus; a
+  hidden dialog no longer applies anything.*
+
+- **Support bundles no longer include your GPU's model name.** The bundle's manifest promised
+  that, but the bundled settings kept the picked GPU and the logs named adapters. The bundled copy
+  now shows `<redacted-gpu>` and `<gpu-1>`, `<gpu-2>`... (your own log on disk is unchanged).
+  ([#498])
+
+- **Quieter logs.** A database that can't be written (a full disk, say) now logs one ERROR, a
+  WARNING every 10 minutes while it lasts and one INFO line when writes resume, instead of an
+  ERROR every 10 s - and, at the 200,000-row buffer cap, a warning for every sample. "All settings
+  applied successfully" (every live-preview change) moved to DEBUG, the "run LibreHardwareMonitor
+  as Administrator" hint logs once per run, and the first primary network interface line no
+  longer says "changed". ([#511])
+
+  *Under the hood: `FailureEpisode` (worker thread only) wraps `WriterV8.flush`, `_trim` and the
+  usage-counter persist. A different error mid-episode logs at ERROR once (up to 5 per episode),
+  and an exit with unsaved buffered rows logs one WARNING. Logging only - no write, retry or cap
+  behavior changed.*
+
 - A test that drew different random data on every run and could fail on a rare draw. ([#501])
 
+### Localization
+
+- Turkish: five 2.2 strings polished (thanks @lezgintekay). Two locale auto-detect tests failed on
+  Windows with a German regional format (thanks @emgeka for the report); the tests read the real
+  machine's format, the app was right. ([#364], [#448], [#507])
+
+### Developer notes
+
+- The full suite runs serially in about 13 minutes instead of 43: SQLite fsync off inside the
+  test process only (child processes, including the crash and kill tests, keep real fsync;
+  `NST_TEST_REAL_FSYNC=1` restores it), module-scoped database templates, and fewer font-probe
+  subprocesses. The kill tests no longer leave orphaned child processes. `native_desktop` and
+  `slow` markers; pytest-xdist added for local runs, CI stays serial. ([#505])
+
+[#236]: https://github.com/erez-c137/NetSpeedTray/issues/236
+[#364]: https://github.com/erez-c137/NetSpeedTray/issues/364
+[#448]: https://github.com/erez-c137/NetSpeedTray/issues/448
+[#496]: https://github.com/erez-c137/NetSpeedTray/pull/496
+[#498]: https://github.com/erez-c137/NetSpeedTray/pull/498
 [#499]: https://github.com/erez-c137/NetSpeedTray/pull/499
 [#501]: https://github.com/erez-c137/NetSpeedTray/pull/501
 [#503]: https://github.com/erez-c137/NetSpeedTray/issues/503
 [#504]: https://github.com/erez-c137/NetSpeedTray/pull/504
+[#505]: https://github.com/erez-c137/NetSpeedTray/pull/505
+[#507]: https://github.com/erez-c137/NetSpeedTray/pull/507
+[#509]: https://github.com/erez-c137/NetSpeedTray/pull/509
+[#510]: https://github.com/erez-c137/NetSpeedTray/pull/510
+[#511]: https://github.com/erez-c137/NetSpeedTray/pull/511
 
 ---
 
