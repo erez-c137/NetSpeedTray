@@ -453,14 +453,23 @@ def set_text_in_face(label, text) -> Optional[str]:
     return face
 
 
-def set_elided_text_in_face(label, text, width: int) -> Optional[str]:
+def set_elided_text_in_face(label, text, width: int, keep_suffix: str = "") -> Optional[str]:
     """``set_text_in_face`` for a fixed-width label: ``text`` elided at its right to ``width`` px,
     measured in the face it is drawn in. Call after any setStyleSheet on ``label`` (a new sheet drops
-    the face; this puts it back). Returns the face."""
+    the face; this puts it back). ``keep_suffix`` (the end of ``text``) is never elided: only the part
+    before it is, in the width left beside it - "NVIDIA GeForce RT… #2" keeps two identical cards
+    apart. Returns the face."""
     from PyQt6.QtGui import QFontMetrics
     text = str(text)
     face = apply_text_face(label, text)
-    label.setText(QFontMetrics(label.font()).elidedText(text, Qt.TextElideMode.ElideRight, int(width)))
+    fm = QFontMetrics(label.font())
+    suffix = str(keep_suffix or "")
+    if suffix and text.endswith(suffix) and len(text) > len(suffix):
+        base = text[:-len(suffix)]
+        room = max(0, int(width) - fm.horizontalAdvance(suffix))
+        label.setText(fm.elidedText(base, Qt.TextElideMode.ElideRight, room) + suffix)
+    else:
+        label.setText(fm.elidedText(text, Qt.TextElideMode.ElideRight, int(width)))
     return face
 
 
