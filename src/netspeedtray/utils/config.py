@@ -375,6 +375,7 @@ class ConfigManager:
             "color_coding_enabled": "color_coding",
             "history_duration": "history_minutes",
             "fixed_width_values": None, # Explicitly drop removed field
+            "location_onboarding_dismissed": None,  # Connected-profile SSID reads retired the explainer
             # Runtime-only state that 2.0-2.2 betas wrote into the file (C3); dropped, not preserved
             # as an "unknown key from a newer version".
             "taskbar_height": None,

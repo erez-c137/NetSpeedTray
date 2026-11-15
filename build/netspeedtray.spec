@@ -60,6 +60,12 @@ my_hidden_imports = [
     'PyQt6.QtGui',
     'PyQt6.QtWidgets',
     'psutil',
+    # PyWinRT 3.2.1 dynamically projects these types; it has no automatic hook.
+    'winrt.runtime',
+    'winrt.system',
+    'winrt.windows.foundation',
+    'winrt.windows.foundation.collections',
+    'winrt.windows.networking.connectivity',
     'win32api',
     # Imported lazily by monitor.py's single-instance check (per-user instance scan); a missing one
     # there would fall back to psutil, then assume an instance is running - keep them bundled.

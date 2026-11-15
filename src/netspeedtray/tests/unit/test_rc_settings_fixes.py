@@ -252,14 +252,14 @@ def test_sidebar_takes_focus_and_ctrl_tab_switches_pages(qtbot):
 
 def test_cancel_after_reset_all_restores_the_user_config(qtbot):
     user = dict(DEFAULTS, font_size=8, pause_in_menu=True, keep_data=90, reduce_motion=True,
-                color_coding=True, location_onboarding_dismissed=True,
+                color_coding=True, temp_onboarding_dismissed=True,
                 widgets_overlap_nudge_shown=True, monitor_active_tab="hardware")
     dlg, main = _make(qtbot, user)
     dlg.advanced_page.reset_all_btn.click()
     _flush(dlg)
     assert main.config["font_size"] == DEFAULTS["font_size"]
     # Reset all resets settings only - onboarding / nudge flags and UI state are kept.
-    for k in ("location_onboarding_dismissed", "widgets_overlap_nudge_shown", "monitor_active_tab"):
+    for k in ("temp_onboarding_dismissed", "widgets_overlap_nudge_shown", "monitor_active_tab"):
         assert dlg.config[k] == user[k], k
     dlg.cancel_button.click()
     for k in ("font_size", "pause_in_menu", "keep_data", "reduce_motion", "color_coding"):
@@ -395,7 +395,7 @@ def test_reset_all_resets_hidden_settings_and_keeps_state(qtbot):
               "dynamic_update_enabled": not DEFAULTS["dynamic_update_enabled"],
               "dark_mode": not DEFAULTS["dark_mode"], "show_legend": not DEFAULTS["show_legend"],
               "monitor_graph_smoothing": not DEFAULTS["monitor_graph_smoothing"]}
-    state = {"location_onboarding_dismissed": True, "monitor_active_tab": "hardware", "paused": True,
+    state = {"temp_onboarding_dismissed": True, "monitor_active_tab": "hardware", "paused": True,
              "history_period_chosen": True, "history_period_slider_value": 3}
     dlg, _ = _make(qtbot, dict(DEFAULTS, **hidden, **state))
     dlg.advanced_page.reset_all_btn.click()

@@ -78,9 +78,6 @@ def test_get_identity_never_raises_and_returns_dataclass():
     assert isinstance(ident, NetworkIdentity)
     # band, when present, is always one of the coarse tags.
     assert ident.band in (None, "2.4G", "5G", "6G")
-    # A blocked SSID must never leak a name (honesty: absent, not wrong).
-    if ident.ssid_blocked:
-        assert ident.name is None
 
 
 def test_non_windows_falls_back_to_wired(monkeypatch):
@@ -88,8 +85,7 @@ def test_non_windows_falls_back_to_wired(monkeypatch):
     monkeypatch.setattr(network_utils.sys, "platform", "linux")
     monkeypatch.setattr(network_utils, "get_primary_interface_name", lambda: "eth0")
     ident = get_connected_network_identity()
-    assert ident == NetworkIdentity(name="eth0", band=None, is_wireless=False,
-                                    ssid_blocked=False, connected=True)
+    assert ident == NetworkIdentity(name="eth0", band=None, is_wireless=False, connected=True)
 
 
 def test_wired_fallback_when_no_primary_interface(monkeypatch):
@@ -114,7 +110,7 @@ def test_controller_forwards_network_identity():
     controller = _controller()
     view = MagicMock()
     controller.set_view(view)
-    ident = NetworkIdentity(name=None, band="5G", is_wireless=True, ssid_blocked=True, connected=True)
+    ident = NetworkIdentity(name=None, band="5G", is_wireless=True, connected=True)
     controller.handle_stats({"network_identity": ident})
     view.update_network_identity.assert_called_once_with(ident)
 
