@@ -1,5 +1,17 @@
 # Core application dependencies for NetSpeedTray
-PyQt6
+# Compile on WINDOWS (pip-compile on Linux drops every sys_platform == "win32" pin - Dependabot does):
+#   pip-compile --upgrade --output-file=requirements.txt requirements.in
+#   pip-compile --upgrade --output-file=dev-requirements.txt dev-requirements.in
+# Held at 6.10.x: 6.11 costs ~2.5 MB idle, 6.12 widens text.
+#   6.11: +2.5 MB USS median at idle in frozen builds (Qt's font database lists 543 families vs 323,
+#         paid at first font-db population) - 2.2.1 bump, PR #519.
+#   6.12.0: DirectWrite ignores the opsz axis in glyph advances - the widget's Segoe UI Variable Text
+#         measures as Small ("888.8 Mbps" 64 px instead of 60), compact side-bar layouts drop a tier.
+# Cap PyQt6-Qt6 and PyQt6-sip too: PyQt6 alone lets the resolver pair an old PyQt6 with the newest Qt
+# binaries. sip pinned to what 2.2.0 ships.
+PyQt6>=6.10.2,<6.11
+PyQt6-Qt6>=6.10.2,<6.11
+PyQt6-sip==13.11.0
 pywin32; sys_platform == "win32"       # Windows-only (no Linux wheels; Dependabot resolves on Linux)
 psutil
 matplotlib
@@ -8,4 +20,5 @@ wmi; sys_platform == "win32"           # Windows-only (needs pywin32)
 fonttools>=4.61.0   # Explicitly added to enforce Security CVE fix
 pillow>=13.0.0      # Security: 56 Dependabot alerts (3 critical) fixed in 13.0.0
 truststore           # HTTPS verified by Windows (fetches missing roots on demand) - update checks on fresh installs
-python-bidi          # RTL (Hebrew) bidi reshaping for matplotlib graph labels (item 6)
+python-bidi          # RTL (Hebrew) bidi reshaping for matplotlib graph labels (item 6); matplotlib 3.11+ does its own (mpl_fonts.shape_rtl)
+python-dateutil<3    # via matplotlib. 3.0 (Oct 2026) rewrote dateutil.tz and pulls in tzdata, 4.0 followed 11 days later; nothing we need - revisit once settled

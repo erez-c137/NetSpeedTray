@@ -170,7 +170,7 @@ def test_peak_label_is_shaped_for_rtl_like_the_axis_labels(agg):
     """matplotlib does no bidi: a Hebrew peak label drawn in logical order reads reversed. It must go
     through the same shape_rtl() the axis labels use."""
     from netspeedtray.utils.helpers import format_decimal
-    from netspeedtray.utils.mpl_fonts import shape_rtl
+    from netspeedtray.utils.mpl_fonts import matplotlib_does_bidi, shape_rtl
     r = GraphRenderer(MagicMock(), I18nStrings("he_IL"))
     down = _month_mbps(spikes=((200, 900.0), (500, 950.0)))
     start = END - timedelta(hours=len(down))
@@ -180,5 +180,6 @@ def test_peak_label_is_shaped_for_rtl_like_the_axis_labels(agg):
     assert len(peak) == 1
     i18n = r.i18n
     logical = f"{i18n.GRAPH_PEAK_SHORT} {format_decimal(950.0, i18n, 1)} {i18n.MBITS_UNIT}"
-    assert shape_rtl(logical, "he_IL") != logical          # the guard means something
+    # The guard means something - on matplotlib < 3.11; 3.11+ does its own bidi (logical order in).
+    assert (shape_rtl(logical, "he_IL") != logical) is not matplotlib_does_bidi()
     assert peak[0].get_text() == shape_rtl(logical, "he_IL")
