@@ -72,6 +72,8 @@
     "GPU_ADAPTER_LABEL": "Getoonde GPU",
     "GPU_ADAPTER_DESCRIPTION": "Temperatuur en vermogen verschijnen alleen als hun sensor van de fabrikant van deze GPU is.",
     "GPU_ADAPTER_AUTO": "Automatisch (drukst bezet)",
+    "HOVER_LIST_ALL_GPUS_LABEL": "Alle GPU's tonen bij hoveren over de widget",
+    "GPU_ON_TASKBAR_MARKER": "op de taakbalk",
     "TEMPERATURE_UNIT_LABEL": "Temperatuureenheid",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",

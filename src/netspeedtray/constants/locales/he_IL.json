@@ -72,6 +72,8 @@
     "GPU_ADAPTER_LABEL": "GPU להצגה",
     "GPU_ADAPTER_DESCRIPTION": "טמפרטורה והספק מוצגים רק כשהחיישן שלהם שייך ליצרן של GPU זה.",
     "GPU_ADAPTER_AUTO": "אוטומטי (העמוס ביותר)",
+    "HOVER_LIST_ALL_GPUS_LABEL": "הצג את כל ה-GPU בעת ריחוף מעל היישומון",
+    "GPU_ON_TASKBAR_MARKER": "בשורת המשימות",
     "TEMPERATURE_UNIT_LABEL": "יחידת טמפרטורה",
     "TEMPERATURE_UNIT_CELSIUS": "צלזיוס (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "פרנהייט (°F)",

@@ -72,6 +72,8 @@
     "GPU_ADAPTER_LABEL": "GPU to show",
     "GPU_ADAPTER_DESCRIPTION": "Temperature and power appear only when their sensor belongs to this GPU's maker.",
     "GPU_ADAPTER_AUTO": "Automatic (busiest)",
+    "HOVER_LIST_ALL_GPUS_LABEL": "List every GPU when hovering the widget",
+    "GPU_ON_TASKBAR_MARKER": "on taskbar",
     "TEMPERATURE_UNIT_LABEL": "Temperature unit",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",

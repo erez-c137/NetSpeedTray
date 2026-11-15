@@ -80,6 +80,34 @@ def same_maker_siblings(adapters: Optional[Iterable[AdapterInfo]], adapter: Adap
     return [a for a in hardware_adapters(adapters or []) if a.vendor_id == adapter.vendor_id and a != adapter]
 
 
+_TRADEMARKS = re.compile(r"\((?:r|tm|c)\)|[®™©]", re.IGNORECASE)
+
+
+def display_name(name: object) -> str:
+    """A DXGI Description as the hover card lists it (#236): the (R)/(TM)/®/™ marks dropped and runs
+    of spaces collapsed - "AMD Radeon(TM) Graphics" -> "AMD Radeon Graphics". Display only: the picker
+    and the config keep the driver's own spelling."""
+    return " ".join(_TRADEMARKS.sub(" ", str(name or "")).split())
+
+
+def numbered_display_names(names: Iterable[object]) -> List[str]:
+    """``display_name`` of each, in order; names shared by two or more cards get " #1", " #2"... in
+    that order, so two identical RTX 4090s are told apart."""
+    shown = [display_name(n) for n in names]
+    counts: dict = {}
+    for s in shown:
+        counts[s.casefold()] = counts.get(s.casefold(), 0) + 1
+    seen: dict = {}
+    out = []
+    for s in shown:
+        key = s.casefold()
+        if counts[key] > 1:
+            seen[key] = seen.get(key, 0) + 1
+            s = f"{s} #{seen[key]}"
+        out.append(s)
+    return out
+
+
 def sensor_matches_vendor(text: object, vendor_id: int) -> bool:
     """Whether a sensor's hardware id / name / identifier names the maker ``vendor_id`` (see
     constants.gpu.VENDOR_SENSOR_TOKENS). An unknown vendor matches nothing."""

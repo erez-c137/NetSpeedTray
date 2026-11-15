@@ -54,7 +54,7 @@ from functools import lru_cache
 
 from netspeedtray import constants
 from netspeedtray.core import gpu_adapters
-from netspeedtray.core.lhm_http import LhmGpu, LhmHttpClient, LhmSensor, gpu_groups
+from netspeedtray.core.lhm_http import LhmGpu, LhmHttpClient, LhmSensor, LhmSnapshot, gpu_groups
 from netspeedtray.utils import secret_store
 from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.network_utils import get_connected_network_identity
@@ -147,6 +147,31 @@ def aggregate_gpu_engine_utilization(samples: Dict[Any, Any],
     return max(engines.values(), default=0.0)
 
 
+def per_adapter_engine_utilization(samples: Dict[Any, Any]) -> Dict[Tuple[int, int], float]:
+    """{adapter LUID: its busiest engine's utilization} from the same array, by the same rules as
+    aggregate_gpu_engine_utilization with a picked ``luid`` - each adapter's value is exactly what
+    picking it would read (the hover card's per-GPU rows, #236). Unparseable instances belong to no
+    adapter and are left out. Not clamped here."""
+    engines: Dict[Tuple[int, int, int, int], float] = {}
+    for instance, value in samples.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        value = float(value)
+        if not math.isfinite(value) or value < 0.0:
+            continue
+        match = (constants.gpu.ENGINE_INSTANCE_PATTERN.match(instance)
+                 if isinstance(instance, str) else None)
+        if not match:
+            continue
+        luid_high, luid_low, phys, eng = match.groups()
+        key = (int(luid_high, 16), int(luid_low, 16), int(phys), int(eng))
+        engines[key] = engines.get(key, 0.0) + value
+    out: Dict[Tuple[int, int], float] = {}
+    for key, value in engines.items():
+        out[key[:2]] = max(out.get(key[:2], 0.0), value)
+    return out
+
+
 def _is_nvidia_group(gpu: LhmGpu) -> bool:
     return "nvidia" in f"{gpu.hardware_id} {gpu.hardware_name}".casefold()
 
@@ -167,6 +192,21 @@ class GpuPollResult(NamedTuple):
     vram_is_shared: bool = False
     # A PDH engine instance or a hardware-scoped LHM GPU sensor proves presence.
     present: bool = False
+
+
+class GpuCard(NamedTuple):
+    """One GPU of a multi-GPU PC, as the hover card lists it (#236). Built by _gpu_cards from what
+    the poll already read - never part of GpuPollResult, never persisted. None = no reading ("—")."""
+    luid: Tuple[int, int]
+    name: str                         # display_name, numbered when two cards share one
+    integrated: bool
+    util: Optional[float] = None
+    vram_used_gib: Optional[float] = None
+    vram_total_gib: Optional[float] = None
+    vram_shared: bool = False         # an iGPU's shared system memory, not dedicated video memory
+    temp: Optional[float] = None
+    power: Optional[float] = None
+    picked: bool = False              # the GPU picked in Settings: the one the taskbar shows
 
 
 class StatsMonitorThread(QThread):
@@ -282,6 +322,14 @@ class StatsMonitorThread(QThread):
         # Same latch for LHM: once its web server has shown a hardware-scoped GPU, the GPU exists -
         # an LHM backoff window or a GPU that is asleep this tick must not flap the tiles out.
         self._lhm_gpu_seen: bool = False
+        # What the last GPU poll read, kept for _gpu_cards (the hover card's per-GPU rows, #236) so the
+        # list costs no extra PDH read and no subprocess: (util array, dedicated MiB by instance or
+        # None, shared MiB by instance, LHM snapshot, picked adapter, its temp, its power).
+        self._gpu_poll_inputs: Optional[tuple] = None
+        # The WMI sensor groups the last poll built (LHM 0.9.4 / OHM), () when WMI was not asked.
+        self._gpu_wmi_groups: Tuple[LhmGpu, ...] = ()
+        # (vendor, integrated) per listed card, last logged - the list is logged once per change.
+        self._gpu_cards_sig: Optional[tuple] = None
         # Set by update_config (GUI thread); the PDH handles are owned by run()'s thread, so the actual
         # cleanup/re-init is deferred to the loop (see update_config / run).
         self._hw_queries_dirty: bool = False
@@ -473,6 +521,7 @@ class StatsMonitorThread(QThread):
         util_arr: Optional[Dict[Any, Any]] = None
         temp_c = None
         power_w = None
+        self._gpu_wmi_groups = ()
 
         if self._gpu_query:
             try:
@@ -697,6 +746,7 @@ class StatsMonitorThread(QThread):
             rapl_matches = _is_intel_group(source_gpu)
         else:
             rapl_matches = temp_c is None   # a temperature here came from nvidia-smi: NVIDIA's
+        rapl_w = None   # the Intel iGPU's RAPL PP1 reading, when it is what power_w shows
         if include_power and power_w is None and rapl_matches:
             try:
                 self._init_power_query()
@@ -704,11 +754,14 @@ class StatsMonitorThread(QThread):
                     win32pdh.CollectQueryData(self._power_query)
                     _, val = win32pdh.GetFormattedCounterValue(self._power_pp1_counter, win32pdh.PDH_FMT_DOUBLE)
                     if val is not None and val > 0:
-                        power_w = val / 1000.0  # mW to W
+                        power_w = rapl_w = val / 1000.0  # mW to W
             except: pass
 
         # Clamp utilization to [0, 100] - a per-engine sum can momentarily read >100%.
         util_pct = max(constants.gpu.UTIL_MIN_PERCENT, min(constants.gpu.UTIL_MAX_PERCENT, util_pct))
+        # The inputs, for the hover card's per-GPU list (_gpu_cards): read once here, reused there.
+        self._gpu_poll_inputs = (util_arr, dedicated_mib if dedicated_read_ok else None, shared_mib,
+                                 lhm_snapshot, selected, temp_c, power_w, rapl_w)
         # LHM's HardwareId-scoped sensor group is independent evidence that a physical GPU
         # exists. Keeping the row visible with 0% utilization is intentional when PDH is
         # unavailable: temperature/power remain useful and are not fabricated.
@@ -769,6 +822,99 @@ class StatsMonitorThread(QThread):
         total = adapter.shared_system_bytes / mib if adapter.shared_system_bytes > 0 else None
         return sum(mine), total if total else self._half_ram_mib()
 
+    def _gpu_cards(self, include_temp: bool, include_power: bool) -> Tuple[GpuCard, ...]:
+        """Every real GPU, for the hover card's list (#236) - () unless the machine has two or more.
+
+        Built from what the last _poll_gpu_hybrid read (no PDH read, no WMI query, never nvidia-smi):
+        utilization per adapter (per_adapter_engine_utilization), its own dedicated memory - or, for an
+        integrated GPU, its shared memory against its shared budget - and its own sensor group
+        (LhmSnapshot.gpu_for: None when two cards cannot be told apart, so "—", never the other
+        card's). The picked GPU's temperature / power are exactly what the taskbar shows. nvidia-smi
+        readings are reused only from a cache that is the card's for sure (Automatic with ONE NVIDIA
+        card, or the picked card's own line) and recent. Discrete before integrated, then DXGI order:
+        a static order that never reshuffles at 1 Hz."""
+        real = gpu_adapters.hardware_adapters(self._gpu_adapters or [])
+        if len(real) < 2 or self._gpu_poll_inputs is None:
+            return ()
+        (util_arr, dedicated_mib, shared_mib, snapshot, selected, sel_temp, sel_power,
+         rapl_w) = self._gpu_poll_inputs
+        # Automatic showing RAPL PP1 as the GPU power: that IS the Intel iGPU's, so its row shows the
+        # same value as the taskbar (one source of truth) - only when exactly one Intel iGPU exists.
+        intel_igpus = [a for a in real if a.vendor_id == constants.gpu.VENDOR_INTEL
+                       and gpu_adapters.is_integrated(a)]
+        rapl_card = intel_igpus[0] if rapl_w is not None and selected is None and len(intel_igpus) == 1 else None
+        cards = sorted(real, key=gpu_adapters.is_integrated)   # stable: DXGI order within each side
+        try:
+            utils = per_adapter_engine_utilization(util_arr) if util_arr is not None else None
+        except Exception as e:
+            self.logger.debug("GPU per-adapter utilization failed: %s", e)
+            utils = None
+        groups = snapshot.gpus if snapshot is not None and snapshot.gpus else self._gpu_wmi_groups
+        sensors = LhmSnapshot(gpus=tuple(groups)) if groups else None
+        nvidia = [a for a in real if a.vendor_id == constants.gpu.VENDOR_NVIDIA]
+        now = time.monotonic()
+        fresh_window = constants.gpu.LIST_SMI_CACHE_MAX_AGE_POLLS * self._NVIDIA_POLL_INTERVAL_SEC
+        auto_smi_fresh = (selected is None and len(nvidia) == 1 and self._nvidia_last_poll > 0.0
+                          and now - self._nvidia_last_poll <= fresh_window)
+        mib = 1024.0 * 1024.0
+        out = []
+        for a, name in zip(cards, gpu_adapters.numbered_display_names(c.name for c in cards)):
+            integrated = gpu_adapters.is_integrated(a)
+            picked = selected is not None and a.luid == selected.luid
+            util = None
+            if utils is not None:
+                util = max(constants.gpu.UTIL_MIN_PERCENT,
+                           min(constants.gpu.UTIL_MAX_PERCENT, utils.get(a.luid, 0.0)))
+
+            # Memory: an iGPU's shared usage (no shared reading: "—" - its tiny dedicated carve-out
+            # would read as a misleading "VRAM 0.0 / 0.1 GB"); any other GPU's own dedicated usage.
+            used = total = None
+            shared = integrated
+            if integrated:
+                mine_shared = [v for inst, v in (shared_mib or {}).items()
+                               if gpu_adapters.pdh_instance_luid(inst) == a.luid]
+                if mine_shared:
+                    used = sum(mine_shared)
+                    total = a.shared_system_bytes / mib if a.shared_system_bytes > 0 else self._half_ram_mib()
+            elif dedicated_mib is not None:
+                mine = [v for inst, v in dedicated_mib.items() if gpu_adapters.pdh_instance_luid(inst) == a.luid]
+                if mine:
+                    used = sum(mine)
+                    smi_total = None
+                    if a.vendor_id == constants.gpu.VENDOR_NVIDIA:
+                        if picked and self._nvidia_pick_cache[0] == a.name.strip().casefold():
+                            smi_total = self._nvidia_pick_cache[1][2]
+                        elif selected is None and len(nvidia) == 1:
+                            smi_total = self._nvidia_cache_vram_total
+                    total = smi_total or (a.dedicated_video_bytes / mib if a.dedicated_video_bytes > 0 else None)
+
+            temp = power = None
+            if picked:
+                temp, power = sel_temp, sel_power
+            else:
+                group = sensors.gpu_for(a.vendor_id, a.name, integrated) if sensors is not None else None
+                if group is not None:
+                    temp, power = group.temperature, group.power
+                if a is rapl_card:
+                    power = rapl_w
+                if auto_smi_fresh and a is nvidia[0]:
+                    temp = temp if temp is not None else self._nvidia_cache_temp
+                    power = power if power is not None else self._nvidia_cache_power
+            out.append(GpuCard(
+                luid=a.luid, name=name, integrated=integrated, util=util,
+                vram_used_gib=used / 1024.0 if used is not None else None,
+                vram_total_gib=total / 1024.0 if total else None, vram_shared=shared,
+                temp=temp if include_temp else None, power=power if include_power else None,
+                picked=picked))
+
+        sig = tuple((hex(a.vendor_id), gpu_adapters.is_integrated(a)) for a in cards)
+        if sig != self._gpu_cards_sig:
+            self._gpu_cards_sig = sig
+            # Vendors and kinds only - adapter names stay out of the log (the support bundle carries it).
+            self.logger.info("Hover card GPU list: %d GPUs (%s)", len(sig), ", ".join(
+                f"{v} {'integrated' if i else 'discrete'}" for v, i in sig))
+        return tuple(out)
+
     def _wmi_gpu_group(self, adapter: Optional[gpu_adapters.AdapterInfo], same_as: Optional[LhmGpu],
                        want_temp: bool, want_power: bool) -> Optional[LhmGpu]:
         """LHM v0.9.4 / OHM WMI: the ONE GPU sensor group for ``adapter`` (or, without one, the
@@ -802,6 +948,7 @@ class StatsMonitorThread(QThread):
             self._wmi_ohm = None
             return None
         groups = gpu_groups(rows)
+        self._gpu_wmi_groups = groups
         if same_as is not None:
             card = same_as.hardware_id.casefold()
             return next((g for g in groups if g.hardware_id.casefold() == card), None)
@@ -1616,6 +1763,10 @@ class StatsMonitorThread(QThread):
 
                 # 3. GPU / VRAM (Optional - skipped entirely in RDP sessions). VRAM alone still needs
                 # the PDH GPU poll; temperature / power / utilization are only asked for with the GPU on.
+                list_gpus = _collect_gpu and not _in_rdp and bool(self.config.get(
+                    'hover_list_all_gpus', constants.config.defaults.DEFAULT_HOVER_LIST_ALL_GPUS))
+                if not list_gpus:
+                    stats['gpu_cards'] = ()   # GPU collection or the list switched off: clear it
                 if (_collect_gpu or _collect_vram) and not _in_rdp:
                     try:
                         include_temp = _collect_gpu and (
@@ -1639,6 +1790,13 @@ class StatsMonitorThread(QThread):
                         if gpu.vram_is_shared and gpu.vram_used is not None:
                             # Only set for an iGPU, so a discrete GPU's stats dict is unchanged.
                             stats['vram_is_shared'] = True
+                        # Every GPU of a multi-GPU PC, for the hover card's list (#236): built from
+                        # this poll's reads, live display only - the controller never persists it.
+                        # () = no list (one GPU). A failed poll sends no key at all, so a transient
+                        # PDH/driver error keeps the list the card already shows.
+                        if list_gpus:
+                            cards = self._gpu_cards(include_temp, include_power)
+                            stats['gpu_cards'] = cards if len(cards) >= 2 else ()
                     except Exception as gpu_err:
                         self.logger.warning("GPU polling error (skipped, not counted against circuit breaker): %s", gpu_err)
 

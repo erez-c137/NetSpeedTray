@@ -72,6 +72,8 @@
     "GPU_ADAPTER_LABEL": "Angezeigte GPU",
     "GPU_ADAPTER_DESCRIPTION": "Temperatur und Leistung erscheinen nur, wenn ihr Sensor vom Hersteller dieser GPU stammt.",
     "GPU_ADAPTER_AUTO": "Automatisch (höchste Auslastung)",
+    "HOVER_LIST_ALL_GPUS_LABEL": "Beim Überfahren des Widgets alle GPUs auflisten",
+    "GPU_ON_TASKBAR_MARKER": "in der Taskleiste",
     "TEMPERATURE_UNIT_LABEL": "Temperatureinheit",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",
