@@ -456,6 +456,35 @@ def test_offer_waits_while_blocked_then_shows_a_flyout(q_app):
     fake._show_update_dialog.assert_not_called()             # only on the user's click
 
 
+@pytest.mark.parametrize("toggle, policy", [(False, False), (True, True)])
+def test_a_waiting_offer_is_dropped_once_automatic_checks_are_off(q_app, monkeypatch, toggle, policy):
+    """2.2.1 review: an offer that waited (fullscreen, idle) was still shown after the user turned
+    automatic checks off, or IT disabled them - the same gate should_check() applies."""
+    policy_now = [False]
+    monkeypatch.setattr("netspeedtray.core.update_checker.update_check_disabled_by_policy",
+                        lambda: policy_now[0])
+    fake = _offer_fake(blocked=True)
+    with patch("netspeedtray.views.flyout.Flyout") as flyout_cls:
+        W._show_pending_update_offer(fake)                    # blocked: kept for the retry
+        assert fake._pending_update_offer is not None
+        fake.config["check_for_updates"] = toggle
+        policy_now[0] = policy
+        fake._update_offer_blocked.return_value = False
+        W._show_pending_update_offer(fake)                    # the retry, checks now off
+        flyout_cls.assert_not_called()
+    assert fake._pending_update_offer is None
+    assert fake._update_offer_retry_timer.start.call_count == 1   # no further retries
+
+
+def test_a_waiting_offer_still_shows_while_checks_stay_on(q_app, monkeypatch):
+    monkeypatch.setattr("netspeedtray.core.update_checker.update_check_disabled_by_policy", lambda: False)
+    fake = _offer_fake()
+    fake.config["check_for_updates"] = True
+    with patch("netspeedtray.views.flyout.Flyout") as flyout_cls:
+        W._show_pending_update_offer(fake)
+        flyout_cls.return_value.show_at.assert_called_once()
+
+
 def test_flyout_click_opens_the_dialog_deferred(q_app, monkeypatch):
     fake = _offer_fake()
     deferred = []

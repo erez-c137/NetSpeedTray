@@ -3066,6 +3066,13 @@ class NetworkSpeedWidget(QWidget):
             self._pending_update_offer = None
             return
         try:
+            # The offer may have waited (fullscreen, idle) past the user turning automatic checks
+            # off, or IT pushing the policy: then it is dropped, not shown. The checker's own gate.
+            from netspeedtray.core.update_checker import automatic_update_checks_allowed
+            if not automatic_update_checks_allowed(getattr(self, "config", None) or {}):
+                self._pending_update_offer = None
+                self.logger.info("Update %s not offered: automatic update checks are now off.", offer[0])
+                return
             if self._update_offer_blocked():
                 timer = getattr(self, "_update_offer_retry_timer", None)
                 if timer is not None:
