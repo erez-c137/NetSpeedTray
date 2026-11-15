@@ -228,6 +228,20 @@ def test_record_toggle_follows_the_hardware_page_live(dialog):
     assert adv.record_hardware.isEnabled() is True
 
 
+def test_vram_alone_on_the_hardware_page_keeps_the_record_toggle_grey(dialog):
+    # VRAM is never recorded (controller: "No VRAM history"), so switching it on live must not make
+    # the card look like it records something; RAM is recorded on its own switch (2.2.1 review).
+    adv, hw = dialog.advanced_page, dialog.hardware_page
+    hw.monitor_cpu.setChecked(False)
+    hw.monitor_gpu.setChecked(False)
+    hw.monitor_vram.setChecked(True)
+    assert adv.record_hardware.isEnabled() is False
+    dialog._sync_record_card()                     # any other re-sync (page built, reset) agrees
+    assert adv.record_hardware.isEnabled() is False
+    hw.monitor_ram.setChecked(True)
+    assert adv.record_hardware.isEnabled() is True
+
+
 def test_delete_refused_up_front_when_the_worker_cannot_answer(dialog, monkeypatch):
     shown = []
     monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: shown.append(a[2]))
