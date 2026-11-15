@@ -59,6 +59,11 @@ class LhmConstants:
     # skipped for this long - so an absent LHM costs one short attempt per window, and an LHM
     # started later is still picked up.
     FAILURE_BACKOFF_SEC: Final[float] = 30.0
+    # The same for the LHM v0.9.4 / OpenHardwareMonitor WMI probe (2.2.1): after a probe in which no
+    # namespace connected, it is not repeated for this long. It runs only while a temperature / power
+    # reading is still missing - every poll, up to three times a poll (CPU temperature, CPU power,
+    # GPU), on every NVIDIA desktop without LHM - and each probe is two COM GetObject calls.
+    WMI_PROBE_BACKOFF_SEC: Final[float] = 30.0
     # The "Turn on temperatures" notice (lhm_not_detected) waits this long after the first poll that
     # wanted a temperature / power reading, to give LHM time to be detected. Time, not a poll count:
     # "5 polls" was 4 s at the 1 s rate but 2 s at 0.5 s (#456). 4 s keeps the 1 s behavior (the
@@ -87,6 +92,8 @@ class LhmConstants:
             raise ValueError("CACHE_SEC must be positive and under one poll interval.")
         if self.FAILURE_BACKOFF_SEC <= 0:
             raise ValueError("FAILURE_BACKOFF_SEC must be positive.")
+        if self.WMI_PROBE_BACKOFF_SEC <= 0:
+            raise ValueError("WMI_PROBE_BACKOFF_SEC must be positive.")
         if self.NOT_DETECTED_GRACE_SEC <= 0:
             raise ValueError("NOT_DETECTED_GRACE_SEC must be positive.")
 

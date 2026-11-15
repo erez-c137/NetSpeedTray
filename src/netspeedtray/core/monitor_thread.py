@@ -83,6 +83,47 @@ def memory_collection_gates(config: Dict[str, Any], force: bool) -> Tuple[bool, 
             collect_gpu or bool(config.get('monitor_vram_enabled', False)))
 
 
+class GpuEngineUtilization(NamedTuple):
+    """One `\\GPU Engine(*)\\Utilization Percentage` array, parsed ONCE per poll (2.2.1): the taskbar
+    readout, the hover card's per-GPU rows and the Optimus gate all read it. Parsing it for each of
+    them cost ~6 ms a pass on a big array (hundreds of processes x engines), three times a poll on a
+    hybrid laptop - doubled at the 0.5 s rate. Built by parse_gpu_engine_utilization; the rules are
+    aggregate_gpu_engine_utilization's."""
+    per_adapter: Dict[Tuple[int, int], float]   # adapter LUID -> its busiest engine (processes summed)
+    unparsed: Tuple[float, ...]                 # instances no engine can be read from: one engine each
+
+    def busiest(self, luid: Optional[Tuple[int, int]] = None) -> float:
+        """The busiest engine on any adapter (unparsed instances included), or on ``luid`` only."""
+        if luid is not None:
+            return self.per_adapter.get(tuple(luid), 0.0)
+        return max(max(self.per_adapter.values(), default=0.0), max(self.unparsed, default=0.0))
+
+
+def parse_gpu_engine_utilization(samples: Dict[Any, Any]) -> GpuEngineUtilization:
+    """Parse a `\\GPU Engine(*)\\Utilization Percentage` array once - see
+    aggregate_gpu_engine_utilization for the rules."""
+    engines: Dict[Tuple[int, int, int, int], float] = {}
+    unparsed: List[float] = []
+    match_instance = constants.gpu.ENGINE_INSTANCE_PATTERN.match
+    for instance, value in samples.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        value = float(value)
+        if not math.isfinite(value) or value < 0.0:
+            continue
+        match = match_instance(instance) if isinstance(instance, str) else None
+        if not match:
+            unparsed.append(0.0 + value)   # as the per-engine sum would hold it (-0.0 -> 0.0)
+            continue
+        luid_high, luid_low, phys, eng = match.groups()
+        key = (int(luid_high, 16), int(luid_low, 16), int(phys), int(eng))
+        engines[key] = engines.get(key, 0.0) + value
+    per_adapter: Dict[Tuple[int, int], float] = {}
+    for key, value in engines.items():
+        per_adapter[key[:2]] = max(per_adapter.get(key[:2], 0.0), value)
+    return GpuEngineUtilization(per_adapter, tuple(unparsed))
+
+
 def aggregate_gpu_engine_utilization(samples: Dict[Any, Any],
                                      luid: Optional[Tuple[int, int]] = None) -> float:
     """Busiest-engine GPU utilization from a `\\GPU Engine(*)\\Utilization Percentage` array.
@@ -101,52 +142,18 @@ def aggregate_gpu_engine_utilization(samples: Dict[Any, Any],
 
     ``luid`` (the GPU picker, #236): only that adapter's engines count, and unparseable instances -
     which cannot be attributed to any adapter - are dropped. None (Automatic) is the readout above.
+
+    One-shot form; a poll parses its array once (parse_gpu_engine_utilization) and reads that.
     """
-    engines: Dict[Any, float] = {}
-    for instance, value in samples.items():
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            continue
-        value = float(value)
-        if not math.isfinite(value) or value < 0.0:
-            continue
-        match = (constants.gpu.ENGINE_INSTANCE_PATTERN.match(instance)
-                 if isinstance(instance, str) else None)
-        if match:
-            luid_high, luid_low, phys, eng = match.groups()
-            key: Any = (int(luid_high, 16), int(luid_low, 16), int(phys), int(eng))
-            if luid is not None and key[:2] != tuple(luid):
-                continue
-        elif luid is not None:
-            continue
-        else:
-            key = ("unparsed", instance)
-        engines[key] = engines.get(key, 0.0) + value
-    return max(engines.values(), default=0.0)
+    return parse_gpu_engine_utilization(samples).busiest(luid)
 
 
 def per_adapter_engine_utilization(samples: Dict[Any, Any]) -> Dict[Tuple[int, int], float]:
     """{adapter LUID: its busiest engine's utilization} from the same array, by the same rules as
     aggregate_gpu_engine_utilization with a picked ``luid`` - each adapter's value is exactly what
     picking it would read (the hover card's per-GPU rows, #236). Unparseable instances belong to no
-    adapter and are left out. Not clamped here."""
-    engines: Dict[Tuple[int, int, int, int], float] = {}
-    for instance, value in samples.items():
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            continue
-        value = float(value)
-        if not math.isfinite(value) or value < 0.0:
-            continue
-        match = (constants.gpu.ENGINE_INSTANCE_PATTERN.match(instance)
-                 if isinstance(instance, str) else None)
-        if not match:
-            continue
-        luid_high, luid_low, phys, eng = match.groups()
-        key = (int(luid_high, 16), int(luid_low, 16), int(phys), int(eng))
-        engines[key] = engines.get(key, 0.0) + value
-    out: Dict[Tuple[int, int], float] = {}
-    for key, value in engines.items():
-        out[key[:2]] = max(out.get(key[:2], 0.0), value)
-    return out
+    adapter and are left out. Not clamped here. One-shot form, like aggregate_gpu_engine_utilization."""
+    return dict(parse_gpu_engine_utilization(samples).per_adapter)
 
 
 def _smi_number(parts: List[str], index: int, lo: float, hi: float) -> Optional[float]:
@@ -236,6 +243,8 @@ class StatsMonitorThread(QThread):
         # LibreHardwareMonitor / OpenHardwareMonitor WMI object.
         # None = not yet tried, False = tried and unavailable, object = connected.
         self._wmi_ohm: Any = None
+        # Monotonic time before which a failed LHM/OHM WMI probe is not repeated (0.0 = probe now).
+        self._ohm_retry_at: float = 0.0
         # One INFO line when a WMI connection that was working is dropped mid-session, one when it is
         # back (rate-limited if it flaps) - see SourceOutage.
         self._ohm_outage = SourceOutage(self.logger, "the LibreHardwareMonitor/OpenHardwareMonitor WMI source")
@@ -622,10 +631,13 @@ class StatsMonitorThread(QThread):
         # 2c. A GPU that came or went since the DXGI list was read (G4), then the picked one (#236).
         self._refresh_adapters_on_luid_change(set(dedicated_mib) | set(shared_mib))
         selected = self._selected_gpu_adapter()
+        # Parsed once: the readout here, the Optimus gate below and the hover list (_gpu_cards) all
+        # read this one structure (None = no array, or it could not be parsed).
+        engine_util: Optional[GpuEngineUtilization] = None
         if util_arr is not None:
             try:
-                util_pct = aggregate_gpu_engine_utilization(
-                    util_arr, selected.luid if selected is not None else None)
+                engine_util = parse_gpu_engine_utilization(util_arr)
+                util_pct = engine_util.busiest(selected.luid if selected is not None else None)
             except Exception as e:
                 self.logger.debug("GPU utilization aggregation failed: %s", e)
         if selected is not None and dedicated_read_ok:
@@ -719,10 +731,15 @@ class StatsMonitorThread(QThread):
                     self.logger.info("GPU utilization unavailable; nvidia-smi is polled without the "
                                      "sleep check on this hybrid PC (every %d s on battery).",
                                      int(constants.gpu.HYBRID_BLIND_BATTERY_POLL_SEC))
-            else:
+            elif include_temp or include_power:
                 nvidia_luids = [a.luid for a in gpu_adapters.hardware_adapters(self._gpu_adapters or [])
                                 if a.vendor_id == constants.gpu.VENDOR_NVIDIA] if selected is None else [selected.luid]
-                gate_open, may_query = self._nvidia_awake(util_arr, nvidia_luids, window_start)
+                gate_open, may_query = self._nvidia_awake(
+                    engine_util.per_adapter if engine_util is not None else {}, nvidia_luids, window_start)
+            # else: GPU temperature and power both off - nvidia-smi cannot be asked this poll (the total
+            # is never a reason on a hybrid), so the gate is not judged (2.2.1). Nothing else reads it
+            # then: the hover list drops temperature / power with the same switches, the LHM notice
+            # needs one of them on, and the next poll that wants them judges its own sample first.
             if not gate_open:
                 need_smi_temp = need_smi_power = False
                 # Asleep: no reading is kept for later - not on the taskbar, not in the hover list.
@@ -850,7 +867,7 @@ class StatsMonitorThread(QThread):
         # Clamp utilization to [0, 100] - a per-engine sum can momentarily read >100%.
         util_pct = max(constants.gpu.UTIL_MIN_PERCENT, min(constants.gpu.UTIL_MAX_PERCENT, util_pct))
         # The inputs, for the hover card's per-GPU list (_gpu_cards): read once here, reused there.
-        self._gpu_poll_inputs = (util_arr, dedicated_mib if dedicated_read_ok else None, shared_mib,
+        self._gpu_poll_inputs = (engine_util, dedicated_mib if dedicated_read_ok else None, shared_mib,
                                  lhm_snapshot, selected, temp_c, power_w, rapl_w)
         # LHM's HardwareId-scoped sensor group is independent evidence that a physical GPU
         # exists. Keeping the row visible with 0% utilization is intentional when PDH is
@@ -947,7 +964,7 @@ class StatsMonitorThread(QThread):
         real = gpu_adapters.hardware_adapters(self._gpu_adapters or [])
         if len(real) < 2 or self._gpu_poll_inputs is None:
             return ()
-        (util_arr, dedicated_mib, shared_mib, snapshot, selected, sel_temp, sel_power,
+        (engine_util, dedicated_mib, shared_mib, snapshot, selected, sel_temp, sel_power,
          rapl_w) = self._gpu_poll_inputs
         # Automatic showing RAPL PP1 as the GPU power: that IS the Intel iGPU's, so its row shows the
         # same value as the taskbar (one source of truth) - only when exactly one Intel iGPU exists.
@@ -955,11 +972,7 @@ class StatsMonitorThread(QThread):
                        and gpu_adapters.is_integrated(a)]
         rapl_card = intel_igpus[0] if rapl_w is not None and selected is None and len(intel_igpus) == 1 else None
         cards = sorted(real, key=gpu_adapters.is_integrated)   # stable: DXGI order within each side
-        try:
-            utils = per_adapter_engine_utilization(util_arr) if util_arr is not None else None
-        except Exception as e:
-            self.logger.debug("GPU per-adapter utilization failed: %s", e)
-            utils = None
+        utils = engine_util.per_adapter if engine_util is not None else None   # the poll's parse
         groups = snapshot.gpus if snapshot is not None and snapshot.gpus else self._gpu_wmi_groups
         sensors = LhmSnapshot(gpus=tuple(groups)) if groups else None
         nvidia = [a for a in real if a.vendor_id == constants.gpu.VENDOR_NVIDIA]
@@ -1206,10 +1219,10 @@ class StatsMonitorThread(QThread):
         except Exception:
             return False
 
-    def _nvidia_awake(self, util_arr: Dict[Any, Any], luids: List[Tuple[int, int]],
+    def _nvidia_awake(self, utils: Dict[Tuple[int, int], float], luids: List[Tuple[int, int]],
                       window_start: Optional[float]) -> Tuple[bool, bool]:
         """(awake, may_query) for a hybrid's NVIDIA dGPU, from this tick's PDH engine utilization
-        (PDH never wakes a GPU).
+        (PDH never wakes a GPU) - ``utils`` is the poll's parsed per-adapter busiest engine.
 
         A utilization sample covers (window_start, its collection]. A sample whose window holds our
         last nvidia-smi call is ambiguous - if querying a sleeping dGPU registers as engine activity,
@@ -1225,11 +1238,6 @@ class StatsMonitorThread(QThread):
         ran = self._nvidia_smi_ran_at
         clean = ran is None or (window_start is not None and window_start > ran)
         self._gpu_window_sec = now - window_start if window_start is not None else 0.0
-        try:
-            utils = per_adapter_engine_utilization(util_arr) if util_arr else {}
-        except Exception as e:
-            self.logger.debug("GPU per-adapter utilization failed: %s", e)
-            utils = {}
         if clean and any(utils.get(luid, 0.0) > g.HYBRID_DGPU_AWAKE_MIN_UTIL_PERCENT for luid in luids):
             self._nvidia_active_at = now
         hold = max(g.HYBRID_DGPU_AWAKE_HOLD_SEC, g.HYBRID_DGPU_AWAKE_HOLD_WINDOWS * self._gpu_window_sec)
@@ -1620,14 +1628,21 @@ class StatsMonitorThread(QThread):
         and caches the WMI connection in self._wmi_ohm.
         _wmi_ohm == None  → not yet probed (or previous probe failed - will retry)
         _wmi_ohm == <obj> → connected and ready
-        Failures are NOT permanently cached so the probe retries each poll cycle,
-        allowing the app to pick up LHM/OHM if it starts after NetSpeedTray.
+        Failures are NOT permanently cached, so the app picks up LHM/OHM if it starts after
+        NetSpeedTray - but a failed probe is not repeated for constants.lhm.WMI_PROBE_BACKOFF_SEC
+        (2.2.1): it used to run on every poll, up to three times a poll, wherever no namespace exists.
+        A settings change (run) probes again at once.
         """
         if self._wmi_ohm is not None:
+            return
+        now = time.monotonic()
+        if now < self._ohm_retry_at:
             return
         com_client = _com_client()
         if com_client is None:
             return
+        # Stamped before the probe: any way out of it short of connecting waits the full backoff.
+        self._ohm_retry_at = now + constants.lhm.WMI_PROBE_BACKOFF_SEC
         # Probe every namespace BEFORE deciding on any user-facing guidance: a working
         # fallback (e.g. a live root\OpenHardwareMonitor) must not trigger a misleading
         # "install LHM v0.9.4" note just because the LHM namespace happens to be absent
@@ -1649,6 +1664,7 @@ class StatsMonitorThread(QThread):
                     self.logger.debug("Hardware monitor: %s exists but exposes 0 sensors.", ns)
                     continue
                 self._wmi_ohm = obj
+                self._ohm_retry_at = 0.0   # a connection lost later is re-probed at once
                 # The first connection is INFO; a reconnect after a lost one is SourceOutage's
                 # "is back" line, and a re-probe after a settings change is DEBUG.
                 level = logging.INFO if self._ohm_outage.succeeded() else logging.DEBUG
@@ -1686,7 +1702,7 @@ class StatsMonitorThread(QThread):
                     "Options > Remote Web Server (port %d).", "; ".join(probe_errors),
                     self._lhm_http.host, self._lhm_http.port, self._lhm_http.port
                 )
-        # Leave _wmi_ohm as None so we retry next poll (LHM may not be running yet)
+        # Leave _wmi_ohm as None so we retry after the backoff (LHM may not be running yet)
 
     def _poll_cpu_temperature(self) -> Optional[float]:
         """
@@ -1937,6 +1953,7 @@ class StatsMonitorThread(QThread):
                     self._cleanup_thermal_query()
                     self._cleanup_power_query()
                     self._wmi_ohm = None   # re-probe LHM/OHM on the next temp poll
+                    self._ohm_retry_at = 0.0   # now, not after a failed probe's backoff
 
                 stats = {}
 
