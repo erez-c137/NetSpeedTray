@@ -43,28 +43,48 @@ Also on the [**Microsoft Store**](https://apps.microsoft.com/detail/XP9MHWQZJPLQ
 
 ## See it in action
 
-The widget lives on your taskbar - at its simplest, just your up &amp; down speeds:
+The widget lives on your taskbar, next to the clock - live speeds and a mini-graph, at work:
 
 <div align="center">
-  <img src="screenshots/widget_network_2.0.png" alt="NetSpeedTray widget - up and download speeds" />
+  <img src="screenshots/widget_hero_2.2.gif" alt="NetSpeedTray widget on the Windows taskbar, next to the clock - live upload and download speeds, the mini graph in Trend and Detailed styles, CPU and GPU stats, everything at once, split graphs, a light taskbar, and the compact layout on a side taskbar" width="626" />
 </div>
 
 <details>
-  <summary>&nbsp;&nbsp;<b>➕ Show more on the taskbar</b> - mini-graph, CPU/GPU/RAM, temps &amp; power</summary>
+  <summary>&nbsp;&nbsp;<b>➕ Choose what it shows</b> - just speeds, a mini-graph, CPU/GPU/RAM, temps &amp; power</summary>
   <br/>
   <div align="center">
   <table>
     <tr>
-      <td align="right"><img src="screenshots/widget_minigraph_2.0.png" alt="Widget - with a live mini-graph" /></td>
-      <td align="left">&nbsp;&nbsp;+ a live mini-graph</td>
+      <td align="right"><img src="screenshots/widget_network_2.2.png" alt="Widget - up and download speeds only" width="93" /></td>
+      <td align="left">&nbsp;&nbsp;at its simplest, just your up &amp; down speeds</td>
     </tr>
     <tr>
-      <td align="right"><img src="screenshots/widget_hardware_2.0.png" alt="Widget - with CPU/GPU/RAM stats" /></td>
-      <td align="left">&nbsp;&nbsp;+ CPU / GPU / RAM, temps</td>
+      <td align="right"><img src="screenshots/widget_minigraph_trend_2.2.png" alt="Widget - mini graph in the Trend style" width="101" />&nbsp;<img src="screenshots/widget_minigraph_detailed_2.2.png" alt="Widget - mini graph in the Detailed style" width="101" /></td>
+      <td align="left">&nbsp;&nbsp;+ a live mini-graph - Trend (default) or Detailed</td>
     </tr>
     <tr>
-      <td align="right"><img src="screenshots/widget_full_2.0.png" alt="Widget - everything at once" /></td>
-      <td align="left">&nbsp;&nbsp;everything at once</td>
+      <td align="right"><img src="screenshots/widget_hardware_2.2.png" alt="Widget - with CPU, GPU and RAM stats" width="245" /></td>
+      <td align="left">&nbsp;&nbsp;+ CPU &amp; GPU, in brand colors</td>
+    </tr>
+    <tr>
+      <td align="right"><img src="screenshots/widget_full_2.2.png" alt="Widget - everything at once, with temperatures, power, RAM and VRAM" width="334" /></td>
+      <td align="left">&nbsp;&nbsp;everything at once - temps &amp; power too</td>
+    </tr>
+    <tr>
+      <td align="right"><img src="screenshots/widget_full_light_2.2.png" alt="Widget - everything at once, on a light taskbar" width="334" /></td>
+      <td align="left">&nbsp;&nbsp;on a light taskbar</td>
+    </tr>
+    <tr>
+      <td align="right"><img src="screenshots/widget_split_graphs_2.2.png" alt="Widget - separate upload and download graphs" width="188" /></td>
+      <td align="left">&nbsp;&nbsp;split graphs - upload and download, each on its own scale</td>
+    </tr>
+    <tr>
+      <td align="right"><img src="screenshots/widget_full_small32_2.2.png" alt="Widget - everything at once, on a 32 px Small taskbar" width="331" /></td>
+      <td align="left">&nbsp;&nbsp;on a Small (32 px) taskbar</td>
+    </tr>
+    <tr>
+      <td align="right"><img src="screenshots/widget_side_compact48_2.2.png" alt="Widget - compact layout on a side taskbar" width="48" /></td>
+      <td align="left">&nbsp;&nbsp;on a side taskbar - compact, details on hover</td>
     </tr>
   </table>
   </div>
