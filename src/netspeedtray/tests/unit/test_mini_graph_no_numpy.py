@@ -286,6 +286,21 @@ def test_trend_sampled_auto_fit_finds_the_max_between_drawn_points(kind):
         assert abs(got - want) <= 0.005 * want, (n, (got - want) / want)
 
 
+@pytest.mark.parametrize("n,graph_w,pos", [(7200, 16, 6975), (7200, 16, 3600), (1800, 56, 900),
+                                           (5000, 116, 4990), (600, 200, 300)])
+def test_trend_auto_fit_never_lands_below_a_drawn_point(n, graph_w, pos):
+    """2.2.1: on a narrow graph the drawn points are exact but the fit came from the lattice path, so a
+    lone spike near "now" (n = 7,200 on a 16 px graph) drew a point 7e-6 above the fitted max. Every
+    path now puts its drawn values (all but the newest TREND_EDGE_WINDOW // 2, read as their mean) into
+    the fit, so the axis is never sized below the line."""
+    stride = max(1, n // (2 * graph_w))
+    y = [2e5] * n
+    y[pos] = 1e7
+    idx, drawn, scale = trend_smooth_sampled(y, trend_window(n), stride)
+    newest = n - R.TREND_EDGE_WINDOW // 2
+    assert max(scale) >= max(v for i, v in zip(idx, drawn) if i < newest)
+
+
 def _auto_fit_error(y, stride):
     window = trend_window(len(y))
     want = max(trend_scale_values(trend_smooth(y, window)))

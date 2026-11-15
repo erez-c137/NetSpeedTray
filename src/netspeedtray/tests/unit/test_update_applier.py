@@ -546,6 +546,30 @@ def test_a_staged_copy_damaged_after_staging_is_refused_and_the_app_restarted(
     assert told.offered == [False]
 
 
+def test_explorer_metadata_in_the_staged_copy_passes_its_file_check(tmp_path, frozen_with_manifest):
+    """2.2.1: opening the staged folder in Explorer can drop a desktop.ini / Thumbs.db into it. The
+    install-folder check already tolerates exactly those; the staged-files check must too, or the
+    update is refused for a file Explorer wrote."""
+    staged = _make_staged(tmp_path)
+    frozen_with_manifest(staged)
+    (staged / "desktop.ini").write_text("[.ShellClassInfo]", encoding="utf-8")
+    (staged / "Thumbs.db").write_bytes(b"thumbs")
+    assert ua._staged_files_refusal(str(staged)) is None
+
+
+@pytest.mark.parametrize("extra", ["version.dll", "notes.txt", "_internal/desktop.ini"])
+def test_any_other_extra_file_in_the_staged_copy_is_still_refused(tmp_path, frozen_with_manifest,
+                                                                   extra):
+    """Only Explorer's own two names, and only at the top level - the same rule as the install
+    folder. A planted DLL, any unknown file, or a desktop.ini inside _internal is still refused."""
+    staged = _make_staged(tmp_path)
+    frozen_with_manifest(staged)
+    (staged / "desktop.ini").write_text("[.ShellClassInfo]", encoding="utf-8")
+    (staged / extra).write_bytes(b"x")
+    reason = ua._staged_files_refusal(str(staged))
+    assert reason and "unexpected" in reason
+
+
 def test_a_file_check_refusal_records_the_refused_version(tmp_path, restart_spy, frozen_with_manifest):
     """2.2.1 review: the restarted (old) app re-offered the refused release the next day - a copy
     that fails the same way each time looped daily. The refusal now names the staged version, which

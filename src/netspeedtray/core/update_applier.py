@@ -995,7 +995,11 @@ def _staged_files_refusal(staged_dir: str) -> Optional[str]:
         return None
     try:
         from netspeedtray.utils.bundle_manifest import verify_app_folder
-        verify_app_folder(staged_dir, os.path.join(staged_dir, APP_EXE))
+        # Explorer's folder metadata is tolerated here exactly as in the install-folder check: a
+        # desktop.ini or Thumbs.db appears as soon as someone opens the staged folder in Explorer.
+        # Any other extra file is still a refusal.
+        verify_app_folder(staged_dir, os.path.join(staged_dir, APP_EXE),
+                          tolerated_top_level=_EXPLORER_METADATA)
         return None
     except Exception as e:
         return "the staged copy failed its file check: %s" % (str(e) or e.__class__.__name__)
