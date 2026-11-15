@@ -260,7 +260,7 @@ class StatsMonitorThread(QThread):
         self._thermal_moved: set = set()
         self._thermal_placeholder_logged: set = set()
         self._lhm_notice_emitted: bool = False  # One-time notification flag
-        self._lhm_check_polls: int = 0  # Count polls before emitting notice
+        self._lhm_check_since: Optional[float] = None  # monotonic ts of the first poll that wanted a sensor
         self._last_identity_poll: float = 0.0  # monotonic ts of the last network-identity sub-poll (0 = poll immediately)
         self._last_link_stats_poll: float = 0.0  # monotonic ts of the last net_if_stats sub-poll (v8 link history)
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
@@ -1887,9 +1887,11 @@ class StatsMonitorThread(QThread):
         user_cpu, user_gpu = hardware_collection_gates(self.config, False)
         if not (user_cpu or (user_gpu and not in_rdp)):
             return
-        self._lhm_check_polls += 1
-        # Wait 5 polls (~5s) to give LHM time to be detected
-        if self._lhm_check_polls >= 5:
+        # Give LHM time to be detected - by the clock, so the 0.5 s rate does not halve it (#456).
+        now = time.monotonic()
+        if self._lhm_check_since is None:
+            self._lhm_check_since = now
+        if now - self._lhm_check_since >= constants.lhm.NOT_DETECTED_GRACE_SEC:
             has_any_reading = any(stats.get(k) is not None for k in _SENSOR_STAT_KEYS)
             # A hybrid's sleeping dGPU (2.2.1 Optimus gate): nvidia-smi is a known source, just not
             # asked while the dGPU sleeps - not "no sensor". Re-checked on later polls.

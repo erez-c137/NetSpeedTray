@@ -399,11 +399,12 @@ def test_the_list_follows_the_taskbar_at_startup_and_after_the_gate_closes(q_app
 
 # --- review of #500: the "turn on temperatures" notice ------------------------------------------
 
-def _notice(t, stats, polls=6):
+def _notice(t, clock, stats, polls=6):
     t.config = dict(t.config, show_hardware_temps=True, monitor_gpu_enabled=True)
     t.lhm_not_detected = MagicMock()
-    for _ in range(polls):
+    for _ in range(polls):                # 1 s apart: the notice's grace is by the clock
         t._update_lhm_notice(stats, False)
+        clock.t += 1.0
     return t.lhm_not_detected.emit.call_count
 
 
@@ -412,7 +413,7 @@ def test_a_sleeping_hybrid_dgpu_is_not_no_sensor(q_app, monkeypatch, clock):
     for _ in range(6):
         r = _tick(t, clock, IGPU_BUSY)
     assert r.temp is None
-    assert _notice(t, {"gpu_temp": None}) == 0
+    assert _notice(t, clock, {"gpu_temp": None}) == 0
 
 
 def test_a_hybrid_whose_nvidia_smi_fails_still_gets_the_notice(q_app, monkeypatch, clock):
@@ -420,7 +421,7 @@ def test_a_hybrid_whose_nvidia_smi_fails_still_gets_the_notice(q_app, monkeypatc
     t._run_child.side_effect = subprocess.CalledProcessError(9, "nvidia-smi")
     for util in [DGPU_BUSY] * 2 + [IGPU_BUSY] * 30:   # it failed when the dGPU was awake
         _tick(t, clock, util)
-    assert _notice(t, {"gpu_temp": None}) == 1
+    assert _notice(t, clock, {"gpu_temp": None}) == 1
 
 
 # --- pre-existing: "[N/A]" from nvidia-smi clears the reading -----------------------------------
