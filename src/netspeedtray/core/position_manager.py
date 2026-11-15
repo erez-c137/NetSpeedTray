@@ -623,16 +623,22 @@ class PositionCalculator:
         # its native origin in Qt (taskbar_utils.physical_to_logical), so its rects convert around it.
         x_origin = 0.0 if tray_rect else float(full_geom.left())
         step_boundary = None
+        beside_toolbars = False
         if tray_rect:
             # Normal taskbar: hug the tray's left edge, but floor the gap so the widget never abuts
             # the show-hidden-icons "^" chevron and steals its clicks (#161 pt1).
             right_boundary = round(tray_rect[0] / dpi_scale)
             offset = max(offset, constants.layout.TRAY_EDGE_MIN_GAP_PX)
             # Classic toolbars (Desktop / Links, Win10) between the apps and the tray: hug their left
-            # edge instead of drawing over them (#324, best-effort). Always None on Win11.
+            # edge instead of drawing over them (#324, best-effort). Always None on Win11. The DEFAULT
+            # spot only: a drag's tray_offset_x is measured from the tray (input_handler), so it keeps
+            # the tray as its boundary - measured from the toolbars it put the widget a whole toolbar
+            # width left of where it was dropped.
             toolbars = taskbar_utils.valid_rect(getattr(taskbar_info, "toolbars_rect", None))
-            if toolbars is not None and toolbars[0] < tray_rect[0]:
+            if (toolbars is not None and toolbars[0] < tray_rect[0]
+                    and not user_placed_horizontal_offset(config)):
                 right_boundary = round(toolbars[0] / dpi_scale)
+                beside_toolbars = True
         else:
             # A Win11 SECONDARY taskbar (Shell_SecondaryTrayWnd) has no TrayNotifyWnd child, so
             # get_tray_rect() is None. Its clock is shell-drawn (XAML) with no HWND to hug: hug the
@@ -684,8 +690,9 @@ class PositionCalculator:
                 right_boundary if step_boundary is None else step_boundary, dpi_scale,
                 full_geom.left(), x_origin)
 
-        # Safety check: don't overlap with app icons on left
-        if x < left_boundary:
+        # Safety check: don't overlap with app icons on left. Beside the toolbars the task list runs up
+        # to them, so this snap would push the widget straight back onto them (#324): keep the spot.
+        if x < left_boundary and not beside_toolbars:
             logger.warning("Calculated position overlaps app icons; snapping to safe zone.")
             x = round(left_boundary + constants.layout.DEFAULT_PADDING)
 
@@ -811,9 +818,11 @@ class PositionCalculator:
         # Calculate Y: align to bottom (system tray side) with offset.
         tray_rect = taskbar_info.get_tray_rect()
         bottom_boundary = round(tray_rect[1] / dpi_scale) if tray_rect else (full_geom.bottom() + 1)
-        # Classic toolbars above the tray on a Win10 side bar (#324, best-effort): sit above them.
+        # Classic toolbars above the tray on a Win10 side bar (#324, best-effort): sit above them -
+        # the default spot only; a drag's tray_offset_y is measured from the tray (input_handler).
         toolbars = taskbar_utils.valid_rect(getattr(taskbar_info, "toolbars_rect", None))
-        if tray_rect and toolbars is not None and toolbars[1] < tray_rect[1]:
+        if (tray_rect and toolbars is not None and toolbars[1] < tray_rect[1]
+                and not user_placed_side_offset(config)):
             bottom_boundary = round(toolbars[1] / dpi_scale)
 
         y = round(bottom_boundary - widget_height - offset_y)
