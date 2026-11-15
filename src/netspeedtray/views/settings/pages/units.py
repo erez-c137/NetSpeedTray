@@ -96,7 +96,16 @@ class UnitsPage(QWidget):
         """A line-spacing segment's text: "Default" for the default gap, else the signed px offset
         from it ("-4" .. "+4")."""
         offset = px - constants.config.defaults.DEFAULT_LINE_SPACING
-        return f"{offset:+d}" if offset else self._tr("LINE_SPACING_DEFAULT_OPTION", "Default")
+        if not offset:
+            return self._tr("LINE_SPACING_DEFAULT_OPTION", "Default")
+        # A right-to-left (Hebrew) segment read "1+" / "4-": the sign is direction-neutral and lands
+        # on the far side of the digit. An LTR embedding (LRE ... PDF) keeps "+1" one left-to-right
+        # unit (Qt's bidi, checked with QTextLayout). Not the LRI/PDI isolates: Segoe UI, the Hebrew UI
+        # face, has no glyph for those, and Qt then maps every installed font file (~850) looking for
+        # one. Only there: most CJK/Bengali UI faces lack even LRE/PDF. The segment's value is
+        # separate from its text, so nothing maps the label back.
+        text = f"{offset:+d}"
+        return f"\u202a{text}\u202c" if getattr(self.i18n, "is_rtl", False) is True else text
 
     def load_settings(self, config: Dict[str, Any]):
         # Unit Type

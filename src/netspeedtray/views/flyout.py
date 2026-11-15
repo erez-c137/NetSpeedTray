@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
 )
@@ -115,14 +116,35 @@ class Flyout(QWidget):
         sz = self.size()
         x = point.x() - sz.width()
         y = point.y() - sz.height()
-        if x < 0:
-            x = max(0, point.x())
-        if y < 0:
-            y = max(0, point.y())
+        # Kept inside the work area of the screen holding `point`, not clamped at 0: a monitor left
+        # of / above the primary has negative virtual coordinates (0 flung the flyout onto the
+        # primary), and on a left / top taskbar 0 sat it over the taskbar.
+        screen = QGuiApplication.screenAt(point) or self._nearest_screen(point)
+        if screen is not None:
+            area = screen.availableGeometry()
+            if x < area.left():       # no room to the left of the anchor: open to its right
+                x = point.x()
+            if y < area.top():        # no room above it: open below
+                y = point.y()
+            x = max(area.left(), min(x, area.right() + 1 - sz.width()))
+            y = max(area.top(), min(y, area.bottom() + 1 - sz.height()))
         self.move(x, y)
         self.show()
         if self._auto_dismiss_ms > 0:
             self._timer.start(self._auto_dismiss_ms)
+
+    @staticmethod
+    def _nearest_screen(point: QPoint):
+        """The screen whose geometry lies closest to `point`, for an anchor screenAt() misses: with
+        mixed-DPI monitors the virtual desktop has gaps between screens, and the widget's corner can
+        sit in one. Not the primary - that is the jump to the wrong monitor show_at avoids."""
+        def distance(screen) -> int:
+            g = screen.geometry()
+            dx = max(g.left() - point.x(), 0, point.x() - g.right())
+            dy = max(g.top() - point.y(), 0, point.y() - g.bottom())
+            return dx * dx + dy * dy
+        screens = QGuiApplication.screens()
+        return min(screens, key=distance) if screens else QGuiApplication.primaryScreen()
 
     def _on_action(self) -> None:
         self.action_clicked.emit()

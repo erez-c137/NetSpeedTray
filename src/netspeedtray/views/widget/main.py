@@ -8,7 +8,7 @@ import os
 import sys
 import time
 from ctypes import wintypes
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 # --- Third-Party Imports ---
@@ -498,6 +498,7 @@ class NetworkSpeedWidget(QWidget):
         # outlived a manual check that FOUND an update and fired on the next automatic one (#508).
         self.update_checker.up_to_date.connect(self._on_update_check_up_to_date)
         self.update_checker.check_failed.connect(self._on_update_check_failed)
+        self._snooze_refused_update()
         if self.update_checker.should_check():
             # Offered like every automatic check: a flyout behind the same gates (fullscreen, nobody
             # at the screen, a modal up), never a dialog the user did not ask for (#508).
@@ -3009,6 +3010,31 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.debug("Automatic update check (%s) failed to start: %s", reason, e)
 
+    def _snooze_refused_update(self) -> None:
+        """A portable update the applier refused at its pre-swap file check restarted this (old)
+        version; without a hold the next automatic check re-offers that release, and a copy that
+        fails the same way each time loops daily. So record the "Not now" snooze for it, counted
+        from the refusal - written here, by the app's own config path (the applier never writes the
+        user's config). A manual check still shows it."""
+        try:
+            from netspeedtray.core.update_applier import refused_update_versions
+            from netspeedtray.core.update_checker import format_snooze, snooze_suppresses
+            refused = refused_update_versions()
+            if not refused:
+                return
+            version, failed_at = refused[-1]
+            snooze_s = constants.app.UPDATE_NOT_NOW_SNOOZE_S
+            snooze = format_snooze(version, snooze_s, datetime.fromtimestamp(failed_at, timezone.utc))
+            current = self.config.get("update_snooze", "")
+            if not snooze_suppresses(snooze, version, snooze_s) or snooze_suppresses(current, version, snooze_s):
+                return   # expired, or already held (this snooze, or a newer version's)
+            self.config["update_snooze"] = snooze
+            self.update_config({"update_snooze": snooze})
+            self.logger.info("Update %s was refused at its file check; not re-offering it before %s.",
+                             version, snooze.rpartition("@")[2])
+        except Exception as e:
+            self.logger.warning("Could not snooze a refused update: %s", e)
+
     def _update_recently_dismissed(self, version: str) -> bool:
         """'Not now' (config ``update_snooze``, survives restarts) holds automatic offers of that
         version back for UPDATE_NOT_NOW_SNOOZE_S; a newer release is offered at once."""
@@ -3066,6 +3092,13 @@ class NetworkSpeedWidget(QWidget):
             self._pending_update_offer = None
             return
         try:
+            # The offer may have waited (fullscreen, idle) past the user turning automatic checks
+            # off, or IT pushing the policy: then it is dropped, not shown. The checker's own gate.
+            from netspeedtray.core.update_checker import automatic_update_checks_allowed
+            if not automatic_update_checks_allowed(getattr(self, "config", None) or {}):
+                self._pending_update_offer = None
+                self.logger.info("Update %s not offered: automatic update checks are now off.", offer[0])
+                return
             if self._update_offer_blocked():
                 timer = getattr(self, "_update_offer_retry_timer", None)
                 if timer is not None:

@@ -482,7 +482,7 @@ def test_line_spacing_segments_are_offsets_from_the_default(q_app, mock_callback
     from netspeedtray.constants.i18n import I18nStrings
     i18n = I18nStrings(lang)
     p = UnitsPage(i18n, mock_callback)
-    items = [(btn.text(), value) for value, btn in p.line_spacing._items]
+    items = [(btn.text().strip("\u202a\u202c"), value) for value, btn in p.line_spacing._items]
     default = constants.config.defaults.DEFAULT_LINE_SPACING
     assert items == ([(f"{o:+d}", default + o) for o in range(-4, 0)]
                      + [(i18n.LINE_SPACING_DEFAULT_OPTION, default)]
@@ -497,6 +497,54 @@ def test_line_spacing_segments_are_offsets_from_the_default(q_app, mock_callback
     assert seg.minimumSizeHint().width() < seg._row_width(1) == seg.sizeHint().width() == seg._one_row_width()
     schema = constants.config.defaults.VALIDATION_SCHEMA["line_spacing"]
     assert (schema["min"], schema["max"]) == (default - 4, default + 4)
+
+
+def _visual_order(text: str) -> str:
+    """The sign and digit glyphs of ``text`` left to right, as Qt lays it out in a right-to-left
+    paragraph (what a Hebrew segment button paints). The offscreen test platform has no system fonts
+    (every glyph would be index 0), so Segoe UI - the Hebrew UI face - is loaded for the call only."""
+    import os
+    from PyQt6.QtGui import QTextLayout, QTextOption, QFont, QFontDatabase
+    from PyQt6.QtCore import Qt
+    path = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "segoeui.ttf")
+    if not os.path.exists(path):
+        pytest.skip("Segoe UI not installed")
+    font_id = QFontDatabase.addApplicationFont(path)
+    try:
+        layout = QTextLayout(text, QFont("Segoe UI", 10))
+        option = QTextOption()
+        option.setTextDirection(Qt.LayoutDirection.RightToLeft)
+        layout.setTextOption(option)
+        layout.beginLayout()
+        layout.createLine().setLineWidth(200)
+        layout.endLayout()
+        placed = []
+        for run in layout.glyphRuns():
+            raw = run.rawFont()
+            names = {raw.glyphIndexesForString(c)[0]: c for c in "+-0123456789"}
+            assert len(names) == 12, "glyph lookup failed - no real font"
+            placed += [(pos.x(), names[g]) for g, pos in zip(run.glyphIndexes(), run.positions()) if g in names]
+    finally:
+        QFontDatabase.removeApplicationFont(font_id)
+    return "".join(c for _x, c in sorted(placed))
+
+
+@pytest.mark.parametrize("lang", ["he_IL", "en_US", "ja_JP"])
+def test_line_spacing_sign_stays_left_of_the_digit(q_app, mock_callback, lang):
+    """2.2.1 review: under Hebrew the segments painted "1+" / "4-" - the sign is direction-neutral and
+    took the paragraph's right-to-left side. An LTR embedding keeps it "+1"; a left-to-right UI gets no
+    marks at all (most CJK faces have no glyph for them and Qt would search every installed font)."""
+    from netspeedtray.constants.i18n import I18nStrings
+    i18n = I18nStrings(lang)
+    p = UnitsPage(i18n, mock_callback)
+    texts = [btn.text() for _v, btn in p.line_spacing._items if btn.text() != i18n.LINE_SPACING_DEFAULT_OPTION]
+    assert len(texts) == 8
+    for text in texts:
+        bare = text.strip("\u202a\u202c")
+        if lang == "he_IL":
+            assert _visual_order(text) == bare, text
+        else:
+            assert text == bare
 
 
 def test_arrow_colors_round_trip(q_app, mock_i18n, mock_callback):

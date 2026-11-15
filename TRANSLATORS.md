@@ -87,6 +87,8 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - `HARDWARE_NEEDS_ANY_MONITOR_TOOLTIP` - why the "Show hardware only when hovering the widget" switch is grayed: "Turn on CPU, GPU, RAM or VRAM monitoring to use this". Follow your `HARDWARE_NEEDS_GPU_TOOLTIP`.
 > - `RECORD_HARDWARE_HISTORY_NEEDS_MONITOR_SUB` - replaces `RECORD_HARDWARE_HISTORY_INACTIVE_SUB` under Settings > Advanced > Record hardware history: "Turn on CPU, GPU or RAM monitoring, or battery power in the hover card, to use this" (RAM history and the battery switch count too now).
 > - `NET_GRAPH_NO_TRAFFIC_REASON` - the second line of the Monitor → Network graph's "nothing in this period" note, split out of `NET_GRAPH_NO_TRAFFIC`: "The PC was off, asleep or idle, or NetSpeedTray wasn't running." The old line said "paused", but the app's own Pause never stops recording, so it can't be the reason (thanks @RainThings, #525).
+> - `IDENTITY_MODE_SUB` - the muted line under Settings > Network > Network identity > Show, reworded by #493: "Read the connected Wi-Fi name without scanning nearby networks." The network name (SSID) no longer needs Windows Location, so the old sentence about turning Location on is gone.
+> - `BAND_DISPLAY_COLORED` - the "Color-coded (2.4G / 5G)" choice under Band display: 6G is dropped from the list (#493), already removed from every locale - just check the rest still reads well.
 > - No review needed: `NET_GRAPH_NO_TRAFFIC_TITLE` (the old first line, your translation kept as is), `HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP` (the old `RECORD_HARDWARE_HISTORY_INACTIVE_SUB` text, kept as is) and `HARDWARE_NEEDS_CPU_TOOLTIP` (back, with its 2.2.0 text).
 
 ## How translation works in NetSpeedTray

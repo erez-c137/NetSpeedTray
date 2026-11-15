@@ -403,7 +403,9 @@ class LegacyV7Readers:
             # the current poll interval (it's ≤24h, where the rate rarely changes). Per the db_utils model.
             # SMART (-1.0) / the historical 0 sentinel actually sample every 2.0 s, not 1.0 s -
             # resolve through the shared helper so raw-tier volume is not under-reported 2x.
-            poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
+            # Floored at 1 s (2.2.1): the raw tier holds one row per second, and this oracle predates
+            # the 0.5 s preset - its fastest poll was 1 s, which is what a sub-second rate meant here.
+            poll_interval = max(1.0, resolve_poll_interval_seconds(self.config.get("update_rate", 1.0)))
 
             tiers = []
             if start_ts <= now_ts:                  # raw: SUM(bytes_sec) × poll_interval

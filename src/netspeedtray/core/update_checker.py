@@ -57,6 +57,14 @@ def update_check_disabled_by_policy() -> bool:
     return False
 
 
+def automatic_update_checks_allowed(config: dict) -> bool:
+    """The user's "Check for updates automatically" toggle AND no IT policy against it - the gate for
+    every automatic check (should_check) and for showing an offer one found, which may wait (a
+    fullscreen app, nobody at the screen) past the user turning checks off. Not the 24 h interval:
+    a found offer is never 'due'."""
+    return bool(config.get("check_for_updates", True)) and not update_check_disabled_by_policy()
+
+
 # Pre-release stage ordering. An unrecognised stage sorts ABOVE these but still
 # below any final release, so an unexpected tag can never look newer than a real one.
 _PRERELEASE_STAGES = {"alpha": 0, "a": 0, "beta": 1, "b": 1, "rc": 2, "c": 2, "pre": 2}
@@ -251,11 +259,10 @@ class UpdateChecker(QObject):
 
     def should_check(self) -> bool:
         """Return True if enough time has passed since the last check."""
-        if update_check_disabled_by_policy():
-            logger.info("Update checks are disabled by policy (%s\\%s).",
-                        constants.app.POLICY_REGISTRY_KEY, constants.app.POLICY_DISABLE_UPDATE_CHECK_VALUE)
-            return False
-        if not self.config.get("check_for_updates", True):
+        if not automatic_update_checks_allowed(self.config):
+            if update_check_disabled_by_policy():
+                logger.info("Update checks are disabled by policy (%s\\%s).",
+                            constants.app.POLICY_REGISTRY_KEY, constants.app.POLICY_DISABLE_UPDATE_CHECK_VALUE)
             return False
 
         last_check = self.config.get("last_update_check")

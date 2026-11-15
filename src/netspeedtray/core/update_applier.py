@@ -1001,6 +1001,36 @@ def _staged_files_refusal(staged_dir: str) -> Optional[str]:
         return "the staged copy failed its file check: %s" % (str(e) or e.__class__.__name__)
 
 
+def _own_version() -> Optional[str]:
+    """This code's version - the STAGED version: the applier runs from the staged copy. Lazy, so
+    this module stays stdlib-only; None if it cannot be read."""
+    try:
+        from netspeedtray import __version__
+        return str(__version__).lstrip("vV").strip() or None
+    except Exception:
+        return None
+
+
+def refused_update_versions(install_dir: Optional[str] = None) -> List[Tuple[str, float]]:
+    """(version, failed_at) for every update whose staged copy the applier refused at its file
+    check (``refused_version`` in the backups record), oldest first. Read by the app at start-up
+    to snooze that version's automatic offer. Only refusals for ``install_dir`` (default: the
+    running app's folder) count: the record is per profile, and an installed copy must not be
+    snoozed by a portable copy's refusal. Never raises."""
+    out = []
+    try:
+        here = install_dir if install_dir is not None else _running_dir()
+        for rec in _read_backup_records():
+            version, failed_at = rec.get("refused_version"), rec.get("failed_at")
+            if rec.get("kind") == "failure" and isinstance(version, str) and version \
+                    and isinstance(failed_at, (int, float)) and not isinstance(failed_at, bool) \
+                    and _same_path(rec["install"], here):
+                out.append((version, float(failed_at)))
+    except Exception:
+        logger.debug("Could not read refused updates.", exc_info=True)
+    return sorted(out, key=lambda vf: vf[1])
+
+
 def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional[str] = None) -> int:
     """The whole flow. Returns a process exit code (0 = applied)."""
     staged_dir = staged_dir or os.path.dirname(os.path.abspath(sys.executable))
@@ -1030,7 +1060,11 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
     if reason:
         logger.warning("Refusing to apply the update: the staged copy no longer matches its "
                        "manifest: %s", reason)
-        _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
+        # The version is recorded so the restarted app snoozes its automatic offer like "Not now"
+        # (refused_update_versions) - else the next day's check re-offers it, and a copy that fails
+        # the same way every time (an antivirus quarantining one DLL) makes that a daily loop.
+        _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir,
+                              refused_version=_own_version())
         # Restart and say why - but never point the user at this copy to install by hand: it is
         # the one that just failed (a missing DLL would leave them a broken app). The next update
         # check offers the release again and downloads a fresh, re-verified copy.
@@ -1205,7 +1239,8 @@ def _read_staged_paths() -> List[dict]:
 
 def _read_backup_records() -> List[dict]:
     """``{"kind": "backup", "path", "install", "applier_pid"}`` and
-    ``{"kind": "failure", "install", "failed_at"[, "restore_failed", "backup"]}`` records."""
+    ``{"kind": "failure", "install", "failed_at"[, "restore_failed", "backup", "refused_version"]}``
+    records."""
     out = []
     for item in _read_list(_backups_path()):
         if isinstance(item, dict) and item.get("kind") in ("backup", "failure") \
@@ -1259,8 +1294,18 @@ def _write_entries(entries: List[dict]) -> None:
     _write_list(_marker_path(), entries)
 
 
-def _entry_key(entry: dict) -> Tuple[str, str]:
-    return (entry.get("kind") or "staged", _norm(entry.get("path") or entry.get("install") or ""))
+def _entry_key(entry: dict) -> Tuple[str, ...]:
+    kind = entry.get("kind") or "staged"
+    key: Tuple[str, ...] = (kind, _norm(entry.get("path") or entry.get("install") or ""))
+    if kind == "failure":
+        # One install collects several failure records (a failed restore, a later refusal...). Keyed
+        # by the install alone, the sweep's write-back merge replaced every one with the newest -
+        # twice over - and a restore_failed record, the backup's only protection, was lost (#538
+        # review). What a record says and when (fields the sweep never changes) tells them apart.
+        key += (repr(entry.get("failed_at")), str(entry.get("staged") or ""),
+                str(entry.get("backup") or ""), str(entry.get("refused_version") or ""),
+                str(bool(entry.get("restore_failed"))))
+    return key
 
 
 def record_staged_path(path: str, package: Optional[str] = None) -> None:
@@ -1290,7 +1335,8 @@ def record_staged_path(path: str, package: Optional[str] = None) -> None:
 
 def _note_applier_outcome(staged_dir: str, *, applied: bool, backup: Optional[str] = None,
                           install_dir: Optional[str] = None,
-                          restore_failed_backup: Optional[str] = None) -> None:
+                          restore_failed_backup: Optional[str] = None,
+                          refused_version: Optional[str] = None) -> None:
     """The applier's half of the record: mark the staged entry applied (or failed) in the staged
     marker, and record the backup the swap made - or the failure - in the backups record, so the
     relaunched version knows exactly what it may remove, and what it must not.
@@ -1349,6 +1395,8 @@ def _note_applier_outcome(staged_dir: str, *, applied: bool, backup: Optional[st
                         # No expiry: this backup is the only complete copy of the user's app.
                         rec.update(restore_failed=True,
                                    backup=os.path.abspath(restore_failed_backup))
+                    if refused_version:
+                        rec["refused_version"] = refused_version
                     records.append(rec)
                 _write_list(_backups_path(), records)
     except Exception:

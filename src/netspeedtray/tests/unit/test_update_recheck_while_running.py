@@ -193,7 +193,7 @@ def test_startup_check_runs_through_the_automatic_path(q_app, monkeypatch):
                      position_manager=MagicMock(), _state_watcher_timer=MagicMock(),
                      _cycle_timer=MagicMock(), widget_state=MagicMock(), update_config=MagicMock(),
                      _show_usage_alert=MagicMock(), _execute_refresh=MagicMock(),
-                     _run_automatic_update_check=MagicMock()).items():
+                     _run_automatic_update_check=MagicMock(), _snooze_refused_update=MagicMock()).items():
         setattr(host, k, v)
     _bind(host, "_on_update_available", "_on_update_check_up_to_date", "_on_update_check_failed",
           "_show_pending_update_offer")
@@ -456,6 +456,82 @@ def test_offer_waits_while_blocked_then_shows_a_flyout(q_app):
     fake._show_update_dialog.assert_not_called()             # only on the user's click
 
 
+# --- a portable update refused at its pre-swap file check ------------------------------------------
+
+def _refused(monkeypatch, version, seconds_ago):
+    when = time.time() - seconds_ago
+    monkeypatch.setattr("netspeedtray.core.update_applier.refused_update_versions",
+                        lambda: [(version, when)])
+    fake = _fake(update_config=MagicMock())
+    _bind(fake, "_snooze_refused_update")
+    fake._snooze_refused_update()
+    return fake
+
+
+def test_a_refused_update_is_snoozed_like_not_now(monkeypatch):
+    """2.2.1 review: the restarted app re-offered the release the applier just refused, the next
+    day and every day after (a copy that fails the same way each time). The refusal now writes the
+    "Not now" snooze, counted from the refusal."""
+    fake = _refused(monkeypatch, "2.2.5", seconds_ago=3600)
+    fake.update_config.assert_called_once_with({"update_snooze": fake.config["update_snooze"]})
+    assert fake.config["update_snooze"].startswith("2.2.5@")
+    _available(fake, "v2.2.5")
+    fake._show_pending_update_offer.assert_not_called()      # automatic: held back
+    _available(fake, "v2.2.6")
+    fake._show_pending_update_offer.assert_called_once()     # a newer release is offered at once
+
+
+def test_a_refused_update_still_shows_on_a_manual_check(monkeypatch):
+    fake = _refused(monkeypatch, "2.2.5", seconds_ago=60)
+    fake._manual_update_check = True
+    _available(fake, "v2.2.5")
+    fake._show_update_dialog.assert_called_once()
+
+
+def test_a_refusal_older_than_the_snooze_writes_nothing(monkeypatch):
+    fake = _refused(monkeypatch, "2.2.5", seconds_ago=SNOOZE + 60)
+    fake.update_config.assert_not_called()
+    assert fake.config["update_snooze"] == ""
+
+
+def test_a_refusal_never_shortens_a_newer_snooze(monkeypatch):
+    monkeypatch.setattr("netspeedtray.core.update_applier.refused_update_versions",
+                        lambda: [("2.2.5", time.time() - 60)])
+    fake = _fake(update_config=MagicMock(), config={"update_snooze": _snoozed("2.2.6", SNOOZE - 10)})
+    _bind(fake, "_snooze_refused_update")
+    fake._snooze_refused_update()
+    fake.update_config.assert_not_called()
+
+
+@pytest.mark.parametrize("toggle, policy", [(False, False), (True, True)])
+def test_a_waiting_offer_is_dropped_once_automatic_checks_are_off(q_app, monkeypatch, toggle, policy):
+    """2.2.1 review: an offer that waited (fullscreen, idle) was still shown after the user turned
+    automatic checks off, or IT disabled them - the same gate should_check() applies."""
+    policy_now = [False]
+    monkeypatch.setattr("netspeedtray.core.update_checker.update_check_disabled_by_policy",
+                        lambda: policy_now[0])
+    fake = _offer_fake(blocked=True)
+    with patch("netspeedtray.views.flyout.Flyout") as flyout_cls:
+        W._show_pending_update_offer(fake)                    # blocked: kept for the retry
+        assert fake._pending_update_offer is not None
+        fake.config["check_for_updates"] = toggle
+        policy_now[0] = policy
+        fake._update_offer_blocked.return_value = False
+        W._show_pending_update_offer(fake)                    # the retry, checks now off
+        flyout_cls.assert_not_called()
+    assert fake._pending_update_offer is None
+    assert fake._update_offer_retry_timer.start.call_count == 1   # no further retries
+
+
+def test_a_waiting_offer_still_shows_while_checks_stay_on(q_app, monkeypatch):
+    monkeypatch.setattr("netspeedtray.core.update_checker.update_check_disabled_by_policy", lambda: False)
+    fake = _offer_fake()
+    fake.config["check_for_updates"] = True
+    with patch("netspeedtray.views.flyout.Flyout") as flyout_cls:
+        W._show_pending_update_offer(fake)
+        flyout_cls.return_value.show_at.assert_called_once()
+
+
 def test_flyout_click_opens_the_dialog_deferred(q_app, monkeypatch):
     fake = _offer_fake()
     deferred = []
@@ -614,7 +690,8 @@ def test_setup_timers_on_a_real_qobject_starts_the_recheck_timer(q_app, monkeypa
     for k, v in dict(config={"check_for_updates": False}, i18n=MagicMock(), logger=MagicMock(),
                      position_manager=MagicMock(), _state_watcher_timer=MagicMock(),
                      _cycle_timer=MagicMock(), widget_state=MagicMock(), update_config=MagicMock(),
-                     _show_usage_alert=MagicMock(), _execute_refresh=MagicMock()).items():
+                     _show_usage_alert=MagicMock(), _execute_refresh=MagicMock(),
+                     _snooze_refused_update=MagicMock()).items():
         setattr(host, k, v)
     _bind(host, "_on_update_available", "_on_update_check_up_to_date", "_on_update_check_failed",
           "_run_automatic_update_check", "_show_pending_update_offer")
