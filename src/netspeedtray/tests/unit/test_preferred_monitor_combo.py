@@ -91,3 +91,15 @@ def test_monitor_combo_is_wide_enough_for_its_longest_entry(qtbot, monkeypatch, 
 def test_every_locale_formats_the_entry(lang):
     text = I18nStrings(lang).PREFERRED_MONITOR_ITEM.format(index=1, width=1920, height=1080, scale=150)
     assert "1920" in text and "1080" in text and "150" in text
+
+
+def test_bengali_monitor_number_in_bengali_digits(qtbot, monkeypatch, two_screens):
+    """"Monitor 1" is a fixed label: its number in Bengali digits (the translator's rule on #477); the
+    resolution and scale are technical values and stay Western. English is unchanged."""
+    d = _dialog(qtbot, monkeypatch, lang="bn_BD")
+    combo = d.widget_page.preferred_monitor_combo
+    first, second = combo.itemText(1), combo.itemText(2)
+    assert first.startswith("মনিটর ১:") and "1920 x 1080, 150%" in first, first
+    assert second.startswith("মনিটর ২:") and "2560 x 1440, 100%" in second, second
+    en = _dialog(qtbot, monkeypatch).widget_page.preferred_monitor_combo
+    assert en.itemText(1).startswith("Monitor 1:"), en.itemText(1)
