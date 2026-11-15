@@ -177,6 +177,16 @@ def run_all():
     return out
 
 
+@pytest.fixture(autouse=True)
+def _golden_vendors(monkeypatch):
+    """Brand label colours come from the machine's CPU / GPU vendor (hardware_vendors); the golden was
+    painted on an Intel CPU + Intel GPU PC. Pin both, or a runner with other hardware paints other
+    colours - the CI failure that hid behind a matching font fingerprint."""
+    from netspeedtray.utils import hardware_vendors
+    monkeypatch.setattr(hardware_vendors, "cpu_vendor", lambda: "intel")
+    monkeypatch.setattr(hardware_vendors, "gpu_vendor", lambda: "intel")
+
+
 def _load():
     return json.loads(GOLDEN.read_text(encoding="utf-8"))
 
