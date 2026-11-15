@@ -1032,12 +1032,14 @@ class GraphRenderer(QObject):
             except (ValueError, NotImplementedError, AttributeError):
                 pass   # already gone with a cleared figure / axes
 
-    def _draw_hw_empty_message(self, ax, period_key, hw_styles=None, roles=("cpu", "gpu")) -> None:
+    def _draw_hw_empty_message(self, ax, period_key, hw_styles=None, roles=("cpu", "gpu", "ram")) -> None:
         """The centered note on an empty hardware graph. A fresh session is still collecting; but a
         ranged view whose ``roles`` are all unrecorded will never fill, so it says where to turn
         recording on (Hardware for monitoring, Advanced for the record switch) instead of "Collecting
-        data" forever. ``hw_styles["history_off"]`` is graph_host.hardware_history_off_reasons()."""
-        reasons = [((hw_styles or {}).get("history_off") or {}).get(r) for r in roles]
+        data" forever. ``hw_styles["history_off"]`` is graph_host.hardware_history_off_reasons().
+        RAM counts only when the reasons name it (2.2.1: recorded on its own switch)."""
+        off = (hw_styles or {}).get("history_off") or {}
+        reasons = [off.get(r) for r in roles if r != "ram" or r in off]
         if period_key == "TIMELINE_SESSION" or not reasons or None in reasons:
             text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
         elif "record" in reasons:

@@ -4,7 +4,7 @@
 Owner request (2026-10-21): offer the side-bar hover card on TOP/BOTTOM bars too, so the taskbar widget
 can stay a clean speed readout and CPU/GPU/memory are one hover away. One opt-in switch (default off):
 
-- While it is ACTIVE (on + CPU or GPU monitoring on - RAM/VRAM ride on those lines) the widget sizes
+- While it is ACTIVE (on + any hardware readout on: CPU, GPU, or - since 2.2.1 - RAM / VRAM alone) the widget sizes
   and paints exactly as its network-only form for whatever Display Mode is saved, on every edge. One
   helper decides it (``helpers.effective_display_mode``), read by RenderConfig (paint + Settings
   preview), the layout manager (sizing) and the Auto-Cycle timer.
@@ -155,9 +155,13 @@ def test_effective_mode_collapses_only_while_active():
                                        **HW}) == mode
         assert effective_display_mode({"widget_display_mode": mode, "hardware_in_hover_card": True,
                                        "monitor_gpu_enabled": True}) == "network_only"
-        # On, but no hardware to move: inert - the widget keeps its Display Mode.
+        # RAM / VRAM alone are hardware to move too (2.2.1: they show without CPU / GPU).
         assert effective_display_mode({"widget_display_mode": mode, "hardware_in_hover_card": True,
-                                       "monitor_ram_enabled": True, "monitor_vram_enabled": True}) == mode
+                                       "monitor_ram_enabled": True}) == "network_only"
+        assert effective_display_mode({"widget_display_mode": mode, "hardware_in_hover_card": True,
+                                       "monitor_vram_enabled": True}) == "network_only"
+        # On, but no hardware to move: inert - the widget keeps its Display Mode.
+        assert effective_display_mode({"widget_display_mode": mode, "hardware_in_hover_card": True}) == mode
     assert hardware_in_hover_card_active({"hardware_in_hover_card": True, "monitor_cpu_enabled": True})
     assert not hardware_in_hover_card_active({"hardware_in_hover_card": True})
     assert not hardware_in_hover_card_active(None)
@@ -216,9 +220,10 @@ def _hover_fake(layout="horizontal", fit=None, **config):
 def test_hover_gate_opens_on_any_edge_with_the_switch_and_hardware_on(q_app, layout):
     assert _hover_fake(layout, hardware_in_hover_card=True, monitor_cpu_enabled=True)._hover_hardware_wanted()
     assert _hover_fake(layout, hardware_in_hover_card=True, monitor_gpu_enabled=True)._hover_hardware_wanted()
-    # No CPU/GPU monitoring: nothing to show, the gate stays shut (RAM/VRAM need their host line).
-    assert not _hover_fake(layout, hardware_in_hover_card=True, monitor_ram_enabled=True,
-                           monitor_vram_enabled=True)._hover_hardware_wanted()
+    # RAM / VRAM alone open it too (2.2.1); nothing at all keeps it shut.
+    assert _hover_fake(layout, hardware_in_hover_card=True, monitor_ram_enabled=True)._hover_hardware_wanted()
+    assert _hover_fake(layout, hardware_in_hover_card=True, monitor_vram_enabled=True)._hover_hardware_wanted()
+    assert not _hover_fake(layout, hardware_in_hover_card=True)._hover_hardware_wanted()
     # Switch off: a horizontal bar never opens it (the hardware is on the widget).
     assert not _hover_fake("horizontal", hardware_in_hover_card=False, **HW)._hover_hardware_wanted()
 
@@ -235,11 +240,18 @@ def test_card_carries_everything_enabled_and_honours_the_detail_switches(q_app):
                           "monitor_ram_enabled": False, "monitor_vram_enabled": False})
     assert bare._hover_hardware_snapshot() == {"cpu": {"usage": 37.0}, "gpu": {"usage": 52.0}}
 
-    # RAM rides on CPU, VRAM on GPU: GPU off drops the VRAM row even with its switch on.
+    # 2.2.1: VRAM shows without GPU monitoring - GPU off drops the GPU row, not the VRAM one.
     cpu_only = _hover_fake(hardware_in_hover_card=True, widget_display_mode="cycle",
                            **{**HW, "monitor_gpu_enabled": False, "show_hardware_power": False})
     assert cpu_only._hover_hardware_snapshot() == {"cpu": {"usage": 37.0, "temp": 58.0},
-                                                   "ram": (9.2, 16.0)}
+                                                   "ram": (9.2, 16.0), "vram": (3.1, 8.0)}
+    # ... and RAM without CPU monitoring: a RAM row, no CPU row.
+    ram_only = _hover_fake(hardware_in_hover_card=True, widget_display_mode="side_by_side",
+                           monitor_ram_enabled=True, show_hardware_temps=True)
+    assert ram_only._hover_hardware_snapshot() == {"ram": (9.2, 16.0)}
+    vram_only = _hover_fake(hardware_in_hover_card=True, widget_display_mode="cycle",
+                            monitor_vram_enabled=True, show_hardware_power=True)
+    assert vram_only._hover_hardware_snapshot() == {"vram": (3.1, 8.0)}
 
     # side_by_side keeps the user's Display order - a "None" slot stays out of the card too.
     order = _hover_fake(hardware_in_hover_card=True, widget_display_mode="side_by_side",
@@ -362,7 +374,7 @@ def test_widget_keeps_every_reading_but_stops_repainting_for_hardware_it_hides(q
     on.update_gpu_power(99.0)
     assert (on.cpu_usage, on.gpu_usage, on.ram_used, on.vram_used, on.cpu_temp, on.gpu_power) == \
         (81.0, 12.0, 10.0, 4.0, 70.0, 99.0)
-    assert on._refresh_hover_hardware.call_count == 3           # the open card follows CPU/GPU/RAM
+    assert on._refresh_hover_hardware.call_count == 4           # the open card follows CPU/GPU/RAM/VRAM
     on.update.assert_not_called()                                # ... but the widget has nothing new
     off = _hover_fake(hardware_in_hover_card=False, widget_display_mode="side_by_side", **HW)
     off._refresh_hover_hardware = MagicMock()
@@ -514,9 +526,15 @@ def test_settings_toggle_round_trips(page):
     assert page.get_settings()["hardware_in_hover_card"] is False
 
 
-def test_settings_toggle_is_greyed_without_cpu_or_gpu(page):
-    page.load_settings({"monitor_cpu_enabled": False, "monitor_gpu_enabled": False,
-                        "monitor_ram_enabled": True})
+def test_settings_toggle_is_greyed_without_any_hardware(page):
+    page.load_settings({"monitor_cpu_enabled": False, "monitor_gpu_enabled": False})
+    assert not page._hover_card_card.isEnabled()
+    page.monitor_ram.setChecked(True)            # 2.2.1: RAM alone is hardware for the card
+    assert page._hover_card_card.isEnabled()
+    page.monitor_ram.setChecked(False)
+    page.monitor_vram.setChecked(True)
+    assert page._hover_card_card.isEnabled()
+    page.monitor_vram.setChecked(False)
     assert not page._hover_card_card.isEnabled()
     page.monitor_gpu.setChecked(True)
     assert page._hover_card_card.isEnabled()
