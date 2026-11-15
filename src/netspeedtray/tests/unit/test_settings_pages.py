@@ -482,7 +482,7 @@ def test_line_spacing_segments_are_offsets_from_the_default(q_app, mock_callback
     from netspeedtray.constants.i18n import I18nStrings
     i18n = I18nStrings(lang)
     p = UnitsPage(i18n, mock_callback)
-    items = [(btn.text().strip("⁦⁩"), value) for value, btn in p.line_spacing._items]
+    items = [(btn.text().strip("\u202a\u202c"), value) for value, btn in p.line_spacing._items]
     default = constants.config.defaults.DEFAULT_LINE_SPACING
     assert items == ([(f"{o:+d}", default + o) for o in range(-4, 0)]
                      + [(i18n.LINE_SPACING_DEFAULT_OPTION, default)]
@@ -532,7 +532,7 @@ def _visual_order(text: str) -> str:
 @pytest.mark.parametrize("lang", ["he_IL", "en_US", "ja_JP"])
 def test_line_spacing_sign_stays_left_of_the_digit(q_app, mock_callback, lang):
     """2.2.1 review: under Hebrew the segments painted "1+" / "4-" - the sign is direction-neutral and
-    took the paragraph's right-to-left side. An LTR isolate keeps it "+1"; a left-to-right UI gets no
+    took the paragraph's right-to-left side. An LTR embedding keeps it "+1"; a left-to-right UI gets no
     marks at all (most CJK faces have no glyph for them and Qt would search every installed font)."""
     from netspeedtray.constants.i18n import I18nStrings
     i18n = I18nStrings(lang)
@@ -540,7 +540,7 @@ def test_line_spacing_sign_stays_left_of_the_digit(q_app, mock_callback, lang):
     texts = [btn.text() for _v, btn in p.line_spacing._items if btn.text() != i18n.LINE_SPACING_DEFAULT_OPTION]
     assert len(texts) == 8
     for text in texts:
-        bare = text.strip("⁦⁩")
+        bare = text.strip("\u202a\u202c")
         if lang == "he_IL":
             assert _visual_order(text) == bare, text
         else:

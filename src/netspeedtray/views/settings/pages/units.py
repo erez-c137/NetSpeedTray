@@ -99,12 +99,13 @@ class UnitsPage(QWidget):
         if not offset:
             return self._tr("LINE_SPACING_DEFAULT_OPTION", "Default")
         # A right-to-left (Hebrew) segment read "1+" / "4-": the sign is direction-neutral and lands
-        # on the far side of the digit. An LTR isolate (LRI ... PDI) keeps "+1" one left-to-right unit
-        # (Qt's bidi, checked with QTextLayout). Only there: most CJK/Bengali UI faces have no glyph for
-        # the marks, and Qt then searches every installed family. The segment's value is separate from
-        # its text, so nothing maps the label back.
+        # on the far side of the digit. An LTR embedding (LRE ... PDF) keeps "+1" one left-to-right
+        # unit (Qt's bidi, checked with QTextLayout). Not the LRI/PDI isolates: Segoe UI, the Hebrew UI
+        # face, has no glyph for those, and Qt then maps every installed font file (~850) looking for
+        # one. Only there: most CJK/Bengali UI faces lack even LRE/PDF. The segment's value is
+        # separate from its text, so nothing maps the label back.
         text = f"{offset:+d}"
-        return f"⁦{text}⁩" if getattr(self.i18n, "is_rtl", False) is True else text
+        return f"\u202a{text}\u202c" if getattr(self.i18n, "is_rtl", False) is True else text
 
     def load_settings(self, config: Dict[str, Any]):
         # Unit Type
