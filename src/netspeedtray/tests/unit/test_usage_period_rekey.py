@@ -32,7 +32,8 @@ GB = 1e9
 
 
 class FakeDate(date):
-    today_value = date(2026, 10, 21)
+    DEFAULT_TODAY = date(2026, 10, 21)
+    today_value = DEFAULT_TODAY
 
     @classmethod
     def today(cls):
@@ -41,8 +42,12 @@ class FakeDate(date):
 
 @pytest.fixture(autouse=True)
 def _fake_date():
+    # _poll/_read move today_value (a class attribute); every test starts on the default day, so no
+    # test depends on where the one before it left the clock (it failed in a shuffled order).
+    FakeDate.today_value = FakeDate.DEFAULT_TODAY
     with patch.object(wsmod, "date", FakeDate):
         yield
+    FakeDate.today_value = FakeDate.DEFAULT_TODAY
 
 
 class _Reader:

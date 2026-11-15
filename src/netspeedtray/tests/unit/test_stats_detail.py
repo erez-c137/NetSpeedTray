@@ -353,13 +353,21 @@ def test_the_loaded_sheet_stays_on_screen(q_app):
     # A parent low on the screen: its centre is ~150 px above the bottom edge.
     parent.setGeometry(avail.left() + 100, avail.bottom() - 350, 900, 300)
     parent.show()
+    from PyQt6 import sip
+    gate = sheet = None
     try:
-        # The network sheet's three blocks (download, upload, latency), as in the review.
-        sheet = StatsDetailSheet(_ThreadRecordingWS(), _ALL_KINDS[:3], _window(), _cfg(),
+        # The network sheet's three blocks (download, upload, latency), as in the review. The read is
+        # held until the loading size is measured: an ungated read could land inside that first
+        # processEvents (a busy machine, pytest -n), and "small" was then already the loaded size.
+        import threading
+        gate = threading.Event()
+        sheet = StatsDetailSheet(_ThreadRecordingWS(gate=gate), _ALL_KINDS[:3], _window(), _cfg(),
                                  I18nStrings("en_US"), parent=parent)
         sheet.show()
         q_app.processEvents()
+        assert not sheet.is_loaded()
         small = sheet.frameGeometry()
+        gate.set()
         _wait_loaded(sheet)
         q_app.processEvents()
         fg = sheet.frameGeometry()
@@ -367,9 +375,14 @@ def test_the_loaded_sheet_stays_on_screen(q_app):
         if fg.height() > avail.height():
             pytest.skip(f"this screen ({avail.height()} px) is shorter than the sheet ({fg.height()} px)")
         assert avail.contains(fg), (fg, avail)
-        sheet.done(0)
-        sheet.deleteLater()
     finally:
+        # Closed on every path (a failed assert, the skip): the sheet is MODAL, and one left open
+        # blocks input to every later window on this pytest worker (a Settings test's Esc/close).
+        if gate is not None:
+            gate.set()
+        if sheet is not None and not sip.isdeleted(sheet):
+            sheet.done(0)
+            sheet.deleteLater()
         parent.close()
         parent.deleteLater()
 

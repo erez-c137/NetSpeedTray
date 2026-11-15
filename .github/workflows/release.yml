@@ -87,6 +87,9 @@ jobs:
         env:
           # GUI tests run headless + deterministic (conftest.py also sets this, but
           # the tag build that gates a public release should be explicit).
+          # SERIAL on purpose (no -n): ci.yml runs the suite in parallel; the release gate runs it in
+          # the one fixed order, independent of xdist's scheduling, so an order-dependent failure in
+          # either mode is caught before a tag ships.
           QT_QPA_PLATFORM: offscreen
           QT_SCALE_FACTOR: "1"
         run: |
