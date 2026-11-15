@@ -378,12 +378,18 @@ class TestHardwareMonitoring:
         assert len(logged) == 1
         mt._OHM_GUIDANCE_LOGGED.clear()
 
-    def test_wmi_source_lost_mid_session_logs_one_line_each_way(self, monitor_thread):
+    def test_wmi_source_lost_mid_session_logs_one_line_each_way(self, monitor_thread, monkeypatch):
         """#511 follow-up: a working LHM/OHM WMI connection that drops mid-session was DEBUG only,
         and every reconnect repeated "connected to ..." at INFO. Now: one INFO when it is lost, one
         when it is back, nothing per failed poll in between."""
         import logging as _logging
+        import time as _time
+        import types as _types
         import netspeedtray.core.monitor_thread as mt
+        from netspeedtray import constants as _constants
+        now = [1000.0]
+        monkeypatch.setattr(mt, "time", _types.SimpleNamespace(monotonic=lambda: now[0],
+                                                               sleep=_time.sleep, time=_time.time))
         log = MagicMock()
         monitor_thread.logger = log
         monitor_thread._ohm_outage.logger = log
@@ -399,14 +405,22 @@ class TestHardwareMonitoring:
             return [sensor]
         ohm = MagicMock()
         ohm.ExecQuery.side_effect = query
-        with patch('win32com.client.GetObject', return_value=ohm), patch.object(mt, 'win32pdh', None):
+        with patch('win32com.client.GetObject', return_value=ohm) as get_object, \
+                patch.object(mt, 'win32pdh', None):
             assert monitor_thread._poll_cpu_temperature() == 55.0
+            now[0] += _constants.lhm.NOT_DETECTED_GRACE_SEC + 1   # past the start-up grace
             state["up"] = False
+            probes = get_object.call_count
             for _ in range(5):
                 monitor_thread._poll_cpu_temperature()
+                now[0] += 1.0
+            # Lost after working: re-probed (and failing) on every poll, never backed off (2.2.1),
+            # and still nothing logged per failed poll.
+            assert get_object.call_count - probes >= 4
             state["up"] = True
-            for _ in range(3):
+            for _ in range(3):                           # back on the very next poll
                 assert monitor_thread._poll_cpu_temperature() == 55.0
+                now[0] += 1.0
 
         def info_lines(needle):
             lines = [c.args[0] % c.args[1:] for c in log.info.call_args_list if c.args]
@@ -417,16 +431,21 @@ class TestHardwareMonitoring:
         assert len(info_lines("lost the LibreHardwareMonitor/OpenHardwareMonitor WMI")) == 1
         assert len(info_lines("WMI source is back after")) == 1
 
-    def test_wmi_source_lost_for_good_right_after_a_flap_still_reaches_info(self, monitor_thread):
+    def test_wmi_source_lost_for_good_right_after_a_flap_still_reaches_info(self, monitor_thread, monkeypatch):
         """A WMI outage that starts within the quiet window of a reported one is DEBUG; if it then
         never ends, the failing re-probes must still report it once the window passes - otherwise
-        the log's last INFO about the source is "is back" while it has been gone for hours."""
+        the log's last INFO about the source is "is back" while it has been gone for hours. One
+        clock drives the outage and the probe backoff (2.2.1, not applied while the source is lost)."""
+        import time as _time
+        import types as _types
         import netspeedtray.core.monitor_thread as mt
         log = MagicMock()
         monitor_thread.logger = log
         monitor_thread._ohm_outage.logger = log
         now = [1000.0]
         monitor_thread._ohm_outage._clock = lambda: now[0]
+        monkeypatch.setattr(mt, "time", _types.SimpleNamespace(monotonic=lambda: now[0],
+                                                               sleep=_time.sleep, time=_time.time))
         monitor_thread._ohm_guidance_logged = True
         monitor_thread._wmi = MagicMock()
         monitor_thread._wmi.ExecQuery.return_value = []
