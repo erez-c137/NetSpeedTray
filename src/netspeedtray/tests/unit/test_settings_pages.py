@@ -24,6 +24,7 @@ def mock_i18n():
     i18n.LANGUAGE_LABEL = "Language"
     i18n.UPDATE_RATE_GROUP_TITLE = "Update Rate"
     i18n.UPDATE_INTERVAL_LABEL = "Interval"
+    i18n.UPDATE_INTERVAL_DESCRIPTION = "1s is recommended"
     i18n.OPTIONS_GROUP_TITLE = "Options"
     i18n.DYNAMIC_UPDATE_RATE_LABEL = "Dynamic Update"
     i18n.START_WITH_WINDOWS_LABEL = "Start with Windows"
@@ -157,11 +158,11 @@ def mock_i18n():
     i18n.MONITORING_MODE_PHYSICAL_TOOLTIP = "Adds up every real network adapter."
 
     # For GeneralPage update rate slider
-    i18n.UPDATE_MODE_AGGRESSIVE_LABEL = "Aggressive"
+    i18n.UPDATE_MODE_STANDARD_LABEL = "Standard"
     i18n.UPDATE_MODE_BALANCED_LABEL = "Balanced"
     i18n.UPDATE_MODE_EFFICIENT_LABEL = "Efficient"
     i18n.UPDATE_MODE_POWER_SAVER_LABEL = "Power Saver"
-    i18n.CHECK_FOR_UPDATES_LABEL = "Check for updates on startup"
+    i18n.CHECK_FOR_UPDATES_AUTO_LABEL = "Check for updates automatically"
     i18n.PREFERRED_MONITOR_LABEL = "Preferred Monitor"
     i18n.PREFERRED_MONITOR_PRIMARY = "Primary (auto)"
 
@@ -461,16 +462,41 @@ def test_display_enums_are_segmented_and_round_trip(q_app, mock_i18n, mock_callb
     assert got["decimal_places"] == 0
 
 
-@pytest.mark.parametrize("stored,shown", [(-4, -4), (0, 0), (4, 4), (None, 1), ("junk", 1),
-                                          (50, 1), (-9, 1), ("3", 1), (2.5, 1), (True, 1)])
+@pytest.mark.parametrize("stored,shown", [(-3, -3), (0, 0), (4, 4), (5, 5), (None, 1), ("junk", 1),
+                                          (50, 1), (-9, 1), (-4, 1), ("3", 1), (2.5, 1), (True, 1)])
 def test_line_spacing_round_trips_and_defaults(q_app, mock_i18n, mock_callback, stored, shown):
-    """Line spacing: -4..+4 px as a segmented control; a missing or unreadable value shows the
-    default (1, the gap the widget always had)."""
+    """Line spacing: -3..+5 px (the default 1 +/- 4) as a segmented control; a missing, unreadable or
+    out-of-range value shows the default (1, the gap the widget always had)."""
     from netspeedtray.utils.components import Win11Segmented
     p = UnitsPage(mock_i18n, mock_callback)
     assert isinstance(p.line_spacing, Win11Segmented)
     p.load_settings({} if stored is None else {"line_spacing": stored})
     assert p.get_settings()["line_spacing"] == shown
+
+
+@pytest.mark.parametrize("lang", ["en_US", "de_DE", "ru_RU", "he_IL"])
+def test_line_spacing_segments_are_offsets_from_the_default(q_app, mock_callback, lang):
+    """B3 (2.2.1): the segments read "-4 .. -1, Default, +1 .. +4" around the default, each one storing
+    the px gap default + offset. They used to be raw px (-4 .. +4), so "0" looked like the default
+    while "+1" was it."""
+    from netspeedtray.constants.i18n import I18nStrings
+    i18n = I18nStrings(lang)
+    p = UnitsPage(i18n, mock_callback)
+    items = [(btn.text(), value) for value, btn in p.line_spacing._items]
+    default = constants.config.defaults.DEFAULT_LINE_SPACING
+    assert items == ([(f"{o:+d}", default + o) for o in range(-4, 0)]
+                     + [(i18n.LINE_SPACING_DEFAULT_OPTION, default)]
+                     + [(f"{o:+d}", default + o) for o in range(1, 5)])
+    p.load_settings({})
+    checked = [btn.text() for _v, btn in p.line_spacing._items if btn.isChecked()]
+    assert checked == [i18n.LINE_SPACING_DEFAULT_OPTION]
+    assert "px" not in i18n.LINE_SPACING_LABEL
+    # The "Default" word made the row the widest control in Settings (~460-510 px): it may wrap onto
+    # two rows instead of raising the window's minimum width, but prefers one.
+    seg = p.line_spacing
+    assert seg.minimumSizeHint().width() < seg._row_width(1) == seg.sizeHint().width() == seg._one_row_width()
+    schema = constants.config.defaults.VALIDATION_SCHEMA["line_spacing"]
+    assert (schema["min"], schema["max"]) == (default - 4, default + 4)
 
 
 def test_arrow_colors_round_trip(q_app, mock_i18n, mock_callback):

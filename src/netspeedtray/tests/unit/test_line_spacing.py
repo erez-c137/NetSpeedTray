@@ -1,7 +1,8 @@
 """
-Line spacing: the gap between the widget's upload and download rows, -4..+4 px (Settings > Appearance >
-Interface layout). The default, 1, is the fixed ``TWO_ROW_GAP_PX`` the widget always painted with, so
-an untouched config renders exactly as before.
+Line spacing: the gap between the widget's upload and download rows, -3..+5 px - offered in Settings >
+Appearance > Interface layout as "-4 .. -1, Default, +1 .. +4" around the default (2.2.1). The default,
+1, is the fixed ``TWO_ROW_GAP_PX`` the widget always painted with, so an untouched config renders
+exactly as before.
 
 Every place that sizes or paints the two-row network readout must agree on the gap: the renderer
 (``draw_network_speeds``), the docked-height model (``_row_baselines`` / ``_two_row_floor``), the
@@ -32,6 +33,7 @@ from netspeedtray.tests.unit import test_pause_cue as pause
 from netspeedtray.tests.unit import test_side_taskbar_compact as side
 
 DEFAULT = constants.config.defaults.DEFAULT_LINE_SPACING
+MIN, MAX = constants.config.defaults.LINE_SPACING_MIN, constants.config.defaults.LINE_SPACING_MAX
 
 
 # --- The value ------------------------------------------------------------------------------------
@@ -40,7 +42,7 @@ def test_default_is_the_old_fixed_gap():
     assert DEFAULT == constants.renderer.TWO_ROW_GAP_PX == 1
     assert constants.config.defaults.DEFAULT_CONFIG["line_spacing"] == DEFAULT
     schema = constants.config.defaults.VALIDATION_SCHEMA["line_spacing"]
-    assert (schema["min"], schema["max"], schema["default"]) == (-4, 4, DEFAULT)
+    assert (schema["min"], schema["max"], schema["default"]) == (-3, 5, DEFAULT) == (MIN, MAX, DEFAULT)
 
 
 @pytest.mark.parametrize("raw,expected", [(-4, -4), (0, 0), (4, 4), (None, DEFAULT), (True, DEFAULT),
@@ -64,7 +66,7 @@ def _ink_rows(cfg, w=220, h=48):
     return int(rows[0]), int(rows[-1])
 
 
-@pytest.mark.parametrize("spacing", [-4, -1, 0, 2, 4])
+@pytest.mark.parametrize("spacing", [MIN, -1, 0, 2, 4, MAX])
 def test_rows_painted_spacing_apart(q_app, spacing):
     base = pause._cfg(dict(widget_display_mode="network_only"), "#FFFFFF")
     top0, bottom0 = _ink_rows(base)
@@ -83,7 +85,7 @@ def _lm(spacing=None, font_size=9) -> WidgetLayoutManager:
     return lm
 
 
-@pytest.mark.parametrize("spacing", [-4, 0, 1, 4])
+@pytest.mark.parametrize("spacing", [MIN, 0, 1, 4, MAX])
 def test_layout_baselines_follow_the_spacing(q_app, spacing):
     lm, line_h = _lm(spacing), _lm().metrics.height()
     net_top, net_bottom, hw_top, hw_bottom = lm._row_baselines(48)
@@ -97,7 +99,7 @@ def test_layout_reads_junk_as_the_default(q_app):
     assert WidgetLayoutManager(MagicMock())._row_gap() == DEFAULT     # config is not even a dict
 
 
-@pytest.mark.parametrize("spacing,extra", [(None, 2), (1, 2), (4, 5), (-4, 2)])
+@pytest.mark.parametrize("spacing,extra", [(None, 2), (1, 2), (4, 5), (MAX, 6), (MIN, 2)])
 def test_two_row_floor(q_app, spacing, extra):
     """The #221 floor (``2*line_height + 2`` by default) grows with a wider spacing, and a negative one
     never lowers it: the hardware rows are painted without a gap and would crop."""
@@ -120,7 +122,7 @@ def _tightest_strip(font_size):
 
 
 @pytest.mark.parametrize("edge", [dock.TOP, dock.BOTTOM])
-@pytest.mark.parametrize("spacing", [2, 3, 4])
+@pytest.mark.parametrize("spacing", [2, 3, 4, MAX])
 @pytest.mark.parametrize("font_size,strip", [(9, None), (11, None), (9, 32), (11, 40)])
 def test_wide_spacing_never_outgrows_a_horizontal_strip(q_app, font_size, strip, spacing, edge):
     """#455 review: +3/+4 used to floor a 9 pt widget to 34-35 px on the 32 px Small taskbar - the #322
@@ -132,7 +134,7 @@ def test_wide_spacing_never_outgrows_a_horizontal_strip(q_app, font_size, strip,
     lm, h = _docked(spacing, font_size, strip, edge)
     _lm_default, h_default = _docked(None, font_size, strip, edge)
     overhangs = lm._two_row_floor(strip, spacing) > strip
-    if tight and spacing == 4:
+    if tight and spacing >= 4:
         assert overhangs, "precondition: the user's gap alone would overhang the bar"
     assert h == h_default <= strip
     # Narrowed only as far as needed: kept whole when it fits, never below the default.
@@ -149,17 +151,17 @@ def test_wide_spacing_never_outgrows_a_horizontal_strip(q_app, font_size, strip,
 def test_the_one_height_check_agrees_with_the_full_floor(q_app, font_size, painted):
     """``_docked_rows`` checks each wider gap at the one height it must fit; that must give the same
     answer as the full ``_two_row_floor`` scan, on every strip from far too thin to roomy."""
-    lm = _lm(4, font_size)
+    lm = _lm(MAX, font_size)
     if painted:
         lm.widget.i18n = I18nStrings("en_US")
         lm._font = QFont("Segoe UI", font_size)
     for strip in range(16, 50, 3):
         limit = max(strip, lm._two_row_floor(strip, DEFAULT))
-        for gap in (2, 3, 4):
+        for gap in range(2, MAX + 1):
             assert lm._floor_within(limit, gap) == (lm._two_row_floor(strip, gap) <= limit), (strip, gap)
 
 
-@pytest.mark.parametrize("spacing", [-4, -1, 0, 1, 2, 4])
+@pytest.mark.parametrize("spacing", [MIN, -1, 0, 1, 2, 4, MAX])
 def test_a_roomy_strip_keeps_the_users_spacing(q_app, spacing):
     lm, h = _docked(spacing, 9, 48)
     assert (h, lm.docked_row_gap) == (48, spacing)
@@ -167,7 +169,7 @@ def test_a_roomy_strip_keeps_the_users_spacing(q_app, spacing):
     assert lm.paint_config(config) is config           # nothing to narrow: the same object
 
 
-@pytest.mark.parametrize("spacing", [-4, -1, 0])
+@pytest.mark.parametrize("spacing", [MIN, -1, 0])
 def test_a_tight_spacing_is_never_narrowed(q_app, spacing):
     lm, _h = _docked(spacing, 9, 24)                    # a strip thinner than even the default fits
     assert lm.docked_row_gap == spacing
@@ -181,20 +183,21 @@ def test_paint_config_untouched_when_not_docked(q_app):
 
 
 @pytest.mark.parametrize("edge", [dock.TOP, dock.BOTTOM])
-def test_narrowed_rows_paint_inside_the_small_taskbar(q_app, edge):
-    """The painted proof: on the thinnest bar the default fits, +4 alone would overhang; the layout
+@pytest.mark.parametrize("spacing", [4, MAX])
+def test_narrowed_rows_paint_inside_the_small_taskbar(q_app, edge, spacing):
+    """The painted proof: on the thinnest bar the default fits, +4 px alone would overhang; the layout
     narrows the gap, and the frame painted the way ``paintEvent`` does (``paint_config``) keeps every
     text pixel inside the widget - above and below."""
-    cfg = pause._cfg({"widget_display_mode": "network_only", "line_spacing": 4}, "#FFFFFF")
+    cfg = pause._cfg({"widget_display_mode": "network_only", "line_spacing": spacing}, "#FFFFFF")
     font = font_from_config(cfg)
     widget = MagicMock()
-    widget.config, widget.i18n = {"line_spacing": 4}, I18nStrings("en_US")
+    widget.config, widget.i18n = {"line_spacing": spacing}, I18nStrings("en_US")
     lm = WidgetLayoutManager(widget)
     lm.metrics, lm._font = QFontMetrics(font), font                 # sized by painting, like the app
     strip = lm._two_row_floor(1, DEFAULT)
-    assert lm._two_row_floor(strip, 4) > strip, "precondition: +4 alone would overhang the bar"
+    assert lm._two_row_floor(strip, spacing) > strip, "precondition: the gap alone would overhang the bar"
     h = int(lm._horizontal_dock_height(edge, dock._taskbar(edge, inset=strip, window_h=strip), 1.0))
-    assert h == strip and DEFAULT <= lm.docked_row_gap < 4
+    assert h == strip and DEFAULT <= lm.docked_row_gap < spacing
 
     renderer, w = WidgetRenderer(cfg, I18nStrings("en_US")), 260
     painted = lm.paint_config(renderer.config)
@@ -264,7 +267,7 @@ def test_stacked_network_segment_height():
 
 
 @pytest.mark.parametrize("mode", ["network_only", "split_graphs", "side_by_side"])
-@pytest.mark.parametrize("spacing", [-4, 4])
+@pytest.mark.parametrize("spacing", [MIN, MAX])
 def test_classic_side_height_moves_with_the_spacing(spacing, mode):
     cfg = side._config(**side.MODES[mode])
     base = RenderConfig.from_dict(cfg)
@@ -275,7 +278,7 @@ def test_classic_side_height_moves_with_the_spacing(spacing, mode):
 
 
 @pytest.mark.parametrize("mode", ["cpu_only", "combined"])
-@pytest.mark.parametrize("spacing", [-4, 4])
+@pytest.mark.parametrize("spacing", [MIN, MAX])
 def test_hardware_only_heights_ignore_the_spacing(q_app, mode, spacing):
     """CPU/GPU rows have no gap, so a hardware-only widget keeps its height (side bar and free float)."""
     cfg = side._config(**side.MODES[mode])
@@ -286,7 +289,7 @@ def test_hardware_only_heights_ignore_the_spacing(q_app, mode, spacing):
 
 
 @pytest.mark.parametrize("mode", ["network_only", "network_graph", "split_graphs", "side_by_side"])
-@pytest.mark.parametrize("spacing", [-4, 4])
+@pytest.mark.parametrize("spacing", [MIN, MAX])
 @pytest.mark.parametrize("thickness", [48, 32, 300])
 def test_side_bar_never_paints_outside_the_widget(q_app, mode, spacing, thickness):
     """A guard, not the regression test for the side-bar heights (the 8 px padding hides a few px):
@@ -303,16 +306,16 @@ def test_side_bar_never_paints_outside_the_widget(q_app, mode, spacing, thicknes
 # --- Pause glyph --------------------------------------------------------------------------------
 
 def test_pause_glyph_merges_rows_at_the_widest_spacing(q_app):
-    """At +4 one readout's two arrow cells are 4 px apart: still one glyph across both rows. Split
+    """At the widest gap (+5 px) one readout's two arrow cells are 5 px apart: still one glyph across both rows. Split
     panels on a side bar (cells ~12 px apart, a divider between them) still get one each."""
     r = WidgetRenderer(pause._cfg({}, "#FFFFFF"), I18nStrings("en_US"))
-    r._pause_slots = [QRectF(9, 4, 8, 16), QRectF(9, 24, 8, 16)]
-    assert len(wp._pause_glyph_rects(QRect(0, 0, 48, 72), r, 4)) == 1
+    r._pause_slots = [QRectF(9, 4, 8, 16), QRectF(9, 25, 8, 16)]
+    assert len(wp._pause_glyph_rects(QRect(0, 0, 48, 72), r, MAX)) == 1
     r._pause_slots = [QRectF(9, 4, 8, 16), QRectF(9, 32, 8, 16)]
-    assert len(wp._pause_glyph_rects(QRect(0, 0, 48, 72), r, 4)) == 2
+    assert len(wp._pause_glyph_rects(QRect(0, 0, 48, 72), r, MAX)) == 2
 
 
-@pytest.mark.parametrize("spacing", [-4, 4])
+@pytest.mark.parametrize("spacing", [MIN, MAX])
 @pytest.mark.parametrize("mode", ["network_only", "side_by_side", "split_graphs"])
 def test_pause_glyph_never_overlaps_text(q_app, monkeypatch, mode, spacing):
     overrides, phase, _arrows = pause.HORIZONTAL[mode]
@@ -329,7 +332,7 @@ def _native_small_taskbar_rows():
     widget's own ``_font``), on Win11's 32 px Small bar at 9 pt and a 40 px bar at 11 pt."""
     rows = []
     for font_size, strip in ((9, 32), (11, 40)):
-        for spacing in (None, 3, 4):
+        for spacing in (None, 3, 4, MAX):
             lm = _lm(spacing, font_size)
             lm._font = QFont("Segoe UI", font_size)
             lm.widget.i18n = I18nStrings("en_US")

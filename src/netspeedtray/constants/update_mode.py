@@ -15,13 +15,13 @@ class UpdateMode:
     # link stats / network identity 5 s), and history stays one net_raw row per second (same-second
     # intervals merge), so only the live display gets faster.
     REALTIME: Final[float] = 0.5     # 0.5 sec (opt-in)
-    AGGRESSIVE: Final[float] = 1.0   # 1 sec (default, smooth & responsive)
+    STANDARD: Final[float] = 1.0     # 1 sec (default and recommended; "Aggressive" until 2.2.1)
     BALANCED: Final[float] = 2.0     # 2 sec
     EFFICIENT: Final[float] = 5.0    # 5 sec
     POWER_SAVER: Final[float] = 10.0 # 10 sec (still feels responsive, saves resources)
 
     # Slider order: position i <-> PRESETS[i]. Ascending; the first is the floor, the last the cap.
-    PRESETS: Final[Tuple[float, ...]] = (REALTIME, AGGRESSIVE, BALANCED, EFFICIENT, POWER_SAVER)
+    PRESETS: Final[Tuple[float, ...]] = (REALTIME, STANDARD, BALANCED, EFFICIENT, POWER_SAVER)
 
 
 update_mode = UpdateMode()

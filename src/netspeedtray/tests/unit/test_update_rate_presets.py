@@ -31,13 +31,14 @@ from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds, snap_u
 
 PRESETS = (0.5, 1.0, 2.0, 5.0, 10.0)
 SRC = Path(__file__).resolve().parents[2]          # src/netspeedtray
+LOCALES = SRC / "constants" / "locales"
 
 
 # --- the preset ladder ------------------------------------------------------------------------
 
 def test_presets_are_half_one_two_five_ten_seconds():
     assert tuple(UpdateMode.PRESETS) == PRESETS
-    assert (UpdateMode.REALTIME, UpdateMode.AGGRESSIVE, UpdateMode.BALANCED, UpdateMode.EFFICIENT,
+    assert (UpdateMode.REALTIME, UpdateMode.STANDARD, UpdateMode.BALANCED, UpdateMode.EFFICIENT,
             UpdateMode.POWER_SAVER) == PRESETS
     assert not hasattr(UpdateMode, "SMART")
     assert not hasattr(constants.timers, "SMART_MODE_INTERVAL_MS")
@@ -256,7 +257,7 @@ def test_off_preset_rate_snaps_to_nearest_on_the_slider(general_page, rate, expe
 
 
 @pytest.mark.parametrize("position, key", [(0, "UPDATE_MODE_REALTIME_LABEL"),
-                                           (1, "UPDATE_MODE_AGGRESSIVE_LABEL"),
+                                           (1, "UPDATE_MODE_STANDARD_LABEL"),
                                            (2, "UPDATE_MODE_BALANCED_LABEL"),
                                            (3, "UPDATE_MODE_EFFICIENT_LABEL"),
                                            (4, "UPDATE_MODE_POWER_SAVER_LABEL")])
@@ -330,3 +331,45 @@ def test_the_sentinel_idioms_are_gone():
             if pattern.search(line):
                 offenders.append(f"{rel}:{n}: {line.strip()}")
     assert not offenders, "\n".join(offenders)
+
+
+# --- 2.2.1 labels (B1/B2) -------------------------------------------------------------------------
+
+def _card_of(widget):
+    from netspeedtray.utils.components import SettingCard
+    w = widget
+    while w is not None and not isinstance(w, SettingCard):
+        w = w.parentWidget()
+    return w
+
+
+def test_one_second_preset_is_standard_not_aggressive(general_page):
+    """B2: 1 s is the default and the recommended rate - "Aggressive (1s)" read like the risky one."""
+    assert UpdateMode.PRESETS.index(constants.config.defaults.DEFAULT_UPDATE_RATE) == 1
+    assert general_page._format_update_rate_label(1) == "Standard (1s)"
+    for path in sorted(LOCALES.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert "UPDATE_MODE_AGGRESSIVE_LABEL" not in data, path.name
+        labels = [data[k] for k in ("UPDATE_MODE_REALTIME_LABEL", "UPDATE_MODE_STANDARD_LABEL",
+                                    "UPDATE_MODE_BALANCED_LABEL", "UPDATE_MODE_EFFICIENT_LABEL",
+                                    "UPDATE_MODE_POWER_SAVER_LABEL")]
+        names = [re.sub(r"\s*\(.*\)$", "", label) for label in labels]
+        assert len(set(names)) == 5, f"{path.name}: two presets share a name: {names}"
+
+
+def test_update_rate_card_explains_the_choice(general_page):
+    """B2: the card says 1 s is recommended and that 0.5 s costs CPU without finer history - true
+    because the raw tiers keep at most one row per second."""
+    from netspeedtray.core.db.schema_v8 import RAW_TS_RESOLUTION_SECONDS
+    assert RAW_TS_RESOLUTION_SECONDS == 1
+    card = _card_of(general_page.update_rate)
+    text = card._desc_label.text()
+    assert text == general_page.i18n.UPDATE_INTERVAL_DESCRIPTION
+    assert "1s is recommended" in text and "once per second" in text
+
+
+def test_update_check_switch_says_automatically(general_page):
+    """B1: the switch also controls the periodic checks (#508), not only the one at startup."""
+    assert _card_of(general_page.check_for_updates)._title_label.text() == "Check for updates automatically"
+    for path in sorted(LOCALES.glob("*.json")):
+        assert "CHECK_FOR_UPDATES_LABEL" not in json.loads(path.read_text(encoding="utf-8")), path.name

@@ -611,12 +611,12 @@ class HardwarePage(QWidget):
         self._set_card_enabled(self._mem_labels_card, mem_on)
         # A greyed card says why (rc.2 G6). Qt shows a tooltip on a disabled widget, and the card's
         # children (the dimmed toggle) carry none of their own, so hovering anywhere on it explains.
-        needs_util = self.i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB
+        needs_util = self.i18n.HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP
         self._temps_card.setToolTip(self.i18n.SHOW_HARDWARE_TEMPS_TOOLTIP if has_util
                                     else f"{needs_util}\n\n{self.i18n.SHOW_HARDWARE_TEMPS_TOOLTIP}")
         self._power_card.setToolTip(self.i18n.SHOW_HARDWARE_POWER_TOOLTIP if has_util
                                     else f"{needs_util}\n\n{self.i18n.SHOW_HARDWARE_POWER_TOOLTIP}")
-        self._hover_card_card.setToolTip("" if any_hw else needs_util)
+        self._hover_card_card.setToolTip("" if any_hw else self.i18n.HARDWARE_NEEDS_ANY_MONITOR_TOOLTIP)
         self._ram_card.setToolTip("")
         self._vram_card.setToolTip("")
         self._gpu_adapter_card.setToolTip("" if (gpu_on or vram_on) else self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP)
@@ -624,13 +624,17 @@ class HardwarePage(QWidget):
         self._mem_labels_card.setToolTip("" if mem_on else self._mem_labels_reason(cpu_on, gpu_on, ram_on, vram_on))
 
     def _mem_labels_reason(self, cpu_on: bool, gpu_on: bool, ram_on: bool, vram_on: bool) -> str:
-        """Why the memory-labels card is greyed (existing strings only): no memory readout is on, or
-        each one that is on is a memory-only row (its usage monitor is off) that always shows its label."""
+        """Why the memory-labels card is greyed: no memory readout is on, or each one that is on is a
+        memory-only row (its usage monitor is off) that always shows its label. The reason names only
+        the monitor that would help: RAM needs CPU, VRAM needs GPU (A5 - RAM alone used to say "CPU or
+        GPU", and turning GPU on did nothing)."""
         if not (ram_on or vram_on):
             return self.i18n.SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP          # "Turn on RAM or VRAM usage..."
-        if vram_on and not ram_on:
-            return self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP                   # "Turn on GPU monitoring..."
-        return self.i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB             # "Turn on CPU or GPU monitoring..."
+        if ram_on and vram_on:
+            return self.i18n.HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP            # either would pair with its memory
+        if ram_on:
+            return self.i18n.HARDWARE_NEEDS_CPU_TOOLTIP                   # "Turn on CPU monitoring..."
+        return self.i18n.HARDWARE_NEEDS_GPU_TOOLTIP                       # "Turn on GPU monitoring..."
 
     def get_settings(self) -> Dict[str, Any]:
         return {

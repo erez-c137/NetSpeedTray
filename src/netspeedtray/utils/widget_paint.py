@@ -810,7 +810,7 @@ def _pause_glyph_rects(rect: QRect, renderer: WidgetRenderer,
     # Merge only the rows of ONE stacked readout (same column, adjacent rows). Split-graph panels
     # stacked on a side bar share the column but sit either side of the divider: each gets its own
     # glyph in its own row, so a merged glyph never straddles the divider. The widest line_spacing
-    # (+4) still leaves the rows well inside the panels' ~12 px split.
+    # (LINE_SPACING_MAX, +5 px) still leaves the rows well inside the panels' ~12 px split.
     adjacent = max(row_gap, constants.renderer.TWO_ROW_GAP_PX) + 1.0
     for cell in renderer._pause_slots:
         for i, col in enumerate(columns):

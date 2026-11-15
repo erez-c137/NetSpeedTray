@@ -83,7 +83,11 @@ class GeneralPage(QWidget):
         self.update_rate.setSingleStep(1)
         self.update_rate.setMinimumWidth(260)
         self.update_rate.valueChanged.connect(self._on_update_rate_changed)
-        layout.addWidget(SettingCard(self.i18n.UPDATE_INTERVAL_LABEL, control=self.update_rate))
+        # 1 s is the default and the recommended rate; 0.5 s costs CPU but no history detail: the raw
+        # tiers keep at most one row per second either way (schema_v8.RAW_TS_RESOLUTION_SECONDS).
+        layout.addWidget(SettingCard(self.i18n.UPDATE_INTERVAL_LABEL,
+                                     description=self.i18n.UPDATE_INTERVAL_DESCRIPTION,
+                                     control=self.update_rate))
 
         # --- Behavior ---
         # NOTE (2.0 IA): free-move, keep-visible-in-fullscreen and tray-offset moved to the new Widget
@@ -102,7 +106,7 @@ class GeneralPage(QWidget):
         self._updates_policy_locked = False
         self._saved_check_for_updates = True
         self._updates_card = SettingCard(
-            self.i18n.CHECK_FOR_UPDATES_LABEL,
+            self.i18n.CHECK_FOR_UPDATES_AUTO_LABEL,   # startup, every few hours and after wake (#508)
             description=getattr(self.i18n, "UPDATE_CHECK_POLICY_MANAGED", "Managed by your organization"),
             control=self.check_for_updates)
         layout.addWidget(self._updates_card)
@@ -261,7 +265,7 @@ class GeneralPage(QWidget):
     def _format_update_rate_label(self, slider_position: int) -> str:
         """Format slider position as a human-readable label."""
         # One key per UpdateMode.PRESETS entry, in slider order.
-        keys = ("UPDATE_MODE_REALTIME_LABEL", "UPDATE_MODE_AGGRESSIVE_LABEL", "UPDATE_MODE_BALANCED_LABEL",
+        keys = ("UPDATE_MODE_REALTIME_LABEL", "UPDATE_MODE_STANDARD_LABEL", "UPDATE_MODE_BALANCED_LABEL",
                 "UPDATE_MODE_EFFICIENT_LABEL", "UPDATE_MODE_POWER_SAVER_LABEL")
         if not 0 <= slider_position < len(UpdateMode.PRESETS):
             return "Unknown"

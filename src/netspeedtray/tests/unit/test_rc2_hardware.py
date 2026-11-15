@@ -262,7 +262,7 @@ def test_greyed_cards_say_why(page):
     # 2.2.1: RAM / VRAM show without CPU / GPU monitoring, so they are never greyed.
     assert page._ram_card.isEnabled() and page._ram_card.toolTip() == ""
     assert page._vram_card.isEnabled() and page._vram_card.toolTip() == ""
-    assert page._temps_card.toolTip().startswith(EN.RECORD_HARDWARE_HISTORY_INACTIVE_SUB)
+    assert page._temps_card.toolTip().startswith(EN.HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP)
     assert EN.SHOW_HARDWARE_TEMPS_TOOLTIP in page._temps_card.toolTip()
     assert EN.SHOW_HARDWARE_POWER_TOOLTIP in page._power_card.toolTip()
     page.monitor_cpu.setChecked(True)
@@ -280,9 +280,9 @@ def test_memory_labels_tooltip_names_the_actual_reason(page, cpu, gpu):
 
 
 @pytest.mark.parametrize("ram, vram, reason", [
-    (True, False, EN.RECORD_HARDWARE_HISTORY_INACTIVE_SUB),
+    (True, False, EN.HARDWARE_NEEDS_CPU_TOOLTIP),          # A5: only CPU pairs with RAM
     (False, True, EN.HARDWARE_NEEDS_GPU_TOOLTIP),
-    (True, True, EN.RECORD_HARDWARE_HISTORY_INACTIVE_SUB),
+    (True, True, EN.HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP),
 ])
 def test_memory_labels_and_gpu_picker_follow_ram_vram_alone(page, ram, vram, reason):
     page.load_settings({"monitor_cpu_enabled": False, "monitor_gpu_enabled": False,
@@ -314,6 +314,57 @@ def test_memory_labels_switch_is_live_only_beside_a_usage_row(page, cpu, gpu, ra
     if not live:   # turning on the usage monitor beside the memory makes it live
         (page.monitor_gpu if vram else page.monitor_cpu).setChecked(True)
         assert page._mem_labels_card.isEnabled() and page._mem_labels_card.toolTip() == ""
+
+
+@pytest.mark.parametrize("cpu, gpu, ram, vram, reason", [
+    # RAM pairs with CPU only: with VRAM off, GPU monitoring can't help, on or off (A5).
+    (False, False, True, False, "HARDWARE_NEEDS_CPU_TOOLTIP"),
+    (False, True, True, False, "HARDWARE_NEEDS_CPU_TOOLTIP"),
+    # VRAM pairs with GPU only.
+    (False, False, False, True, "HARDWARE_NEEDS_GPU_TOOLTIP"),
+    (True, False, False, True, "HARDWARE_NEEDS_GPU_TOOLTIP"),
+    # Both memory-only rows: either monitor would put one beside its usage row.
+    (False, False, True, True, "HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP"),
+    # No memory readout at all.
+    (True, True, False, False, "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP"),
+])
+def test_memory_labels_reason_names_only_the_monitor_that_helps(page, cpu, gpu, ram, vram, reason):
+    """B4/A5 (2.2.1): every greyed memory-labels state says what would make it live - and following
+    the advice does make it live."""
+    page.load_settings({"monitor_cpu_enabled": cpu, "monitor_gpu_enabled": gpu,
+                        "monitor_ram_enabled": ram, "monitor_vram_enabled": vram})
+    assert not page._mem_labels_card.isEnabled()
+    assert page._mem_labels_card.toolTip() == getattr(EN, reason)
+    follow = {"HARDWARE_NEEDS_CPU_TOOLTIP": [page.monitor_cpu], "HARDWARE_NEEDS_GPU_TOOLTIP": [page.monitor_gpu],
+              "HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP": [page.monitor_cpu],
+              "SHOW_MEMORY_LABELS_INACTIVE_TOOLTIP": [page.monitor_ram]}[reason]
+    for toggle in follow:
+        toggle.setChecked(True)
+    assert page._mem_labels_card.isEnabled() and page._mem_labels_card.toolTip() == ""
+
+
+def test_hover_card_switch_reason_names_all_four_readouts(page):
+    """B4 (2.2.1): the hover-card switch is enabled by any of CPU, GPU, RAM or VRAM - its greyed tooltip
+    used to say "CPU or GPU" (the Record-history string)."""
+    page.load_settings({"monitor_cpu_enabled": False, "monitor_gpu_enabled": False,
+                        "monitor_ram_enabled": False, "monitor_vram_enabled": False})
+    assert not page._hover_card_card.isEnabled()
+    assert page._hover_card_card.toolTip() == EN.HARDWARE_NEEDS_ANY_MONITOR_TOOLTIP
+    assert all(w in EN.HARDWARE_NEEDS_ANY_MONITOR_TOOLTIP for w in ("CPU", "GPU", "RAM", "VRAM"))
+    for toggle in (page.monitor_cpu, page.monitor_gpu, page.monitor_ram, page.monitor_vram):
+        toggle.setChecked(True)
+        assert page._hover_card_card.isEnabled() and page._hover_card_card.toolTip() == ""
+        toggle.setChecked(False)
+        assert page._hover_card_card.toolTip() == EN.HARDWARE_NEEDS_ANY_MONITOR_TOOLTIP
+
+
+def test_temps_and_power_reason_is_cpu_or_gpu(page):
+    """Temperatures / power ride on the CPU / GPU rows: RAM / VRAM alone don't enable them."""
+    page.load_settings({"monitor_cpu_enabled": False, "monitor_gpu_enabled": False,
+                        "monitor_ram_enabled": True, "monitor_vram_enabled": True})
+    for card in (page._temps_card, page._power_card):
+        assert not card.isEnabled()
+        assert card.toolTip().startswith(EN.HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP + "\n\n")
 
 
 def test_fahrenheit_throttle_floor_is_the_celsius_off_stop(page):
