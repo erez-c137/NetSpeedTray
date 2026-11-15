@@ -12,12 +12,6 @@ from netspeedtray.views.monitor.network.app_list import AppBarList
 from netspeedtray.views.monitor.network.detail import ConnectionDetailPanel
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _payload(updated="12:00:00", include_chrome=True):
     rows = []
     if include_chrome:

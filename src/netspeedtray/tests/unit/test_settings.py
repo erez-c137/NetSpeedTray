@@ -7,10 +7,6 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 from netspeedtray import constants
 
-@pytest.fixture(scope="session")
-def q_app():
-    """Provides a QApplication instance for the test session."""
-    return QApplication.instance() or QApplication([])
 
 @pytest.fixture
 def mock_parent_widget():

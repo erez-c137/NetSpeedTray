@@ -9,12 +9,6 @@ from netspeedtray.utils import taskbar_utils as tu
 from netspeedtray.core.position_manager import PositionCalculator, PositionManager, WindowState, ScreenPosition
 
 
-@pytest.fixture(scope="session", autouse=True)
-def qt_app():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
 def _screen(name, geo):
     s = MagicMock()
     s.name.return_value = name

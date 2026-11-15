@@ -20,12 +20,6 @@ from netspeedtray.views.graph.worker import GraphDataWorker
 from netspeedtray.views.graph.request import DataRequest
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 class _FakeWS:
     """Just the surface the worker's session-hwcombined path reads - real deques + real copy getters."""
     def __init__(self):

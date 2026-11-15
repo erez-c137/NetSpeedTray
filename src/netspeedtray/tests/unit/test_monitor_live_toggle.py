@@ -14,12 +14,6 @@ from netspeedtray import constants
 from netspeedtray.constants.i18n import I18nStrings
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _cfg(**over):
     c = dict(constants.config.defaults.DEFAULT_CONFIG)
     c.update(over)

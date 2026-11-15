@@ -83,11 +83,6 @@ def left_aligned(n_apps, overflow=False, stray=None, widgets=True):
     return els
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def layout():
     """The REAL layout cache, its worker run synchronously on the REAL element parsing."""

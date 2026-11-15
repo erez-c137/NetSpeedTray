@@ -21,12 +21,6 @@ from netspeedtray.core.widget_state import WidgetState
 from netspeedtray.views.monitor import graph_host as GH
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _make_state(tmp_path):
     cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
     with patch.object(QThread, "start", lambda self: None), \

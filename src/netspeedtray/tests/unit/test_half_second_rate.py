@@ -273,6 +273,7 @@ def test_time_above_throttle_temp_is_not_halved_at_half_a_second(q_app, poll, ex
     seen = []
     sheet = SimpleNamespace(
         _config={"throttle_temp_c": 90}, _poll=poll, _i18n=None, _copy_text_parts=[],
+        _start=datetime.fromtimestamp(NOW), _end=datetime.fromtimestamp(NOW + 3600),   # raw tier (<= 6 h)
         _tr=lambda key, default: default,
         _dur=lambda secs: seen.append(secs) or f"{secs:g}s",
         _formatter=lambda kind, unit: (lambda v: f"{v}"))

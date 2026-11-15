@@ -42,11 +42,6 @@ D1, D2 = r"\\.\DISPLAY1", r"\\.\DISPLAY2"
 PRIMARY_HWND, SECONDARY_HWND, TRAY_HWND = 0x10010, 0x20020, 0x10011
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 def _screen(x, y, w, h, name, dpr):
     s = MagicMock()
     s.geometry.return_value = QRect(x, y, w, h)

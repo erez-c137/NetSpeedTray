@@ -46,11 +46,6 @@ VM_SECONDARY_RIGHT_BAR = [
 CLOCK = (X0, 1036, X1, 1072)
 
 
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture(autouse=True)
 def clean_probe_cache():
     taskbar_utils._probed_tray.clear()

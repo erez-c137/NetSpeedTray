@@ -15,15 +15,6 @@ from PyQt6.QtGui import QScreen
 from PyQt6.QtWidgets import QApplication
 
 
-@pytest.fixture(scope="session", autouse=True)
-def qt_app():
-    """Create Qt application for all tests."""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    yield app
-
-
 @pytest.fixture
 def mock_screen():
     """Create a mock QScreen for testing."""

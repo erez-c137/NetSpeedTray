@@ -12,12 +12,6 @@ from netspeedtray.utils import hardware_vendors as hv
 from netspeedtray.views.monitor.settings_flyout import MonitorSettingsFlyout
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _flyout(config):
     mw = MagicMock()
     return MonitorSettingsFlyout(mw, config, I18nStrings("en_US")), mw

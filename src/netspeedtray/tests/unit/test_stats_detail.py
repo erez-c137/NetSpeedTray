@@ -12,12 +12,6 @@ from netspeedtray.utils.summaries import summarize_raw, summarize_rollup
 from netspeedtray.views.monitor.stats_detail import StatsDetailSheet
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 class _WS:
     """download = raw/exact; cpu = rollup (avg+max only); cpu_temp = empty (no sensor)."""
     def __init__(self):
@@ -448,3 +442,39 @@ def test_labels_inside_a_card_draw_no_border_of_their_own(q_app):
             lbl.ensurePolished()
             assert lbl.contentsRect() == lbl.rect(), lbl.text()
     sheet.close()
+
+
+class _TempWS(_WS):
+    """cpu_temp history with ``hot`` points above 90 °C among ``cool`` ones - minute/hour averages on a
+    long window, raw polls on a short one (what hardware_history returns for each)."""
+    def __init__(self, hot, cool, step):
+        super().__init__()
+        self._series = [(self._t0 + timedelta(seconds=i * step), 95.0 if i < hot else 60.0)
+                        for i in range(hot + cool)]
+
+    def summarize_hardware(self, stat, start, end, poll):
+        if stat == "cpu_temp":
+            return summarize_raw([v for _, v in self._series])
+        return super().summarize_hardware(stat, start, end, poll)
+
+    def get_hardware_history(self, stat, start, end):
+        return list(self._series) if stat == "cpu_temp" else super().get_hardware_history(stat, start, end)
+
+
+@pytest.mark.parametrize("days,step,hot,poll,expected_secs", [
+    (7, 60, 30, 1.0, 30 * 60),        # minute tier: 30 hot minutes = 30 min, not 30 s
+    (60, 3600, 5, 1.0, 5 * 3600),     # hour tier: 5 hot hours = 5 h, not 5 s
+    (0.25, 2, 10, 2.0, 10 * 2),       # raw tier (6 h): one poll each, as before
+], ids=["week-minute-tier", "60-days-hour-tier", "6h-raw-tier"])
+def test_time_above_throttle_counts_each_bucket_for_its_duration(q_app, days, step, hot, poll,
+                                                                   expected_secs):
+    """Windows over 6 h read per-minute / per-hour averages; each counted as one poll, so a day spent
+    above the throttle temperature showed as ~24 minutes."""
+    end = datetime(2026, 6, 28, 21)
+    window = (end - timedelta(days=days), end, "window")
+    subjects = [{"key": "cpu_temp", "label": "CPU temperature", "unit": "°C", "kind": "hw",
+                 "primary": True}]
+    sheet = _open(_TempWS(hot, 20, step), subjects, window,
+                  _cfg(throttle_temp_c=90, update_rate=poll), I18nStrings("en_US"))
+    text = "\n".join(sheet._copy_text_parts)
+    assert f"for {sheet._dur(expected_secs)}" in text, text

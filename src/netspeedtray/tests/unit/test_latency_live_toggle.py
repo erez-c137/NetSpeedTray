@@ -26,12 +26,6 @@ ANCHOR = "1.1.1.1"
 LAT = constants.network.latency
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 class _PingLog:
     """A fake icmp_ping_ms: records (monotonic start, ip) and sleeps ``echo`` seconds per echo."""
 

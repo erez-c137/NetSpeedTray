@@ -14,15 +14,6 @@ from PyQt6.QtGui import QScreen
 from PyQt6.QtWidgets import QApplication
 
 
-@pytest.fixture(scope="session", autouse=True)
-def qt_app():
-    """Create Qt application for all tests."""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    yield app
-
-
 class MockScreen:
     """Mock QScreen for multi-monitor testing."""
     def __init__(self, name="Screen", geometry_rect=(0, 0, 1920, 1080)):

@@ -40,6 +40,7 @@ from netspeedtray.utils.helpers import format_speed, get_machine_id, format_dura
 from netspeedtray.core.db.schema_v8 import RAW_TS_RESOLUTION_SECONDS
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import summaries as S
+from netspeedtray.core.db.history_reader import hardware_history_bin_seconds
 from netspeedtray.utils import stats_exporter
 from netspeedtray.views.monitor.graph_host import bind_reader_thread, stop_reader_thread
 
@@ -470,10 +471,15 @@ class StatsDetailSheet(QDialog):
         elif key in ("cpu_temp", "gpu_temp"):
             thr = float(self._config.get("throttle_temp_c", 0) or 0)
             if thr > 0 and pairs:
-                # One pair per stored row: hw_raw keeps at most one per metric per second
-                # (RAW_TS_RESOLUTION_SECONDS), so at the 0.5 s rate (#456) a pair is 1 s, not 0.5 s.
-                secs = S.time_above([v for _, v in pairs], thr,
-                                    max(self._poll, float(RAW_TS_RESOLUTION_SECONDS)))
+                # Each point counts as the time it stands for: one stored row on the raw tier (<= 6 h) - hw_raw
+                # keeps at most one per metric per second (RAW_TS_RESOLUTION_SECONDS), so at the 0.5 s rate (#456)
+                # a row is 1 s, not 0.5 s - but a whole minute / hour bucket beyond that: counting those as one poll
+                # each reported a day above the limit as ~24 min. APPROXIMATION: a bucket counts as "above" when
+                # its AVERAGE is, so a short spike inside a cooler minute or hour is missed and a bucket only partly
+                # recorded counts in full; the figure is exact only for windows of 6 h or less.
+                bucket = max(self._poll, float(RAW_TS_RESOLUTION_SECONDS), float(hardware_history_bin_seconds(
+                    int(self._start.timestamp()), int(self._end.timestamp()))))
+                secs = S.time_above([v for _, v in pairs], thr, bucket)
                 if secs > 0:
                     text = (f"{self._tr('STATS_DETAIL_ABOVE', 'Above')} {fmt(thr)} "
                             f"{self._tr('STATS_DETAIL_FOR', 'for')} {self._dur(secs)}")
