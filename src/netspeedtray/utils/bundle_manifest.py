@@ -183,9 +183,12 @@ def parse(data: bytes) -> dict:
 
 # --- verification -----------------------------------------------------------------------------
 
-def verify_tree(app_dir: str, manifest: dict, exe_name: str) -> None:
+def verify_tree(app_dir: str, manifest: dict, exe_name: str,
+                tolerated_top_level: frozenset = frozenset()) -> None:
     """Require ``app_dir`` to match ``manifest`` exactly. Raises ManifestError naming the first
-    problem (missing, extra or changed file; link; oversized marker)."""
+    problem (missing, extra or changed file; link; oversized marker). ``tolerated_top_level``
+    (lower-case names) are extra regular files allowed at the top level only - the applier passes
+    Explorer's desktop.ini/Thumbs.db; a link under such a name is still refused by list_files."""
     if exe_name.lower() != str(manifest.get("exe", "")).lower():
         raise ManifestError(f"manifest is for {manifest.get('exe')!r}, not {exe_name!r}")
     expected: Dict[str, str] = manifest["files"]
@@ -193,7 +196,8 @@ def verify_tree(app_dir: str, manifest: dict, exe_name: str) -> None:
     missing = sorted(set(expected) - set(actual))
     if missing:
         raise ManifestError(f"{len(missing)} file(s) missing, e.g. {missing[0]}")
-    extra = sorted(set(actual) - set(expected))
+    extra = sorted(rel for rel in set(actual) - set(expected)
+                   if "/" in rel or rel.lower() not in tolerated_top_level)
     if extra:
         raise ManifestError(f"{len(extra)} unexpected file(s), e.g. {extra[0]}")
     for rel in sorted(expected):
@@ -256,7 +260,8 @@ def read_from_exe(exe_path: str) -> Optional[bytes]:
 
 
 def verify_app_folder(app_dir: str, exe_path: str,
-                      reader: Optional[Callable[[str], Optional[bytes]]] = None) -> None:
+                      reader: Optional[Callable[[str], Optional[bytes]]] = None,
+                      tolerated_top_level: frozenset = frozenset()) -> None:
     """Fail-closed check of a whole portable folder against the manifest in its (already
     signature-verified) exe. Returns None on a match; raises ManifestError otherwise - including
     when the exe carries no manifest: every build since 2.2.1 embeds one, and the updater only ever
@@ -269,6 +274,6 @@ def verify_app_folder(app_dir: str, exe_path: str,
         raise ManifestError("the exe carries no file manifest")
     manifest = parse(data)
     try:
-        verify_tree(app_dir, manifest, os.path.basename(exe_path))
+        verify_tree(app_dir, manifest, os.path.basename(exe_path), tolerated_top_level)
     except OSError as e:
         raise ManifestError(f"could not read the app folder: {e}") from None

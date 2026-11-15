@@ -427,7 +427,8 @@ def trend_smooth_sampled(values: List[float], window: int, stride: int,
     exactly, then trend_scale_values's mean of the newest samples. On the widget's graph rects the
     drawn points and the axis stay within 0.08 px of the full computation for a single spike anywhere
     and 0.15 px on any traffic; 0.25 px for any stride up to half / 2 (pinned by
-    test_mini_graph_no_numpy)."""
+    test_mini_graph_no_numpy). Every drawn value but the newest TREND_EDGE_WINDOW // 2 is itself in
+    the third list, on every path, so the auto-fit never lands below the line it sizes."""
     y = values
     n = len(y)
     b = int(stride)
@@ -442,8 +443,14 @@ def trend_smooth_sampled(values: List[float], window: int, stride: int,
             idx = list(range(0, n, b))
             if idx[-1] != n - 1:
                 idx.append(n - 1)
-            return idx, _trend_smooth_at(y, window, edge_window, idx), trend_smooth_sampled(
-                y, window, b_fit, edge_window)[2]
+            drawn = _trend_smooth_at(y, window, edge_window, idx)
+            # The fit is the lattice path's (approximate) and the drawn points are exact, so a drawn
+            # point could sit a hair above it (2.2.1: 7e-6 for a lone spike near "now"). The drawn
+            # points join the fit, so the axis never lands below the line - all but the newest
+            # TREND_EDGE_WINDOW // 2, which the fit reads as their mean (trend_scale_values).
+            newest = n - constants.renderer.TREND_EDGE_WINDOW // 2
+            return idx, drawn, trend_smooth_sampled(y, window, b_fit, edge_window)[2] + [
+                v for i, v in zip(idx, drawn) if i < newest]
     # The full computation when every sample is drawn, when there are too few to bin, or when the
     # kernel is too short for the narrow-graph path above (half < 2 * _TREND_FIT_STRIDE_DIV: cheap).
     if b <= 1 or n < 4 * b or 2 * b > _trend_half(window, n):

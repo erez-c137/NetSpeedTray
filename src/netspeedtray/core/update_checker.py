@@ -17,6 +17,9 @@ logger = logging.getLogger(f"{constants.app.APP_NAME}.UpdateChecker")
 
 RELEASES_URL = f"https://api.github.com/repos/{constants.app.GITHUB_OWNER}/{constants.app.GITHUB_REPO}/releases/latest"
 CHECK_INTERVAL_HOURS = 24
+# A last_update_check stamp further in the future than this means the clock was set ahead and then
+# corrected; the stamp is treated as stale, or automatic checks would stop until real time caught up.
+FUTURE_STAMP_TOLERANCE_MINUTES = 5
 
 
 _POLICY_TYPE_WARNED: set = set()   # (hive, registry type) pairs already logged
@@ -253,6 +256,10 @@ class UpdateChecker(QObject):
                 sig.disconnect()
             except (TypeError, RuntimeError):
                 pass
+        try:   # the thread-end cleanup too (check_now): the reaper owns this thread now
+            QThread.finished.__get__(worker, QThread).disconnect(self._on_worker_ended)
+        except (TypeError, RuntimeError):
+            pass
         worker.wait(self.STOP_WAIT_MS)
         from netspeedtray.core import thread_reaper
         thread_reaper.outlived(worker, "The update check")
@@ -272,6 +279,10 @@ class UpdateChecker(QObject):
         try:
             last_dt = datetime.fromisoformat(last_check)
             elapsed = datetime.now(timezone.utc) - last_dt
+            if elapsed.total_seconds() < -FUTURE_STAMP_TOLERANCE_MINUTES * 60:
+                logger.info("Last update check (%s) is in the future - clock set back; checking now.",
+                            last_check)
+                return True
             return elapsed.total_seconds() > CHECK_INTERVAL_HOURS * 3600
         except (ValueError, TypeError):
             return True
@@ -292,7 +303,19 @@ class UpdateChecker(QObject):
         self._worker = _CheckWorker(self)
         self._worker.finished.connect(self._on_result)
         self._worker.failed.connect(self._on_failed)
+        # Free the thread once it has ended. _CheckWorker.finished is its own result signal (it
+        # shadows QThread's), so the thread's end is reached through the base-class descriptor.
+        # Queued like the results, and posted after them, so _on_result/_on_failed always run first.
+        QThread.finished.__get__(self._worker, QThread).connect(self._on_worker_ended)
         self._worker.start()
+
+    def _on_worker_ended(self) -> None:
+        worker = self.sender()
+        if worker is None:
+            return
+        if worker is self._worker:
+            self._worker = None
+        worker.deleteLater()
 
     def _on_result(self, latest_version: str, release_url: str, release_body: str = "",
                    installer_url: str = "", portable_url: str = "") -> None:

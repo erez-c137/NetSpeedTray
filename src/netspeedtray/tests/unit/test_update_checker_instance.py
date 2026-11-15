@@ -42,6 +42,17 @@ def test_should_check_true_on_malformed_timestamp():
     assert UpdateChecker({"last_update_check": "not-a-date"}).should_check() is True
 
 
+def test_should_check_true_when_the_stamp_is_in_the_future():
+    # 2.2.1: the clock was set ahead, a check stamped that time, then the clock was corrected.
+    # Without the guard no automatic check ran until real time caught up with the stamp.
+    assert UpdateChecker({"last_update_check": _iso_hours_ago(-72)}).should_check() is True
+
+
+def test_should_check_tolerates_a_stamp_just_ahead_of_now():
+    # A small skew (a time sync nudging the clock back) is not a reason to check again.
+    assert UpdateChecker({"last_update_check": _iso_hours_ago(-1 / 60)}).should_check() is False
+
+
 # --- _on_result --------------------------------------------------------------
 
 def _spies(uc):
@@ -202,3 +213,50 @@ def test_on_result_four_part_final_tag_still_offered():
     uc._on_result("v99.0.0.0", "http://example/release")
     avail.assert_called_once()
     uptodate.assert_not_called()
+
+
+# --- check_now: the worker thread is freed once it has ended -------------------------------------
+
+def _spin_until(cond, timeout_s: float = 5.0) -> bool:
+    import time
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    end = time.monotonic() + timeout_s
+    while time.monotonic() < end:
+        QCoreApplication.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        if cond():
+            return True
+        time.sleep(0.01)
+    return cond()
+
+
+@pytest.mark.parametrize("outcome", ["result", "failure"])
+def test_check_now_deletes_the_finished_worker_after_delivering_its_result(q_app, outcome):
+    """2.2.1: check_now never deleteLater()ed its _CheckWorker, so every check (one a day, plus
+    each manual one) leaked a QThread. It is freed once its thread has ended - and only after the
+    queued result (or failure) has reached the checker."""
+    from PyQt6 import sip
+
+    def fake_run(self):
+        if outcome == "result":
+            self.finished.emit("v0.0.1", "http://example/rel", "", "", "")
+        else:
+            self.failed.emit("boom")
+
+    uc = UpdateChecker({})
+    avail, uptodate = _spies(uc)
+    failed = MagicMock()
+    uc.check_failed.connect(failed)
+    with patch.object(_CheckWorker, "run", fake_run), \
+            patch("netspeedtray.core.update_checker.update_check_disabled_by_policy",
+                  return_value=False):
+        uc.check_now()
+        worker = uc._worker
+        assert worker is not None and worker.wait(5000)
+        assert _spin_until(lambda: sip.isdeleted(worker)), "the finished worker was never deleted"
+    assert uc._worker is None
+    if outcome == "result":
+        uptodate.assert_called_once()
+    else:
+        failed.assert_called_once_with("boom")
+    avail.assert_not_called()

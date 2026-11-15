@@ -430,7 +430,8 @@ def swap(install_dir: str, staged_dir: str) -> str:
                         "install is at: %s", install_dir, backup)
         raise _RestoreFailed(backup, "install path re-created during the swap: %s" % e)
     try:
-        shutil.copytree(staged_dir, install_dir, dirs_exist_ok=True)
+        shutil.copytree(staged_dir, install_dir, dirs_exist_ok=True,
+                        ignore=_staged_explorer_metadata(staged_dir))
         problem = _copy_mismatch(staged_dir, install_dir)
         if problem:
             raise RuntimeError("the copied install does not match the staged copy: %s" % problem)
@@ -489,13 +490,30 @@ def _carry_explorer_metadata(backup: str, install_dir: str) -> None:
         logger.debug("Could not carry the folder's Explorer metadata.", exc_info=True)
 
 
+def _staged_explorer_metadata(staged_dir: str):
+    """copytree ``ignore`` callback: Explorer's metadata (``_EXPLORER_METADATA``) at the TOP level of
+    the staged copy is not copied. The staged-files check tolerates it there (someone opened the
+    staged folder in Explorer), but it is not part of the release - and copied in, it would take the
+    place of the user's own desktop.ini, which _carry_explorer_metadata then skips, leaving it only in
+    a backup the janitor deletes. Below the top level nothing is skipped."""
+    root = os.path.normcase(os.path.abspath(staged_dir))
+
+    def ignore(src, names):
+        if os.path.normcase(os.path.abspath(src)) != root:
+            return set()
+        return {n for n in names if n.lower() in _EXPLORER_METADATA}
+    return ignore
+
+
 def _copy_mismatch(staged_dir: str, install_dir: str) -> Optional[str]:
     """None when ``install_dir`` holds what ``staged_dir`` holds at the top level and the EXE is the
     same size; else what differs. A cheap check that the swap really produced the new version
-    before anything is marked applied - and so before the old copy becomes deletable."""
+    before anything is marked applied - and so before the old copy becomes deletable. Explorer's
+    metadata is left out on both sides: the swap does not copy the staged copy's, and carries the
+    user's own in afterwards (``_carry_explorer_metadata``)."""
     try:
-        want = sorted(n.lower() for n in os.listdir(staged_dir))
-        got = sorted(n.lower() for n in os.listdir(install_dir))
+        want = sorted(n.lower() for n in os.listdir(staged_dir) if n.lower() not in _EXPLORER_METADATA)
+        got = sorted(n.lower() for n in os.listdir(install_dir) if n.lower() not in _EXPLORER_METADATA)
         if want != got:
             return "top-level entries differ"
         if (os.path.getsize(os.path.join(staged_dir, APP_EXE))
@@ -995,7 +1013,11 @@ def _staged_files_refusal(staged_dir: str) -> Optional[str]:
         return None
     try:
         from netspeedtray.utils.bundle_manifest import verify_app_folder
-        verify_app_folder(staged_dir, os.path.join(staged_dir, APP_EXE))
+        # Explorer's folder metadata is tolerated here exactly as in the install-folder check: a
+        # desktop.ini or Thumbs.db appears as soon as someone opens the staged folder in Explorer.
+        # Any other extra file is still a refusal.
+        verify_app_folder(staged_dir, os.path.join(staged_dir, APP_EXE),
+                          tolerated_top_level=_EXPLORER_METADATA)
         return None
     except Exception as e:
         return "the staged copy failed its file check: %s" % (str(e) or e.__class__.__name__)
