@@ -149,7 +149,8 @@ def test_manual_menu_check_is_a_no_op_under_policy(policy):
 def _menu_fake(update_action):
     return types.SimpleNamespace(widget=types.SimpleNamespace(config={}), pause_action=None,
                                  reset_position_action=None, pause_separator=None,
-                                 update_action=update_action, logger=MagicMock())
+                                 update_action=update_action, logger=MagicMock(),
+                                 _hidden_menu_items=set, _collapse_separators=lambda: None)
 
 
 @pytest.mark.parametrize("hklm, visible", [({_NAME: (1, winreg.REG_DWORD)}, False), (None, True)])

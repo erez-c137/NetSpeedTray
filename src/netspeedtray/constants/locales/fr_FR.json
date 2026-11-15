@@ -641,5 +641,7 @@
     "BACKUP_HISTORY_ERR_READ": "Impossible de lire le fichier d'historique.",
     "BACKUP_HISTORY_ERR_VERIFY": "La copie n'a pas pu être vérifiée, elle n'a donc pas été enregistrée.",
     "BACKUP_HISTORY_ERR_IO": "Impossible d'écrire la copie. Vérifiez que vous pouvez enregistrer dans ce dossier et qu'il reste assez d'espace libre.",
-    "BACKUP_HISTORY_ERR_BUSY": "Une sauvegarde vers ce fichier est déjà en cours."
+    "BACKUP_HISTORY_ERR_BUSY": "Une sauvegarde vers ce fichier est déjà en cours.",
+    "CONTEXT_MENU_ITEMS_LABEL": "Éléments du menu clic droit",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choisissez ce qu'affiche le menu clic droit du widget. {settings} et {exit} sont toujours affichés."
 }

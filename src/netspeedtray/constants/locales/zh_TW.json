@@ -641,5 +641,7 @@
     "BACKUP_HISTORY_ERR_READ": "無法讀取歷史紀錄檔案。",
     "BACKUP_HISTORY_ERR_VERIFY": "無法驗證副本，因此未儲存。",
     "BACKUP_HISTORY_ERR_IO": "無法寫入副本。請確認可以儲存到該資料夾，且可用空間足夠。",
-    "BACKUP_HISTORY_ERR_BUSY": "已在備份到此檔案。"
+    "BACKUP_HISTORY_ERR_BUSY": "已在備份到此檔案。",
+    "CONTEXT_MENU_ITEMS_LABEL": "右鍵選單項目",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "選擇小工具右鍵選單中顯示的項目。「{settings}」和「{exit}」一律顯示。"
 }

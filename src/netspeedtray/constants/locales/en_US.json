@@ -641,5 +641,7 @@
     "BACKUP_HISTORY_ERR_READ": "The history file could not be read.",
     "BACKUP_HISTORY_ERR_VERIFY": "The copy could not be verified, so it was not saved.",
     "BACKUP_HISTORY_ERR_IO": "The copy could not be written. Check that you can save to that folder and that there is enough free space.",
-    "BACKUP_HISTORY_ERR_BUSY": "A backup to this file is already running."
+    "BACKUP_HISTORY_ERR_BUSY": "A backup to this file is already running.",
+    "CONTEXT_MENU_ITEMS_LABEL": "Right-click menu items",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choose what the widget's right-click menu shows. {settings} and {exit} always show."
 }

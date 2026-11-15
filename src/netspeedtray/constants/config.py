@@ -228,6 +228,22 @@ class ConfigConstants:
     DEFAULT_DOUBLE_CLICK_ACTION: Final[str] = CLICK_ACTION_OPEN_MONITOR
     DEFAULT_MIDDLE_CLICK_ACTION: Final[str] = CLICK_ACTION_NONE
 
+    # --- Right-click menu items the user can hide (2.2.1, from #526) ---
+    # Stable ids stored in `context_menu_hidden_items`. Settings and Exit are NOT here: they always
+    # show, so nobody can lock themselves out of the app. Pause/Resume keeps its own opt-in switch
+    # (`pause_in_menu`). Default: nothing hidden, so the menu is unchanged for existing users.
+    CONTEXT_MENU_ITEM_MONITOR: Final[str] = "monitor"
+    CONTEXT_MENU_ITEM_RESET_POSITION: Final[str] = "reset_position"
+    CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES: Final[str] = "check_for_updates"
+    CONTEXT_MENU_ITEM_SUPPORT: Final[str] = "support"
+    CONTEXT_MENU_HIDEABLE_ITEMS: Final[List[str]] = [
+        CONTEXT_MENU_ITEM_MONITOR,
+        CONTEXT_MENU_ITEM_RESET_POSITION,
+        CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES,
+        CONTEXT_MENU_ITEM_SUPPORT,
+    ]
+    DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS: Final[List[str]] = []
+
     # --- CPU/GPU Monitoring ---
     DEFAULT_MONITOR_CPU_ENABLED: Final[bool] = False
     DEFAULT_MONITOR_GPU_ENABLED: Final[bool] = False
@@ -311,6 +327,7 @@ class ConfigConstants:
         "power_display_enabled": False,    # opt-in: the hover card's battery rows (live draw / projected)
         "show_hover_tips": True,           # the hover card's right-click/double-click gesture hint
         "pause_in_menu": False,            # opt-in: surface Pause/Resume in the right-click menu
+        "context_menu_hidden_items": list(DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS),  # ids from CONTEXT_MENU_HIDEABLE_ITEMS
         "dark_mode": DEFAULT_DARK_MODE,
         "history_period": data.history_period.DEFAULT_PERIOD,
         "legend_position": DEFAULT_LEGEND_POSITION,
@@ -494,6 +511,10 @@ class ConfigConstants:
         "power_display_enabled": {"type": bool, "default": False},
         "show_hover_tips": {"type": bool, "default": True},
         "pause_in_menu": {"type": bool, "default": False},
+        # "item_choices": unknown ids (incl. "settings"/"exit", which always show) are dropped one by
+        # one and duplicates collapsed - a bad entry never costs the user the rest of the list.
+        "context_menu_hidden_items": {"type": list, "default": DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS,
+                                      "item_choices": CONTEXT_MENU_HIDEABLE_ITEMS},
         "dark_mode": {"type": bool, "default": DEFAULT_DARK_MODE},
         "history_period": {"type": str, "default": data.history_period.DEFAULT_PERIOD, "choices": list(data.history_period.PERIOD_MAP.values())},
         "legend_position": {"type": str, "default": DEFAULT_LEGEND_POSITION, "choices": data.legend_position.UI_OPTIONS},

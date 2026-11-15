@@ -641,5 +641,7 @@
     "BACKUP_HISTORY_ERR_READ": "Datoteke zgodovine ni bilo mogoče prebrati.",
     "BACKUP_HISTORY_ERR_VERIFY": "Kopije ni bilo mogoče preveriti, zato ni bila shranjena.",
     "BACKUP_HISTORY_ERR_IO": "Kopije ni bilo mogoče zapisati. Preverite, ali lahko shranjujete v to mapo in ali je dovolj prostega prostora.",
-    "BACKUP_HISTORY_ERR_BUSY": "Varnostno kopiranje v to datoteko že poteka."
+    "BACKUP_HISTORY_ERR_BUSY": "Varnostno kopiranje v to datoteko že poteka.",
+    "CONTEXT_MENU_ITEMS_LABEL": "Elementi menija desnega klika",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Izberite, kaj prikaže meni desnega klika pripomočka. {settings} in {exit} sta vedno prikazana."
 }

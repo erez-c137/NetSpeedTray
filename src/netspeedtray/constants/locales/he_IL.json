@@ -641,5 +641,7 @@
     "BACKUP_HISTORY_ERR_READ": "לא ניתן היה לקרוא את קובץ ההיסטוריה.",
     "BACKUP_HISTORY_ERR_VERIFY": "לא ניתן היה לאמת את העותק, ולכן הוא לא נשמר.",
     "BACKUP_HISTORY_ERR_IO": "לא ניתן היה לכתוב את העותק. ודא שאפשר לשמור בתיקייה הזו ושיש מספיק מקום פנוי.",
-    "BACKUP_HISTORY_ERR_BUSY": "כבר מתבצע גיבוי לקובץ הזה."
+    "BACKUP_HISTORY_ERR_BUSY": "כבר מתבצע גיבוי לקובץ הזה.",
+    "CONTEXT_MENU_ITEMS_LABEL": "פריטי תפריט הלחיצה הימנית",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "בחר מה יוצג בתפריט הלחיצה הימנית של הווידג'ט. {settings} ו{exit} מוצגים תמיד."
 }

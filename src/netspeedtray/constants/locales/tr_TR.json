@@ -641,5 +641,7 @@
     "BACKUP_HISTORY_ERR_READ": "Geçmiş dosyası okunamadı.",
     "BACKUP_HISTORY_ERR_VERIFY": "Kopya doğrulanamadığı için kaydedilmedi.",
     "BACKUP_HISTORY_ERR_IO": "Kopya yazılamadı. O klasöre kaydedebildiğinizi ve yeterli boş alan olduğunu denetleyin.",
-    "BACKUP_HISTORY_ERR_BUSY": "Bu dosyaya zaten bir yedekleme yapılıyor."
+    "BACKUP_HISTORY_ERR_BUSY": "Bu dosyaya zaten bir yedekleme yapılıyor.",
+    "CONTEXT_MENU_ITEMS_LABEL": "Sağ tıklama menüsü öğeleri",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Widget'ın sağ tıklama menüsünde nelerin görüneceğini seçin. {settings} ve {exit} her zaman görünür."
 }

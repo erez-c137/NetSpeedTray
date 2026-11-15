@@ -45,6 +45,8 @@ class TrayIconManager(QObject):
         self.pause_separator: Optional[QAction] = None
         self.reset_position_action: Optional[QAction] = None
         self.update_action: Optional[QAction] = None
+        self.monitor_action: Optional[QAction] = None
+        self.support_action: Optional[QAction] = None
         # [(QAction, Segoe-Fluent-codepoint)] - icons are (re)tinted to the text color on each open.
         self._menu_icon_actions: list = []
 
@@ -102,6 +104,7 @@ class TrayIconManager(QObject):
             # Activity windows - its three tabs cover both - so the menu is one calm entry (and a
             # double-click on the widget opens it too).
             monitor_action = self.context_menu.addAction(self.i18n.SHOW_MONITOR_MENU_ITEM)
+            self.monitor_action = monitor_action
             if hasattr(self.widget, 'open_monitor_window'):
                 monitor_action.triggered.connect(self.widget.open_monitor_window)
 
@@ -127,6 +130,7 @@ class TrayIconManager(QObject):
                 update_action.triggered.connect(self.widget.check_for_updates)
 
             support_action = self.context_menu.addAction(self.i18n.SUPPORT_MENU_ITEM)
+            self.support_action = support_action
             if hasattr(self.widget, 'show_support_dialog'):
                 support_action.triggered.connect(self.widget.show_support_dialog)
 
@@ -199,9 +203,48 @@ class TrayIconManager(QObject):
         except Exception as e:
             self.logger.debug("Menu style apply failed: %s", e)
 
+    def _hidden_menu_items(self) -> set:
+        """The optional items the user turned off in Settings (`context_menu_hidden_items`, 2.2.1).
+        Only ids from CONTEXT_MENU_HIDEABLE_ITEMS count - Settings and Exit are never in that list, so
+        they show even if a hand-edited config names them. A bad value hides nothing."""
+        try:
+            raw = getattr(self.widget, "config", {}).get("context_menu_hidden_items", [])
+            if not isinstance(raw, (list, tuple)):
+                return set()
+            allowed = constants.config.defaults.CONTEXT_MENU_HIDEABLE_ITEMS
+            return {item for item in raw if isinstance(item, str) and item in allowed}
+        except Exception:
+            return set()
+
+    def _collapse_separators(self) -> None:
+        """Hide any separator that would lead, trail or double up once items are hidden - every
+        separator is re-shown first, then only the ones between two visible groups stay."""
+        if not self.context_menu:
+            return
+        previous_visible_is_item = False
+        pending_separator: Optional[QAction] = None
+        for action in self.context_menu.actions():
+            if action.isSeparator():
+                action.setVisible(False)
+                if previous_visible_is_item and pending_separator is None:
+                    pending_separator = action
+                continue
+            if not action.isVisible():
+                continue
+            if pending_separator is not None:
+                pending_separator.setVisible(True)
+                pending_separator = None
+            previous_visible_is_item = True
+
     def _refresh_dynamic_items(self) -> None:
         """Update menu items whose text depends on live state, just before showing."""
         try:
+            ids = constants.config.defaults
+            hidden = self._hidden_menu_items()
+            if getattr(self, "monitor_action", None) is not None:
+                self.monitor_action.setVisible(ids.CONTEXT_MENU_ITEM_MONITOR not in hidden)
+            if getattr(self, "support_action", None) is not None:
+                self.support_action.setVisible(ids.CONTEXT_MENU_ITEM_SUPPORT not in hidden)
             # Pause/Resume is opt-in: show the action + its divider only when enabled in Settings.
             show_pause = bool(getattr(self.widget, "config", {}).get("pause_in_menu", False))
             if self.pause_action is not None:
@@ -216,13 +259,14 @@ class TrayIconManager(QObject):
             show_reset = False
             if getattr(self, "reset_position_action", None) is not None:
                 moved = getattr(self.widget, "has_custom_position", None)
-                show_reset = bool(moved()) if callable(moved) else False
+                show_reset = (bool(moved()) if callable(moved) else False)                     and ids.CONTEXT_MENU_ITEM_RESET_POSITION not in hidden
                 self.reset_position_action.setVisible(show_reset)
-            if self.pause_separator is not None:
-                self.pause_separator.setVisible(show_pause or show_reset)
             if getattr(self, "update_action", None) is not None:
                 from netspeedtray.core.update_checker import update_check_disabled_by_policy
-                self.update_action.setVisible(not update_check_disabled_by_policy())
+                self.update_action.setVisible(not update_check_disabled_by_policy()
+                                              and ids.CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES not in hidden)
+            # The Pause/Reset divider included: no separator leads, trails or doubles up.
+            self._collapse_separators()
         except Exception as e:
             self.logger.error("Error refreshing dynamic menu items: %s", e, exc_info=True)
 

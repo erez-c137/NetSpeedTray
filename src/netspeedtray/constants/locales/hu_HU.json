@@ -641,5 +641,7 @@
     "BACKUP_HISTORY_ERR_READ": "Az előzményfájl nem olvasható.",
     "BACKUP_HISTORY_ERR_VERIFY": "A másolat nem ellenőrizhető, ezért nem lett mentve.",
     "BACKUP_HISTORY_ERR_IO": "A másolat nem írható. Ellenőrizd, hogy tudsz-e menteni ebbe a mappába, és van-e elég szabad hely.",
-    "BACKUP_HISTORY_ERR_BUSY": "Már fut egy biztonsági mentés ebbe a fájlba."
+    "BACKUP_HISTORY_ERR_BUSY": "Már fut egy biztonsági mentés ebbe a fájlba.",
+    "CONTEXT_MENU_ITEMS_LABEL": "A jobb kattintásos menü elemei",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Válassza ki, mi jelenjen meg a widget jobb kattintásos menüjében. {settings} és {exit} mindig látható."
 }

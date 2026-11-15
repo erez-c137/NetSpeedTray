@@ -641,5 +641,7 @@
     "BACKUP_HISTORY_ERR_READ": "No se pudo leer el archivo de historial.",
     "BACKUP_HISTORY_ERR_VERIFY": "No se pudo verificar la copia, así que no se guardó.",
     "BACKUP_HISTORY_ERR_IO": "No se pudo escribir la copia. Comprueba que puedes guardar en esa carpeta y que hay espacio libre suficiente.",
-    "BACKUP_HISTORY_ERR_BUSY": "Ya se está haciendo una copia de seguridad en este archivo."
+    "BACKUP_HISTORY_ERR_BUSY": "Ya se está haciendo una copia de seguridad en este archivo.",
+    "CONTEXT_MENU_ITEMS_LABEL": "Elementos del menú contextual",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Elige qué muestra el menú contextual del widget. {settings} y {exit} siempre se muestran."
 }

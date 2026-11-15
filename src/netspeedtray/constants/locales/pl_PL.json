@@ -641,5 +641,7 @@
     "BACKUP_HISTORY_ERR_READ": "Nie udało się odczytać pliku historii.",
     "BACKUP_HISTORY_ERR_VERIFY": "Nie udało się sprawdzić kopii, więc nie została zapisana.",
     "BACKUP_HISTORY_ERR_IO": "Nie udało się zapisać kopii. Sprawdź, czy możesz zapisywać w tym folderze i czy jest dość wolnego miejsca.",
-    "BACKUP_HISTORY_ERR_BUSY": "Kopia zapasowa do tego pliku jest już tworzona."
+    "BACKUP_HISTORY_ERR_BUSY": "Kopia zapasowa do tego pliku jest już tworzona.",
+    "CONTEXT_MENU_ITEMS_LABEL": "Pozycje menu prawego przycisku",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Wybierz, co pokazuje menu prawego przycisku widżetu. {settings} i {exit} są zawsze widoczne."
 }

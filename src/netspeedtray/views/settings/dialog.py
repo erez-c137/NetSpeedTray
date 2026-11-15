@@ -460,7 +460,7 @@ class SettingsDialog(QDialog):
 
     def _wire_page(self, name: str, page: QWidget) -> None:
         """The cross-page and dialog hookups a page needs, made when it is built."""
-        if name in ("widget", "appearance", "interfaces", "hardware"):
+        if name in ("general", "widget", "appearance", "interfaces", "hardware"):
             page.layout_changed.connect(self._adjust_size_and_reposition)
         if name == "appearance":
             units, colors = page.units_section, page.colors_section
