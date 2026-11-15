@@ -812,8 +812,7 @@ class StatsMonitorThread(QThread):
             elif memory_only and vram_total is None:
                 vram_total = self._dxgi_vram_total()   # VRAM alone: DXGI, any vendor, no subprocess
             elif vram_total is None and self._nvidia_smi_path:
-                # nvidia-smi has not given a total (a hybrid's asleep dGPU, VRAM alone
-                # with no subprocess, or nvidia-smi failing):
+                # nvidia-smi has not given a total (a hybrid's asleep dGPU, or nvidia-smi failing):
                 # the one NVIDIA card's DXGI dedicated size - what Task Manager shows - not N/A.
                 nvidia = [a for a in gpu_adapters.hardware_adapters(self._gpu_adapters or [])
                           if a.vendor_id == constants.gpu.VENDOR_NVIDIA]
