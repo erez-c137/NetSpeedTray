@@ -194,6 +194,13 @@ class StatsController(QObject):
                 self.view.gpu_cards = tuple(stats['gpu_cards'] or ())
             except Exception:
                 pass
+        # A picked hybrid dGPU's sleep verdict (2.2.1) for the hover card's single GPU row: True / False
+        # / None (not judged). Live display only, like the list.
+        if 'gpu_asleep' in stats and self.view is not None:
+            try:
+                self.view.gpu_asleep = stats['gpu_asleep']
+            except Exception:
+                pass
 
         # Forward the network identity (band/SSID) whenever the thread sub-polled it (present-key
         # emits, like temp/power). The payload is a NetworkIdentity or None.

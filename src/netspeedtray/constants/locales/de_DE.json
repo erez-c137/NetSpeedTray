@@ -74,6 +74,7 @@
     "GPU_ADAPTER_AUTO": "Automatisch (höchste Auslastung)",
     "HOVER_LIST_ALL_GPUS_LABEL": "Beim Überfahren des Widgets alle GPUs auflisten",
     "GPU_ON_TASKBAR_MARKER": "in der Taskleiste",
+    "GPU_ASLEEP_LABEL": "Schläft",
     "TEMPERATURE_UNIT_LABEL": "Temperatureinheit",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",

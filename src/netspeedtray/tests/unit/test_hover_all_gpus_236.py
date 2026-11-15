@@ -114,10 +114,12 @@ def test_one_gpu_lists_nothing(thread):
 
 def test_the_poll_reads_no_more_pdh_arrays_and_returns_the_same_tuple(thread):
     """Golden-test constraint: the list adds no GpuPollResult field and no PDH read (``_poll`` hands
-    out exactly three arrays and would fail on a fourth)."""
+    out exactly three arrays and would fail on a fourth). ``asleep`` (2.2.1) is the picked card's
+    sleep verdict, not the list's - appended after the golden's fields, which it slices to."""
     thread._lhm_http.get_snapshot.return_value = parse_snapshot(balciseri_data_json())
     r = _poll(thread)
-    assert type(r)._fields == ("util", "vram_used", "vram_total", "temp", "power", "vram_is_shared", "present")
+    assert type(r)._fields == ("util", "vram_used", "vram_total", "temp", "power", "vram_is_shared", "present",
+                              "asleep")
     with patch("win32pdh.GetFormattedCounterArray", side_effect=AssertionError("PDH read")):
         assert len(thread._gpu_cards(True, True)) == 2
 
@@ -216,7 +218,7 @@ def _one_tick(thread, config, cards):
     thread.stats_ready = types.SimpleNamespace(emit=emit)
     gpu = MagicMock(return_value=types.SimpleNamespace(
         util=40.0, vram_used=2048.0, vram_total=8192.0, temp=60.0, power=30.0,
-        vram_is_shared=False, present=True))
+        vram_is_shared=False, present=True, asleep=None))
     with patch("netspeedtray.core.monitor_thread.is_rdp_session", return_value=False), \
          patch.object(thread, "_init_com"), patch.object(thread, "_cleanup_com"), \
          patch.object(thread, "_poll_gpu_hybrid", gpu), \

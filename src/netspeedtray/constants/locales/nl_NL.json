@@ -74,6 +74,7 @@
     "GPU_ADAPTER_AUTO": "Automatisch (drukst bezet)",
     "HOVER_LIST_ALL_GPUS_LABEL": "Alle GPU's tonen bij hoveren over de widget",
     "GPU_ON_TASKBAR_MARKER": "op de taakbalk",
+    "GPU_ASLEEP_LABEL": "Slaapt",
     "TEMPERATURE_UNIT_LABEL": "Temperatuureenheid",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",

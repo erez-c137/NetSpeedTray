@@ -75,6 +75,7 @@
     "GPU_ADAPTER_AUTO": "自动（负载最高）",
     "HOVER_LIST_ALL_GPUS_LABEL": "悬停小组件时列出所有 GPU",
     "GPU_ON_TASKBAR_MARKER": "任务栏显示",
+    "GPU_ASLEEP_LABEL": "休眠中",
     "TEMPERATURE_UNIT_LABEL": "温度单位",
     "TEMPERATURE_UNIT_CELSIUS": "摄氏度 (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "华氏度 (°F)",

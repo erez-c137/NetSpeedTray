@@ -74,6 +74,7 @@
     "GPU_ADAPTER_AUTO": "Automatikus (a legterheltebb)",
     "HOVER_LIST_ALL_GPUS_LABEL": "Összes GPU megjelenítése a widget fölé mutatva",
     "GPU_ON_TASKBAR_MARKER": "a tálcán",
+    "GPU_ASLEEP_LABEL": "Alszik",
     "TEMPERATURE_UNIT_LABEL": "Hőmérséklet mértékegysége",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",
