@@ -256,6 +256,10 @@ class UpdateChecker(QObject):
                 sig.disconnect()
             except (TypeError, RuntimeError):
                 pass
+        try:   # the thread-end cleanup too (check_now): the reaper owns this thread now
+            QThread.finished.__get__(worker, QThread).disconnect(self._on_worker_ended)
+        except (TypeError, RuntimeError):
+            pass
         worker.wait(self.STOP_WAIT_MS)
         from netspeedtray.core import thread_reaper
         thread_reaper.outlived(worker, "The update check")

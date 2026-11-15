@@ -740,6 +740,29 @@ def test_the_swap_carries_explorer_metadata_and_the_backup_stays_removable(
         ctypes.windll.kernel32.SetFileAttributesW(str(install), 0x10)
 
 
+def test_the_staged_copys_explorer_metadata_never_replaces_the_users(tmp_path):
+    """#541 review: once the staged-files check tolerated a staged desktop.ini, the swap's copytree
+    copied it into the new install; _carry_explorer_metadata then skipped the user's own (the name was
+    taken), so it survived only in the backup - which the janitor deletes, since the new install's
+    top level now listed desktop.ini. The staged copy's top-level Explorer files are not copied; the
+    user's are carried as before."""
+    install = _make_install(tmp_path)
+    (install / "desktop.ini").write_text("user", encoding="utf-8")
+    staged = _make_staged(tmp_path)
+    (staged / "desktop.ini").write_text("staged", encoding="utf-8")
+    (staged / "Thumbs.db").write_bytes(b"staged-thumbs")
+    (staged / "_internal" / "desktop.ini").write_text("nested", encoding="utf-8")
+
+    backup = ua.swap(str(install), str(staged))
+    assert (install / ua.APP_EXE).read_text(encoding="utf-8") == "new"
+    assert (install / "desktop.ini").read_text(encoding="utf-8") == "user", "the user's file was replaced"
+    assert not (install / "Thumbs.db").exists(), "the staged copy's thumbnail cache was copied in"
+    assert (install / "_internal" / "desktop.ini").read_text(encoding="utf-8") == "nested", (
+        "only the top level is skipped")
+    # The user's file is now in the install, so the backup may go - and the janitor's check agrees.
+    assert ua._portable_tree_refusal(backup, allowed_extra=os.listdir(install)) is None
+
+
 def test_a_refused_staged_copy_leaves_the_marker_older_sweeps_read(tmp_path, restart_spy):
     """The app restarted after a refusal is often an OLDER build, whose sweep deletes every folder
     in staged_update.json ten minutes after staging - the folder the notice sends the user to."""
