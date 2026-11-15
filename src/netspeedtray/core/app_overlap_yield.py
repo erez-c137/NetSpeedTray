@@ -18,6 +18,13 @@ yield off, and a second launch of the app (#440's activate message) while it is 
 for the rest of the session (``suspend_for_session``; a launch that finds it not yielded leaves it on,
 #373).
 
+With the setting OFF (2.2.1 item 6) the widget is never hidden, but it still never sits on the app
+buttons while another default spot is clear: on a left-aligned bar with a Widgets button beside the
+tray, buttons that reach the spot left of that button move the widget to the tray spot (the rc.3
+full-bar fallback, ``OverlapContext.may_hide=False``). Only when neither spot is clear (the tray spot
+would cover the weather text, or there is no second spot at all: no such button, a centred bar, a
+user's drag) does it stay where it is, over the buttons - the user chose visible over hidden.
+
 What is judged: the widget's x span - its real position while it is shown, the position it WOULD get
 (PositionManager computes it) while it is hidden: a hidden window is never re-placed, so its stale
 spot must not keep it hidden (rc.2 live test H3).
@@ -135,6 +142,16 @@ class OverlapContext:
     # The screen's Qt x origin (QScreen.geometry().left()): physical UIA rects convert to logical px
     # around it (taskbar_utils.physical_to_logical, #373). 0 on the primary.
     x_origin: float = 0.0
+    # False: the user turned "Hide while app buttons cover the widget" off (2.2.1 item 6). The widget is
+    # never hidden, but the full-bar fallback still runs: a crowded left-aligned bar moves it to the
+    # tray spot when that spot is clear, instead of leaving it on the app buttons. PositionManager sends
+    # such a context only while there IS a second spot (or the fallback holds one), or - on the primary
+    # bar - while it is left-aligned with Widgets on and no Widgets box is known yet (nothing else probes
+    # that bar's layout then); otherwise the yield stays detached and inert, as before.
+    may_hide: bool = True
+    # The weather text's extent was known when ``tray_spot_clear`` was judged (False: unknown, which
+    # also reads as not clear). Hiding off only: one unknown reading never drops the tray-spot hold.
+    tray_spot_text_known: bool = True
 
 
 def group_span(group_rect, dpi: float, x_origin: float = 0.0) -> Optional[Span]:
@@ -271,6 +288,8 @@ class AppOverlapYield(QObject):
         self._retreated = False
         self._step_clear_since: Optional[float] = None
         self._spot_gone_since: Optional[float] = None   # first retreated reading with no second spot
+        self._text_unknown_since: Optional[float] = None  # hiding off: first held reading, text unknown
+        self._may_hide = True                    # OverlapContext.may_hide at the last attach / sync
         self._relayout_burst_at = -1e9           # when a layout change last armed the follow-up burst
         self._probe_timer = self._timer(0, self._fire_probe)
         self._poll_timer = self._timer(t.SIDE_BAR_PROBE_POLL_MS, self._poll_probe)
@@ -315,6 +334,7 @@ class AppOverlapYield(QObject):
         self._retreated = False
         self._step_clear_since = None
         self._spot_gone_since = None
+        self._text_unknown_since = None
         self._model = None
         self._model_known = False
         self._changes = 0
@@ -356,6 +376,10 @@ class AppOverlapYield(QObject):
         if int(ctx.hwnd) != self._hwnd:
             self._attach(ctx)
             return
+        if self._note_may_hide(ctx):
+            # Off: a yield ends here, before the caller's visibility gate reads ``yielded`` (as
+            # detaching did). On: judge afresh.
+            self._schedule(0)
         if self._model_known and self._model_dpi is not None and abs(ctx.dpi - self._model_dpi) > 1e-6:
             # A live display-scale change: the measured group is logical px at the OLD scale (and the
             # widget is being re-sized / re-placed for the new one) - forget it and judge afresh now.
@@ -367,6 +391,7 @@ class AppOverlapYield(QObject):
             # The fallback's pending confirmations were timed against the old scale's readings.
             self._step_clear_since = None
             self._spot_gone_since = None
+            self._text_unknown_since = None
             self._near_interval_ms = constants.timeouts.SIDE_BAR_NEAR_RECHECK_MS
             self._schedule(0)
             return
@@ -410,10 +435,25 @@ class AppOverlapYield(QObject):
         if (self._clock() - self._last_probe_at) * 1000.0 >= interval - t.APP_YIELD_TICK_SLACK_MS:
             self._schedule(0)
 
+    def _note_may_hide(self, ctx: OverlapContext) -> bool:
+        """The setting flipped while a second spot keeps the yield attached: forget the hiding state
+        (a yield ends at once when it went off). True when it flipped. Called by ``sync`` AND by a probe
+        that lands first - a probe judged under the new setting with the old state, and the tick then
+        resetting it, hid / showed / hid the widget within a second of turning hiding on."""
+        if ctx.may_hide == self._may_hide:
+            return False
+        self._may_hide = ctx.may_hide
+        if not ctx.may_hide and self._state.yielded:
+            self._log.info("App-button yield off: the 'Hide while app buttons cover the widget' "
+                           "setting is off.")
+        self._state.reset()
+        self._hold_until = 0.0
+        return True
+
     def _attach(self, ctx: OverlapContext) -> None:
         """A (new) taskbar. A re-created one (Explorer restart: a new HWND) keeps a yield for the hold
         window; a saved "dropped on the buttons" offset that is still in force suppresses it."""
-        keep = bool(self._hwnd) and self._state.yielded
+        keep = bool(self._hwnd) and self._state.yielded and ctx.may_hide
         for timer in (self._probe_timer, self._poll_timer, self._followup_timer):
             timer.stop()
         suppressed = self._state.suppressed
@@ -421,6 +461,7 @@ class AppOverlapYield(QObject):
         self._retreated = False
         self._step_clear_since = None
         self._spot_gone_since = None
+        self._text_unknown_since = None
         self._model = None
         self._model_known = False
         self._changes = 0
@@ -433,6 +474,7 @@ class AppOverlapYield(QObject):
         self._hold_until = 0.0
         self._hwnd = int(ctx.hwnd)
         self._layout_key = ctx.layout_key
+        self._may_hide = ctx.may_hide
         if keep:
             self._state.yielded = True
             self._hold_until = self._clock() + constants.timeouts.APP_YIELD_NEW_TASKBAR_HOLD_MS / 1000.0
@@ -610,6 +652,13 @@ class AppOverlapYield(QObject):
         if ctx is None:
             self._finish()
             return
+        was_yielded = self._state.yielded
+        if self._note_may_hide(ctx) and was_yielded:
+            # Hiding went off before the tick noticed: show it now (no caller's gate follows a probe).
+            try:
+                self._on_change()
+            except Exception as e:
+                self._log.error("App-yield visibility update failed: %s", e, exc_info=True)
         span = group_span(group_rect, ctx.dpi, ctx.x_origin) if landed else None
         self._last_group_rect = group_rect
         if landed:
@@ -643,6 +692,11 @@ class AppOverlapYield(QObject):
                     self._on_change()
                 except Exception as e:
                     self._log.error("App-yield placement update failed: %s", e, exc_info=True)
+        if not ctx.may_hide:
+            # The setting is off: the fallback above was the whole judgement - never a hide, no hold,
+            # no drop baseline (2.2.1 item 6).
+            self._finish()
+            return
         # One gap to hide and to show. No return margin for a widget hidden at the stepped spot (rc.5,
         # #373): the fallback's margin stops the widget swinging between two spots, each move changing
         # the next judgement - hiding moves nothing (the hidden widget is judged at the same spot), so
@@ -700,15 +754,34 @@ class AppOverlapYield(QObject):
         self._spot_gone_since = None
         if span is None:
             return False
+        if ctx.tray_spot_text_known:
+            self._text_unknown_since = None
         if not ctx.tray_spot_clear:
+            if (not ctx.may_hide and self._retreated and not ctx.tray_spot_text_known
+                    and (self._text_unknown_since is None
+                         or (at - self._text_unknown_since) * 1000.0 < self._state.confirm_ms - 0.5)):
+                # Hiding off, held at the tray spot, and where the weather text ends is unknown for a
+                # moment: letting go would put the widget ON the app buttons until the next reading
+                # brings it back. Hold through one such reading; a second one APP_YIELD_SHOW_CONFIRM_MS
+                # later lets go (as for a vanished second spot).
+                if self._text_unknown_since is None:
+                    self._text_unknown_since = at
+                self._schedule(max(0, int(self._state.confirm_ms - (at - self._text_unknown_since) * 1000.0)))
+                return False
+            self._text_unknown_since = None
             # The tray spot would draw over the weather text (or where that text ends is unknown): no
             # fallback - the caller judges the stepped spot, so the yield steps the widget aside.
             changed = self._retreated
             self._retreated = False
             self._step_clear_since = None
             if changed:
-                self._log.info("The spot by the tray would cover the Widgets button's text: stepping aside "
-                            "instead.")
+                if ctx.may_hide:
+                    self._log.info("The spot by the tray would cover the Widgets button's text: stepping "
+                                "aside instead.")
+                else:
+                    # Neither spot is clear and hiding is off: the default spot, as before item 6.
+                    self._log.info("The spot by the tray would cover the Widgets button's text: back to "
+                                "the default spot (hiding is off).")
             return changed
         if not self._retreated:
             if group_reaches_widget(span, ctx.stepped) and not group_reaches_widget(span, ctx.tray_spot):
