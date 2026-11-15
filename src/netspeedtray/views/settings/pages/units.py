@@ -96,7 +96,15 @@ class UnitsPage(QWidget):
         """A line-spacing segment's text: "Default" for the default gap, else the signed px offset
         from it ("-4" .. "+4")."""
         offset = px - constants.config.defaults.DEFAULT_LINE_SPACING
-        return f"{offset:+d}" if offset else self._tr("LINE_SPACING_DEFAULT_OPTION", "Default")
+        if not offset:
+            return self._tr("LINE_SPACING_DEFAULT_OPTION", "Default")
+        # A right-to-left (Hebrew) segment read "1+" / "4-": the sign is direction-neutral and lands
+        # on the far side of the digit. An LTR isolate (LRI ... PDI) keeps "+1" one left-to-right unit
+        # (Qt's bidi, checked with QTextLayout). Only there: most CJK/Bengali UI faces have no glyph for
+        # the marks, and Qt then searches every installed family. The segment's value is separate from
+        # its text, so nothing maps the label back.
+        text = f"{offset:+d}"
+        return f"⁦{text}⁩" if getattr(self.i18n, "is_rtl", False) is True else text
 
     def load_settings(self, config: Dict[str, Any]):
         # Unit Type
