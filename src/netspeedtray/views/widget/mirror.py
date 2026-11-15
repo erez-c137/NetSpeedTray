@@ -404,7 +404,7 @@ class MirrorWidget(QWidget):
             if not self.renderer or not self.current_metrics:
                 return
             render_widget(
-                painter, self.rect(), self.renderer, self.renderer.config,
+                painter, self.rect(), self.renderer, self.layout_manager.paint_config(self.renderer.config),
                 main._build_metrics(),
                 layout_mode=self._layout_mode,                 # from ITS taskbar edge (§3.7)
                 cycle_mode=main._current_cycle_mode,           # one shared cycle phase
