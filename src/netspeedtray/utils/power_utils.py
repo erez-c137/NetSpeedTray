@@ -32,10 +32,8 @@ from typing import Optional
 
 from netspeedtray.constants import hardware
 
-try:
-    import wmi  # pywin32-backed; only present on Windows installs
-except ImportError:  # pragma: no cover - exercised on non-Windows CI
-    wmi = None
+# wmi is imported on first use (read_design_capacity_mwh, on the monitor thread), never at
+# import time: this module is also read by the GUI thread's hover card (utils/com_utils.py).
 
 MODE_DISCHARGE = "discharge"
 MODE_CHARGE = "charge"
@@ -117,6 +115,38 @@ def has_battery() -> bool:
     return read_power_state().mode != MODE_NONE
 
 
+def battery_presence() -> Optional[bool]:
+    """True / False when Windows says whether there is a system battery, None when it cannot say
+    (the call failed, or BatteryFlag 255 "unknown" with no valid percent) - ask again later then.
+    Unlike has_battery(), which folds "unknown" into "no battery" (fine for one hover)."""
+    status = _power_status_struct()
+    if status is None:
+        return None
+    flags = status.BatteryFlag
+    if flags != _FLAG_UNKNOWN:
+        return not (flags & _FLAG_NO_BATTERY)
+    return True if 0 <= status.BatteryLifePercent <= 100 else None
+
+
+# POWER_PLATFORM_ROLE (powrprof PowerDeterminePlatformRoleEx, POWER_PLATFORM_ROLE_V2).
+_POWER_PLATFORM_ROLE_V2 = 2
+_ROLE_MOBILE = 2
+_ROLE_SLATE = 8
+
+
+def platform_is_mobile() -> Optional[bool]:
+    """Whether the firmware calls this PC a laptop / tablet (ACPI preferred PM profile Mobile or
+    Slate), None if unreadable. Tells a laptop's battery from a desktop's USB UPS, which
+    GetSystemPowerStatus also reports as a system battery."""
+    try:
+        fn = ctypes.windll.powrprof.PowerDeterminePlatformRoleEx
+        fn.restype = ctypes.c_int
+        fn.argtypes = [ctypes.c_ulong]
+        return fn(_POWER_PLATFORM_ROLE_V2) in (_ROLE_MOBILE, _ROLE_SLATE)
+    except Exception:  # pragma: no cover - powrprof unavailable
+        return None
+
+
 def ac_line_status() -> Optional[int]:
     """The raw ACLineStatus (0 offline, 1 online, 255 unknown), or None if unreadable. Cheap
     enough to ask every poll - the monitor thread uses a change in it to drop its cached
@@ -162,12 +192,12 @@ def read_design_capacity_mwh() -> Optional[int]:
             return None
         total = 0
         try:
-            if wmi is not None:
-                root = wmi.WMI(namespace="root\\wmi")
-                for battery in root.query("SELECT DesignedCapacity FROM BatteryStaticData"):
-                    capacity = int(getattr(battery, "DesignedCapacity", 0) or 0)
-                    if p.DESIGN_CAPACITY_MIN_MWH <= capacity <= p.DESIGN_CAPACITY_MAX_MWH:
-                        total += capacity
+            from netspeedtray.utils.com_utils import import_wmi
+            root = import_wmi().WMI(namespace="root\\wmi")
+            for battery in root.query("SELECT DesignedCapacity FROM BatteryStaticData"):
+                capacity = int(getattr(battery, "DesignedCapacity", 0) or 0)
+                if p.DESIGN_CAPACITY_MIN_MWH <= capacity <= p.DESIGN_CAPACITY_MAX_MWH:
+                    total += capacity
         except Exception:
             total = 0
         if total > 0:

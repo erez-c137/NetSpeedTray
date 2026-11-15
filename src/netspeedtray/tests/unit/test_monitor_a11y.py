@@ -10,12 +10,6 @@ from PyQt6.QtGui import QKeyEvent
 from netspeedtray.constants.i18n import I18nStrings
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def _press(widget, key) -> None:
     widget.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier))
 

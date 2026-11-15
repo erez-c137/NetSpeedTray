@@ -16,15 +16,6 @@ import netspeedtray.utils.taskbar_utils as tbu
 from netspeedtray.utils.taskbar_utils import _select_taskbar_for_screen, _taskbar_window_is_ready
 
 
-@pytest.fixture(scope="session", autouse=True)
-def qt_app():
-    """A QApplication must exist for QScreen access."""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    yield app
-
-
 class MockScreen:
     """Minimal QScreen stand-in with name() + geometry()."""
     def __init__(self, name, geometry_rect):

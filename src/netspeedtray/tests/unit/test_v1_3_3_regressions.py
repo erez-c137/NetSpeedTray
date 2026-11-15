@@ -27,12 +27,6 @@ class _MockNetIO:
 
 
 @pytest.fixture
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
-@pytest.fixture
 def controller() -> StatsController:
     config = constants.config.defaults.DEFAULT_CONFIG.copy()
     return StatsController(config=config, widget_state=MagicMock(spec=WidgetState))

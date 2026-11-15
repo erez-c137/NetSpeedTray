@@ -302,6 +302,8 @@ def _rmtree_retrying(path: Path, budget_s: float = 10.0) -> None:
 def test_kill_at_a_random_moment_then_relaunch(seed, hot_db, hot_template, tmp_path):
     # Calibrated on identical copies: `start` = interpreter + imports + recover() (a --recover-only
     # run), `full` = a whole unkilled migration. Delays land between the two, i.e. inside migrate().
+    # Both are timed through the same _PY/_env launch as the killed run (#505: the base interpreter
+    # started directly, no venv launcher stub), so they measure the process the kill reaches.
     cal = tmp_path / "calibrate"
     shutil.copytree(hot_db, cal)
     t = time.perf_counter()

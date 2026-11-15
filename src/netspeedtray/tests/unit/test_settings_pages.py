@@ -15,10 +15,6 @@ from netspeedtray.views.settings.pages.interfaces import InterfacesPage
 from netspeedtray.views.settings.pages.colors import ColorsPage
 from netspeedtray import constants
 
-@pytest.fixture(scope="session")
-def q_app():
-    """Provides a QApplication instance for the test session."""
-    return QApplication.instance() or QApplication([])
 
 @pytest.fixture
 def mock_i18n():
@@ -463,6 +459,18 @@ def test_display_enums_are_segmented_and_round_trip(q_app, mock_i18n, mock_callb
     p.load_settings({"decimal_places": 0})
     got = p.get_settings()
     assert got["decimal_places"] == 0
+
+
+@pytest.mark.parametrize("stored,shown", [(-4, -4), (0, 0), (4, 4), (None, 1), ("junk", 1),
+                                          (50, 1), (-9, 1), ("3", 1), (2.5, 1), (True, 1)])
+def test_line_spacing_round_trips_and_defaults(q_app, mock_i18n, mock_callback, stored, shown):
+    """Line spacing: -4..+4 px as a segmented control; a missing or unreadable value shows the
+    default (1, the gap the widget always had)."""
+    from netspeedtray.utils.components import Win11Segmented
+    p = UnitsPage(mock_i18n, mock_callback)
+    assert isinstance(p.line_spacing, Win11Segmented)
+    p.load_settings({} if stored is None else {"line_spacing": stored})
+    assert p.get_settings()["line_spacing"] == shown
 
 
 def test_arrow_colors_round_trip(q_app, mock_i18n, mock_callback):

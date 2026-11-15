@@ -23,16 +23,11 @@ WIDGET_TERM = {
     "en_US": "widget", "de_DE": "widget", "es_ES": "widget", "fr_FR": "widget",
     "it_IT": "widget", "nl_NL": "widget", "hu_HU": "widget", "tr_TR": "widget",
     "pl_PL": "widż", "ru_RU": "виджет", "sl_SI": "gradnik", "he_IL": "יישומון",
-    "ja_JP": "ウィジェット", "ko_KR": "위젯", "zh_CN": "小部件", "zh_TW": "小工具",
+    "ja_JP": "ウィジェット", "ko_KR": "위젯", "zh_CN": "小组件", "zh_TW": "小工具",
     "bn_BD": "উইজেট",
 }
 
 LOCALES = sorted(p.stem for p in LOCALES_DIR.glob("*.json"))
-
-
-@pytest.fixture(scope="module", autouse=True)
-def q_app():
-    return QApplication.instance() or QApplication([])
 
 
 def _hint(locale: str) -> str:

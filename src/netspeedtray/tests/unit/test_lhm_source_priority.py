@@ -48,7 +48,7 @@ def test_http_without_a_cpu_sensor_falls_back_to_wmi(thread):
     thread._wmi_ohm = _lhm_cpu_package(61.0)
     with patch.object(thread, "_init_ohm_wmi"), \
          patch("netspeedtray.core.monitor_thread.win32pdh", _acpi_zone(_AMBIENT_ZONE)), \
-         patch("netspeedtray.core.monitor_thread.win32com.client", None):
+         patch("netspeedtray.core.monitor_thread._com_client", return_value=None):
         assert thread._poll_cpu_temperature() == 61.0
 
 
@@ -57,7 +57,7 @@ def test_http_down_falls_back_to_acpi(thread):
     thread._wmi_ohm = None
     with patch.object(thread, "_init_ohm_wmi"), \
          patch("netspeedtray.core.monitor_thread.win32pdh", _acpi_zone(_AMBIENT_ZONE)), \
-         patch("netspeedtray.core.monitor_thread.win32com.client", None):
+         patch("netspeedtray.core.monitor_thread._com_client", return_value=None):
         assert thread._poll_cpu_temperature() == pytest.approx(27.05)
 
 
@@ -67,7 +67,7 @@ def test_acpi_placeholder_is_still_rejected_behind_http(thread):
     thread._wmi_ohm = None
     with patch.object(thread, "_init_ohm_wmi"), \
          patch("netspeedtray.core.monitor_thread.win32pdh", _acpi_zone([3000.0] * 6)), \
-         patch("netspeedtray.core.monitor_thread.win32com.client", None):
+         patch("netspeedtray.core.monitor_thread._com_client", return_value=None):
         readings = [thread._poll_cpu_temperature() for _ in range(6)]
     assert readings[-1] is None
 
@@ -190,7 +190,7 @@ def test_a_foreign_service_on_the_port_does_not_break_the_temp_poll(thread, garb
     thread._wmi_ohm = None
     with patch.object(thread, "_init_ohm_wmi"), \
          patch("netspeedtray.core.monitor_thread.win32pdh", _acpi_zone(_AMBIENT_ZONE)), \
-         patch("netspeedtray.core.monitor_thread.win32com.client", None):
+         patch("netspeedtray.core.monitor_thread._com_client", return_value=None):
         assert thread._poll_cpu_temperature() == pytest.approx(27.05)
         # Backed off: no second request this window. Counted, not timed - a wall-clock bound
         # flaked under a loaded full-suite run (2026-11-03).

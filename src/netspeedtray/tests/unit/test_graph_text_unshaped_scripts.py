@@ -32,6 +32,14 @@ MBPS = 125_000.0
 _BENGALI = re.compile("[ঀ-৿]")
 
 
+@pytest.fixture(autouse=True)
+def _unshaped_matplotlib(monkeypatch):
+    """This module is matplotlib WITHOUT complex text shaping (< 3.11, what 2.2.0 ships): pinned, so it
+    holds on 3.11 too. The shaping matplotlib's Bengali graph: test_graph_text_shaped_bengali.py."""
+    from netspeedtray.utils import mpl_fonts
+    monkeypatch.setattr(mpl_fonts, "_MPL_SHAPES", False)
+
+
 def _agg_init(self):
     self.figure = Figure(figsize=(9.3, 4.3), dpi=100)
     self.canvas = FigureCanvasAgg(self.figure)

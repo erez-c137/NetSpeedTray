@@ -54,6 +54,7 @@ class AdapterInfo:
     description: str = ""
     if_type: Optional[int] = None
     hardware: Optional[bool] = None
+    luid: int = 0   # InterfaceLuid (route-table rows name their interface by it)
 
 
 def _any_in(text: str, keywords: Iterable[str]) -> bool:
@@ -164,7 +165,7 @@ def read_os_adapters() -> Dict[str, AdapterInfo]:
                 continue
             out.setdefault(r.Alias, AdapterInfo(
                 name=r.Alias, description=r.Description, if_type=int(r.Type),
-                hardware=bool(flags & _FLAG_HARDWARE_INTERFACE)))
+                hardware=bool(flags & _FLAG_HARDWARE_INTERFACE), luid=int(r.InterfaceLuid)))
         return out
     finally:
         lib.FreeMibTable(table)

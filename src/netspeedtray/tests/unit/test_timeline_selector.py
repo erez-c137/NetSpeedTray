@@ -14,12 +14,6 @@ _GRANULAR = ("TIMELINE_30_MIN", "TIMELINE_1_HOUR", "TIMELINE_4_HOURS",
              "TIMELINE_8_HOURS", "TIMELINE_12_HOURS", "TIMELINE_48_HOURS")
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def test_granular_periods_present_and_consistent():
     hp = constants.data.history_period
     # validate() runs on import; the new keys must be in PERIOD_MAP AND have a cutoff (or import fails).

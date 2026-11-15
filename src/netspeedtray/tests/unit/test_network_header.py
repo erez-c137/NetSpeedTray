@@ -11,12 +11,6 @@ from netspeedtray.views.monitor.network.header import (
 )
 
 
-@pytest.fixture(scope="session")
-def q_app():
-    from PyQt6.QtWidgets import QApplication
-    return QApplication.instance() or QApplication([])
-
-
 def test_period_value_maps_keys():
     assert _period_value("TIMELINE_SESSION") == 0
     assert _period_value("TIMELINE_24_HOURS") == 2
