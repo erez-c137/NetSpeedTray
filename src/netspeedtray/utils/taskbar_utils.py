@@ -110,6 +110,20 @@ def find_tasklist_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]
         return None
 
 
+def _rebar_band_count(rebar_hwnd: int) -> Optional[int]:
+    """How many bands the taskbar's ReBarWindow32 holds (RB_GETBANDCOUNT), or None when it doesn't
+    answer within REBAR_BAND_COUNT_TIMEOUT_MS or the call fails. The message carries no pointers, so
+    it is safe to send into Explorer's process."""
+    try:
+        _rc, count = win32gui.SendMessageTimeout(
+            rebar_hwnd, constants.layout.REBAR_GETBANDCOUNT_MSG, 0, 0,
+            win32con.SMTO_ABORTIFHUNG, constants.layout.REBAR_BAND_COUNT_TIMEOUT_MS)
+    except Exception as e:  # noqa: BLE001 - a timeout / hung Explorer: infer nothing
+        logger.debug("RB_GETBANDCOUNT failed for ReBar %s: %s", rebar_hwnd, e)
+        return None
+    return count if isinstance(count, int) and not isinstance(count, bool) else None
+
+
 def find_toolbar_bands_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
     """
     Physical-px union of the classic taskbar toolbars (Desktop, Links, Address, a folder toolbar) that
@@ -124,7 +138,8 @@ def find_toolbar_bands_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, 
     The rect starts where the task band ENDS, not at a toolbar child window: the ReBar draws each
     band's gripper and title ("Desktop", "Links") itself, outside the child, so hugging the child put
     the widget on the title (2.2.1). And a band whose child is hidden or empty (collapsed to its title
-    and chevron) still takes the room between the task band and the ReBar's end - that gap counts too.
+    and chevron) still takes the room between the task band and the ReBar's end - that gap counts too,
+    but only when the ReBar reports more than one band (RB_GETBANDCOUNT; Win11's says 1).
     """
     try:
         rebar = win32gui.FindWindowEx(taskbar_hwnd, 0, "ReBarWindow32", None)
@@ -156,8 +171,10 @@ def find_toolbar_bands_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, 
             bar = None
         if bar is not None:
             bar_end = bar[3] if vertical else bar[2]
-            # The task band fills the ReBar to its end unless bands follow it (Win11: both 1136).
-            if bar_end - task_end > constants.layout.TOOLBAR_BAND_MIN_GAP_PX:
+            # The task band fills the ReBar to its end unless bands follow it (Win11: both 1136). The
+            # gap alone is geometry only - believed when the ReBar itself says it holds more bands.
+            if (bar_end - task_end > constants.layout.TOOLBAR_BAND_MIN_GAP_PX
+                    and (_rebar_band_count(rebar) or 0) > 1):
                 ends.append(bar_end)
         if not ends:
             return None
