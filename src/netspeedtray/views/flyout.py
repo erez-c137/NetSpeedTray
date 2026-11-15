@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
 )
@@ -115,10 +116,18 @@ class Flyout(QWidget):
         sz = self.size()
         x = point.x() - sz.width()
         y = point.y() - sz.height()
-        if x < 0:
-            x = max(0, point.x())
-        if y < 0:
-            y = max(0, point.y())
+        # Kept inside the work area of the screen holding `point`, not clamped at 0: a monitor left
+        # of / above the primary has negative virtual coordinates (0 flung the flyout onto the
+        # primary), and on a left / top taskbar 0 sat it over the taskbar.
+        screen = QGuiApplication.screenAt(point) or QGuiApplication.primaryScreen()
+        if screen is not None:
+            area = screen.availableGeometry()
+            if x < area.left():       # no room to the left of the anchor: open to its right
+                x = point.x()
+            if y < area.top():        # no room above it: open below
+                y = point.y()
+            x = max(area.left(), min(x, area.right() + 1 - sz.width()))
+            y = max(area.top(), min(y, area.bottom() + 1 - sz.height()))
         self.move(x, y)
         self.show()
         if self._auto_dismiss_ms > 0:
