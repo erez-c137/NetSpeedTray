@@ -23,7 +23,7 @@ same commit. This describes **schema v8** (NetSpeedTray 2.2 and later). The desi
 
 ## What changed in v8 (2.2)
 
-- **Bytes, not rates.** Every poll stores the exact number of bytes each adapter moved, and the
+- **Bytes, not rates.** The raw tier stores the exact number of bytes each adapter moved, and the
   interval it moved them over (`net_raw.dt_ms`). Volume is a `SUM`, exact, and the poll-rate setting
   can no longer skew it. Rates are derived: `bytes * 1000 / dt_ms`.
 - **Adapter and metric names live once**, in `interfaces` and `metrics`; the history tables hold
@@ -39,7 +39,7 @@ same commit. This describes **schema v8** (NetSpeedTray 2.2 and later). The desi
 
 | Tier | Network | Hardware | Resolution | Holds | Then |
 |---|---|---|---|---|---|
-| raw | `net_raw` | `hw_raw` | each poll | the last **24 hours** | rolled into per-minute rows, originals deleted |
+| raw | `net_raw` | `hw_raw` | each poll, at most one row a second | the last **24 hours** | rolled into per-minute rows, originals deleted |
 | minute | `net_minute` | `hw_minute` | per minute | the last **30 days** | rolled into per-hour rows, originals deleted |
 | hour | `net_hour` | `hw_hour` | per hour | until your retention setting | deleted |
 
@@ -99,7 +99,7 @@ CREATE TABLE metrics (
 );
 ```
 
-### `net_raw` — every poll, last 24 h
+### `net_raw` — each poll (at most one row a second), last 24 h
 
 ```sql
 CREATE TABLE net_raw (
@@ -120,6 +120,12 @@ a driver glitch cannot add phantom gigabytes. A poll in which an adapter moved n
 interval, `2` a gap (the interval was far longer than the poll rate - standby, a stall; the bytes are
 real, a graph should not draw them as one spike). `4` and `8` are reserved (meant for "resumed
 from sleep" and "first sample of a session"); nothing sets them yet, so a reader must not rely on them.
+
+**At most one row per adapter per second.** `ts` is whole seconds and part of the key, so at the
+0.5 s update rate two intervals that end in the same second are **merged** into one row: their bytes
+and `dt_ms` are added and their `flags` OR-ed. Nothing is lost - volume and `bytes * 1000 / dt_ms`
+stay exact - but a row is a second, not a poll, so count seconds, not rows, when you measure coverage
+(`RAW_TS_RESOLUTION_SECONDS` in `core/db/schema_v8.py`).
 
 ### `net_minute` / `net_hour` — the rollups
 
@@ -163,11 +169,16 @@ CREATE TABLE hw_raw (
 -- (here sample_count IS a sample count, not seconds)
 ```
 
+`hw_raw` too holds **at most one row per metric per second**. At the 0.5 s update rate the second's
+**first** sample is kept and the second one is dropped - except the `errin`/`errout`/`dropin`/`dropout`
+counts below, which are added together so no packet is lost. So `sample_count` in the rollups counts
+raw rows, at most one a second.
+
 Metrics recorded, by `metrics.name` (`entity = ''` unless noted):
 
 | name | Unit | Notes |
 |---|---|---|
-| `cpu`, `gpu`, `ram` | percent | 0–100 |
+| `cpu`, `gpu`, `ram` | percent | 0–100. `ram` follows its own switch (**Show RAM usage**) and is recorded without CPU monitoring since 2.2.1. VRAM is shown, not recorded |
 | `cpu_temp`, `gpu_temp` | °C | `cpu_temp` needs LibreHardwareMonitor on most systems |
 | `cpu_power`, `gpu_power`, `total_power`, `system_power` | watts | |
 | `latency_gw` | milliseconds | ping to your router — your LAN. Median of the cycle's burst of 4 pings |
@@ -197,7 +208,7 @@ CREATE TABLE app_sessions (
     last_seen_ts INTEGER NOT NULL,   -- heartbeat, updated every 10 s
     ended_ts     INTEGER,            -- NULL while running, or after a crash / forced kill
     version      TEXT    NOT NULL,   -- the NetSpeedTray version that ran
-    poll_ms      INTEGER NOT NULL,
+    poll_ms      INTEGER NOT NULL,   -- update rate when the session started: 500, 1000, 2000, 5000 or 10000
     clean_exit   INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE link_events (
@@ -435,7 +446,7 @@ WHERE m.name IN ('errin', 'errout', 'dropin', 'dropout') AND t.ts > strftime('%s
 GROUP BY adapter, counter ORDER BY packets DESC;
 ```
 
-**Percentiles — but only over the last 24 hours**, where per-poll data still exists:
+**Percentiles — but only over the last 24 hours**, where per-second data still exists:
 
 ```sql
 WITH r AS (SELECT n.down_bytes * 8.0 / n.dt_ms / 1000.0 AS mbps
