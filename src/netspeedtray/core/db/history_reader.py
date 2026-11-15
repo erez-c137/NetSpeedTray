@@ -487,6 +487,13 @@ class V7HistoryReader(_ReaderBase):
 
     allow_fallback = True
 
+    @staticmethod
+    def _raw_row_seconds(poll_interval: float) -> float:
+        """The seconds one raw row stands for. The v7 raw tables' (timestamp, ...) primary key holds
+        at most one row per second, so a sub-second poll (0.5 s, #456) still writes one row per second:
+        row count x 0.5 s read as 50 % coverage and half the volume. Same cap as the v8 reader."""
+        return max(float(poll_interval), float(S8.RAW_TS_RESOLUTION_SECONDS))
+
     # --- tier precedence ----------------------------------------------------------------------
 
     def _bounds(self, tables: Tuple[str, ...]) -> List[Tuple[str, tuple]]:
@@ -685,6 +692,7 @@ class V7HistoryReader(_ReaderBase):
                           interface_name: Optional[str] = None, poll_interval: float = 1.0):
         from netspeedtray.utils import summaries as S
         col = "download" if direction == "download" else "upload"
+        poll_interval = self._raw_row_seconds(poll_interval)
         win = max(0.0, (end_time - start_time).total_seconds())
         st, et = int(start_time.timestamp()), int(end_time.timestamp())
         iface = None if interface_name in (None, "all") else interface_name
@@ -810,7 +818,7 @@ class V7HistoryReader(_ReaderBase):
             # sample_count x the LIVE poll interval, which silently rescales ALL historical data when the
             # user changes the poll rate (1s->5s would 5x-over-report months of minute/hour history). The
             # raw tier has no stored capture interval, so it uses the current poll interval (it's <=24h,
-            # where the rate rarely changes).
+            # where the rate rarely changes) - floored at one second, the raw tier's row resolution.
             #
             # KNOWN OVER-COUNT, deliberately kept (v8 step 2 is behaviour-identical): avg x 60 assumes
             # every second of the bucket was sampled, but the writer only stores a raw row when the NIC
@@ -818,7 +826,8 @@ class V7HistoryReader(_ReaderBase):
             # idle minute. The v8 backend fixes it by storing bytes (SUM(bytes)), not by patching this.
             tiers = []
             if start_ts <= now_ts:                  # raw: SUM(bytes_sec) x poll_interval
-                tiers.append(("speed_history_raw", "upload_bytes_sec", "download_bytes_sec", poll_interval))
+                tiers.append(("speed_history_raw", "upload_bytes_sec", "download_bytes_sec",
+                              self._raw_row_seconds(poll_interval)))
             if start_ts < (now_ts - 24 * 3600):     # minute: SUM(avg) x 60
                 tiers.append(("speed_history_minute", "upload_avg", "download_avg", 60.0))
             if start_ts < (now_ts - 30 * 86400):    # hour: SUM(avg) x 3600
@@ -963,6 +972,7 @@ class V7HistoryReader(_ReaderBase):
     def summarize_hardware(self, stat_type: str, start_time: datetime, end_time: datetime,
                            poll_interval: float = 1.0):
         from netspeedtray.utils import summaries as S
+        poll_interval = self._raw_row_seconds(poll_interval)
         win = max(0.0, (end_time - start_time).total_seconds())
         st, et = int(start_time.timestamp()), int(end_time.timestamp())
         conn, began = None, False
