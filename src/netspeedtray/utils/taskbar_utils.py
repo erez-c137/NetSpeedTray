@@ -110,6 +110,20 @@ def find_tasklist_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]
         return None
 
 
+def _rebar_band_count(rebar_hwnd: int) -> Optional[int]:
+    """How many bands the taskbar's ReBarWindow32 holds (RB_GETBANDCOUNT), or None when it doesn't
+    answer within REBAR_BAND_COUNT_TIMEOUT_MS or the call fails. The message carries no pointers, so
+    it is safe to send into Explorer's process."""
+    try:
+        _rc, count = win32gui.SendMessageTimeout(
+            rebar_hwnd, constants.layout.REBAR_GETBANDCOUNT_MSG, 0, 0,
+            win32con.SMTO_ABORTIFHUNG, constants.layout.REBAR_BAND_COUNT_TIMEOUT_MS)
+    except Exception as e:  # noqa: BLE001 - a timeout / hung Explorer: infer nothing
+        logger.debug("RB_GETBANDCOUNT failed for ReBar %s: %s", rebar_hwnd, e)
+        return None
+    return count if isinstance(count, int) and not isinstance(count, bool) else None
+
+
 def find_toolbar_bands_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
     """
     Physical-px union of the classic taskbar toolbars (Desktop, Links, Address, a folder toolbar) that
@@ -120,6 +134,12 @@ def find_toolbar_bands_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, 
     Windows 11 has no taskbar toolbars: its ReBarWindow32 holds MSTaskSwWClass only (probed on
     26200), so this is None there and nothing changes. A band before the task list (dragged to the
     start of the bar) is left out: the widget never sits there.
+
+    The rect starts where the task band ENDS, not at a toolbar child window: the ReBar draws each
+    band's gripper and title ("Desktop", "Links") itself, outside the child, so hugging the child put
+    the widget on the title (2.2.1). And a band whose child is hidden or empty (collapsed to its title
+    and chevron) still takes the room between the task band and the ReBar's end - that gap counts too,
+    but only when the ReBar reports more than one band (RB_GETBANDCOUNT; Win11's says 1).
     """
     try:
         rebar = win32gui.FindWindowEx(taskbar_hwnd, 0, "ReBarWindow32", None)
@@ -133,7 +153,9 @@ def find_toolbar_bands_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, 
             return None
         vertical = (task[3] - task[1]) > (task[2] - task[0])
         tol = constants.layout.TOOLBAR_BAND_ADJACENCY_TOLERANCE_PX
-        bands = []
+        task_end = task[3] if vertical else task[2]
+        # Where each band after the task list ends, along the bar.
+        ends = []
         child = win32gui.FindWindowEx(rebar, 0, None, None)
         for _ in range(constants.layout.TOOLBAR_BAND_SCAN_LIMIT):
             if not child:
@@ -141,12 +163,27 @@ def find_toolbar_bands_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, 
             if child != tasksw and win32gui.IsWindowVisible(child):
                 r = valid_rect(tuple(win32gui.GetWindowRect(child)))
                 if r is not None and ((r[1] >= task[3] - tol) if vertical else (r[0] >= task[2] - tol)):
-                    bands.append(r)
+                    ends.append(r[3] if vertical else r[2])
             child = win32gui.FindWindowEx(rebar, child, None, None)
-        if not bands:
+        try:
+            bar = valid_rect(tuple(win32gui.GetWindowRect(rebar)))
+        except Exception:  # noqa: BLE001 - the child scan alone decides
+            bar = None
+        if bar is not None:
+            bar_end = bar[3] if vertical else bar[2]
+            # The task band fills the ReBar to its end unless bands follow it (Win11: both 1136). The
+            # gap alone is geometry only - believed when the ReBar itself says it holds more bands.
+            if (bar_end - task_end > constants.layout.TOOLBAR_BAND_MIN_GAP_PX
+                    and (_rebar_band_count(rebar) or 0) > 1):
+                ends.append(bar_end)
+        if not ends:
             return None
-        return (min(b[0] for b in bands), min(b[1] for b in bands),
-                max(b[2] for b in bands), max(b[3] for b in bands))
+        end = max(ends)
+        if end <= task_end:
+            return None
+        if vertical:
+            return (task[0], task_end, task[2], end)
+        return (task_end, task[1], end, task[3])
     except Exception as e:
         logger.debug("Toolbar band scan failed for taskbar HWND %s: %s", taskbar_hwnd, e)
         return None

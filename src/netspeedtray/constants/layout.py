@@ -98,6 +98,17 @@ class LayoutConstants:
     # looked at (a real taskbar has a handful).
     TOOLBAR_BAND_ADJACENCY_TOLERANCE_PX: Final[int] = 2
     TOOLBAR_BAND_SCAN_LIMIT: Final[int] = 32
+    # The task band fills the ReBar to its end unless toolbar bands follow it: more than this many
+    # physical px between the two ends counts as toolbars even when no band child is visible (a band
+    # collapsed to its title and chevron). Less than any band's gripper + title or chevron.
+    TOOLBAR_BAND_MIN_GAP_PX: Final[int] = 8
+    # That gap is only believed when the ReBar reports more than one band: RB_GETBANDCOUNT
+    # (WM_USER + 12; no pointers, so safe across processes), sent with SMTO_ABORTIFHUNG and this
+    # timeout. Win11's bar answers 1 (probed on 26200, 2026-11-15); a timeout or failure infers nothing,
+    # so a task band shrunk by something else (a third-party tool, an Explorer restart) never reads
+    # as toolbars mid-bar.
+    REBAR_GETBANDCOUNT_MSG: Final[int] = 0x0400 + 12
+    REBAR_BAND_COUNT_TIMEOUT_MS: Final[int] = 200
     # One Win11 taskbar button slot along a horizontal bar, logical px (44 physical px at 96 DPI,
     # scaled with the DPI; owner's probe 2026-10-22). Only an ESTIMATE for the #24 yield's "is the app
     # group near the widget" poll gating - the collision itself always uses UIA's real rects.
