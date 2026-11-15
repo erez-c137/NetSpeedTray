@@ -1122,6 +1122,19 @@ class Win11Segmented(QWidget):
             return base
         return QSize(self._row_width(2), base.height())
 
+    def sizeHint(self) -> QSize:
+        # (wrap mode) Prefer one row: a layout that doesn't stretch the control (a stacked SettingCard
+        # aligns it left) sizes it by this, and a 2-row hint would keep it on two rows for good.
+        base = super().sizeHint()
+        if not self._wrap or len(self._items) < 2:
+            return base
+        return QSize(self._row_width(1), base.height())
+
+    def _one_row_width(self) -> int:
+        """(wrap mode) What SettingCard needs beside the title: the one-row width, so the card puts the
+        control under the title (on one row, if that fits) before squeezing it onto two rows."""
+        return self._row_width(1) if self._wrap and len(self._items) > 1 else self.minimumSizeHint().width()
+
     def resizeEvent(self, event) -> None:
         if self._wrap and len(self._items) > 1:
             rows = 1 if event.size().width() >= self._row_width(1) else 2

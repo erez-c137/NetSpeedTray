@@ -168,9 +168,13 @@ class ConfigConstants:
     DEFAULT_HIDE_ARROWS: Final[bool] = False
     DEFAULT_HIDE_UNIT_SUFFIX: Final[bool] = False
     # Extra px between the two speed rows on top of the font's line height (negative = tighter).
+    # Settings offers it as an offset from the default - "-4 .. -1, Default, +1 .. +4" - so the stored
+    # px range is the default +/- LINE_SPACING_OFFSET_RANGE (-3..+5): a value keeps meaning the same
+    # pixels, and only the old -4 px (never in a release) falls outside and is reset to the default.
     DEFAULT_LINE_SPACING: Final[int] = 1
-    LINE_SPACING_MIN: Final[int] = -4
-    LINE_SPACING_MAX: Final[int] = 4
+    LINE_SPACING_OFFSET_RANGE: Final[int] = 4
+    LINE_SPACING_MIN: Final[int] = DEFAULT_LINE_SPACING - LINE_SPACING_OFFSET_RANGE
+    LINE_SPACING_MAX: Final[int] = DEFAULT_LINE_SPACING + LINE_SPACING_OFFSET_RANGE
     DEFAULT_SHORT_UNIT_LABELS: Final[bool] = False
     DEFAULT_DECIMAL_PLACES: Final[int] = 1
     DEFAULT_TEXT_ALIGNMENT: Final[str] = "center"

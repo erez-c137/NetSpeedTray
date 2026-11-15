@@ -974,7 +974,8 @@ class GraphRenderer(QObject):
         """The centered note on a network graph with no traffic for the range, saying WHY honestly:
         the live Session view is still collecting; nothing recorded at all yet; the range ends before
         the first record ("History starts <date>"); or history exists before it and this period simply
-        had none - the PC was off, idle or paused (the history keeps no all-zero rows), which is not
+        had none - the PC was off, asleep or idle, or the app wasn't running (the history keeps no
+        all-zero rows; the app's Pause does not stop recording), which is not
         "not enough history". ``hw_styles["earliest"]`` (GraphHost) is the first stored record."""
         earliest = (hw_styles or {}).get("earliest")
         if period_key == "TIMELINE_SESSION":
@@ -990,8 +991,12 @@ class GraphRenderer(QObject):
                 date = f"{date} {calendar_strftime(earliest, '%Y', lang, shape=False)}"
             text = getattr(self.i18n, "NET_GRAPH_HISTORY_STARTS", "History starts {date}.").format(date=date)
         else:
-            text = getattr(self.i18n, "NET_GRAPH_NO_TRAFFIC",
-                           "No traffic recorded in this period.\nThe PC was off, idle or paused.")
+            # Never "paused": the app's Pause only freezes the widget's readout - history keeps
+            # recording (NetworkSpeedWidget.pause) - so it can't be why a period is empty (#525).
+            text = "\n".join((
+                getattr(self.i18n, "NET_GRAPH_NO_TRAFFIC_TITLE", "No traffic recorded in this period."),
+                getattr(self.i18n, "NET_GRAPH_NO_TRAFFIC_REASON",
+                        "The PC was off, asleep or idle, or NetSpeedTray wasn't running.")))
         self._clear_net_empty_message()
         ax = self.ax_download
         self._net_empty_artist = ax.text(

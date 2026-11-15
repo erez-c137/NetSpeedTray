@@ -365,7 +365,7 @@ class AdvancedPage(QWidget):
             self._record_card.setGraphicsEffect(eff)
         eff.setOpacity(1.0 if active else 0.4)
         self._record_card.set_description(self.i18n.RECORD_HARDWARE_HISTORY_SUB if active
-                                          else self.i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB)
+                                          else self.i18n.RECORD_HARDWARE_HISTORY_NEEDS_MONITOR_SUB)
 
     def _retention_label(self, days: int) -> str:
         return helpers.format_retention_label(days, self.i18n)

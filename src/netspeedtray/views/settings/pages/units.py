@@ -75,16 +75,28 @@ class UnitsPage(QWidget):
         layout.addWidget(SettingCard(self.i18n.SHORT_UNIT_LABELS_LABEL, control=self.short_unit_labels))
 
         # Extra px between the upload/download rows on top of the font's line height; 1 = old fixed gap.
+        # Shown as offsets from the default ("-4 .. -1, Default, +1 .. +4"); each segment's value is the
+        # stored px (default + offset). Raw px made "0" look like the default while "+1" was it.
         defaults = constants.config.defaults
-        self.line_spacing = Win11Segmented([(f"{v:+d}" if v else "0", v)
-                                            for v in range(defaults.LINE_SPACING_MIN, defaults.LINE_SPACING_MAX + 1)])
+        # wrap: the localized "Default" segment makes the row ~460-510 px - the widest control in
+        # Settings - so let it break onto two rows rather than raise the window's minimum width.
+        self.line_spacing = Win11Segmented([(self._line_spacing_text(v), v)
+                                            for v in range(defaults.LINE_SPACING_MIN, defaults.LINE_SPACING_MAX + 1)],
+                                           wrap=True)
         self.line_spacing.valueChanged.connect(self.on_change)
-        layout.addWidget(SettingCard(self._tr("LINE_SPACING_LABEL", "Line spacing (px)"),
-                                     description=self._tr("LINE_SPACING_DESCRIPTION",
-                                                          "Gap between the upload and download rows"),
+        layout.addWidget(SettingCard(self._tr("LINE_SPACING_LABEL", "Line spacing"),
+                                     description=self._tr("LINE_SPACING_OFFSET_DESCRIPTION",
+                                                          "Gap between the upload and download rows, "
+                                                          "in pixels from the default"),
                                      control=self.line_spacing))
 
         layout.addStretch()
+
+    def _line_spacing_text(self, px: int) -> str:
+        """A line-spacing segment's text: "Default" for the default gap, else the signed px offset
+        from it ("-4" .. "+4")."""
+        offset = px - constants.config.defaults.DEFAULT_LINE_SPACING
+        return f"{offset:+d}" if offset else self._tr("LINE_SPACING_DEFAULT_OPTION", "Default")
 
     def load_settings(self, config: Dict[str, Any]):
         # Unit Type
