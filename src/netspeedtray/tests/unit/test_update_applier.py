@@ -557,9 +557,26 @@ def test_a_file_check_refusal_records_the_refused_version(tmp_path, restart_spy,
     (staged / "_internal" / "data.bin").unlink()
     before = time.time()
     assert ua.apply_update(str(install), None, str(staged)) == 3
-    (version, failed_at), = ua.refused_update_versions()
+    (version, failed_at), = ua.refused_update_versions(str(install))
     assert version == __version__.lstrip("vV")
     assert before - 1 <= failed_at <= time.time() + 1
+
+
+def test_a_refusal_only_snoozes_the_install_it_was_for(tmp_path, restart_spy, frozen_with_manifest,
+                                                       monkeypatch):
+    """#538 review: the record is per profile. A portable copy's refusal must not snooze the
+    installed copy (or another portable one) on the same profile - only the app running from the
+    refused install folder reads it (by default: the running exe's folder)."""
+    install = _make_install(tmp_path)
+    staged = _make_staged(tmp_path)
+    frozen_with_manifest(staged)
+    (staged / "_internal" / "data.bin").unlink()
+    assert ua.apply_update(str(install), None, str(staged)) == 3
+    other = _make_install(tmp_path / "Program Files")
+    monkeypatch.setattr(ua, "_running_dir", lambda: str(other))
+    assert ua.refused_update_versions() == []
+    monkeypatch.setattr(ua, "_running_dir", lambda: str(install).upper())   # case-insensitive match
+    assert len(ua.refused_update_versions()) == 1
 
 
 def test_other_refusals_record_no_refused_version(tmp_path, restart_spy):
@@ -568,7 +585,7 @@ def test_other_refusals_record_no_refused_version(tmp_path, restart_spy):
     install = _make_install(tmp_path)
     (install / "my-notes.txt").write_text("mine", encoding="utf-8")
     assert ua.apply_update(str(install), None, str(_make_staged(tmp_path))) == 3
-    assert ua.refused_update_versions() == []
+    assert ua.refused_update_versions(str(install)) == []
 
 
 def test_other_refusals_still_offer_the_staged_copy(tmp_path, restart_spy):

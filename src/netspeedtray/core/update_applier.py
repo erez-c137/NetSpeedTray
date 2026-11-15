@@ -1011,16 +1011,20 @@ def _own_version() -> Optional[str]:
         return None
 
 
-def refused_update_versions() -> List[Tuple[str, float]]:
+def refused_update_versions(install_dir: Optional[str] = None) -> List[Tuple[str, float]]:
     """(version, failed_at) for every update whose staged copy the applier refused at its file
     check (``refused_version`` in the backups record), oldest first. Read by the app at start-up
-    to snooze that version's automatic offer. Never raises."""
+    to snooze that version's automatic offer. Only refusals for ``install_dir`` (default: the
+    running app's folder) count: the record is per profile, and an installed copy must not be
+    snoozed by a portable copy's refusal. Never raises."""
     out = []
     try:
+        here = install_dir if install_dir is not None else _running_dir()
         for rec in _read_backup_records():
             version, failed_at = rec.get("refused_version"), rec.get("failed_at")
             if rec.get("kind") == "failure" and isinstance(version, str) and version \
-                    and isinstance(failed_at, (int, float)) and not isinstance(failed_at, bool):
+                    and isinstance(failed_at, (int, float)) and not isinstance(failed_at, bool) \
+                    and _same_path(rec["install"], here):
                 out.append((version, float(failed_at)))
     except Exception:
         logger.debug("Could not read refused updates.", exc_info=True)
