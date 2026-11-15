@@ -63,7 +63,7 @@ def test_lhm_wins_over_a_live_acpi_zone(thread):
     thread._wmi_ohm = _lhm_cpu_package(61.0)
     with patch.object(thread, "_init_ohm_wmi"), \
          patch("netspeedtray.core.monitor_thread.win32pdh", _acpi_zone(_AMBIENT_ZONE)), \
-         patch("netspeedtray.core.monitor_thread.win32com.client", None):
+         patch("netspeedtray.core.monitor_thread._com_client", return_value=None):
         assert [thread._poll_cpu_temperature() for _ in range(3)] == [61.0] * 3
 
 
@@ -72,7 +72,7 @@ def test_acpi_is_still_the_fallback_without_lhm(thread):
     thread._wmi_ohm = None
     with patch.object(thread, "_init_ohm_wmi"), \
          patch("netspeedtray.core.monitor_thread.win32pdh", _acpi_zone(_AMBIENT_ZONE)), \
-         patch("netspeedtray.core.monitor_thread.win32com.client", None):
+         patch("netspeedtray.core.monitor_thread._com_client", return_value=None):
         assert thread._poll_cpu_temperature() == pytest.approx(27.05)
 
 
@@ -83,6 +83,6 @@ def test_an_lhm_failure_falls_through_to_acpi(thread):
     thread._wmi_ohm = wmi
     with patch.object(thread, "_init_ohm_wmi"), \
          patch("netspeedtray.core.monitor_thread.win32pdh", _acpi_zone(_AMBIENT_ZONE)), \
-         patch("netspeedtray.core.monitor_thread.win32com.client", None):
+         patch("netspeedtray.core.monitor_thread._com_client", return_value=None):
         assert thread._poll_cpu_temperature() == pytest.approx(27.05)
         assert thread._wmi_ohm is None   # re-probed on the next poll
