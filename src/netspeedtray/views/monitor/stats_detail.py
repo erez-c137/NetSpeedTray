@@ -37,6 +37,7 @@ from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, get_machine_id, format_duration_short, reveal_in_explorer
+from netspeedtray.core.db.schema_v8 import RAW_TS_RESOLUTION_SECONDS
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import summaries as S
 from netspeedtray.utils import stats_exporter
@@ -469,7 +470,10 @@ class StatsDetailSheet(QDialog):
         elif key in ("cpu_temp", "gpu_temp"):
             thr = float(self._config.get("throttle_temp_c", 0) or 0)
             if thr > 0 and pairs:
-                secs = S.time_above([v for _, v in pairs], thr, self._poll)
+                # One pair per stored row: hw_raw keeps at most one per metric per second
+                # (RAW_TS_RESOLUTION_SECONDS), so at the 0.5 s rate (#456) a pair is 1 s, not 0.5 s.
+                secs = S.time_above([v for _, v in pairs], thr,
+                                    max(self._poll, float(RAW_TS_RESOLUTION_SECONDS)))
                 if secs > 0:
                     text = (f"{self._tr('STATS_DETAIL_ABOVE', 'Above')} {fmt(thr)} "
                             f"{self._tr('STATS_DETAIL_FOR', 'for')} {self._dur(secs)}")

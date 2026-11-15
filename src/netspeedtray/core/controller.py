@@ -6,6 +6,7 @@ including network speeds, CPU utilization, and GPU utilization.
 """
 
 import logging
+import math
 import time
 from typing import Dict, Any, List, Optional, TYPE_CHECKING, Tuple
 
@@ -17,6 +18,7 @@ from netspeedtray.core import usage_snapshot
 from netspeedtray.utils.config import stable_pseudonym
 from netspeedtray.utils.network_utils import get_primary_interface_name
 from netspeedtray.utils.interface_classifier import InterfaceClassifier, get_classifier
+from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
@@ -28,13 +30,16 @@ logger = logging.getLogger("NetSpeedTray.StatsController")
 # Which monitoring switches a persisted hardware stat_type depends on. A stat is written to the history
 # DB only when the user's "Record hardware history" toggle is on AND every switch listed here is on -
 # i.e. only for metrics the user actually chose to monitor. The Monitor window forces collection of
-# everything while it is open (live tiles); that is display, not consent to record. RAM rides the CPU
-# line (Settings greys RAM out with CPU off), hence both. Stats not listed here (the latency series)
-# are not hardware and have their own switch, latency_enabled.
+# everything while it is open (live tiles); that is display, not consent to record. RAM has its own
+# switch and shows without CPU monitoring (2.2.1), so it is recorded on that switch alone (before 2.2.1
+# it also needed CPU monitoring). VRAM is not recorded today (see handle_stats); its entry keeps any
+# future write behind its switch. Stats not listed here (the latency series) are not hardware and have
+# their own switch, latency_enabled.
 _HW_PERSIST_REQUIRES: Dict[str, Tuple[str, ...]] = {
     "cpu": ("monitor_cpu_enabled",),
     "gpu": ("monitor_gpu_enabled",),
-    "ram": ("monitor_cpu_enabled", "monitor_ram_enabled"),
+    "ram": ("monitor_ram_enabled",),
+    "vram": ("monitor_vram_enabled",),
     "cpu_temp": ("monitor_cpu_enabled", "show_hardware_temps"),
     "gpu_temp": ("monitor_gpu_enabled", "show_hardware_temps"),
     "cpu_power": ("monitor_cpu_enabled", "show_hardware_power"),
@@ -181,6 +186,15 @@ class StatsController(QObject):
             self._handle_network_counters(stats['network'], stats.get('network_sampled_at'),
                                           stats.get('network_if_stats'))
 
+        # Every GPU of a multi-GPU PC for the hover card's list (#236): live display only, never
+        # persisted. The thread sends () to clear it (one GPU, GPU collection or the list off) and no
+        # key at all on a failed GPU poll - which keeps the list the card shows instead of blinking it.
+        if 'gpu_cards' in stats and self.view is not None:
+            try:
+                self.view.gpu_cards = tuple(stats['gpu_cards'] or ())
+            except Exception:
+                pass
+
         # Forward the network identity (band/SSID) whenever the thread sub-polled it (present-key
         # emits, like temp/power). The payload is a NetworkIdentity or None.
         if 'network_identity' in stats:
@@ -286,6 +300,8 @@ class StatsController(QObject):
                     except Exception:
                         pass
                 self.vram_info_updated.emit(stats['vram_used'], v_total_val)
+                # No VRAM history (2.2.1 decision): nothing reads it yet, so a row per second would only
+                # cost battery and disk I/O. Per-GPU history belongs to the 2.3 per-GPU Monitor work.
 
         # Power history, OUTSIDE the CPU/GPU gate above (#323 review 3): with the PR's own
         # defaults (CPU/GPU/power-stats off) a battery-only poll reaches this block alone,
@@ -460,6 +476,15 @@ class StatsController(QObject):
             self.logger.warning("Network bytes for this poll were not recorded in the %s: %s",
                                 sink, e, exc_info=True)
 
+    @staticmethod
+    def _spike_baseline_len(update_interval: Any) -> int:
+        """Polls in the spike filter's rolling baseline at this update rate: SPIKE_BASELINE_SAMPLES,
+        or enough polls to span SPIKE_BASELINE_MIN_SECONDS when the rate is faster than 1 s (0.5 s,
+        #456 -> 40) - the baseline is a time window, not a poll count, at sub-second rates."""
+        spd = constants.network.speed
+        poll = resolve_poll_interval_seconds(update_interval)
+        return max(spd.SPIKE_BASELINE_SAMPLES, int(math.ceil(spd.SPIKE_BASELINE_MIN_SECONDS / poll)))
+
     def _update_rate_display(self, current_counters: Dict[str, Any], prev_counters: Dict[str, Any],
                              time_diff: float, rate_span: float, update_interval: float) -> None:
         """The rate display for one poll: re-prime across gaps, else per-interface rates over
@@ -487,6 +512,7 @@ class StatsController(QObject):
         # (current_speed_data -> widget text, mini graph, in-memory session deques) stays smoothed.
         measured_speed_data: Dict[str, Tuple[float, float]] = {}
 
+        baseline_len = self._spike_baseline_len(update_interval)
         for name, current in current_counters.items():
             last = prev_counters.get(name)
             if last:
@@ -515,7 +541,11 @@ class StatsController(QObject):
 
                 if name not in self.recent_speeds:
                     from collections import deque
-                    self.recent_speeds[name] = deque(maxlen=20)
+                    self.recent_speeds[name] = deque(maxlen=baseline_len)
+                elif self.recent_speeds[name].maxlen != baseline_len:
+                    # The update rate changed: keep the newest samples, resize to the new rate's window.
+                    from collections import deque
+                    self.recent_speeds[name] = deque(self.recent_speeds[name], maxlen=baseline_len)
 
                 recent_history = self.recent_speeds[name]
                 if recent_history and len(recent_history) >= 5:

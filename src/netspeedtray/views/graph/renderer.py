@@ -982,11 +982,12 @@ class GraphRenderer(QObject):
         elif earliest is None:
             text = getattr(self.i18n, "NET_GRAPH_NO_HISTORY_YET", "No history recorded yet.")
         elif end_time is not None and earliest > end_time:
-            from netspeedtray.views.graph.time_axis import localized_strftime
+            # The graph's language (self.i18n): its calendar digits match the time-axis ticks.
+            from netspeedtray.views.graph.time_axis import calendar_strftime
             lang = getattr(self.i18n, "language", None)
-            date = localized_strftime(earliest, "%b %d", lang, shape=False)
+            date = calendar_strftime(earliest, "%b %d", lang, shape=False)
             if end_time.year != earliest.year:
-                date = f"{date} {earliest.year}"
+                date = f"{date} {calendar_strftime(earliest, '%Y', lang, shape=False)}"
             text = getattr(self.i18n, "NET_GRAPH_HISTORY_STARTS", "History starts {date}.").format(date=date)
         else:
             text = getattr(self.i18n, "NET_GRAPH_NO_TRAFFIC",
@@ -1032,12 +1033,14 @@ class GraphRenderer(QObject):
             except (ValueError, NotImplementedError, AttributeError):
                 pass   # already gone with a cleared figure / axes
 
-    def _draw_hw_empty_message(self, ax, period_key, hw_styles=None, roles=("cpu", "gpu")) -> None:
+    def _draw_hw_empty_message(self, ax, period_key, hw_styles=None, roles=("cpu", "gpu", "ram")) -> None:
         """The centered note on an empty hardware graph. A fresh session is still collecting; but a
         ranged view whose ``roles`` are all unrecorded will never fill, so it says where to turn
         recording on (Hardware for monitoring, Advanced for the record switch) instead of "Collecting
-        data" forever. ``hw_styles["history_off"]`` is graph_host.hardware_history_off_reasons()."""
-        reasons = [((hw_styles or {}).get("history_off") or {}).get(r) for r in roles]
+        data" forever. ``hw_styles["history_off"]`` is graph_host.hardware_history_off_reasons().
+        RAM counts only when the reasons name it (2.2.1: recorded on its own switch)."""
+        off = (hw_styles or {}).get("history_off") or {}
+        reasons = [off.get(r) for r in roles if r != "ram" or r in off]
         if period_key == "TIMELINE_SESSION" or not reasons or None in reasons:
             text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
         elif "record" in reasons:
@@ -1646,7 +1649,8 @@ class GraphRenderer(QObject):
                 linewidths=0, clip_on=False, zorder=12, label="_value_axis_clip_markers",
                 gid="value_axis_clip_markers")]
             peak = max(ry for _, ry in runs)
-            # Through _lbl like every axis label: matplotlib does no bidi, so Hebrew would read reversed.
+            # Through _lbl like every axis label: matplotlib < 3.11 does no bidi, so Hebrew would read
+            # reversed (shape_rtl passes it through on 3.11+, which reorders it itself).
             text = self._lbl(f"{self.i18n.GRAPH_PEAK_SHORT} {format_decimal(peak * scale, self.i18n, 1)} "
                              f"{unit or self.i18n.MBITS_UNIT}")
             artists.append(ax.text(

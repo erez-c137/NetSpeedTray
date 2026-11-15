@@ -247,6 +247,10 @@ class ConfigConstants:
     # Side-taskbar design phase C: keep the taskbar widget to network speed and show the enabled
     # CPU/GPU/memory in the hover card instead. Off by default, so nobody's widget changes.
     DEFAULT_HARDWARE_IN_HOVER_CARD: Final[bool] = False
+    # #236 (2.2.1): on a PC with two or more GPUs, the hover card lists every one of them (name, usage,
+    # temperature, power, memory) in place of its single GPU/VRAM rows. Inert with one GPU or with GPU
+    # monitoring off. On by default (owner decision 2026-11-10, design Q1).
+    DEFAULT_HOVER_LIST_ALL_GPUS: Final[bool] = True
     # CPU/GPU label SHAPE and COLOUR are two settings (2.2): the style is "icons" | "text", the
     # colour "brand" | "match_text" | "custom". The pre-2.2 three-way style (icons_colored /
     # icons_monochrome / text) is split in two by ConfigManager._migrate_config.
@@ -395,6 +399,7 @@ class ConfigConstants:
         "throttle_temp_c": 0,
         "stack_hardware_stats": DEFAULT_STACK_HARDWARE_STATS,
         "hardware_in_hover_card": DEFAULT_HARDWARE_IN_HOVER_CARD,
+        "hover_list_all_gpus": DEFAULT_HOVER_LIST_ALL_GPUS,
         "widget_display_mode": DEFAULT_WIDGET_DISPLAY_MODE,
         "widget_display_order": DEFAULT_WIDGET_DISPLAY_ORDER,
         "widget_cycle_interval": DEFAULT_WIDGET_CYCLE_INTERVAL,
@@ -418,6 +423,9 @@ class ConfigConstants:
         "check_for_updates": True,
         "skipped_version": None,
         "last_update_check": None,
+        # "Not now" in the update dialog: "<version>@<until, UTC>" ("" = none). Holds automatic offers of
+        # that version (never a newer one) back until then, across restarts (#508).
+        "update_snooze": "",
         "first_run_v2_seen": False,
         "first_run_ever": True,
         "tooltip_hint_shown_count": 0,     # gesture-hint tooltip fades after a few sessions
@@ -451,7 +459,7 @@ class ConfigConstants:
         "config_version": {"type": str, "default": CONFIG_SCHEMA_VERSION},
         "start_with_windows": {"type": bool, "default": DEFAULT_START_WITH_WINDOWS},
         "language": {"type": (str, type(None)), "default": None, "choices": list(I18nStrings.LANGUAGE_MAP.keys()) + [None]},
-        # Seconds between samples: one of the four slider presets (1/2/5/10). `_migrate_config` snaps
+        # Seconds between samples: one of the slider presets (0.5/1/2/5/10). `_migrate_config` snaps
         # any other persisted value onto the ladder first, so this only catches a bad in-memory value.
         "update_rate": {"type": (int, float), "default": DEFAULT_UPDATE_RATE, "choices": list(UpdateMode.PRESETS)},
         "font_family": {"type": str, "default": DEFAULT_FONT_FAMILY},
@@ -569,6 +577,7 @@ class ConfigConstants:
         "lhm_password_protected": {"type": str, "default": ""},
         "stack_hardware_stats": {"type": bool, "default": DEFAULT_STACK_HARDWARE_STATS},
         "hardware_in_hover_card": {"type": bool, "default": DEFAULT_HARDWARE_IN_HOVER_CARD},
+        "hover_list_all_gpus": {"type": bool, "default": DEFAULT_HOVER_LIST_ALL_GPUS},
         "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},
         "widget_display_order": {"type": list, "default": DEFAULT_WIDGET_DISPLAY_ORDER, "item_type": str},
         "widget_cycle_interval": {"type": int, "default": DEFAULT_WIDGET_CYCLE_INTERVAL, "min": 1, "max": 60},
@@ -588,6 +597,9 @@ class ConfigConstants:
         "check_for_updates": {"type": bool, "default": True},
         "skipped_version": {"type": (str, type(None)), "default": None},
         "last_update_check": {"type": (str, type(None)), "default": None},
+        # Same shape as core/update_checker.SNOOZE_REGEX (pinned by test_update_recheck_while_running).
+        "update_snooze": {"type": str, "default": "",
+                          "regex": r"(|[0-9A-Za-z.+\-]{1,64}@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"},
         "first_run_v2_seen": {"type": bool, "default": False},
         "first_run_ever": {"type": bool, "default": True},
         "tooltip_hint_shown_count": {"type": int, "default": 0, "min": 0},

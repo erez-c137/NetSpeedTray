@@ -12,3 +12,6 @@ Roughly in version order:
 The last pre-2.0 shots still referenced by the v1.3.x README (`main_new_1.1.2.png`,
 `main_graph_1.2.5.png`, `settings_1.3.3.png`) stay in the parent folder until the 2.0 README ships,
 then they move here too.
+
+The 2.0 taskbar-widget crops (`widget_network_2.0.png`, `widget_minigraph_2.0.png`,
+`widget_hardware_2.0.png`, `widget_full_2.0.png`) moved here when the 2.2 stills replaced them.

@@ -106,16 +106,32 @@ def has_dedicated_vram(used: Optional[float]) -> bool:
         return False
 
 
+def hardware_slots(config) -> Tuple[bool, bool]:
+    """(CPU slot, GPU slot): whether the widget has a CPU-side / GPU-side readout at all.
+
+    RAM shows without CPU monitoring and VRAM without GPU monitoring (2.2.1; this reversed the 2.2
+    rule "RAM rides on CPU, VRAM rides on GPU"), so the CPU slot is CPU OR RAM and the GPU slot GPU
+    OR VRAM. A slot whose usage monitor is off paints a memory-only row ("RAM 9.2/16.0G", no
+    percent). Takes a config dict or a RenderConfig (same key / attribute names)."""
+    def on(key: str) -> bool:
+        try:
+            if isinstance(config, dict):
+                return bool(config.get(key, False))
+            return bool(getattr(config, key, False))
+        except Exception:
+            return False
+    return (on("monitor_cpu_enabled") or on("monitor_ram_enabled"),
+            on("monitor_gpu_enabled") or on("monitor_vram_enabled"))
+
+
 def hardware_in_hover_card_active(config) -> bool:
     """The "Show hardware in the hover card" switch is on AND there is hardware to move there.
 
-    RAM rides on the CPU line and VRAM on the GPU line (they are only collected and shown with
-    their host monitor), so "some hardware is enabled" means CPU or GPU monitoring is on. With
+    Any hardware readout counts - CPU, GPU, or RAM / VRAM on their own (hardware_slots). With
     nothing enabled the switch is inert: the widget keeps its Display Mode and the card gets no
     hardware section."""
     try:
-        return bool(config.get("hardware_in_hover_card", False)) and bool(
-            config.get("monitor_cpu_enabled", False) or config.get("monitor_gpu_enabled", False))
+        return bool(config.get("hardware_in_hover_card", False)) and any(hardware_slots(config))
     except AttributeError:
         return False
 
@@ -617,9 +633,21 @@ def format_retention_label(days: int, i18n) -> str:
     if days >= 365:
         years = max(1, round(days / 365))
         return (i18n.RETENTION_YEAR_SINGULAR if years == 1
-                else i18n.RETENTION_YEARS_TEMPLATE.format(years=years))
+                else i18n.RETENTION_YEARS_TEMPLATE.format(years=fixed_digits(years, i18n)))
     months = max(1, round(days / 30))
-    return i18n.RETENTION_MONTHS_TEMPLATE.format(months=months, plural=(plural if months > 1 else ""))
+    return i18n.RETENTION_MONTHS_TEMPLATE.format(months=fixed_digits(months, i18n),
+                                                 plural=(plural if months > 1 else ""))
+
+
+def fixed_digits(value, i18n) -> str:
+    """``value`` (a number, or text) with its digits in the UI language's own digits, for a number that
+    is part of FIXED text - "২ বছর" (2 years) in Bengali - never for a live value (a speed, an amount,
+    a percentage, a clock), which stays Western in every language (I18nStrings.FIXED_TEXT_DIGITS).
+    Languages that write Western digits get ``str(value)`` unchanged."""
+    from netspeedtray.constants.i18n import I18nStrings
+    text = str(value)
+    digits = I18nStrings.FIXED_TEXT_DIGITS.get(str(getattr(i18n, "language", "") or ""))
+    return text.translate(str.maketrans("0123456789", digits)) if digits else text
 
 
 # --- Data Processing Utilities ---

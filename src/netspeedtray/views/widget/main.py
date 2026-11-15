@@ -51,7 +51,7 @@ from netspeedtray.core.startup_manager import StartupManager, is_process_elevate
 from netspeedtray.core.config_controller import ConfigController
 from netspeedtray.core.update_checker import UpdateChecker
 from netspeedtray.core import shutdown_channel
-from netspeedtray.utils.helpers import effective_display_mode, hardware_in_hover_card_active
+from netspeedtray.utils.helpers import effective_display_mode, hardware_in_hover_card_active, hardware_slots
 
 # Display modes whose taskbar widget paints a CPU (and RAM) / GPU (and VRAM) reading - a new value
 # for one of them is worth a repaint. Read through effective_display_mode, so with "Show hardware in
@@ -139,6 +139,67 @@ def hover_hint_text(i18n, config: Dict[str, Any]) -> str:
     if key:
         lines.append(i18n.WIDGET_HOVER_DOUBLE_CLICK_HINT.format(action=getattr(i18n, key)))
     return "\n".join(lines)
+
+
+def hover_gpu_list_wanted(config: Dict[str, Any], cards: Any) -> bool:
+    """The hover card lists every GPU (#236): the switch is on, GPU monitoring is on and the last poll
+    found two or more GPUs. Its own gate - on a bottom bar the card opens for the list alone."""
+    try:
+        return (bool(config.get("hover_list_all_gpus", constants.config.defaults.DEFAULT_HOVER_LIST_ALL_GPUS))
+                and bool(config.get("monitor_gpu_enabled", False)) and len(cards or ()) >= 2)
+    except (AttributeError, TypeError):
+        return False
+
+
+def hover_gpu_list_shown(config: Dict[str, Any], cards: Any, fit: Any = None) -> bool:
+    """The list goes into a hover card the user already gets (#236 review): it never opens the card on
+    its own. So: the card is on (usage / tips / battery - NetworkSpeedWidget._hover_card_enabled), or
+    its hardware section already opens without them ("Show hardware only when hovering", or a side
+    bar that hides the hardware)."""
+    if not hover_gpu_list_wanted(config, cards):
+        return False
+    return (hardware_in_hover_card_active(config) or bool(fit is not None and fit.hides_hardware)
+            or NetworkSpeedWidget._hover_card_enabled(config))
+
+
+def taskbar_paints_gpu(config: Dict[str, Any], fit: Any = None) -> bool:
+    """Whether the taskbar widget paints a GPU reading at all - what the "on taskbar" marker claims.
+    Not in network-only (the user's own, or the one "Show hardware only when hovering" forces), not
+    when a side bar hides the hardware, not when the mode has no GPU slot (cpu_only, a side_by_side
+    order without it). Auto-Cycle paints the GPU in one of its phases, so it counts."""
+    if fit is not None and fit.hides_hardware:
+        return False
+    mode = effective_display_mode(config)
+    if mode == "network_only":
+        return False
+    from netspeedtray.utils.widget_paint import side_hardware_stats
+    from netspeedtray.utils.widget_renderer import RenderConfig
+    return "GPU" in side_hardware_stats(RenderConfig.from_dict(config), mode)
+
+
+def hover_gpu_rows(config: Dict[str, Any], cards: Any, bar_shows_gpu: bool = True) -> List[Dict[str, Any]]:
+    """The hover card's per-GPU rows (usage_flyout ``hardware["gpus"]``), only the readings the user
+    turned on - the same switches as the single GPU/VRAM rows they replace. The "on taskbar" marker
+    only when a GPU is picked AND the taskbar paints the GPU (``bar_shows_gpu``): Automatic mixes
+    cards (busiest utilization, the preferred card's sensors), so naming one card as "the taskbar's"
+    would not be true - and with the hardware moved into the card there is no taskbar GPU to name."""
+    temps = bool(config.get("show_hardware_temps", False))
+    power = bool(config.get("show_hardware_power", False))
+    vram = bool(config.get("monitor_vram_enabled", False))
+    rows = []
+    for c in cards or ():
+        row: Dict[str, Any] = {"key": c.luid, "name": c.name, "usage": c.util,
+                               "on_taskbar": bool(c.picked) and bar_shows_gpu}
+        if temps:
+            row["temp"] = c.temp
+        if power:
+            row["power"] = c.power
+        if vram:
+            row["vram"] = (c.vram_used_gib, c.vram_total_gib)
+            if c.vram_shared:
+                row["vram_shared"] = True
+        rows.append(row)
+    return rows
 
 
 def widget_qt_scale(widget: Any) -> Optional[float]:
@@ -247,6 +308,15 @@ class NetworkSpeedWidget(QWidget):
         self._qt_scale_seen: Optional[float] = None  # Qt's device pixel ratio the size was measured at
         self.monitor_window = None  # unified Monitor (Overview / Network / Hardware), lazy
         self.update_checker: Optional[UpdateChecker] = None
+        # Automatic re-checks while running (periodic + after resume); see _run_automatic_update_check.
+        self._update_recheck_timer: Optional[QTimer] = None
+        self._update_resume_check_timer: Optional[QTimer] = None
+        self._update_offer_retry_timer: Optional[QTimer] = None
+        self._update_dialog_open: bool = False        # never stack a second update prompt
+        self._manual_update_check: bool = False       # the result in flight answers the menu item
+        self._update_auto_source: Optional[str] = None  # "startup"/"periodic"/"resume" while one is out
+        self._pending_update_offer: Optional[tuple] = None  # a flyout offer waiting out fullscreen etc.
+        self._update_flyout = None
         self.app_icon: QIcon
         # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
         
@@ -301,6 +371,9 @@ class NetworkSpeedWidget(QWidget):
         # True when vram_used/vram_total are an integrated GPU's shared system memory (set by the
         # controller from the stats dict's 'vram_is_shared').
         self.vram_is_shared: bool = False
+        # Every GPU of a multi-GPU PC (monitor_thread.GpuCard), for the hover card's list (#236). Set
+        # by the controller on every hardware poll; () with one GPU, GPU monitoring off or the list off.
+        self.gpu_cards: tuple = ()
         
         # Cycling State
         self._cycle_index: int = 0
@@ -421,8 +494,32 @@ class NetworkSpeedWidget(QWidget):
         # Update Checker - delayed startup check
         self.update_checker = UpdateChecker(self.config, self)
         self.update_checker.update_available.connect(self._on_update_available)
+        # Persistent, like update_available: the manual "up to date" / "failed" boxes show only when
+        # the result answers the menu item (_manual_update_check). Per-click SingleShot connections
+        # outlived a manual check that FOUND an update and fired on the next automatic one (#508).
+        self.update_checker.up_to_date.connect(self._on_update_check_up_to_date)
+        self.update_checker.check_failed.connect(self._on_update_check_failed)
         if self.update_checker.should_check():
-            QTimer.singleShot(5000, self.update_checker.check_now)
+            # Offered like every automatic check: a flyout behind the same gates (fullscreen, nobody
+            # at the screen, a modal up), never a dialog the user did not ask for (#508).
+            QTimer.singleShot(5000, lambda: self._run_automatic_update_check("startup"))
+        # The startup check runs once; a PC that sleeps instead of rebooting keeps this instance for
+        # weeks, so re-ask periodically and after a wake (both gated by should_check's 24 h interval).
+        try:
+            self._update_offer_retry_timer = QTimer(self)
+            self._update_offer_retry_timer.setSingleShot(True)
+            self._update_offer_retry_timer.setInterval(constants.app.UPDATE_OFFER_RETRY_MS)
+            self._update_offer_retry_timer.timeout.connect(self._show_pending_update_offer)
+            self._update_recheck_timer = QTimer(self)
+            self._update_recheck_timer.setInterval(constants.app.UPDATE_RECHECK_INTERVAL_MS)
+            self._update_recheck_timer.timeout.connect(lambda: self._run_automatic_update_check("periodic"))
+            self._update_recheck_timer.start()
+            self._update_resume_check_timer = QTimer(self)
+            self._update_resume_check_timer.setSingleShot(True)   # start() again coalesces both PBT_* messages
+            self._update_resume_check_timer.setInterval(constants.app.UPDATE_RESUME_CHECK_DELAY_MS)
+            self._update_resume_check_timer.timeout.connect(lambda: self._run_automatic_update_check("resume"))
+        except Exception as e:
+            self.logger.error(f"Could not start the update re-check timers: {e}", exc_info=True)
 
         # Cycle Timer (not while "Show hardware in the hover card" collapses the widget to network-only)
         if effective_display_mode(self.config) == "cycle":
@@ -444,7 +541,7 @@ class NetworkSpeedWidget(QWidget):
             
             # Background Monitoring Thread
             # The monitor thread's sleep loop is the only sampling pacer. The rate is one of the
-            # 1/2/5/10 s presets (the config migration put it there); the shared resolver is the same
+            # UpdateMode presets (the config migration put it there); the shared resolver is the same
             # clamp every seconds-per-sample computation uses, so they can never disagree.
             effective_interval = resolve_poll_interval_seconds(
                 self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE))
@@ -1074,6 +1171,7 @@ class NetworkSpeedWidget(QWidget):
             return
         self.vram_used = used
         self.vram_total = total if total >= 0 else None
+        self._refresh_hover_hardware()   # VRAM can be the card's only GPU-side row (2.2.1)
         if self._bar_shows(_GPU_BAR_MODES):
             self.update()
 
@@ -1092,8 +1190,10 @@ class NetworkSpeedWidget(QWidget):
             # Separate upload/download graphs: each direction is a phase of its own, so the widget
             # keeps its size instead of widening every phase to two panels.
             modes = split_network_phases(bool(self.config.get("swap_upload_download", False)))
-        if self.config.get("monitor_cpu_enabled", False): modes.append("cpu_only")
-        if self.config.get("monitor_gpu_enabled", False): modes.append("gpu_only")
+        # A phase per hardware SLOT (2.2.1): cpu_only is CPU or RAM alone, gpu_only GPU or VRAM alone.
+        cpu_slot, gpu_slot = hardware_slots(self.config)
+        if cpu_slot: modes.append("cpu_only")
+        if gpu_slot: modes.append("gpu_only")
 
         if not modes: return
 
@@ -1548,9 +1648,10 @@ class NetworkSpeedWidget(QWidget):
             pass
         self.dismiss_hover_card()
 
-    def _show_usage_hover_card(self, pinned: bool = False) -> None:
+    def _show_usage_hover_card(self, pinned: bool = False, rebuild_of: Optional[Any] = None) -> None:
         """Build and show the usage card just above the widget (never under the taskbar). ``pinned``
-        opens it already pinned (a click/tap, not a hover)."""
+        opens it already pinned (a click/tap, not a hover). ``rebuild_of``: the open card this one
+        replaces - it keeps that card's pin-hint footer as it is, without counting another show."""
         if self._is_context_menu_visible or self._dragging or not self.isVisible():
             return
         # Don't pop an always-on-top card over a fullscreen app, even when the widget itself is
@@ -1577,7 +1678,13 @@ class NetworkSpeedWidget(QWidget):
                            else None)
             # "Click the widget to keep this open" footer: on a card opened by hover only (a pinned
             # card is already open), for the first few such cards.
-            pin_hint = None if pinned else self._pin_hint_text()
+            if pinned:
+                pin_hint = None
+            elif rebuild_of is not None:
+                pin_hint = (self.i18n.HOVER_CARD_PIN_HINT
+                            if getattr(rebuild_of, "pin_hint_visible", False) else None)
+            else:
+                pin_hint = self._pin_hint_text()
             card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, power=power,
                                history_note=note, hardware=hardware, month_label=month_label,
                                pin_hint=pin_hint)
@@ -1819,6 +1926,8 @@ class NetworkSpeedWidget(QWidget):
         if hardware_in_hover_card_active(self.config):
             return True
         fit = self._side_bar_fit()
+        if hover_gpu_list_shown(self.config, getattr(self, "gpu_cards", ()), fit):
+            return True
         return bool(fit is not None and (fit.hides_hardware or fit.hides_identity))
 
     def _hover_hardware_snapshot(self) -> Optional[dict]:
@@ -1840,6 +1949,8 @@ class NetworkSpeedWidget(QWidget):
             stats = side_hardware_stats(rc, mode)
             temps = bool(cfg.get("show_hardware_temps", False))
             power = bool(cfg.get("show_hardware_power", False))
+            # stats names each slot: 'CPU'/'GPU' with its usage monitor on, 'RAM'/'VRAM' for memory
+            # shown on its own (2.2.1) - then the card lists the memory without a usage row.
             for key, usage, temp, watts in (("cpu", self.cpu_usage, self.cpu_temp, self.cpu_power),
                                             ("gpu", self.gpu_usage, self.gpu_temp, self.gpu_power)):
                 if key.upper() in stats:
@@ -1853,12 +1964,24 @@ class NetworkSpeedWidget(QWidget):
                     if power:
                         stat["power"] = watts
                     hw[key] = stat
-            if "CPU" in stats and cfg.get("monitor_ram_enabled", False):
+            if ("CPU" in stats or "RAM" in stats) and cfg.get("monitor_ram_enabled", False):
                 hw["ram"] = (self.ram_used, self.ram_total)
-            if "GPU" in stats and cfg.get("monitor_vram_enabled", False):
+            if ("GPU" in stats or "VRAM" in stats) and cfg.get("monitor_vram_enabled", False):
                 hw["vram"] = (self.vram_used, self.vram_total)
                 if getattr(self, "vram_is_shared", False):
                     hw["vram_shared"] = True
+        cards = getattr(self, "gpu_cards", ())
+        if hover_gpu_list_shown(cfg, cards, fit):
+            # Every GPU, each with its own usage/temperature/power/memory - in place of the single
+            # GPU/VRAM rows (the taskbar's figure is one of them, or in Automatic the highest usage).
+            for key in ("gpu", "vram", "vram_shared"):
+                hw.pop(key, None)
+            hw["gpus"] = hover_gpu_rows(cfg, cards, bar_shows_gpu=taskbar_paints_gpu(cfg, fit))
+            if cfg.get("show_hardware_temps", False):
+                from netspeedtray.utils.helpers import temperature_unit
+                unit = temperature_unit(cfg)
+                if unit != constants.hardware.temperature.CELSIUS:
+                    hw["temp_unit"] = unit
         if fit is not None and fit.hides_identity:
             band, _color, _solid = self._identity_presentation()
             parts = [p for p in (self._identity_ssid_text(), band) if p]
@@ -1869,20 +1992,47 @@ class NetworkSpeedWidget(QWidget):
     def _refresh_hover_hardware(self) -> None:
         """Push fresh values into an open hover card's hardware rows (~1 Hz)."""
         card = self._hover_card
-        if card is None or not getattr(card, "has_hardware", False):
+        if card is None:
+            return
+        has_hardware = bool(getattr(card, "has_hardware", False))
+        if not has_hardware and not hover_gpu_list_shown(self.config, getattr(self, "gpu_cards", ()),
+                                                         self._side_bar_fit()):
             return
         now = time.monotonic()
         if now - getattr(self, "_hover_hw_refreshed", 0.0) < self._HOVER_HW_REFRESH_SEC:
             return
         self._hover_hw_refreshed = now
+        pinned = bool(getattr(self, "_hover_card_pinned", False))
         try:
+            if not has_hardware:
+                # The GPU list arrived after this card opened (the first GPU poll, GPU monitoring
+                # switched on, an eGPU plugged in): rebuilt with it. A rebuild that bails leaves this
+                # card up - it has no hardware rows that could freeze (#236 review).
+                self._show_usage_hover_card(pinned=pinned, rebuild_of=card)
+                return
             snapshot = self._hover_hardware_snapshot() if self._hover_hardware_wanted() else None
+            if not snapshot and getattr(card, "lists_gpus", False) is True:
+                # The GPU list was the card's only hardware and it went away (one GPU left, the list
+                # or GPU monitoring switched off): the usage / tips / battery rows the user opened -
+                # maybe pinned - stay, rebuilt without it; closed only when nothing is left (#236
+                # review). Before the list, a bottom-bar card never closed under the pointer.
+                self._show_usage_hover_card(pinned=pinned, rebuild_of=card)
+                if self._hover_card is card:
+                    self._hide_usage_hover_card()
+                return
             if not snapshot:
                 # Hardware turned off, display mode changed, or the bar now fits it: the rows would
                 # only freeze on their last values - close the card (the next hover rebuilds it).
                 self._hide_usage_hover_card()
                 return
-            card.update_hardware(snapshot)
+            if card.update_hardware(snapshot) is False:
+                # A GPU came or went (or the pick changed): the card needs other rows - rebuilt and
+                # swapped, the new one shown before the old one hides; a pinned card stays pinned.
+                self._show_usage_hover_card(pinned=pinned, rebuild_of=card)
+                if self._hover_card is card:
+                    # The rebuild bailed (menu open, a drag, a fullscreen app): never leave the old
+                    # card up frozen on its last values.
+                    self._hide_usage_hover_card()
         except Exception as e:
             self.logger.debug("hover card hardware refresh failed: %s", e)
 
@@ -2257,6 +2407,9 @@ class NetworkSpeedWidget(QWidget):
                     invalidate = getattr(self, "invalidate_latency_gateway", None)
                     if invalidate is not None:
                         invalidate()   # the router may differ after sleep
+                    schedule_update = getattr(self, "_schedule_resume_update_check", None)
+                    if schedule_update is not None:
+                        schedule_update()
         except Exception as e:
             self.logger.debug("nativeEvent power handling failed: %s", e)
         return False, 0
@@ -2791,24 +2944,167 @@ class NetworkSpeedWidget(QWidget):
         from netspeedtray.core.update_checker import update_check_disabled_by_policy
         if update_check_disabled_by_policy():
             # The menu item is hidden under the policy (U1); a stale menu opened just before the
-            # policy landed must not wire the one-shot replies to a check that will never run.
+            # policy landed must not arm the manual replies for a check that will never run.
             return
         if self.update_checker:
-            # update_available is already wired to _on_update_available at construction
-            # (persistent, see __init__). Do NOT connect a second handler here: on a manual
-            # check both would fire and the update dialog shows twice - the first starts the
-            # download, the second "pops back up" over it and races the install/quit, so the
-            # installer never visibly runs. Only the up-to-date / failed messages are manual-
-            # only (the automatic startup check stays silent on those).
-            self.update_checker.up_to_date.connect(self._on_up_to_date_manual, Qt.ConnectionType.SingleShotConnection)
-            self.update_checker.check_failed.connect(self._on_check_failed_manual, Qt.ConnectionType.SingleShotConnection)
+            # update_available / up_to_date / check_failed are all wired ONCE at construction
+            # (persistent, see _setup_timers). Do NOT connect anything here: a second
+            # update_available handler showed the dialog twice (the first started the download,
+            # the second raced the install/quit), and per-click SingleShot up_to_date / failed
+            # connections outlived a manual check that found an update, so the next AUTOMATIC
+            # check popped a surprise "up to date" / "failed" box (#508 review). The flag below
+            # is what makes this result a manual one.
+            self._manual_update_check = True
             self.update_checker.check_now()
+
+    def _take_update_check_context(self) -> Tuple[bool, Optional[str]]:
+        """Read-and-clear who asked for the result now arriving: (manual, automatic source)."""
+        manual = bool(getattr(self, "_manual_update_check", False))
+        source = getattr(self, "_update_auto_source", None)
+        self._manual_update_check = False
+        self._update_auto_source = None
+        return manual, source
+
+    def _on_update_check_up_to_date(self) -> None:
+        manual, _source = self._take_update_check_context()
+        if manual:
+            self._on_up_to_date_manual()
+
+    def _on_update_check_failed(self, error: str = "") -> None:
+        manual, _source = self._take_update_check_context()
+        if manual:
+            self._on_check_failed_manual(error)
+
+    def _schedule_resume_update_check(self) -> None:
+        """Wake from sleep: check for updates once the network is likely back (coalesced)."""
+        timer = getattr(self, "_update_resume_check_timer", None)
+        if timer is not None:
+            timer.start()
+
+    def _app_is_quitting(self) -> bool:
+        return bool(getattr(self, "_will_quit_app", False) or getattr(self, "_cleanup_running", False)
+                    or getattr(self, "_cleanup_done", False))
+
+    def _run_automatic_update_check(self, reason: str) -> None:
+        """Periodic / after-resume update check. Silent like the startup one, and an available
+        release is offered with a non-modal flyout, never a dialog (_show_pending_update_offer).
+        Never runs while a prompt is open, an update is being applied, or the app is quitting;
+        should_check() enforces the 24 h interval, the user's toggle and the IT policy."""
+        try:
+            checker = getattr(self, "update_checker", None)
+            if checker is None or self._app_is_quitting():
+                return
+            if getattr(self, "_update_dialog_open", False):
+                return
+            updater = getattr(self, "_secure_updater", None)
+            if updater is not None:
+                try:
+                    if updater.is_running():
+                        return
+                except RuntimeError:   # already deleteLater'd: nothing in flight
+                    pass
+            if not checker.should_check():
+                return
+            self.logger.info("Automatic update check (%s).", reason)
+            if not getattr(self, "_manual_update_check", False):
+                self._update_auto_source = reason
+            checker.check_now()
+        except Exception as e:
+            self.logger.debug("Automatic update check (%s) failed to start: %s", reason, e)
+
+    def _update_recently_dismissed(self, version: str) -> bool:
+        """'Not now' (config ``update_snooze``, survives restarts) holds automatic offers of that
+        version back for UPDATE_NOT_NOW_SNOOZE_S; a newer release is offered at once."""
+        from netspeedtray.core.update_checker import snooze_suppresses
+        config = getattr(self, "config", None) or {}
+        return snooze_suppresses(config.get("update_snooze", ""), version,
+                                 constants.app.UPDATE_NOT_NOW_SNOOZE_S)
 
     def _on_update_available(self, latest_version: str, release_url: str, body: str = "",
                              installer_url: str = "", portable_url: str = "") -> None:
-        """Handle update available - from either the automatic startup check or a manual
-        menu check (both use this single persistent handler; see check_for_updates)."""
-        self._show_update_dialog(latest_version, release_url, body, installer_url, portable_url)
+        """Handle update available - from a manual menu check (the dialog) or an automatic one (the
+        5 s startup check, the periodic tick, after a resume: a non-modal flyout that opens the
+        dialog only when clicked). One persistent handler for all; see check_for_updates."""
+        manual, _source = self._take_update_check_context()
+        if getattr(self, "_update_dialog_open", False):
+            self.logger.info("Update %s found while an update prompt is open; not stacking another.",
+                             latest_version)
+            return
+        if self._app_is_quitting():
+            return
+        offer = (latest_version, release_url, body, installer_url, portable_url)
+        if manual:
+            self._show_update_dialog(*offer)
+            return
+        if self._update_recently_dismissed(latest_version):
+            self.logger.info("Update %s was answered 'Not now' recently; not re-offering yet.",
+                             latest_version)
+            return
+        self._pending_update_offer = offer
+        self._show_pending_update_offer()
+
+    def _update_offer_blocked(self) -> bool:
+        """A fullscreen app, someone's modal dialog, a nested event loop, or nobody at the screen
+        (locked, screen saver, idle - the shell's notification state): not now, retry later."""
+        handler = getattr(self, "system_event_handler", None)
+        if handler is not None and handler.is_fullscreen_active():
+            return True
+        latch = getattr(self, "_fs_latch", None)
+        if isinstance(latch, FullscreenLatch) and latch.covered:
+            return True   # the widget's own fullscreen decision (#503) can lag the poll's on exit
+        from netspeedtray.utils.user_presence import notice_would_go_unseen
+        if notice_would_go_unseen(constants.app.UPDATE_OFFER_MAX_IDLE_S):
+            return True
+        from PyQt6.QtCore import QThread
+        return (QApplication.activeModalWidget() is not None
+                or QThread.currentThread().loopLevel() > 1)
+
+    def _show_pending_update_offer(self) -> None:
+        """Show the waiting automatic offer as a flyout - takes no focus, auto-dismisses - or retry
+        later while _update_offer_blocked(). Replaces an earlier update flyout, never stacks."""
+        offer = getattr(self, "_pending_update_offer", None)
+        if offer is None:
+            return
+        if self._app_is_quitting() or getattr(self, "_update_dialog_open", False):
+            self._pending_update_offer = None
+            return
+        try:
+            if self._update_offer_blocked():
+                timer = getattr(self, "_update_offer_retry_timer", None)
+                if timer is not None:
+                    timer.start()
+                else:
+                    self._pending_update_offer = None   # no retry possible; the next due check re-offers
+                return
+            self._pending_update_offer = None
+            from netspeedtray.views.flyout import Flyout
+            from PyQt6 import sip
+            previous = getattr(self, "_update_flyout", None)
+            if previous is not None and not sip.isdeleted(previous):
+                previous.close()   # Qt-owned and self-deleting: replace it, never stack two
+            latest = offer[0].lstrip("vV")
+            # Existing, already-translated strings: no new locale keys.
+            flyout = Flyout(self.i18n.UPDATE_AVAILABLE_TITLE,
+                            self.i18n.UPDATE_AVAILABLE_TEXT.format(current=constants.app.VERSION,
+                                                                   latest=latest),
+                            action_text=self.i18n.WELCOME_2_0_WHATS_NEW_BUTTON,
+                            auto_dismiss_ms=constants.app.UPDATE_FLYOUT_DISMISS_MS)
+            # Deferred: the flyout closes (and deletes itself) right after action_clicked returns -
+            # the dialog's nested event loop must not run inside its button's click handler.
+            flyout.action_clicked.connect(
+                lambda o=offer: QTimer.singleShot(0, lambda: self._open_update_dialog_from_offer(o)))
+            self._update_flyout = flyout
+            geo = self.frameGeometry()
+            flyout.show_at(QPoint(geo.left(), geo.top()))
+            self.logger.info("Update %s offered (flyout).", latest)
+        except Exception as e:
+            self.logger.error("Error offering the update: %s", e, exc_info=True)
+
+    def _open_update_dialog_from_offer(self, offer: tuple) -> None:
+        """The user clicked the update flyout: now the dialog (Download / Skip / Not now)."""
+        if self._app_is_quitting() or getattr(self, "_update_dialog_open", False):
+            return
+        self._show_update_dialog(*offer)
 
     def _on_up_to_date_manual(self) -> None:
         """Show up-to-date message for manual check."""
@@ -2828,8 +3124,25 @@ class NetworkSpeedWidget(QWidget):
         from netspeedtray.views.update_dialog import UpdateDialog
         latest = latest_version.lstrip("vV")
         dlg = UpdateDialog(self.i18n, constants.app.VERSION, latest, body, parent=self)
-        dlg.exec()
+        # This dialog answers any automatic offer still waiting out a fullscreen app / an idle
+        # desk (#508 review): left queued, its retry re-offered the release a minute after the user
+        # chose "Not now" here, or while the download they just started was running.
+        self._pending_update_offer = None
+        self._update_dialog_open = True
+        try:
+            dlg.exec()   # nested event loop: timers still fire, hence the open flag
+        finally:
+            self._update_dialog_open = False
 
+        if dlg.action == UpdateDialog.ACTION_DISMISS:
+            # Snoozes automatic offers of this version (UPDATE_NOT_NOW_SNOOZE_S), across restarts.
+            from netspeedtray.core.update_checker import format_snooze
+            snooze = format_snooze(latest, constants.app.UPDATE_NOT_NOW_SNOOZE_S)
+            try:
+                self.config["update_snooze"] = snooze
+                self.update_config({"update_snooze": snooze})
+            except Exception as e:
+                self.logger.warning("Could not save the update snooze: %s", e)
         if dlg.action == UpdateDialog.ACTION_DOWNLOAD:
             self._start_secure_update(installer_url, release_url,
                                       portable_url=portable_url, latest_version=latest)
@@ -3325,6 +3638,11 @@ class NetworkSpeedWidget(QWidget):
 
         def _update_checker() -> None:
             # A check in flight sits in urlopen for up to 10 s; it is not waited for.
+            self._pending_update_offer = None
+            for name in ('_update_recheck_timer', '_update_resume_check_timer', '_update_offer_retry_timer'):
+                timer = getattr(self, name, None)
+                if timer is not None:
+                    timer.stop()
             if getattr(self, 'update_checker', None):
                 self.update_checker.stop()
 

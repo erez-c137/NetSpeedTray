@@ -21,23 +21,24 @@ from netspeedtray.core.widget_state import WidgetState
 
 def _cfg(**kw):
     c = {"record_hardware_history": True, "monitor_cpu_enabled": False, "monitor_gpu_enabled": False,
-         "monitor_ram_enabled": False, "show_hardware_temps": False, "show_hardware_power": False}
+         "monitor_ram_enabled": False, "monitor_vram_enabled": False, "show_hardware_temps": False, "show_hardware_power": False}
     c.update(kw)
     return c
 
 
 # --- the policy -----------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("stat", ["cpu", "gpu", "ram", "cpu_temp", "gpu_temp", "cpu_power", "gpu_power",
+@pytest.mark.parametrize("stat", ["cpu", "gpu", "ram", "vram", "cpu_temp", "gpu_temp", "cpu_power", "gpu_power",
                                   "system_power", "total_power"])
 def test_nothing_persists_with_all_monitoring_off(stat):
     assert hardware_persist_allowed(stat, _cfg()) is False
 
 
-@pytest.mark.parametrize("stat", ["cpu", "gpu", "ram", "cpu_temp", "gpu_temp", "cpu_power", "gpu_power"])
+@pytest.mark.parametrize("stat", ["cpu", "gpu", "ram", "vram", "cpu_temp", "gpu_temp", "cpu_power", "gpu_power"])
 def test_toggle_off_blocks_everything(stat):
     on = _cfg(record_hardware_history=False, monitor_cpu_enabled=True, monitor_gpu_enabled=True,
-              monitor_ram_enabled=True, show_hardware_temps=True, show_hardware_power=True)
+              monitor_ram_enabled=True, monitor_vram_enabled=True, show_hardware_temps=True,
+              show_hardware_power=True)
     assert hardware_persist_allowed(stat, on) is False
 
 
@@ -49,10 +50,14 @@ def test_cpu_on_records_cpu_only():
     assert hardware_persist_allowed("cpu_temp", c) is False     # temps not enabled
 
 
-def test_ram_needs_its_own_switch_and_the_cpu_line():
+def test_ram_and_vram_are_recorded_on_their_own_switches():
     assert hardware_persist_allowed("ram", _cfg(monitor_cpu_enabled=True, monitor_ram_enabled=True)) is True
-    # RAM rides the CPU line (Settings greys it out with CPU off), so it is not being monitored.
-    assert hardware_persist_allowed("ram", _cfg(monitor_ram_enabled=True)) is False
+    # 2.2.1: RAM shows (and is recorded) without CPU monitoring, VRAM without GPU monitoring.
+    assert hardware_persist_allowed("ram", _cfg(monitor_ram_enabled=True)) is True
+    assert hardware_persist_allowed("vram", _cfg(monitor_vram_enabled=True)) is True
+    assert hardware_persist_allowed("vram", _cfg(monitor_gpu_enabled=True)) is False
+    assert hardware_persist_allowed("vram", _cfg(monitor_vram_enabled=True,
+                                                 record_hardware_history=False)) is False
 
 
 def test_temps_and_power_need_their_metric_and_their_own_switch():

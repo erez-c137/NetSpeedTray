@@ -128,20 +128,21 @@ def build_snapshot(widget: Any, now: Optional[float] = None) -> MetricsSnapshot:
     if cpu_on:
         cpu = _finite(getattr(widget, "cpu_usage", None))
         fields["cpu_ratio"] = None if cpu is None else cpu / 100.0
-        if config.get("monitor_ram_enabled", False):
-            used, total = _finite(getattr(widget, "ram_used", None)), _finite(getattr(widget, "ram_total", None))
-            if used is not None and total and total > 0:
-                fields["ram_used_bytes"], fields["ram_total_bytes"] = used * _GIB, total * _GIB
     if gpu_on:
         gpu = _finite(getattr(widget, "gpu_usage", None))
         fields["gpu_ratio"] = None if gpu is None else gpu / 100.0
-        if config.get("monitor_vram_enabled", False):
-            used, total = _finite(getattr(widget, "vram_used", None)), _finite(getattr(widget, "vram_total", None))
-            if used is not None:
-                fields["vram_used_bytes"] = used * _GIB
-            if total is not None and total > 0:
-                fields["vram_total_bytes"] = total * _GIB
-            if getattr(widget, "vram_is_shared", False) is True:
-                fields["vram_kind"] = "shared"
+    # RAM / VRAM on their own switches (2.2.1) - no longer only alongside CPU / GPU monitoring.
+    if config.get("monitor_ram_enabled", False):
+        used, total = _finite(getattr(widget, "ram_used", None)), _finite(getattr(widget, "ram_total", None))
+        if used is not None and total and total > 0:
+            fields["ram_used_bytes"], fields["ram_total_bytes"] = used * _GIB, total * _GIB
+    if config.get("monitor_vram_enabled", False):
+        used, total = _finite(getattr(widget, "vram_used", None)), _finite(getattr(widget, "vram_total", None))
+        if used is not None:
+            fields["vram_used_bytes"] = used * _GIB
+        if total is not None and total > 0:
+            fields["vram_total_bytes"] = total * _GIB
+        if getattr(widget, "vram_is_shared", False) is True:
+            fields["vram_kind"] = "shared"
 
     return MetricsSnapshot(**fields)

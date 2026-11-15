@@ -135,10 +135,12 @@ def hardware_history_off_reasons(config: Dict[str, Any]) -> Dict[str, Optional[s
     """Per hardware graph role: None when its history is recorded (controller.hardware_persist_allowed,
     the writer's own rule), "monitor" when its CPU/GPU monitoring is off (2.2 default; fix it in
     Settings > Hardware), "record" when monitoring is on but Record hardware history is off
-    (Settings > Advanced)."""
+    (Settings > Advanced). RAM is a role of its own: since 2.2.1 it is recorded on its own switch,
+    so a RAM-only setup's graph is "collecting", not "history is off"."""
     from netspeedtray.core.controller import hardware_persist_allowed
     out: Dict[str, Optional[str]] = {}
-    for role, switch in (("cpu", "monitor_cpu_enabled"), ("gpu", "monitor_gpu_enabled")):
+    for role, switch in (("cpu", "monitor_cpu_enabled"), ("gpu", "monitor_gpu_enabled"),
+                         ("ram", "monitor_ram_enabled")):
         if hardware_persist_allowed(role, config):
             out[role] = None
         elif not config.get(switch, False):

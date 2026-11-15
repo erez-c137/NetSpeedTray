@@ -81,6 +81,17 @@ def test_toggle_layout_gpu_view_with_only_cpu_recorded(renderer):
     assert COLLECTING in _texts(renderer.figure)
 
 
+@pytest.mark.parametrize("stat", ["hwcombined", "hwseparate"])
+def test_ram_only_recording_is_collecting_not_off(renderer, stat):
+    """2.2.1: RAM is recorded without CPU/GPU monitoring - its graph will fill, so an empty range is
+    "collecting", not "history is off"; with RAM off as well it is off."""
+    _render(renderer, stat, "TIMELINE_24_HOURS", history_off={**MON_OFF, "ram": None})
+    texts = _texts(renderer.figure)
+    assert COLLECTING in texts and OFF not in texts
+    _render(renderer, stat, "TIMELINE_24_HOURS", history_off={**MON_OFF, "ram": "monitor"})
+    assert OFF in _texts(renderer.figure)
+
+
 NO_HISTORY = I18N.NET_GRAPH_NO_HISTORY_YET
 NO_TRAFFIC = I18N.NET_GRAPH_NO_TRAFFIC
 
@@ -138,7 +149,7 @@ def test_monitoring_on_or_session_view_still_says_collecting(renderer, stat):
 
 def test_hebrew_messages_are_shaped_for_matplotlib(monkeypatch):
     """matplotlib has no bidi: Hebrew must go through shape_rtl like every other graph label."""
-    from netspeedtray.utils.mpl_fonts import shape_rtl
+    from netspeedtray.utils.mpl_fonts import matplotlib_does_bidi, shape_rtl
     monkeypatch.setattr(GraphRenderer, "_init_matplotlib", _bare_init)
     he = I18nStrings("he_IL")
     r = GraphRenderer(MagicMock(), he)
@@ -147,7 +158,8 @@ def test_hebrew_messages_are_shaped_for_matplotlib(monkeypatch):
                              (RECORDING, "COLLECTING_DATA_MESSAGE")):
         _render(r, "hwcombined", "TIMELINE_24_HOURS", history_off)
         shaped = shape_rtl(getattr(he, key), "he_IL")
-        assert shaped != getattr(he, key) and shaped in _texts(r.figure)
+        # reshaped on matplotlib < 3.11; 3.11+ does its own bidi and gets the logical text
+        assert (shaped != getattr(he, key)) is not matplotlib_does_bidi() and shaped in _texts(r.figure)
     ax = r.figure.add_subplot(1, 1, 1)
     end = datetime.now()
     ax.set_xlim(end - timedelta(hours=2), end)
@@ -156,10 +168,14 @@ def test_hebrew_messages_are_shaped_for_matplotlib(monkeypatch):
 
 
 @pytest.mark.parametrize("cfg, off", [
-    ({}, MON_OFF),                                                        # 2.2 defaults
-    ({"monitor_cpu_enabled": True}, {"cpu": None, "gpu": "monitor"}),
-    ({"monitor_gpu_enabled": True}, {"cpu": "monitor", "gpu": None}),
-    ({"monitor_cpu_enabled": True, "monitor_gpu_enabled": True, "record_hardware_history": False}, REC_OFF),
+    ({}, {**MON_OFF, "ram": "monitor"}),                                  # 2.2 defaults
+    ({"monitor_cpu_enabled": True}, {"cpu": None, "gpu": "monitor", "ram": "monitor"}),
+    ({"monitor_gpu_enabled": True}, {"cpu": "monitor", "gpu": None, "ram": "monitor"}),
+    ({"monitor_cpu_enabled": True, "monitor_gpu_enabled": True, "record_hardware_history": False},
+     {**REC_OFF, "ram": "monitor"}),
+    # 2.2.1: RAM is recorded on its own switch, CPU monitoring off or not.
+    ({"monitor_ram_enabled": True}, {**MON_OFF, "ram": None}),
+    ({"monitor_ram_enabled": True, "record_hardware_history": False}, {**MON_OFF, "ram": "record"}),
 ])
 def test_graph_host_derives_reasons_from_the_writer_rule(q_app, cfg, off):
     from netspeedtray.views.monitor.graph_host import GraphHost

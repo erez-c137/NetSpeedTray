@@ -258,9 +258,9 @@ def test_both_paint_events_paint_with_the_layout_gap():
 
 def test_stacked_network_segment_height():
     assert wp.stacked_segment_height("network", 16, False, False) == 33               # unchanged default
-    assert wp.stacked_segment_height("network", 16, False, False, 4) == 36
-    assert wp.stacked_segment_height("network", 16, False, False, -4) == 28
-    assert wp.stacked_segment_height("cpu", 16, True, False, 4) == 32                 # no gap there
+    assert wp.stacked_segment_height("network", 16, False, False, row_gap=4) == 36
+    assert wp.stacked_segment_height("network", 16, False, False, row_gap=-4) == 28
+    assert wp.stacked_segment_height("cpu", 16, True, False, row_gap=4) == 32                 # no gap there
 
 
 @pytest.mark.parametrize("mode", ["network_only", "split_graphs", "side_by_side"])

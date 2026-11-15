@@ -1,11 +1,12 @@
 """
-2.2 scope C: SMART mode removal - the update rate is one of four fixed presets, 1 / 2 / 5 / 10 s.
+2.2 scope C: SMART mode removal - the update rate is one of fixed presets, 1 / 2 / 5 / 10 s
+(and since 2.2.1, #456, the opt-in 0.5 s: see test_half_second_rate.py).
 
 SMART was never adaptive: it was the sentinel ``update_rate = -1.0`` and it sampled at a fixed
 2.0 s (the deleted ``SMART_MODE_INTERVAL_MS = 2000``). Its removal has three halves that must land
 together, or one of them leaves a live bug:
 
-* the Settings slider renumbered to four positions (0..3 = 1/2/5/10 s);
+* the Settings slider renumbered to one position per preset (0..4 = 0.5/1/2/5/10 s since 2.2.1);
 * a config migration: any persisted non-positive rate (SMART's -1.0, the historical 0 sentinel)
   becomes **2.0** - the cadence that user actually had - and any other off-preset rate snaps to
   the nearest preset (ties go to the faster one, like the keep_data ladder snap). Reading 10 s
@@ -28,15 +29,15 @@ from netspeedtray.constants.update_mode import UpdateMode
 from netspeedtray.utils.config import ConfigManager
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds, snap_update_rate
 
-PRESETS = (1.0, 2.0, 5.0, 10.0)
+PRESETS = (0.5, 1.0, 2.0, 5.0, 10.0)
 SRC = Path(__file__).resolve().parents[2]          # src/netspeedtray
 
 
 # --- the preset ladder ------------------------------------------------------------------------
 
-def test_presets_are_one_two_five_ten_seconds():
+def test_presets_are_half_one_two_five_ten_seconds():
     assert tuple(UpdateMode.PRESETS) == PRESETS
-    assert (UpdateMode.AGGRESSIVE, UpdateMode.BALANCED, UpdateMode.EFFICIENT,
+    assert (UpdateMode.REALTIME, UpdateMode.AGGRESSIVE, UpdateMode.BALANCED, UpdateMode.EFFICIENT,
             UpdateMode.POWER_SAVER) == PRESETS
     assert not hasattr(UpdateMode, "SMART")
     assert not hasattr(constants.timers, "SMART_MODE_INTERVAL_MS")
@@ -62,8 +63,10 @@ MIGRATION_TABLE = [
     (10.0, 10.0, "slider 10 s - must NOT clamp to 5 s"),
     (1, 1.0, "int preset"),
     (10, 10.0, "int preset"),
-    (0.1, 1.0, "old MINIMUM_UPDATE_RATE floor, hand-edited"),
-    (0.5, 1.0, "sub-second hand edit snaps up to the 1 s floor"),
+    (0.1, 0.5, "old MINIMUM_UPDATE_RATE floor, hand-edited -> the 0.5 s floor (2.2.1)"),
+    (0.5, 0.5, "1.2.4's 0.5 s option is a preset again (#456)"),
+    (0.75, 0.5, "tie between 0.5 and 1 -> the faster preset"),
+    (0.8, 1.0, "nearest"),
     (1.5, 1.0, "tie between 1 and 2 -> the faster preset"),
     (3.0, 2.0, "nearest"),
     (3.5, 2.0, "tie between 2 and 5 -> the faster preset"),
@@ -164,10 +167,10 @@ def test_resolver_passes_presets_through(rate):
     assert resolve_poll_interval_seconds(rate) == rate
 
 
-@pytest.mark.parametrize("rate, expected", [(0.5, 1.0), (0.0, 1.0), (-1.0, 1.0), (3.0, 3.0),
+@pytest.mark.parametrize("rate, expected", [(0.3, 0.5), (0.0, 0.5), (-1.0, 0.5), (3.0, 3.0),
                                             (12.0, 10.0)])
 def test_resolver_is_a_pure_clamp(rate, expected):
-    """No sentinel branch is left: out-of-range values clamp into [1, 10] s. Non-positive values
+    """No sentinel branch is left: out-of-range values clamp into [0.5, 10] s. Non-positive values
     are unreachable after load (the migration rewrote them), so they just hit the floor."""
     assert resolve_poll_interval_seconds(rate) == expected
 
@@ -211,11 +214,12 @@ def test_startup_starts_the_sampler_at_each_preset(monkeypatch, rate):
 
 @pytest.mark.parametrize("rate", PRESETS)
 def test_history_buffers_size_from_each_preset(rate):
-    """The renderer's sample budget divides by the preset directly."""
+    """The renderer's sample budget divides by the preset - by 1 s at the 0.5 s preset, whose
+    samples merge into one graph point per second (#456, test_half_second_rate.py)."""
     from netspeedtray.utils.widget_renderer import RenderConfig
     rc = RenderConfig.from_dict({**constants.config.defaults.DEFAULT_CONFIG,
                                  "update_rate": rate, "history_minutes": 30})
-    assert rc.max_samples == int(1800 / rate)
+    assert rc.max_samples == int(1800 / max(rate, 1.0))
 
 
 # --- the Settings slider ----------------------------------------------------------------------
@@ -227,9 +231,9 @@ def general_page(qt_owned):
     return qt_owned(GeneralPage(I18nStrings("en_US"), MagicMock()))
 
 
-def test_slider_has_four_positions(general_page):
+def test_slider_has_one_position_per_preset(general_page):
     slider = general_page.update_rate.slider
-    assert (slider.minimum(), slider.maximum()) == (0, 3)
+    assert (slider.minimum(), slider.maximum()) == (0, 4)
 
 
 @pytest.mark.parametrize("position, rate", list(enumerate(PRESETS)))
@@ -244,17 +248,18 @@ def test_each_preset_round_trips_through_the_slider(general_page, rate):
     assert general_page.get_settings()["update_rate"] == rate
 
 
-@pytest.mark.parametrize("rate, expected", [(3.0, 2.0), (4.0, 5.0), (8.0, 10.0), (0.5, 1.0),
-                                            (-1.0, 2.0)])
+@pytest.mark.parametrize("rate, expected", [(3.0, 2.0), (4.0, 5.0), (8.0, 10.0), (0.3, 0.5),
+                                            (0.8, 1.0), (-1.0, 2.0)])
 def test_off_preset_rate_snaps_to_nearest_on_the_slider(general_page, rate, expected):
     general_page.load_settings({"update_rate": rate, "language": "en_US"}, is_startup_enabled=False)
     assert general_page.get_settings()["update_rate"] == expected
 
 
-@pytest.mark.parametrize("position, key", [(0, "UPDATE_MODE_AGGRESSIVE_LABEL"),
-                                           (1, "UPDATE_MODE_BALANCED_LABEL"),
-                                           (2, "UPDATE_MODE_EFFICIENT_LABEL"),
-                                           (3, "UPDATE_MODE_POWER_SAVER_LABEL")])
+@pytest.mark.parametrize("position, key", [(0, "UPDATE_MODE_REALTIME_LABEL"),
+                                           (1, "UPDATE_MODE_AGGRESSIVE_LABEL"),
+                                           (2, "UPDATE_MODE_BALANCED_LABEL"),
+                                           (3, "UPDATE_MODE_EFFICIENT_LABEL"),
+                                           (4, "UPDATE_MODE_POWER_SAVER_LABEL")])
 def test_slider_labels(general_page, position, key):
     assert general_page._format_update_rate_label(position) == getattr(general_page.i18n, key)
 

@@ -83,8 +83,8 @@ class SettingsDialog(QDialog):
         "first_run_ever", "first_run_v2_seen", "tooltip_hint_shown_count", "temp_onboarding_dismissed",
         "location_onboarding_dismissed", "widgets_overlap_nudge_shown", "history_upgrade_notice_shown",
         "monitor_active_tab", "history_period", "history_period_slider_value", "history_period_chosen",
-        "paused", "last_update_check", "skipped_version", "usage_alert_state", "start_with_windows",
-        "pin_hint_shown_count", "side_bar_no_room_notice_shown", "app_overlap_notice_shown",
+        "paused", "last_update_check", "skipped_version", "update_snooze", "usage_alert_state",
+        "start_with_windows", "pin_hint_shown_count", "side_bar_no_room_notice_shown", "app_overlap_notice_shown",
         "app_overlap_drop_offset", "second_launch_notice_shown",
     )
 
@@ -393,9 +393,12 @@ class SettingsDialog(QDialog):
             if self._is_built(page_name):
                 return getattr(self._built_pages[page_name], attr).isChecked()
             return bool(self.config.get(key, False))
+        # RAM / VRAM history is recorded on their own switches (2.2.1), so they count too.
         self.advanced_page.set_hardware_monitoring_active(
             on("hardware", "monitor_cpu", "monitor_cpu_enabled")
             or on("hardware", "monitor_gpu", "monitor_gpu_enabled")
+            or on("hardware", "monitor_ram", "monitor_ram_enabled")
+            or on("hardware", "monitor_vram", "monitor_vram_enabled")
             or on("general", "power_display", "power_display_enabled"))
 
     # --- Lazy pages ---------------------------------------------------------------------------------
@@ -467,6 +470,8 @@ class SettingsDialog(QDialog):
             # The Record-hardware-history card greys out live as CPU/GPU monitoring is switched.
             page.monitor_cpu.toggled.connect(self._sync_record_card)
             page.monitor_gpu.toggled.connect(self._sync_record_card)
+            page.monitor_ram.toggled.connect(self._sync_record_card)
+            page.monitor_vram.toggled.connect(self._sync_record_card)
             # Enabling a hardware monitor nudges the Widget page out of network-only (display-mode
             # lives there), so the freshly-enabled stat is actually visible.
             try:

@@ -77,7 +77,7 @@ class GeneralPage(QWidget):
 
         # --- Update Rate ---
         layout.addWidget(section_header(self.i18n.UPDATE_RATE_GROUP_TITLE))
-        # One slider position per preset: 0..3 = 1 / 2 / 5 / 10 s (UpdateMode.PRESETS order).
+        # One slider position per preset: 0..4 = 0.5 / 1 / 2 / 5 / 10 s (UpdateMode.PRESETS order).
         self.update_rate = Win11Slider(editable=False)
         self.update_rate.setRange(0, len(UpdateMode.PRESETS) - 1)
         self.update_rate.setSingleStep(1)
@@ -260,18 +260,19 @@ class GeneralPage(QWidget):
     
     def _format_update_rate_label(self, slider_position: int) -> str:
         """Format slider position as a human-readable label."""
-        keys = ("UPDATE_MODE_AGGRESSIVE_LABEL", "UPDATE_MODE_BALANCED_LABEL",
+        # One key per UpdateMode.PRESETS entry, in slider order.
+        keys = ("UPDATE_MODE_REALTIME_LABEL", "UPDATE_MODE_AGGRESSIVE_LABEL", "UPDATE_MODE_BALANCED_LABEL",
                 "UPDATE_MODE_EFFICIENT_LABEL", "UPDATE_MODE_POWER_SAVER_LABEL")
         if not 0 <= slider_position < len(UpdateMode.PRESETS):
             return "Unknown"
-        return getattr(self.i18n, keys[slider_position], f"{int(UpdateMode.PRESETS[slider_position])}s")
+        return getattr(self.i18n, keys[slider_position], f"{UpdateMode.PRESETS[slider_position]:g}s")
 
     def _rate_to_slider_position(self, update_rate: object) -> int:
-        """Convert an update_rate value to its slider position (0-3), snapping to the nearest preset."""
+        """Convert an update_rate value to its slider position, snapping to the nearest preset."""
         return UpdateMode.PRESETS.index(snap_update_rate(update_rate))
 
     def _slider_position_to_rate(self, slider_position: int) -> float:
-        """Convert a slider position (0-3) to its update_rate preset in seconds."""
+        """Convert a slider position to its update_rate preset in seconds."""
         if 0 <= slider_position < len(UpdateMode.PRESETS):
             return UpdateMode.PRESETS[slider_position]
         return constants.config.defaults.DEFAULT_UPDATE_RATE
