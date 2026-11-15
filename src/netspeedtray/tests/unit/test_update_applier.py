@@ -546,6 +546,31 @@ def test_a_staged_copy_damaged_after_staging_is_refused_and_the_app_restarted(
     assert told.offered == [False]
 
 
+def test_a_file_check_refusal_records_the_refused_version(tmp_path, restart_spy, frozen_with_manifest):
+    """2.2.1 review: the restarted (old) app re-offered the refused release the next day - a copy
+    that fails the same way each time looped daily. The refusal now names the staged version, which
+    the app turns into the "Not now" snooze (refused_update_versions)."""
+    from netspeedtray import __version__
+    install = _make_install(tmp_path)
+    staged = _make_staged(tmp_path)
+    frozen_with_manifest(staged)
+    (staged / "_internal" / "data.bin").unlink()
+    before = time.time()
+    assert ua.apply_update(str(install), None, str(staged)) == 3
+    (version, failed_at), = ua.refused_update_versions()
+    assert version == __version__.lstrip("vV")
+    assert before - 1 <= failed_at <= time.time() + 1
+
+
+def test_other_refusals_record_no_refused_version(tmp_path, restart_spy):
+    """Only the staged copy's own file check snoozes the release: a refusal about the install folder
+    (a user's file in it) is fixed by the user, and the next offer should come as usual."""
+    install = _make_install(tmp_path)
+    (install / "my-notes.txt").write_text("mine", encoding="utf-8")
+    assert ua.apply_update(str(install), None, str(_make_staged(tmp_path))) == 3
+    assert ua.refused_update_versions() == []
+
+
 def test_other_refusals_still_offer_the_staged_copy(tmp_path, restart_spy):
     """Only a copy that failed its own file check is withheld; a refusal about the install folder
     (here: a user's file in it) still points to the good staged copy for the guided update."""
