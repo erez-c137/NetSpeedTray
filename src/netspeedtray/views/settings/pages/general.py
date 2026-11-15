@@ -149,17 +149,12 @@ class GeneralPage(QWidget):
             getattr(self.i18n, "MIDDLE_CLICK_ACTION_LABEL", "Middle-click action"),
             control=self.middle_click_action))
 
-        # Moved from Advanced > Behavior (2.2 IA pass, change 3): everyday widget-interaction toggles,
-        # not low-frequency / destructive ones. Pause-in-menu first - it is the right-click route to the
-        # same "Pause / Resume" the two click lists above offer - then the hover card's two toggles.
-        self.pause_in_menu = Win11Toggle(label_text="")
-        self.pause_in_menu.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.PAUSE_IN_MENU_LABEL, control=self.pause_in_menu))
-
-        # Right-click menu items (2.2.1, from #526): one switch per optional item, labelled with the
-        # menu's own text (accelerator stripped) so the only new strings are the title and its line.
-        # Settings and Exit are not listed - they always show. On = shown; the config stores the
-        # hidden ones (`context_menu_hidden_items`), so the default (all on) is an empty list.
+        # Right-click menu items (2.2.1, from #526): one switch per optional item, in menu order and
+        # labelled with the menu's own text (accelerator stripped), so the only new strings are the title
+        # and its line. Settings and Exit are not listed - they always show. On = shown; the config stores
+        # the hidden ones (`context_menu_hidden_items`), so the default (all on) is an empty list.
+        # Pause / Resume is in the list too but keeps its own opt-in key, `pause_in_menu` (default off) -
+        # it replaced the standalone "Add Pause/Resume to the right-click menu" switch.
         defaults = constants.config.defaults
         try:
             menu_note = str(getattr(
@@ -170,17 +165,25 @@ class GeneralPage(QWidget):
         except (KeyError, IndexError, ValueError):
             menu_note = ""   # a broken translation loses the note, never the page
         self.context_menu_items = SettingExpander(
-            getattr(self.i18n, "CONTEXT_MENU_ITEMS_LABEL", "Right-click menu items"), description=menu_note, expanded=False, i18n=self.i18n)
+            getattr(self.i18n, "CONTEXT_MENU_ITEMS_LABEL", "Right-click menu items"),
+            description=menu_note, expanded=False, i18n=self.i18n)
         self.context_menu_items.expandedChanged.connect(lambda _on: self.layout_changed.emit())
+        self.pause_in_menu = Win11Toggle(label_text="")
+        self.pause_in_menu.toggled.connect(self.on_change)
         self.context_menu_toggles: Dict[str, Win11Toggle] = {}
+        _PAUSE = object()   # the Pause / Resume row: its own key, not a hidden-items id
         for item_id, label_key, fallback in (
                 (defaults.CONTEXT_MENU_ITEM_MONITOR, "SHOW_MONITOR_MENU_ITEM", "Show Monitor"),
+                (_PAUSE, "CLICK_ACTION_PAUSE_LABEL", "Pause / Resume"),
                 (defaults.CONTEXT_MENU_ITEM_RESET_POSITION, "RESET_POSITION_MENU_ITEM", "Reset P&osition"),
                 (defaults.CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES, "CHECK_FOR_UPDATES_MENU_ITEM", "Check for &Updates"),
                 (defaults.CONTEXT_MENU_ITEM_SUPPORT, "SUPPORT_MENU_ITEM", "Support this Pro&ject")):
-            toggle = Win11Toggle(label_text="", initial_state=True)
-            toggle.toggled.connect(self.on_change)
-            self.context_menu_toggles[item_id] = toggle
+            if item_id is _PAUSE:
+                toggle = self.pause_in_menu
+            else:
+                toggle = Win11Toggle(label_text="", initial_state=True)
+                toggle.toggled.connect(self.on_change)
+                self.context_menu_toggles[item_id] = toggle
             self.context_menu_items.contentLayout().addWidget(
                 SettingCard(strip_mnemonic(getattr(self.i18n, label_key, fallback)), control=toggle))
         layout.addWidget(self.context_menu_items)

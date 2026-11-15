@@ -407,7 +407,6 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "উইজেটের ওপর মাউস রাখলে ডেটা ব্যবহার দেখান",
-    "PAUSE_IN_MENU_LABEL": "রাইট-ক্লিক মেনুতে বিরতি/পুনরারম্ভ যোগ করুন",
     "SETTINGS_PREVIEW_LABEL": "পূর্বরূপ",
     "HOVER_TIPS_LABEL": "রাইট-ক্লিক / ডাবল-ক্লিক টিপস দেখান",
     "ARROW_PRESET_OUTLINE_COMPACT": "আউটলাইন কম্প্যাক্ট",

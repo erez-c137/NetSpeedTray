@@ -512,8 +512,9 @@ class ConfigConstants:
         "show_hover_tips": {"type": bool, "default": True},
         "pause_in_menu": {"type": bool, "default": False},
         # "item_choices": unknown ids (incl. "settings"/"exit", which always show) are dropped one by
-        # one and duplicates collapsed - a bad entry never costs the user the rest of the list.
-        "context_menu_hidden_items": {"type": list, "default": DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS,
+        # one and duplicates collapsed - a bad entry never costs the user the rest of the list. The default
+        # is its own list (as in DEFAULT_CONFIG), never the shared constant.
+        "context_menu_hidden_items": {"type": list, "default": list(DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS),
                                       "item_choices": CONTEXT_MENU_HIDEABLE_ITEMS},
         "dark_mode": {"type": bool, "default": DEFAULT_DARK_MODE},
         "history_period": {"type": str, "default": data.history_period.DEFAULT_PERIOD, "choices": list(data.history_period.PERIOD_MAP.values())},

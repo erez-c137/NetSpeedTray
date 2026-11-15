@@ -407,7 +407,6 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "ウィジェットにカーソルを合わせるとデータ使用量を表示",
-    "PAUSE_IN_MENU_LABEL": "右クリックメニューに一時停止/再開を追加",
     "SETTINGS_PREVIEW_LABEL": "プレビュー",
     "HOVER_TIPS_LABEL": "右クリック / ダブルクリックのヒントを表示",
     "ARROW_PRESET_OUTLINE_COMPACT": "アウトライン コンパクト",

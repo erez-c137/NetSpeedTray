@@ -407,7 +407,6 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "Mostra utilizzo dati passando sul widget",
-    "PAUSE_IN_MENU_LABEL": "Aggiungi Pausa/Riprendi al menu del tasto destro",
     "SETTINGS_PREVIEW_LABEL": "Anteprima",
     "HOVER_TIPS_LABEL": "Mostra suggerimenti per clic destro / doppio clic",
     "ARROW_PRESET_OUTLINE_COMPACT": "Contorno compatto",

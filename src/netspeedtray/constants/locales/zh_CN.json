@@ -408,7 +408,6 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "悬停小组件时显示流量信息",
-    "PAUSE_IN_MENU_LABEL": "右键菜单添加“暂停/继续”",
     "SETTINGS_PREVIEW_LABEL": "预览",
     "HOVER_TIPS_LABEL": "显示操作提示",
     "ARROW_PRESET_OUTLINE_COMPACT": "紧凑描边",

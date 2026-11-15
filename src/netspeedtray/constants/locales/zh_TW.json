@@ -407,7 +407,6 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "滑鼠移到小工具上時顯示資料使用量",
-    "PAUSE_IN_MENU_LABEL": "在右鍵選單中加入暫停/繼續",
     "SETTINGS_PREVIEW_LABEL": "預覽",
     "HOVER_TIPS_LABEL": "顯示右鍵/雙擊操作提示",
     "ARROW_PRESET_OUTLINE_COMPACT": "外框精簡",

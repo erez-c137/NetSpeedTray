@@ -407,7 +407,6 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "Datagebruik tonen bij hoveren over de widget",
-    "PAUSE_IN_MENU_LABEL": "Pauzeren/Hervatten toevoegen aan het rechtsklikmenu",
     "SETTINGS_PREVIEW_LABEL": "Voorbeeld",
     "HOVER_TIPS_LABEL": "Tips voor rechtsklik / dubbelklik tonen",
     "ARROW_PRESET_OUTLINE_COMPACT": "Compact omtrek",

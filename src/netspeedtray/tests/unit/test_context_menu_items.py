@@ -185,3 +185,76 @@ def test_settings_section_names_settings_and_exit(page, i18n):
     assert i18n.CONTEXT_MENU_ITEMS_LABEL in texts
     assert any("Settings" in t and "Exit" in t and "&" not in t for t in texts), texts
     assert "Check for Updates" in texts and "Support this Project" in texts
+
+
+# ------------------------------------------------- Pause / Resume row (folded into the list, 2.2.1)
+
+def test_pause_row_sits_in_the_list_after_show_monitor(page, i18n):
+    """The standalone 'Add Pause/Resume to the right-click menu' card is gone: Pause / Resume is a row
+    of the expander, in menu order (after Show Monitor), titled with CLICK_ACTION_PAUSE_LABEL."""
+    from netspeedtray.utils.components import SettingCard
+    assert page.context_menu_items.isAncestorOf(page.pause_in_menu)
+    rows = [c._title_label.text() for c in page.context_menu_items.findChildren(SettingCard)]
+    assert rows == ["Show Monitor", i18n.CLICK_ACTION_PAUSE_LABEL, "Reset Position",
+                    "Check for Updates", "Support this Project"]
+    assert "pause" not in page.context_menu_toggles   # its own key, not a hidden-items id
+    titles = [c._title_label.text() for c in page.findChildren(SettingCard)]
+    assert "Add Pause/Resume to the right-click menu" not in titles
+
+
+@pytest.mark.parametrize("on", [False, True])
+def test_pause_row_round_trips_pause_in_menu(page, on):
+    page.load_settings({"pause_in_menu": on}, is_startup_enabled=False)
+    assert page.pause_in_menu.isChecked() is on
+    out = page.get_settings()
+    assert out["pause_in_menu"] is on and out["context_menu_hidden_items"] == []
+    page.pause_in_menu.setChecked(not on)
+    assert page.get_settings()["pause_in_menu"] is (not on)
+
+
+def test_pause_row_defaults_off(page):
+    page.load_settings({}, is_startup_enabled=False)
+    assert page.pause_in_menu.isChecked() is False and D.DEFAULT_CONFIG["pause_in_menu"] is False
+
+
+@pytest.fixture
+def dialog(qtbot, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+    from netspeedtray.views.settings.dialog import SettingsDialog
+    for n in ("critical", "information", "warning"):
+        monkeypatch.setattr(QMessageBox, n, lambda *a, **k: None)
+    parent = MagicMock()
+    parent.config = {}
+    parent.config_manager = MagicMock()
+    dlg = SettingsDialog(main_widget=parent, config=dict(D.DEFAULT_CONFIG), version="0",
+                         i18n=I18nStrings("en_US"), available_interfaces=["Ethernet", "Wi-Fi"],
+                         is_startup_enabled=False)
+    qtbot.addWidget(dlg)
+    return dlg, parent
+
+
+def _applied(parent):
+    args, kwargs = parent.handle_settings_changed.call_args
+    return args[0], kwargs.get("save_to_disk", args[1] if len(args) > 1 else None)
+
+
+def test_dialog_save_applies_pause_and_hidden_items(qtbot, dialog):
+    from PyQt6.QtCore import Qt
+    dlg, parent = dialog
+    dlg.general_page.pause_in_menu.setChecked(True)
+    dlg.general_page.context_menu_toggles["support"].setChecked(False)
+    qtbot.mouseClick(dlg.save_button, Qt.MouseButton.LeftButton)
+    cfg, to_disk = _applied(parent)
+    assert to_disk is True
+    assert cfg["pause_in_menu"] is True and cfg["context_menu_hidden_items"] == ["support"]
+
+
+def test_dialog_cancel_reverts_pause_and_hidden_items(qtbot, dialog):
+    from PyQt6.QtCore import Qt
+    dlg, parent = dialog
+    dlg.general_page.pause_in_menu.setChecked(True)
+    dlg.general_page.context_menu_toggles["monitor"].setChecked(False)
+    qtbot.mouseClick(dlg.cancel_button, Qt.MouseButton.LeftButton)
+    cfg, to_disk = _applied(parent)
+    assert to_disk is False
+    assert cfg["pause_in_menu"] is False and cfg["context_menu_hidden_items"] == []

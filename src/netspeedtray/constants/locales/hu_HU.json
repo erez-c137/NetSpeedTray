@@ -407,7 +407,6 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "Adathasználat megjelenítése a widget fölé mutatva",
-    "PAUSE_IN_MENU_LABEL": "Szünet/Folytatás hozzáadása a jobb kattintásos menühöz",
     "SETTINGS_PREVIEW_LABEL": "Előnézet",
     "HOVER_TIPS_LABEL": "Jobb kattintás / dupla kattintás tippek megjelenítése",
     "ARROW_PRESET_OUTLINE_COMPACT": "Kompakt körvonalas",

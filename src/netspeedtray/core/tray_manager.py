@@ -259,7 +259,8 @@ class TrayIconManager(QObject):
             show_reset = False
             if getattr(self, "reset_position_action", None) is not None:
                 moved = getattr(self.widget, "has_custom_position", None)
-                show_reset = (bool(moved()) if callable(moved) else False)                     and ids.CONTEXT_MENU_ITEM_RESET_POSITION not in hidden
+                show_reset = (bool(moved()) if callable(moved) else False) and (
+                    ids.CONTEXT_MENU_ITEM_RESET_POSITION not in hidden)
                 self.reset_position_action.setVisible(show_reset)
             if getattr(self, "update_action", None) is not None:
                 from netspeedtray.core.update_checker import update_check_disabled_by_policy

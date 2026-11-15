@@ -407,7 +407,6 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "%{value}",
     "HOVER_USAGE_CARD_LABEL": "Widget'ın üzerine gelindiğinde veri kullanımını göster",
-    "PAUSE_IN_MENU_LABEL": "Sağ tıklama menüsüne Duraklat/Devam Et seçeneklerini ekle",
     "SETTINGS_PREVIEW_LABEL": "Önizleme",
     "HOVER_TIPS_LABEL": "Sağ tıklama / çift tıklama ipuçlarını göster",
     "ARROW_PRESET_OUTLINE_COMPACT": "Kompakt Ana Hat",

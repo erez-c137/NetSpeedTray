@@ -407,7 +407,6 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value} %",
     "HOVER_USAGE_CARD_LABEL": "Pokaži porabo podatkov ob prehodu miške čez gradnik",
-    "PAUSE_IN_MENU_LABEL": "Dodaj Premor/Nadaljuj v desni klik meni",
     "SETTINGS_PREVIEW_LABEL": "Predogled",
     "HOVER_TIPS_LABEL": "Pokaži namige za desni / dvojni klik",
     "ARROW_PRESET_OUTLINE_COMPACT": "Obris kompakten",

@@ -407,7 +407,6 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value} %",
     "HOVER_USAGE_CARD_LABEL": "Datennutzung beim Überfahren des Widgets anzeigen",
-    "PAUSE_IN_MENU_LABEL": "Pause/Fortsetzen zum Rechtsklick-Menü hinzufügen",
     "SETTINGS_PREVIEW_LABEL": "Vorschau",
     "HOVER_TIPS_LABEL": "Tipps für Rechts-/Doppelklick anzeigen",
     "ARROW_PRESET_OUTLINE_COMPACT": "Umriss kompakt",

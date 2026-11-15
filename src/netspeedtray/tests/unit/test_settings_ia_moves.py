@@ -320,7 +320,7 @@ def test_interaction_toggles_left_advanced(dlg):
     assert not set(INTERACTION_KEYS) & set(dlg.advanced_page.get_settings())
     for attr in INTERACTION_ATTRS.values():
         assert not hasattr(dlg.advanced_page, attr)
-    labels = {dlg.i18n.HOVER_USAGE_CARD_LABEL, dlg.i18n.HOVER_TIPS_LABEL, dlg.i18n.PAUSE_IN_MENU_LABEL}
+    labels = {dlg.i18n.HOVER_USAGE_CARD_LABEL, dlg.i18n.HOVER_TIPS_LABEL, dlg.i18n.CLICK_ACTION_PAUSE_LABEL}
     assert not [c for c in dlg.advanced_page.findChildren(SettingCard) if c._title_label.text() in labels]
 
 
@@ -349,16 +349,16 @@ def test_interaction_toggles_load_from_config_and_keep_their_defaults(dlg):
 
 
 def test_interaction_order_on_general(dlg):
-    """Click actions, then Pause-in-menu (the right-click route to the same Pause / Resume the click
-    lists offer) and the right-click menu's item switches (2.2.1), then the hover card's usage + tips
+    """Click actions, then the right-click menu's item switches (2.2.1 - Pause / Resume, the right-click
+    route to the same action the click lists offer, is one of them now), then the hover card's usage + tips
     toggles - all under the Interaction header, last on the page."""
     g, i = dlg.general_page, dlg.i18n
     flat = _flatten(g.layout())
     header = flat.index(next(x for x in flat if isinstance(x, QLabel) and x.text() == i.INTERACTION_GROUP_TITLE))
-    cards = [flat.index(_card_of(c)) for c in (g.double_click_action, g.middle_click_action, g.pause_in_menu)]
+    cards = [flat.index(_card_of(c)) for c in (g.double_click_action, g.middle_click_action)]
     cards.append(flat.index(g.context_menu_items))
     cards += [flat.index(_card_of(c)) for c in (g.show_usage_hover, g.power_display, g.show_hover_tips)]
-    assert cards == list(range(header + 1, header + 8))
+    assert cards == list(range(header + 1, header + 7))
     assert cards[-1] == len(flat) - 1
     assert _headers(_page(dlg, 0), {i.UPDATE_RATE_GROUP_TITLE, i.BEHAVIOR_GROUP_TITLE, i.INTERACTION_GROUP_TITLE})         == [i.UPDATE_RATE_GROUP_TITLE, i.BEHAVIOR_GROUP_TITLE, i.INTERACTION_GROUP_TITLE]
 
