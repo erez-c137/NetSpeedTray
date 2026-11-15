@@ -487,12 +487,15 @@ def test_gpu_query_is_rebuilt_when_the_monitor_window_forces_gpu_usage(thread):
     def force_after_first(i):
         if i == 1:
             thread._force_hardware_collection = True
-    got, pdh, _m = _ticks(thread, {"monitor_vram_enabled": True}, n=2, between=force_after_first)
+    got, pdh, _m = _ticks(thread, {"monitor_vram_enabled": True}, n=3, between=force_after_first)
     first = [p for q, p in pdh.added if q == 1001]
     second = [p for q, p in pdh.added if q == 1002]
     assert not any("GPU Engine" in p for p in first)
     assert any("GPU Engine" in p for p in second)             # forced: GPU usage needs the wildcard
-    assert "gpu" in got[1]
+    # The rebuilt query's first sample is a sliver of time, so it is held (2.2.1): no "gpu" key on
+    # that tick - the taskbar keeps its last value - and the next tick carries the reading.
+    assert "gpu" not in got[1]
+    assert "gpu" in got[2]
 
 
 # --- history, metrics endpoint, Settings ----------------------------------------------------------

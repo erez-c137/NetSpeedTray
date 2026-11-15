@@ -74,6 +74,8 @@
     "GPU_ADAPTER_AUTO": "Automática (la más ocupada)",
     "HOVER_LIST_ALL_GPUS_LABEL": "Mostrar todas las GPU al pasar el cursor por el widget",
     "GPU_ON_TASKBAR_MARKER": "en la barra",
+    "GPU_IDLE_LABEL": "Inactiva",
+    "GPU_IDLE_TOOLTIP": "La temperatura y el consumo no se leen mientras esta GPU está inactiva, para que pueda suspenderse.",
     "TEMPERATURE_UNIT_LABEL": "Unidad de temperatura",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",

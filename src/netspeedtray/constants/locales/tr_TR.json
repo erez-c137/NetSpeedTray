@@ -74,6 +74,8 @@
     "GPU_ADAPTER_AUTO": "Otomatik (en yoğun)",
     "HOVER_LIST_ALL_GPUS_LABEL": "Widget'ın üzerine gelindiğinde tüm GPU'ları listele",
     "GPU_ON_TASKBAR_MARKER": "görev çubuğunda",
+    "GPU_IDLE_LABEL": "Boşta",
+    "GPU_IDLE_TOOLTIP": "Bu GPU boştayken uyuyabilmesi için sıcaklık ve güç okunmaz.",
     "TEMPERATURE_UNIT_LABEL": "Sıcaklık birimi",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",

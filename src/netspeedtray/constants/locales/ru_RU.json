@@ -74,6 +74,8 @@
     "GPU_ADAPTER_AUTO": "Автоматически (самая загруженная)",
     "HOVER_LIST_ALL_GPUS_LABEL": "Показывать все видеокарты при наведении на виджет",
     "GPU_ON_TASKBAR_MARKER": "на панели задач",
+    "GPU_IDLE_LABEL": "Простой",
+    "GPU_IDLE_TOOLTIP": "Температура и мощность не считываются, пока этот GPU простаивает, чтобы он мог уйти в сон.",
     "TEMPERATURE_UNIT_LABEL": "Единица температуры",
     "TEMPERATURE_UNIT_CELSIUS": "Цельсий (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Фаренгейт (°F)",

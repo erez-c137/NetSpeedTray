@@ -194,6 +194,11 @@ def hover_gpu_rows(config: Dict[str, Any], cards: Any, bar_shows_gpu: bool = Tru
             row["temp"] = c.temp
         if power:
             row["power"] = c.power
+        idle = getattr(c, "idle", None)
+        if (temps or power) and idle is not None:
+            # A hybrid's NVIDIA dGPU (2.2.1): the key says the card can be idle (its tag is laid out),
+            # the value whether it is now - so the tag shows and hides without a rebuild.
+            row["idle"] = bool(idle)
         if vram:
             row["vram"] = (c.vram_used_gib, c.vram_total_gib)
             if c.vram_shared:
@@ -373,6 +378,9 @@ class NetworkSpeedWidget(QWidget):
         # Every GPU of a multi-GPU PC (monitor_thread.GpuCard), for the hover card's list (#236). Set
         # by the controller on every hardware poll; () with one GPU, GPU monitoring off or the list off.
         self.gpu_cards: tuple = ()
+        # A PICKED hybrid dGPU as the Optimus gate judged it (2.2.1): True = idle (the hover card's single
+        # GPU row says so beside its "—"), False = not, None = not judged. Set by the controller.
+        self.gpu_idle: Optional[bool] = None
         
         # Cycling State
         self._cycle_index: int = 0
@@ -1961,6 +1969,9 @@ class NetworkSpeedWidget(QWidget):
                             hw["temp_unit"] = unit   # absent = Celsius, the snapshot as before
                     if power:
                         stat["power"] = watts
+                    idle = getattr(self, "gpu_idle", None) if key == "gpu" else None
+                    if (temps or power) and idle is not None:
+                        stat["idle"] = bool(idle)   # the picked hybrid dGPU (2.2.1), as in the list
                     hw[key] = stat
             if ("CPU" in stats or "RAM" in stats) and cfg.get("monitor_ram_enabled", False):
                 hw["ram"] = (self.ram_used, self.ram_total)

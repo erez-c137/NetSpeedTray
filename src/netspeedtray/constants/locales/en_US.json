@@ -74,6 +74,8 @@
     "GPU_ADAPTER_AUTO": "Automatic (busiest)",
     "HOVER_LIST_ALL_GPUS_LABEL": "List every GPU when hovering the widget",
     "GPU_ON_TASKBAR_MARKER": "on taskbar",
+    "GPU_IDLE_LABEL": "Idle",
+    "GPU_IDLE_TOOLTIP": "Temperature and power aren't read while this GPU is idle, so it can sleep.",
     "TEMPERATURE_UNIT_LABEL": "Temperature unit",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",

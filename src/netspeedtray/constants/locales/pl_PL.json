@@ -74,6 +74,8 @@
     "GPU_ADAPTER_AUTO": "Automatycznie (najbardziej obciążona)",
     "HOVER_LIST_ALL_GPUS_LABEL": "Pokazuj wszystkie GPU po najechaniu na widżet",
     "GPU_ON_TASKBAR_MARKER": "na pasku zadań",
+    "GPU_IDLE_LABEL": "Bezczynny",
+    "GPU_IDLE_TOOLTIP": "Temperatura i pobór mocy nie są odczytywane, gdy ten procesor graficzny jest bezczynny, aby mógł przejść w uśpienie.",
     "TEMPERATURE_UNIT_LABEL": "Jednostka temperatury",
     "TEMPERATURE_UNIT_CELSIUS": "Celsjusz (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",

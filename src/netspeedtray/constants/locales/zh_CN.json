@@ -75,6 +75,8 @@
     "GPU_ADAPTER_AUTO": "自动（负载最高）",
     "HOVER_LIST_ALL_GPUS_LABEL": "悬停小组件时列出所有 GPU",
     "GPU_ON_TASKBAR_MARKER": "任务栏显示",
+    "GPU_IDLE_LABEL": "空闲",
+    "GPU_IDLE_TOOLTIP": "此 GPU 空闲时不读取温度和功耗，以便其进入睡眠。",
     "TEMPERATURE_UNIT_LABEL": "温度单位",
     "TEMPERATURE_UNIT_CELSIUS": "摄氏度 (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "华氏度 (°F)",

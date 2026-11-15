@@ -154,6 +154,9 @@ class UsageFlyout(QWidget):
         # --- Hardware the side taskbar has no room for (live while the card is open) ---
         self._hw_values: dict = {}
         self._gpu_list_sig: Optional[tuple] = None   # the GPU list's rows as built (#236)
+        # A hybrid dGPU's "Idle" tag (2.2.1), per GPU row that can be idle: ("gpu",) for the single
+        # row, ("gpus", key) for a listed card. Shown / hidden in place by update_hardware.
+        self._idle_tags: dict = {}
         if hardware:
             self._hardware_section(body, hardware)
             sections += 1
@@ -350,7 +353,21 @@ class UsageFlyout(QWidget):
             row_label = self._label(label, tokens.TYPE_BODY_STRONG, self._c["text_primary"])
             if key == "vram":
                 self._hw_values[("vram", "label")] = row_label
-            grid.addWidget(row_label, row, 0)
+            if key == "gpu" and "idle" in (hardware.get("gpu") or {}):
+                # The picked GPU is a hybrid's NVIDIA dGPU (2.2.1): "GPU  Idle" while the gate rests it.
+                cell = QWidget()
+                cell.setStyleSheet("background: transparent;")
+                box = QHBoxLayout(cell)
+                box.setContentsMargins(0, 0, 0, 0)
+                box.setSpacing(tokens.SPACE_S)
+                box.addWidget(row_label)
+                tag = self._idle_tag()
+                box.addWidget(tag)
+                box.addStretch(1)
+                self._idle_tags[("gpu",)] = tag
+                grid.addWidget(cell, row, 0)
+            else:
+                grid.addWidget(row_label, row, 0)
             cols = stat_cols if key in ("cpu", "gpu") else ["mem"]
             for i, col in enumerate(cols):
                 lbl = self._label("", tokens.TYPE_BODY, self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
@@ -369,6 +386,19 @@ class UsageFlyout(QWidget):
             self._hw_values[("identity", "text")] = lbl
         body.addLayout(grid)
         self.update_hardware(hardware)
+
+    def _idle_tag(self) -> QLabel:
+        """The small "Idle" tag after a hybrid laptop's NVIDIA GPU (2.2.1): its "—" temperature / power
+        are not read while it is idle, so it can sleep - not a missing sensor (the tooltip says so). Its
+        room is kept while it is hidden, so the card never changes width when the GPU wakes or idles."""
+        tag = self._label(self._tr("GPU_IDLE_LABEL", "Idle"), tokens.TYPE_CAPTION, self._c["text_secondary"])
+        tag.setToolTip(self._tr("GPU_IDLE_TOOLTIP", "Temperature and power aren't read while this GPU is "
+                                                    "idle, so it can sleep."))
+        policy = tag.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        tag.setSizePolicy(policy)
+        tag.setVisible(False)
+        return tag
 
     def _gpu_list_rows(self, grid: QGridLayout, row: int, gpus: list, stat_cols: list, widths: dict) -> int:
         """One row per GPU - its name (in its own face when the UI face lacks a character of it,
@@ -395,6 +425,10 @@ class UsageFlyout(QWidget):
             if g.get("on_taskbar"):
                 box.addWidget(self._label(self._tr("GPU_ON_TASKBAR_MARKER", "on taskbar"),
                                           tokens.TYPE_CAPTION, self._c["accent"]))
+            if "idle" in g:
+                tag = self._idle_tag()
+                box.addWidget(tag)
+                self._idle_tags[("gpus", gid)] = tag
             box.addStretch(1)
             grid.addWidget(cell, row, 0)
             for i, col in enumerate(stat_cols):
@@ -426,7 +460,7 @@ class UsageFlyout(QWidget):
         if not gpus:
             return None
         return tuple((g.get("key"), g.get("name"), bool(g.get("on_taskbar")), bool(g.get("vram_shared")),
-                      tuple(k for k in ("temp", "power", "vram") if k in g)) for g in gpus)
+                      tuple(k for k in ("temp", "power", "vram", "idle") if k in g)) for g in gpus)
 
     @property
     def has_hardware(self) -> bool:
@@ -451,6 +485,10 @@ class UsageFlyout(QWidget):
             return None
         if self._gpu_sig(hardware.get("gpus")) != getattr(self, "_gpu_list_sig", None):
             return False
+        tags = getattr(self, "_idle_tags", {})
+        if (("gpu", "pct") in self._hw_values
+                and (("gpu",) in tags) != ("idle" in (hardware.get("gpu") or {}))):
+            return False   # the single GPU row gained or lost its "Idle" tag: other rows (2.2.1)
         dash = "—"
 
         def num(v: object) -> Optional[float]:
@@ -505,6 +543,10 @@ class UsageFlyout(QWidget):
                     f"{helpers.format_decimal(power, self._i18n, 1)} W" if power is not None else dash)
             if ("gpus", gid, "mem") in self._hw_values:
                 self._hw_values[("gpus", gid, "mem")].setText(mem_text(g.get("vram")))
+            if ("gpus", gid) in tags:
+                tags[("gpus", gid)].setVisible(bool(g.get("idle")))
+        if ("gpu",) in tags:
+            tags[("gpu",)].setVisible(bool((hardware.get("gpu") or {}).get("idle")))
         if ("vram", "label") in self._hw_values and "vram" in hardware:
             # The card can stay up across a poll that changes what the VRAM reading is.
             self._hw_values[("vram", "label")].setText(

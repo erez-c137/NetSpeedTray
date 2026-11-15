@@ -22,6 +22,8 @@ from netspeedtray.core.gpu_adapters import AdapterInfo
 from netspeedtray.core.lhm_http import LhmGpu, LhmSnapshot
 
 GOLDEN = Path(__file__).with_name("gpu_automatic_golden.json")
+# GpuPollResult's fields up to `present` - what the golden froze (later fields are checked apart).
+GOLDEN_FIELDS = 7
 
 MIB = 1024.0 * 1024.0
 GIB = 1024 ** 3
@@ -128,12 +130,15 @@ def run_all(cls, mod) -> dict:
                                   return_value=list(adapters) if adapters is not None else None), \
                      patch.object(cls, "_init_ohm_wmi"):
                     r = t._poll_gpu_hybrid(include_temp=temp, include_power=power)
-                rows.append(list(r) + [t._gpu_engine_seen, t._gpu_dedicated_seen])
+                # The fields frozen in the golden; `idle` (2.2.1) is about a PICKED card only, so
+                # Automatic never has it - pinned here instead of regenerating the contract.
+                assert r.idle is None
+                rows.append(list(r[:GOLDEN_FIELDS]) + [t._gpu_engine_seen, t._gpu_dedicated_seen])
             out[f"{name}|temp={temp}|power={power}"] = rows
     t = _thread(cls, [UHD, BRD], None, None)
     with patch("win32pdh.CollectQueryData", side_effect=E), \
          patch.object(mod.psutil, "virtual_memory", return_value=types.SimpleNamespace(total=32 * GIB)):
-        out["pdh_collect_fails"] = [list(t._poll_gpu_hybrid(include_temp=False, include_power=False))]
+        out["pdh_collect_fails"] = [list(t._poll_gpu_hybrid(include_temp=False, include_power=False)[:GOLDEN_FIELDS])]
     return json.loads(json.dumps(out))
 
 

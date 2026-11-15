@@ -74,6 +74,8 @@
     "GPU_ADAPTER_AUTO": "Automatisch (drukst bezet)",
     "HOVER_LIST_ALL_GPUS_LABEL": "Alle GPU's tonen bij hoveren over de widget",
     "GPU_ON_TASKBAR_MARKER": "op de taakbalk",
+    "GPU_IDLE_LABEL": "Inactief",
+    "GPU_IDLE_TOOLTIP": "Temperatuur en vermogen worden niet uitgelezen zolang deze GPU inactief is, zodat hij in slaapstand kan gaan.",
     "TEMPERATURE_UNIT_LABEL": "Temperatuureenheid",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",
