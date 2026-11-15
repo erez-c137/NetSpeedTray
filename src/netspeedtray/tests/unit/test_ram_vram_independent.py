@@ -11,7 +11,7 @@ VRAM never. Now each is a readout of its own:
 - the widget: a slot (CPU or RAM, GPU or VRAM) whose usage monitor is off paints a memory-only row,
   "RAM 9.2/16.0G", in side by side (in a row or stacked), Auto-Cycle and the side-bar layouts, sized
   from the stable memory reference (never a live value);
-- history: RAM and VRAM % are recorded on their own switches (the 'ram' / 'vram' hw_* metrics);
+- history: RAM % is recorded on its own switch (the 'ram' hw_* metric); VRAM is not recorded (2.2.1);
 - the metrics endpoint, the cycle fallback and Settings follow the same rule.
 The byte-identical guarantee for the configs that could already show memory is
 test_ram_vram_render_guard.
@@ -581,15 +581,17 @@ def test_metrics_endpoint_reports_memory_alone():
     assert snap.vram_used_bytes == pytest.approx(1.0 * GIB) and snap.vram_total_bytes == pytest.approx(4.0 * GIB)
 
 
-@pytest.mark.parametrize("key", ["monitor_ram_enabled", "monitor_vram_enabled"])
-def test_record_hardware_history_card_is_live_with_memory_alone(q_app, key):
+@pytest.mark.parametrize("key, live", [("monitor_ram_enabled", True), ("monitor_vram_enabled", False)])
+def test_record_hardware_history_card_is_live_with_ram_alone_not_vram(q_app, key, live):
+    # RAM is recorded on its own switch; VRAM is never recorded (controller: "No VRAM history"), so
+    # VRAM alone would show the card On while it records nothing (2.2.1 review).
     from netspeedtray.views.settings.pages.advanced import AdvancedPage
     page = AdvancedPage(EN, lambda: None)
     try:
         page.load_settings({})
         assert not page._record_card.isEnabled()
         page.load_settings({key: True})
-        assert page._record_card.isEnabled()
+        assert page._record_card.isEnabled() is live
     finally:
         page.deleteLater()
 
