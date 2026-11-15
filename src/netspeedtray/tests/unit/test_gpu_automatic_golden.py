@@ -130,9 +130,9 @@ def run_all(cls, mod) -> dict:
                                   return_value=list(adapters) if adapters is not None else None), \
                      patch.object(cls, "_init_ohm_wmi"):
                     r = t._poll_gpu_hybrid(include_temp=temp, include_power=power)
-                # The fields frozen in the golden; `asleep` (2.2.1) is about a PICKED card only, so
+                # The fields frozen in the golden; `idle` (2.2.1) is about a PICKED card only, so
                 # Automatic never has it - pinned here instead of regenerating the contract.
-                assert r.asleep is None
+                assert r.idle is None
                 rows.append(list(r[:GOLDEN_FIELDS]) + [t._gpu_engine_seen, t._gpu_dedicated_seen])
             out[f"{name}|temp={temp}|power={power}"] = rows
     t = _thread(cls, [UHD, BRD], None, None)

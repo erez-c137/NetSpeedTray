@@ -187,9 +187,9 @@ class GpuPollResult(NamedTuple):
     vram_is_shared: bool = False
     # A PDH engine instance or a hardware-scoped LHM GPU sensor proves presence.
     present: bool = False
-    # A PICKED NVIDIA dGPU on a hybrid laptop, as the Optimus gate judged it this poll: True = asleep
-    # (temperature / power are "—" because of that), False = awake, None = not judged / not that case.
-    asleep: Optional[bool] = None
+    # A PICKED NVIDIA dGPU on a hybrid laptop (2.2.1): True = idle by the Optimus gate AND its temperature /
+    # power are "—" because of that (_gpu_idle_for), False = not that, None = not judged / not that case.
+    idle: Optional[bool] = None
 
 
 class GpuCard(NamedTuple):
@@ -205,9 +205,10 @@ class GpuCard(NamedTuple):
     temp: Optional[float] = None
     power: Optional[float] = None
     picked: bool = False              # the GPU picked in Settings: the one the taskbar shows
-    # A hybrid laptop's NVIDIA dGPU as the Optimus gate judged it this poll (2.2.1): True = asleep,
-    # False = awake, None = not judged (another GPU, a desktop, temperature and power both off).
-    asleep: Optional[bool] = None
+    # A hybrid laptop's NVIDIA dGPU (2.2.1, _gpu_idle_for): True = idle by the Optimus gate and its
+    # temperature / power blank because of it, False = judged but not that (awake, or another source such
+    # as LHM still reads it), None = not judged (another GPU, a desktop, temperature and power both off).
+    idle: Optional[bool] = None
 
 
 class StatsMonitorThread(QThread):
@@ -326,9 +327,12 @@ class StatsMonitorThread(QThread):
         # poll holds the readout (util None: the taskbar keeps its last value) and is not counted by
         # the Optimus gate. Set by _init_gpu_query, cleared by the next collection.
         self._gpu_util_settling: bool = False
-        # The NVIDIA adapters the Optimus gate judged on the last poll (empty = not judged), for the
-        # hover card's "asleep" hint (2.2.1): only a judged card can be said to be asleep.
-        self._gpu_gate_luids: frozenset = frozenset()
+        # The hover card's "Idle" tag (2.2.1): (the NVIDIA adapters the Optimus gate judged on the last
+        # poll - empty = not judged, whether it found them idle with nvidia-smi healthy). Kept as is over
+        # ONE poll whose engine array could not be read (the blind path), so a transient PDH failure
+        # does not take the tag's row away from an open card and rebuild it twice.
+        self._gpu_idle_gate: Tuple[frozenset, bool] = (frozenset(), False)
+        self._gpu_idle_gate_kept: bool = False
 
         # PDH Queries for GPU
         self._gpu_query: Optional[int] = None
@@ -774,8 +778,15 @@ class StatsMonitorThread(QThread):
         self._nvidia_gate_open = gate_open
         # A known sensor that is only asleep (no failure so far): not "no sensor" (the LHM notice).
         self._gpu_sensor_asleep = hybrid and not gate_open and self._nvidia_fail_streak == 0
-        # Which cards that verdict is about - the hover card says "Asleep" on those rows only (2.2.1).
-        self._gpu_gate_luids = frozenset(gate_luids)
+        # Which cards that verdict is about - the hover card's "Idle" tag (2.2.1). A poll that could not
+        # read the engine array keeps the last verdict once (see _gpu_idle_gate).
+        blind_blip = (hybrid and self._gpu_util_counter is not None and util_arr is None
+                      and (include_temp or include_power))
+        if blind_blip and not self._gpu_idle_gate_kept:
+            self._gpu_idle_gate_kept = True
+        else:
+            self._gpu_idle_gate_kept = False
+            self._gpu_idle_gate = (frozenset(gate_luids), self._gpu_sensor_asleep)
         if selected is None:
             # On a hybrid the total alone is never a reason to call (owner decision 2026-11-11: zero
             # wakes at app start): DXGI's below until a temperature / power query brings nvidia-smi's.
@@ -904,7 +915,8 @@ class StatsMonitorThread(QThread):
         return GpuPollResult(util, vram_used, vram_total, temp_c, power_w,
                              vram_is_shared=vram_is_shared,
                              present=self._gpu_engine_seen or self._lhm_gpu_seen,
-                             asleep=self._gpu_asleep_for(selected.luid) if selected is not None else None)
+                             idle=(self._gpu_idle_for(selected.luid, temp_c, power_w)
+                                   if selected is not None else None))
 
     def _dxgi_vram_total(self) -> Optional[float]:
         """Total VRAM (MiB) from DXGI's static adapter facts, for VRAM shown without GPU monitoring in
@@ -1057,12 +1069,13 @@ class StatsMonitorThread(QThread):
                 if auto_smi_fresh and a is nvidia[0]:
                     temp = temp if temp is not None else self._nvidia_cache_temp
                     power = power if power is not None else self._nvidia_cache_power
+            temp = temp if include_temp else None
+            power = power if include_power else None
             out.append(GpuCard(
                 luid=a.luid, name=name, integrated=integrated, util=util,
                 vram_used_gib=used / 1024.0 if used is not None else None,
                 vram_total_gib=total / 1024.0 if total else None, vram_shared=shared,
-                temp=temp if include_temp else None, power=power if include_power else None,
-                picked=picked, asleep=self._gpu_asleep_for(a.luid)))
+                temp=temp, power=power, picked=picked, idle=self._gpu_idle_for(a.luid, temp, power)))
 
         sig = tuple((hex(a.vendor_id), gpu_adapters.is_integrated(a)) for a in cards)
         if sig != self._gpu_cards_sig:
@@ -1278,14 +1291,20 @@ class StatsMonitorThread(QThread):
         awake = self._nvidia_active_at is not None and now - self._nvidia_active_at <= hold
         return awake, clean
 
-    def _gpu_asleep_for(self, luid: Tuple[int, int]) -> Optional[bool]:
-        """The hover card's "asleep" hint for one adapter (2.2.1): True only when the Optimus gate judged
-        THIS card on the last poll and found it asleep with nvidia-smi healthy (_gpu_sensor_asleep) -
-        so its "—" temperature / power are the gate's doing, not a missing sensor. False when judged and
-        awake (or nvidia-smi failing), None when not judged at all."""
-        if luid not in self._gpu_gate_luids:
+    def _gpu_idle_for(self, luid: Tuple[int, int], temp: Optional[float],
+                      power: Optional[float]) -> Optional[bool]:
+        """The hover card's "Idle" tag for one adapter (2.2.1), from its FINAL temperature / power.
+
+        True only when the Optimus gate judged THIS card on the last poll, found it idle with nvidia-smi
+        healthy (_gpu_sensor_asleep), and the readings the card shows are blank - so its "—" are the
+        gate's doing. The gate only knows "no engine activity within the hold", which is why the tag says
+        idle, not asleep. False when judged but that is not the case: awake, nvidia-smi failing, or
+        another source (LHM / OHM) still reads it - a live 45 °C never sits next to "Idle". None when
+        not judged at all (the row then has no tag)."""
+        luids, idle = self._gpu_idle_gate
+        if luid not in luids:
             return None
-        return bool(self._gpu_sensor_asleep)
+        return bool(idle) and temp is None and power is None
 
     def _refresh_adapters_on_luid_change(self, pdh_instances) -> None:
         """Re-read the DXGI adapter list when PDH's GPU set no longer matches it (rc.2 G4).
@@ -2075,9 +2094,9 @@ class StatsMonitorThread(QThread):
                         # and the history keep the last reading instead of a near-zero-window blip.
                         if _collect_gpu and gpu.util is not None:
                             stats['gpu'] = gpu.util
-                        if _collect_gpu:
-                            # The picked dGPU's sleep verdict for the single GPU row's hint (2.2.1).
-                            stats['gpu_asleep'] = gpu.asleep
+                            # The picked dGPU's "Idle" verdict for the single GPU row (2.2.1) - not on a
+                            # held tick either: its gate verdict comes from the same sliver of a sample.
+                            stats['gpu_idle'] = gpu.idle
                         stats['gpu_present'] = gpu.present   # lets the Monitor hide GPU tiles on no-GPU boxes
                         if include_temp:
                             stats['gpu_temp'] = gpu.temp
