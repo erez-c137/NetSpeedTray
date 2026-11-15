@@ -292,9 +292,9 @@ Only if you ask it to. The default target is your own **gateway**, which never l
 
 <a id="why-does-the-network-name-need-location-access"></a>
 <details>
-<summary><b>Why does the network name need "Location" access?</b></summary>
+<summary><b>Does the network name need "Location" access?</b></summary>
 
-The Wi-Fi **band** (2.4G / 5G) shows on any PC with **no permission**. The **network name (SSID)** is different: since Windows 11, Windows only hands the SSID to apps that have **Location** access - a Windows privacy gate, the same one your browser hits for Wi-Fi features. It is **not** GPS and **not** tracking: NetSpeedTray never uses your position, reads the name **locally** only to show it on the widget, and never stores or transmits it (see the [Privacy Policy](privacy.md)). Prefer not to? Leave "Network name" off and use the band - it needs nothing. The first time the name is blocked, NetSpeedTray shows a one-time explainer with a shortcut straight to the Windows Location setting.
+Not since **2.2.1**. The Wi-Fi **band** (2.4G / 5G) never needed a permission, and 2.2.1 reads the **network name (SSID)** of the network you're connected to through a Windows API that doesn't need **Location** access either - it doesn't scan nearby networks, and nothing shows up under Location's recent activity. The name is read **locally** only to show it on the widget, and never stored or sent (see the [Privacy Policy](privacy.md)). On 2.2.0 and older, Windows 11 only hands the name to apps with Location access, so there it needs Location on - leave "Network name" off and use the band if you prefer.
 
 </details>
 
@@ -336,7 +336,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **Auto-primary mode** - follows the adapter your internet traffic is routed through right now (with a full-tunnel VPN connected, that is the VPN's)
 - **Interface filtering** - all hardware, specific adapters, or include virtual interfaces
 - **Color coding** - Low / Medium / High speed levels with your own thresholds and colors; the default colors stay apart with red-green color blindness
-- **Network identity** - show the Wi-Fi **band** (2.4G / 5G / 6G) and, optionally, the **network name (SSID)** on the widget as a small pill; color-code it, or use **alert-only** mode to flash a red `2.4G` *only* when your PC has silently dropped to the slow band. The band needs no permission; the SSID needs Windows Location on - a Windows privacy gate, read locally and never sent ([why?](#why-does-the-network-name-need-location-access))
+- **Network identity** - show the Wi-Fi **band** (2.4G / 5G) and, optionally, the **network name (SSID)** on the widget as a small pill; color-code it, or use **alert-only** mode to flash a red `2.4G` *only* when your PC has silently dropped to the slow band. Neither needs Location access since 2.2.1; both are read locally and never sent ([more](#why-does-the-network-name-need-location-access))
 - **Per-app connections** (in the Monitor) - live connection counts and remote hosts per program, no admin needed
 
 ### Hardware Monitoring

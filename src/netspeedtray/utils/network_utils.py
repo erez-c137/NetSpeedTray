@@ -171,7 +171,7 @@ class NetworkIdentity:
     Attributes:
         name:         SSID (Wi-Fi) or the active connection's friendly name (wired); None if unknown
                       or unavailable from the connected profile.
-        band:         "2.4G" / "5G" / "6G" for Wi-Fi, else None. Available without Location permission.
+        band:         "2.4G" / "5G" for Wi-Fi, else None (channel numbers overlap with 6 GHz, so no "6G"). Available without Location permission.
         is_wireless:  True if the active interface is a connected WLAN adapter.
         connected:    True if there is an active internet-facing interface at all.
     """
