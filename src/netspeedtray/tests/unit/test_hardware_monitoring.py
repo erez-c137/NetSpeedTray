@@ -405,16 +405,22 @@ class TestHardwareMonitoring:
             return [sensor]
         ohm = MagicMock()
         ohm.ExecQuery.side_effect = query
-        with patch('win32com.client.GetObject', return_value=ohm), patch.object(mt, 'win32pdh', None):
+        with patch('win32com.client.GetObject', return_value=ohm) as get_object, \
+                patch.object(mt, 'win32pdh', None):
             assert monitor_thread._poll_cpu_temperature() == 55.0
+            now[0] += _constants.lhm.NOT_DETECTED_GRACE_SEC + 1   # past the start-up grace
             state["up"] = False
+            probes = get_object.call_count
             for _ in range(5):
                 monitor_thread._poll_cpu_temperature()
+                now[0] += 1.0
+            # Lost after working: re-probed (and failing) on every poll, never backed off (2.2.1),
+            # and still nothing logged per failed poll.
+            assert get_object.call_count - probes >= 4
             state["up"] = True
-            # A failed re-probe waits WMI_PROBE_BACKOFF_SEC (2.2.1) before the next one.
-            now[0] += _constants.lhm.WMI_PROBE_BACKOFF_SEC
-            for _ in range(3):
+            for _ in range(3):                           # back on the very next poll
                 assert monitor_thread._poll_cpu_temperature() == 55.0
+                now[0] += 1.0
 
         def info_lines(needle):
             lines = [c.args[0] % c.args[1:] for c in log.info.call_args_list if c.args]
@@ -428,8 +434,8 @@ class TestHardwareMonitoring:
     def test_wmi_source_lost_for_good_right_after_a_flap_still_reaches_info(self, monitor_thread, monkeypatch):
         """A WMI outage that starts within the quiet window of a reported one is DEBUG; if it then
         never ends, the failing re-probes must still report it once the window passes - otherwise
-        the log's last INFO about the source is "is back" while it has been gone for hours. The
-        re-probes are WMI_PROBE_BACKOFF_SEC apart (2.2.1); the same clock drives both."""
+        the log's last INFO about the source is "is back" while it has been gone for hours. One
+        clock drives the outage and the probe backoff (2.2.1, not applied while the source is lost)."""
         import time as _time
         import types as _types
         import netspeedtray.core.monitor_thread as mt

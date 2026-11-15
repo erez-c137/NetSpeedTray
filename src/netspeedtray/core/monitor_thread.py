@@ -245,6 +245,8 @@ class StatsMonitorThread(QThread):
         self._wmi_ohm: Any = None
         # Monotonic time before which a failed LHM/OHM WMI probe is not repeated (0.0 = probe now).
         self._ohm_retry_at: float = 0.0
+        # Monotonic time of the first probe (None = none yet): the start of its every-poll grace.
+        self._ohm_first_probe_at: Optional[float] = None
         # One INFO line when a WMI connection that was working is dropped mid-session, one when it is
         # back (rate-limited if it flaps) - see SourceOutage.
         self._ohm_outage = SourceOutage(self.logger, "the LibreHardwareMonitor/OpenHardwareMonitor WMI source")
@@ -1629,9 +1631,12 @@ class StatsMonitorThread(QThread):
         _wmi_ohm == None  → not yet probed (or previous probe failed - will retry)
         _wmi_ohm == <obj> → connected and ready
         Failures are NOT permanently cached, so the app picks up LHM/OHM if it starts after
-        NetSpeedTray - but a failed probe is not repeated for constants.lhm.WMI_PROBE_BACKOFF_SEC
-        (2.2.1): it used to run on every poll, up to three times a poll, wherever no namespace exists.
-        A settings change (run) probes again at once.
+        NetSpeedTray - but in the steady "never found" state a failed probe is not repeated for
+        constants.lhm.WMI_PROBE_BACKOFF_SEC (2.2.1): it used to run on every poll, up to three times a
+        poll, wherever no namespace exists (every NVIDIA desktop without LHM). Still every poll: for
+        NOT_DETECTED_GRACE_SEC after the first probe (LHM's WMI coming up at login, or initialising
+        with 0 sensors) and while a connection that worked is lost (a one-poll hiccup recovers on the
+        next poll, as before). A settings change (run) probes again at once.
         """
         if self._wmi_ohm is not None:
             return
@@ -1641,8 +1646,8 @@ class StatsMonitorThread(QThread):
         com_client = _com_client()
         if com_client is None:
             return
-        # Stamped before the probe: any way out of it short of connecting waits the full backoff.
-        self._ohm_retry_at = now + constants.lhm.WMI_PROBE_BACKOFF_SEC
+        if self._ohm_first_probe_at is None:
+            self._ohm_first_probe_at = now
         # Probe every namespace BEFORE deciding on any user-facing guidance: a working
         # fallback (e.g. a live root\OpenHardwareMonitor) must not trigger a misleading
         # "install LHM v0.9.4" note just because the LHM namespace happens to be absent
@@ -1664,7 +1669,6 @@ class StatsMonitorThread(QThread):
                     self.logger.debug("Hardware monitor: %s exists but exposes 0 sensors.", ns)
                     continue
                 self._wmi_ohm = obj
-                self._ohm_retry_at = 0.0   # a connection lost later is re-probed at once
                 # The first connection is INFO; a reconnect after a lost one is SourceOutage's
                 # "is back" line, and a re-probe after a settings change is DEBUG.
                 level = logging.INFO if self._ohm_outage.succeeded() else logging.DEBUG
@@ -1679,6 +1683,10 @@ class StatsMonitorThread(QThread):
         # Nothing connected across all namespaces. A source that worked earlier is still (or newly)
         # lost: SourceOutage reports a folded outage that outlasts its quiet window (no-op otherwise).
         self._ohm_outage.failed("no LibreHardwareMonitor/OpenHardwareMonitor WMI namespace answered")
+        # Back off only in the steady "never found" state (see the docstring).
+        in_grace = now - self._ohm_first_probe_at < constants.lhm.NOT_DETECTED_GRACE_SEC
+        if not (in_grace or self._ohm_outage.lost):
+            self._ohm_retry_at = now + constants.lhm.WMI_PROBE_BACKOFF_SEC
         # Surface ONE actionable line, once.
         if not self._ohm_guidance_logged:
             self._ohm_guidance_logged = True
@@ -1953,7 +1961,8 @@ class StatsMonitorThread(QThread):
                     self._cleanup_thermal_query()
                     self._cleanup_power_query()
                     self._wmi_ohm = None   # re-probe LHM/OHM on the next temp poll
-                    self._ohm_retry_at = 0.0   # now, not after a failed probe's backoff
+                    self._ohm_retry_at = 0.0   # now, not after a failed probe's backoff,
+                    self._ohm_first_probe_at = None   # with a fresh every-poll grace
 
                 stats = {}
 

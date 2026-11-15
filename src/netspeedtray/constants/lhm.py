@@ -62,7 +62,9 @@ class LhmConstants:
     # The same for the LHM v0.9.4 / OpenHardwareMonitor WMI probe (2.2.1): after a probe in which no
     # namespace connected, it is not repeated for this long. It runs only while a temperature / power
     # reading is still missing - every poll, up to three times a poll (CPU temperature, CPU power,
-    # GPU), on every NVIDIA desktop without LHM - and each probe is two COM GetObject calls.
+    # GPU), on every NVIDIA desktop without LHM - and each probe is two COM GetObject calls. Not
+    # applied in the first NOT_DETECTED_GRACE_SEC after the first probe, nor while a connection that
+    # worked is lost: those keep probing every poll (StatsMonitorThread._init_ohm_wmi).
     WMI_PROBE_BACKOFF_SEC: Final[float] = 30.0
     # The "Turn on temperatures" notice (lhm_not_detected) waits this long after the first poll that
     # wanted a temperature / power reading, to give LHM time to be detected. Time, not a poll count:

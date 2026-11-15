@@ -273,26 +273,93 @@ class _FakeCom:
         raise OSError(f"no namespace {moniker}")
 
 
-def test_a_failed_wmi_probe_waits_the_backoff(q_app, monkeypatch, clock):
-    com = _FakeCom()
+def _wmi_thread(monkeypatch, com):
     monkeypatch.setattr(mt, "_com_client", lambda: com)
     t = StatsMonitorThread(interval=1.0)
     t.logger = MagicMock()
+    t._ohm_outage.logger = MagicMock()
+    return t
+
+
+GRACE = constants.lhm.NOT_DETECTED_GRACE_SEC
+BACKOFF = constants.lhm.WMI_PROBE_BACKOFF_SEC
+
+
+def test_a_failed_wmi_probe_waits_the_backoff_once_nothing_was_ever_found(q_app, monkeypatch, clock):
+    """The steady state of every NVIDIA desktop without LHM: one probe per backoff window."""
+    com = _FakeCom()
+    t = _wmi_thread(monkeypatch, com)
+    t._init_ohm_wmi()                                     # the first probe starts the grace
+    clock.t += GRACE
     t._init_ohm_wmi()
-    assert com.calls == 2 and t._wmi_ohm is None          # both namespaces probed, none there
+    assert com.calls == 4 and t._wmi_ohm is None          # both namespaces, twice, none there
     for _ in range(3):                                    # CPU temp, CPU power, GPU: same poll
         t._init_ohm_wmi()
-    clock.t += constants.lhm.WMI_PROBE_BACKOFF_SEC - 0.5
+    clock.t += BACKOFF - 0.5
     t._init_ohm_wmi()
-    assert com.calls == 2                                 # nothing re-probed inside the backoff
+    assert com.calls == 4                                 # nothing re-probed inside the backoff
     clock.t += 0.5
     com.available = True                                  # LHM started meanwhile: picked up
     t._init_ohm_wmi()
-    assert com.calls == 3 and t._wmi_ohm is com.obj
-    # A working connection dropped later (a failed query) is re-probed at once, not after a backoff.
-    t._wmi_ohm = None
+    assert com.calls == 5 and t._wmi_ohm is com.obj
+
+
+def test_the_start_up_grace_probes_every_poll(q_app, monkeypatch, clock):
+    """LHM's WMI coming up after NetSpeedTray at login (or initialising with 0 sensors): every poll
+    of the first NOT_DETECTED_GRACE_SEC probes, so it is found on the poll it appears, as before."""
+    com = _FakeCom()
+    t = _wmi_thread(monkeypatch, com)
+    polls = 0
+    while polls < GRACE:
+        t._init_ohm_wmi()
+        clock.t += 1.0
+        polls += 1
+    assert com.calls == 2 * polls                         # every poll probed both namespaces
+    com.available = True
+    clock.t -= 1.0                                        # still inside the grace
     t._init_ohm_wmi()
-    assert com.calls == 4 and t._wmi_ohm is com.obj
+    assert t._wmi_ohm is com.obj
+
+
+def test_a_lost_working_connection_is_re_probed_every_poll(q_app, monkeypatch, clock):
+    """A one-poll hiccup: the drop's own re-probe fails on the same transient, and the next poll's
+    succeeds - no 30 s of blank temperatures (main recovered on the next poll; so does this)."""
+    com = _FakeCom()
+    com.available = True
+    t = _wmi_thread(monkeypatch, com)
+    t._init_ohm_wmi()
+    assert t._wmi_ohm is com.obj
+    clock.t += GRACE + 60.0                               # long past the start-up grace
+    # The connection drops (a failed sensor query does this) and the transient is still there.
+    t._wmi_ohm = None
+    t._ohm_outage.failed("CPU temperature query failed: RPC")
+    com.available = False
+    for _ in range(3):
+        t._init_ohm_wmi()
+        clock.t += 1.0
+    assert com.calls == 1 + 3 * 2                         # no backoff while the source is lost
+    com.available = True
+    t._init_ohm_wmi()
+    assert t._wmi_ohm is com.obj and not t._ohm_outage.lost
+
+
+def test_a_settings_change_clears_the_probe_backoff(q_app, monkeypatch, clock):
+    t = _wmi_thread(monkeypatch, _FakeCom())
+    t._lhm_http = MagicMock()
+    t._ohm_retry_at = clock.t + 1000.0
+    t._ohm_first_probe_at = clock.t - 1000.0
+    t._hw_queries_dirty = True
+    t._is_running = True
+
+    def stop_after_one_tick(*_a, **_k):
+        t._is_running = False
+        return {}
+
+    with patch.object(mt.psutil, "net_io_counters", side_effect=stop_after_one_tick), \
+         patch.object(t, "_init_com"):
+        t.run()
+    assert t._ohm_retry_at == 0.0                         # probed on the next poll
+    assert t._ohm_first_probe_at is None                  # with a fresh grace
 
 
 def test_the_backoff_constant_is_validated():
