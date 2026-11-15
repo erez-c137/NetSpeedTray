@@ -17,7 +17,8 @@ Open source, signed, no ads, no telemetry. The feature Windows forgot.
 > Start menu or system flyouts. Everything beyond the readout lives in one calm window - the **Monitor** -
 > with history charts, honest per-app and per-process detail, exportable statistics, network latency, and
 > data-usage tracking. And since 2.1.4, the **portable build updates itself** - verified, swapped, and
-> relaunched without you touching a file. [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/latest)
+> relaunched without you touching a file. **2.2** makes your history exact, follows the taskbar to the top,
+> the sides and the Small size, and uses about half the memory. [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/latest)
 
 ---
 
@@ -26,10 +27,6 @@ Open source, signed, no ads, no telemetry. The feature Windows forgot.
 ```powershell
 winget install --id erez-c137.NetSpeedTray
 ```
-
-> 🧪 **Trying the 2.2 beta?** It's a manual download by design - the in-app updater, WinGet and the
-> Store never offer prereleases. Follow [the pinned issue](https://github.com/erez-c137/NetSpeedTray/issues/373)
-> for beta builds and how to go back.
 
 Or grab the latest [**Setup.exe** or **Portable.zip**](https://github.com/erez-c137/NetSpeedTray/releases/latest) directly. Both are digitally signed - no SmartScreen warnings.
 
@@ -250,7 +247,7 @@ See the [Privacy Policy](privacy.md).
 Task Manager shows network speed too - but you have to *open* it, and it disappears the moment you click away. NetSpeedTray lives permanently on your taskbar, live every second, in the corner of your eye while you work.
 
 **Will it slow down my PC?**
-Idle RAM is about **50 MB** - that's the number Windows Task Manager shows you (its *full* working set, which counts the shared Windows/Qt DLLs it maps, is ~90 MB), and CPU sits near zero between polls (~0.1%). The Monitor's Overview tab is deliberately chart-free, so glancing at it stays light; opening the Network or Hardware **charts** loads the plotting library for the session, which adds roughly **50-60 MB** while the Monitor is open - close the Monitor and it eases back down. The widget polls every ~1 second using the same Windows APIs Task Manager uses.
+Idle RAM is about **40-50 MB** - that's the number Windows Task Manager shows you (its *full* working set, which counts the shared Windows/Qt DLLs it maps, is ~80 MB), and CPU sits near zero between polls (~0.1-0.2%). The Monitor's Overview tab is deliberately chart-free, so glancing at it stays light; opening the Network or Hardware **charts** loads the plotting library for the session, which adds roughly **50-60 MB** while the Monitor is open - close the Monitor and it eases back down. The widget polls every ~1 second using the same Windows APIs Task Manager uses.
 
 **Do I need LibreHardwareMonitor?**
 Often no - see the [hardware table above](#hardware-monitoring---do-i-need-librehardwaremonitor). Usage stats and NVIDIA/Intel temps & power work natively; LHM (run as admin, with its Remote Web Server on) is the universal fallback and the realistic way to get **AMD CPU** temperature and power. The widget never asks for admin itself.
