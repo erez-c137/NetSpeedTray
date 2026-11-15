@@ -21,4 +21,4 @@ fonttools>=4.61.0   # Explicitly added to enforce Security CVE fix
 pillow>=13.0.0      # Security: 56 Dependabot alerts (3 critical) fixed in 13.0.0
 truststore           # HTTPS verified by Windows (fetches missing roots on demand) - update checks on fresh installs
 python-bidi          # RTL (Hebrew) bidi reshaping for matplotlib graph labels (item 6); matplotlib 3.11+ does its own (mpl_fonts.shape_rtl)
-python-dateutil<3    # via matplotlib. 3.0 (Oct 2026) rewrote dateutil.tz and pulls in tzdata, 4.0 followed 11 days later; nothing we need - revisit once settled
+python-dateutil<5    # via matplotlib. 3.0 (Oct 2026) rewrote dateutil.tz and pulls in tzdata, 4.0 followed 11 days later; nothing we need - revisit once settled
