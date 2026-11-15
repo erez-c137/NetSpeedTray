@@ -353,7 +353,7 @@ class AdvancedPage(QWidget):
 
     def set_hardware_monitoring_active(self, active: bool) -> None:
         """Grey the Record-hardware-history card out while nothing that records hardware is on (it
-        would show On while recording nothing). Active means CPU, GPU, RAM or VRAM monitoring, or the battery
+        would show On while recording nothing). Active means CPU, GPU or RAM monitoring, or the battery
         hover toggle - with the PR's defaults CPU/GPU monitoring is off, so the battery toggle is
         the thing that governs battery recording, and a user who switched it off could not switch
         it back on (#323 review). The user's choice is kept - only shown as unavailable, the same
@@ -365,7 +365,7 @@ class AdvancedPage(QWidget):
             self._record_card.setGraphicsEffect(eff)
         eff.setOpacity(1.0 if active else 0.4)
         self._record_card.set_description(self.i18n.RECORD_HARDWARE_HISTORY_SUB if active
-                                          else self.i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB)
+                                          else self.i18n.RECORD_HARDWARE_HISTORY_NEEDS_MONITOR_SUB)
 
     def _retention_label(self, days: int) -> str:
         return helpers.format_retention_label(days, self.i18n)
@@ -384,7 +384,6 @@ class AdvancedPage(QWidget):
         self.set_hardware_monitoring_active(bool(config.get("monitor_cpu_enabled", False))
                                             or bool(config.get("monitor_gpu_enabled", False))
                                             or bool(config.get("monitor_ram_enabled", False))
-                                            or bool(config.get("monitor_vram_enabled", False))
                                             or bool(config.get("power_display_enabled", False)))
         self.reduce_motion.setChecked(bool(config.get("reduce_motion", False)))
         self.keep_windows_on_top.setChecked(bool(config.get("keep_windows_on_top", False)))

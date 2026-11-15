@@ -197,10 +197,26 @@ def test_record_toggle_greys_out_when_no_hardware_is_monitored(page):
     i18n = page.i18n
     page.load_settings({"monitor_cpu_enabled": False, "monitor_gpu_enabled": False})
     assert page.record_hardware.isEnabled() is False
-    assert page._record_card._desc_label.text() == i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB
+    assert page._record_card._desc_label.text() == i18n.RECORD_HARDWARE_HISTORY_NEEDS_MONITOR_SUB
     page.load_settings({"monitor_cpu_enabled": False, "monitor_gpu_enabled": True})
     assert page.record_hardware.isEnabled() is True
     assert page._record_card._desc_label.text() == i18n.RECORD_HARDWARE_HISTORY_SUB
+
+
+@pytest.mark.parametrize("key", ["monitor_cpu_enabled", "monitor_gpu_enabled", "monitor_ram_enabled",
+                                 "power_display_enabled"])
+def test_record_card_reason_names_every_switch_that_enables_it(page, key):
+    """B4 (2.2.1): greyed, the card said "Turn on CPU or GPU monitoring" - but RAM (recorded on its own
+    since 2.2.1) and the battery hover switch enable it too. Each one the reason names does. (VRAM
+    alone is never recorded, so it is not named.)"""
+    from netspeedtray.constants.i18n import I18nStrings
+    en = I18nStrings("en_US").RECORD_HARDWARE_HISTORY_NEEDS_MONITOR_SUB
+    assert all(w in en for w in ("CPU", "GPU", "RAM", "battery")) and "VRAM" not in en
+    page.load_settings({})
+    assert page.record_hardware.isEnabled() is False
+    assert page._record_card._desc_label.text() == page.i18n.RECORD_HARDWARE_HISTORY_NEEDS_MONITOR_SUB
+    page.load_settings({key: True})
+    assert page.record_hardware.isEnabled() is True
 
 
 def test_record_toggle_follows_the_hardware_page_live(dialog):
@@ -209,6 +225,20 @@ def test_record_toggle_follows_the_hardware_page_live(dialog):
     hw.monitor_gpu.setChecked(False)
     assert adv.record_hardware.isEnabled() is False
     hw.monitor_gpu.setChecked(True)
+    assert adv.record_hardware.isEnabled() is True
+
+
+def test_vram_alone_on_the_hardware_page_keeps_the_record_toggle_grey(dialog):
+    # VRAM is never recorded (controller: "No VRAM history"), so switching it on live must not make
+    # the card look like it records something; RAM is recorded on its own switch (2.2.1 review).
+    adv, hw = dialog.advanced_page, dialog.hardware_page
+    hw.monitor_cpu.setChecked(False)
+    hw.monitor_gpu.setChecked(False)
+    hw.monitor_vram.setChecked(True)
+    assert adv.record_hardware.isEnabled() is False
+    dialog._sync_record_card()                     # any other re-sync (page built, reset) agrees
+    assert adv.record_hardware.isEnabled() is False
+    hw.monitor_ram.setChecked(True)
     assert adv.record_hardware.isEnabled() is True
 
 

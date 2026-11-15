@@ -346,6 +346,43 @@ def test_the_blind_fallback_follows_a_plug_in(q_app, monkeypatch, clock):
     assert _blind_spawns(t, clock, 11)[0] == [4, 9]   # 5 s after the last call, then every 5 s
 
 
+def _blind_logs(t):
+    return [c for c in t.logger.info.call_args_list if "utilization unavailable" in c.args[0]]
+
+
+def test_vram_alone_never_claims_nvidia_smi_is_polled_blind(q_app, monkeypatch, clock):
+    # VRAM shown, GPU monitoring off (memory_only): the query has no utilization counter by design and
+    # nvidia-smi never runs - "polled without the sleep check" would be false (2.2.1 review).
+    t = _thread([UHD, RTX, BRD], True, monkeypatch, ac=0)
+    t._gpu_util_counter = None
+    for _ in range(10):
+        with patch("win32pdh.CollectQueryData"), \
+             patch("win32pdh.GetFormattedCounterArray", side_effect=[{_inst(NV_LUID): 100 * MIB}, {}]), \
+             patch.object(mt.psutil, "virtual_memory", return_value=types.SimpleNamespace(total=32 * GIB)), \
+             patch.object(StatsMonitorThread, "_init_ohm_wmi"):
+            t._poll_gpu_hybrid(include_temp=False, include_power=False, memory_only=True)
+        clock.t += 1.0
+    assert t._run_child.call_count == 0
+    assert _blind_logs(t) == []
+    assert t._nvidia_gate_blind_logged is False      # the once-per-session line is not used up
+
+
+def test_turning_gpu_monitoring_on_after_vram_alone_still_logs_the_blind_line_once(q_app, monkeypatch,
+                                                                                   clock):
+    t = _thread([UHD, RTX, BRD], True, monkeypatch)
+    t._gpu_util_counter = None
+    with patch("win32pdh.CollectQueryData"), \
+         patch("win32pdh.GetFormattedCounterArray", side_effect=[{_inst(NV_LUID): 100 * MIB}, {}]), \
+         patch.object(mt.psutil, "virtual_memory", return_value=types.SimpleNamespace(total=32 * GIB)), \
+         patch.object(StatsMonitorThread, "_init_ohm_wmi"):
+        t._poll_gpu_hybrid(include_temp=False, include_power=False, memory_only=True)
+    clock.t += 1.0
+    t.logger.info.reset_mock()                       # only what is logged once GPU monitoring is on
+    spawns, r = _blind_spawns(t, clock, 6)          # GPU monitoring on, still no utilization counter
+    assert spawns == [0, 5] and r.temp == 52.0
+    assert len(_blind_logs(t)) == 1 and t._nvidia_gate_blind_logged is True   # now it is true
+
+
 # --- review of #500: the hover list never shows what the taskbar does not -----------------------
 
 def test_the_list_follows_the_taskbar_at_startup_and_after_the_gate_closes(q_app, monkeypatch, clock):
@@ -362,11 +399,12 @@ def test_the_list_follows_the_taskbar_at_startup_and_after_the_gate_closes(q_app
 
 # --- review of #500: the "turn on temperatures" notice ------------------------------------------
 
-def _notice(t, stats, polls=6):
+def _notice(t, clock, stats, polls=6):
     t.config = dict(t.config, show_hardware_temps=True, monitor_gpu_enabled=True)
     t.lhm_not_detected = MagicMock()
-    for _ in range(polls):
+    for _ in range(polls):                # 1 s apart: the notice's grace is by the clock
         t._update_lhm_notice(stats, False)
+        clock.t += 1.0
     return t.lhm_not_detected.emit.call_count
 
 
@@ -375,7 +413,7 @@ def test_a_sleeping_hybrid_dgpu_is_not_no_sensor(q_app, monkeypatch, clock):
     for _ in range(6):
         r = _tick(t, clock, IGPU_BUSY)
     assert r.temp is None
-    assert _notice(t, {"gpu_temp": None}) == 0
+    assert _notice(t, clock, {"gpu_temp": None}) == 0
 
 
 def test_a_hybrid_whose_nvidia_smi_fails_still_gets_the_notice(q_app, monkeypatch, clock):
@@ -383,7 +421,7 @@ def test_a_hybrid_whose_nvidia_smi_fails_still_gets_the_notice(q_app, monkeypatc
     t._run_child.side_effect = subprocess.CalledProcessError(9, "nvidia-smi")
     for util in [DGPU_BUSY] * 2 + [IGPU_BUSY] * 30:   # it failed when the dGPU was awake
         _tick(t, clock, util)
-    assert _notice(t, {"gpu_temp": None}) == 1
+    assert _notice(t, clock, {"gpu_temp": None}) == 1
 
 
 # --- pre-existing: "[N/A]" from nvidia-smi clears the reading -----------------------------------
