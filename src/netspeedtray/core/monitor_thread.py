@@ -711,7 +711,10 @@ class StatsMonitorThread(QThread):
                 if self._on_battery_power():
                     self._nvidia_interval_now = max(self._NVIDIA_POLL_INTERVAL_SEC,
                                                     constants.gpu.HYBRID_BLIND_BATTERY_POLL_SEC)
-                if not self._nvidia_gate_blind_logged:
+                # VRAM shown without GPU monitoring never starts nvidia-smi (and has no utilization
+                # counter by design): the line would be false there, and the once-per-session flag
+                # must stay unburned for when GPU monitoring is turned on (2.2.1 review).
+                if not memory_only and not self._nvidia_gate_blind_logged:
                     self._nvidia_gate_blind_logged = True
                     self.logger.info("GPU utilization unavailable; nvidia-smi is polled without the "
                                      "sleep check on this hybrid PC (every %d s on battery).",
