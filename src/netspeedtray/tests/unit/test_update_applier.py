@@ -738,3 +738,37 @@ def test_a_refused_staged_copy_leaves_the_marker_older_sweeps_read(tmp_path, res
     failures = json.loads((marker.parent / ua._BACKUPS_RECORD_NAME).read_text(encoding="utf-8"))
     assert any(r.get("kind") == "failure" and r.get("staged") == str(staged) for r in failures)
     assert staged.is_dir() and told and told[0][1] == str(staged)
+
+
+# ------------------------------------- the janitor's write-back keeps every failure record (#538)
+
+def test_a_sweep_keeps_each_failure_record_of_one_install(tmp_path, marker):
+    """#538 review (pre-existing): every failure record of one install shared one merge key, so the
+    sweep's write-back replaced the older records with the newest, twice over. A failed restore
+    followed by a later refusal came out as the refusal twice - and the restore_failed record, the
+    backup's never-expires protection (review-2 M3), was gone."""
+    install = str(tmp_path / "NetSpeedTray")
+    backup = str(tmp_path / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "-1"))
+    now = time.time()
+    restore_failed = {"kind": "failure", "install": install, "staged": str(tmp_path / "s1"),
+                      "failed_at": now - 30 * 24 * 3600, "restore_failed": True, "backup": backup}
+    refusal = {"kind": "failure", "install": install, "staged": str(tmp_path / "s2"),
+               "failed_at": now - 60, "refused_version": "9.9.9"}
+    ua._write_list(ua._backups_path(), [restore_failed, refusal])
+    assert ua._norm(backup) in ua._restore_failed_backups()
+
+    ua._sweep_once()
+
+    after = ua._read_backup_records()
+    assert sorted(after, key=lambda r: r["failed_at"]) == [restore_failed, refusal]
+    assert ua._norm(backup) in ua._restore_failed_backups()
+
+
+def test_a_sweep_still_drops_an_expired_failure_and_keeps_the_rest(tmp_path, marker):
+    install = str(tmp_path / "NetSpeedTray")
+    now = time.time()
+    old = {"kind": "failure", "install": install, "failed_at": now - ua._FAILED_KEEP_SEC - 60}
+    recent = {"kind": "failure", "install": install, "failed_at": now - 60}
+    ua._write_list(ua._backups_path(), [old, recent])
+    ua._sweep_once()
+    assert ua._read_backup_records() == [recent]

@@ -1294,8 +1294,18 @@ def _write_entries(entries: List[dict]) -> None:
     _write_list(_marker_path(), entries)
 
 
-def _entry_key(entry: dict) -> Tuple[str, str]:
-    return (entry.get("kind") or "staged", _norm(entry.get("path") or entry.get("install") or ""))
+def _entry_key(entry: dict) -> Tuple[str, ...]:
+    kind = entry.get("kind") or "staged"
+    key: Tuple[str, ...] = (kind, _norm(entry.get("path") or entry.get("install") or ""))
+    if kind == "failure":
+        # One install collects several failure records (a failed restore, a later refusal...). Keyed
+        # by the install alone, the sweep's write-back merge replaced every one with the newest -
+        # twice over - and a restore_failed record, the backup's only protection, was lost (#538
+        # review). What a record says and when (fields the sweep never changes) tells them apart.
+        key += (repr(entry.get("failed_at")), str(entry.get("staged") or ""),
+                str(entry.get("backup") or ""), str(entry.get("refused_version") or ""),
+                str(bool(entry.get("restore_failed"))))
+    return key
 
 
 def record_staged_path(path: str, package: Optional[str] = None) -> None:
