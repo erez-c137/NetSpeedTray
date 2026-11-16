@@ -271,7 +271,10 @@ class DatabaseWorker(QThread):
         # empty AND stop is set. The blocking get() replaces the old 100ms busy-poll.
         while True:
             try:
-                item = self._queue.get(timeout=0.5)
+                # Idle, nothing owed: block until a task or stop()'s sentinel arrives (2.2.1) - the
+                # 0.5 s timeout woke this thread twice a second for nothing. Only a compaction a
+                # Delete all history still owes needs the idle tick, so only then is there a timeout.
+                item = self._queue.get(timeout=self._idle_timeout())
             except queue.Empty:
                 if self._stop_event.is_set():
                     break
@@ -295,6 +298,13 @@ class DatabaseWorker(QThread):
 
         self._close_connection()
 
+
+    def _idle_timeout(self) -> Optional[float]:
+        """How long run()'s get() may block: forever (None) unless a compaction retry is owed or a
+        stop is draining the queue (then the old 0.5 s idle tick, so it exits once the queue is empty)."""
+        if self._compact_pending or self._stop_event.is_set():
+            return constants.timeouts.DB_IDLE_TICK_SEC
+        return None
 
     def stop(self) -> None:
         """Signals the worker thread to stop (drains pending tasks first) and wakes it."""

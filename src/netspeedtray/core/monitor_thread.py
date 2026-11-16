@@ -231,6 +231,10 @@ class StatsMonitorThread(QThread):
         except Exception:
             self.interval = min_interval
             
+        # Stop flag as an Event (2.2.1): the loop waits ONCE per period on it instead of waking
+        # every 0.1 s to look at a bool, and stop() still ends that wait at once. _is_running stays
+        # the public face (a property over this event).
+        self._stop_event = threading.Event()
         self._is_running = True
         # Runtime override: the Monitor window flips this on while it's open so its Overview/Hardware
         # screens show CPU/GPU/RAM/VRAM (+ temps) even when the TASKBAR WIDGET has hardware monitoring
@@ -424,6 +428,31 @@ class StatsMonitorThread(QThread):
             self._lhm_password_blob = blob
             self._lhm_password = (secret_store.unprotect(blob) or "") if blob else ""
         self._lhm_http.configure(port, username, self._lhm_password)
+
+    def _stop_flag(self) -> threading.Event:
+        """The stop event, created on first use (tests build this thread with __new__)."""
+        ev = self.__dict__.get("_stop_event")
+        if ev is None:
+            ev = self._stop_event = threading.Event()
+        return ev
+
+    @property
+    def _is_running(self) -> bool:
+        return not self._stop_flag().is_set()
+
+    @_is_running.setter
+    def _is_running(self, value: bool) -> None:
+        # False from any thread (stop(), or a test inside a poll) also ends the wait in progress.
+        if value:
+            self._stop_flag().clear()
+        else:
+            self._stop_flag().set()
+
+    def _wait_for_stop(self, seconds: float) -> bool:
+        """Sleep up to ``seconds`` in a single wait; returns at once when stopping. True = stopping."""
+        if seconds <= 0:
+            return not self._is_running
+        return self._stop_flag().wait(seconds)
 
     @property
     def lhm_status(self) -> str:
@@ -2162,11 +2191,9 @@ class StatsMonitorThread(QThread):
                     self._MAX_BACKOFF_SEC,
                     self.interval * (2 ** min(self.consecutive_errors, 5)),
                 )
-            sleep_remaining = effective_interval
-            while sleep_remaining > 0 and self._is_running:
-                sleep_slice = min(0.1, sleep_remaining)
-                time.sleep(sleep_slice)
-                sleep_remaining -= sleep_slice
+            # ONE wait per period (2.2.1): stop() sets the event, so a quit still ends it at once.
+            # This replaced 0.1 s slices - ten wake-ups a second at any rate, for nothing.
+            self._wait_for_stop(effective_interval)
 
         self._network_identity_monitor.close()
         self._cleanup_gpu_query()
