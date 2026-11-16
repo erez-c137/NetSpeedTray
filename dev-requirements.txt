@@ -95,12 +95,15 @@ pytest==9.2.0
     #   pytest-cov
     #   pytest-mock
     #   pytest-qt
+    #   pytest-timeout
     #   pytest-xdist
 pytest-cov==7.1.0
     # via -r dev-requirements.in
 pytest-mock==3.17.0
     # via -r dev-requirements.in
 pytest-qt==4.5.0
+    # via -r dev-requirements.in
+pytest-timeout==2.4.0
     # via -r dev-requirements.in
 pytest-xdist==3.8.0
     # via -r dev-requirements.in

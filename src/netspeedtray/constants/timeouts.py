@@ -19,6 +19,9 @@ class TimeoutConstants:
     DB_CHECKPOINT_RETRIES: Final[int] = 5
     DB_CHECKPOINT_RETRY_SLEEP: Final[float] = 0.2
     DB_COMPACT_RETRY_INTERVAL_SEC: Final[float] = 5.0
+    # The DB worker's idle tick, used ONLY while a compaction retry is owed or a stop is draining;
+    # otherwise the worker blocks until a task arrives (2.2.1: it used to wake twice a second idle).
+    DB_IDLE_TICK_SEC: Final[float] = 0.5
     # A database backup "Delete all history" could not remove (held open, read-only, AV): retried with
     # exponential backoff from DB_COMPACT_RETRY_INTERVAL_SEC up to this cap, at most
     # DB_BACKUP_RETRY_MAX_ATTEMPTS times a session; after that, at the next start (the "2" marker).
