@@ -343,6 +343,94 @@ def test_a_lost_working_connection_is_re_probed_every_poll(q_app, monkeypatch, c
     assert t._wmi_ohm is com.obj and not t._ohm_outage.lost
 
 
+def test_a_source_lost_for_good_backs_off_after_the_grace(q_app, monkeypatch, clock):
+    """R2 (2.2.1 beta.1 readiness): LHM 0.9.4 / OHM closed for good. SourceOutage.lost stays True for
+    the whole outage, which used to keep both namespaces probed on every call of every poll - ~8-12
+    failed GetObject a second at 0.5 s. Past NOT_DETECTED_GRACE_SEC of the outage it backs off, and a
+    return is still picked up within one backoff window."""
+    com = _FakeCom()
+    com.available = True
+    t = _wmi_thread(monkeypatch, com)
+    t._init_ohm_wmi()
+    assert t._wmi_ohm is com.obj
+    clock.t += GRACE + 60.0
+    t._wmi_ohm = None                                     # the sensor query failed: LHM closed
+    t._ohm_outage.failed("CPU temperature query failed: RPC")
+    com.available = False
+    calls = com.calls
+    polls = 0
+    while polls * 0.5 < GRACE + 10.0:                     # 0.5 s polls, three probe sites a poll
+        for _ in range(3):
+            t._init_ohm_wmi()
+        clock.t += 0.5
+        polls += 1
+    probes = (com.calls - calls) // 2
+    # Every call inside the grace (3 a poll), then nothing until the backoff window ends.
+    assert probes <= 3 * (int(GRACE / 0.5) + 1), probes
+    assert t._ohm_retry_at > clock.t and t._ohm_outage.lost
+    before = com.calls
+    clock.t = t._ohm_retry_at - 0.1
+    t._init_ohm_wmi()
+    assert com.calls == before                            # still inside the backoff
+    clock.t += 0.1
+    com.available = True                                  # LHM started again: found on that probe
+    t._init_ohm_wmi()
+    assert t._wmi_ohm is com.obj and not t._ohm_outage.lost
+
+
+def test_a_second_outage_after_a_recovery_gets_its_own_grace(q_app, monkeypatch, clock):
+    com = _FakeCom()
+    com.available = True
+    t = _wmi_thread(monkeypatch, com)
+    t._init_ohm_wmi()
+    for _ in range(2):
+        clock.t += GRACE + 60.0
+        t._wmi_ohm = None
+        t._ohm_outage.failed("RPC")
+        com.available = False
+        calls = com.calls
+        t._init_ohm_wmi()
+        clock.t += 1.0
+        t._init_ohm_wmi()
+        assert com.calls == calls + 4                     # every poll of the new outage's grace
+        com.available = True
+        t._init_ohm_wmi()
+        assert t._wmi_ohm is com.obj
+
+
+def test_a_backed_off_outage_still_logs_still_lost(q_app, monkeypatch, clock):
+    """SourceOutage reports a folded outage that outlasts its quiet window ("still lost") from a later
+    failed() - the backed-off probe must keep calling it, once per backoff window."""
+    from netspeedtray.core.lhm_http import SourceOutage
+    com = _FakeCom()
+    com.available = True
+    t = _wmi_thread(monkeypatch, com)
+    log = MagicMock()
+    t._ohm_outage = SourceOutage(log, "the WMI source", quiet_s=120.0, clock=clock.monotonic)
+    t._init_ohm_wmi()
+    # A first outage (reported) and its recovery, then a second inside the quiet window: folded.
+    for _ in range(2):
+        clock.t += 10.0
+        t._wmi_ohm = None
+        t._ohm_outage.failed("RPC")
+        com.available = False
+        t._init_ohm_wmi()
+        clock.t += 1.0
+        com.available = True
+        t._init_ohm_wmi()
+    clock.t += 1.0
+    t._wmi_ohm = None
+    t._ohm_outage.failed("RPC")
+    com.available = False
+    log.info.reset_mock()
+    for _ in range(int(200 / 0.5)):                       # 200 s of 0.5 s polls, gone for good
+        t._init_ohm_wmi()
+        clock.t += 0.5
+    assert t._ohm_retry_at > 0.0                          # backed off ...
+    still = [c for c in log.info.call_args_list if "still lost" in c.args[0]]
+    assert len(still) == 1                                # ... and "still lost" was still logged
+
+
 def test_a_settings_change_clears_the_probe_backoff(q_app, monkeypatch, clock):
     t = _wmi_thread(monkeypatch, _FakeCom())
     t._lhm_http = MagicMock()

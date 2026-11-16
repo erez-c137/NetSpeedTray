@@ -10,6 +10,7 @@ Offloading this I/O from the main UI thread ensures consistent 60+ FPS widget mo
 and prevents micro-stutters during system stack latency.
 """
 
+import gc
 import logging
 import math
 import threading
@@ -235,6 +236,8 @@ class StatsMonitorThread(QThread):
         # every 0.1 s to look at a bool, and stop() still ends that wait at once. _is_running stays
         # the public face (a property over this event).
         self._stop_event = threading.Event()
+        # What the period wait blocks on: set by stop and by a rate change (set_interval, GUI thread).
+        self._wake_event = threading.Event()
         self._is_running = True
         # Runtime override: the Monitor window flips this on while it's open so its Overview/Hardware
         # screens show CPU/GPU/RAM/VRAM (+ temps) even when the TASKBAR WIDGET has hardware monitoring
@@ -259,6 +262,9 @@ class StatsMonitorThread(QThread):
         self._ohm_retry_at: float = 0.0
         # Monotonic time of the first probe (None = none yet): the start of its every-poll grace.
         self._ohm_first_probe_at: Optional[float] = None
+        # Monotonic time of the first failed re-probe of a connection that WAS working (None = not
+        # lost): an outage longer than NOT_DETECTED_GRACE_SEC backs off like the never-found case.
+        self._ohm_lost_probe_at: Optional[float] = None
         # One INFO line when a WMI connection that was working is dropped mid-session, one when it is
         # back (rate-limited if it flaps) - see SourceOutage.
         self._ohm_outage = SourceOutage(self.logger, "the LibreHardwareMonitor/OpenHardwareMonitor WMI source")
@@ -436,6 +442,15 @@ class StatsMonitorThread(QThread):
             ev = self._stop_event = threading.Event()
         return ev
 
+    def _wake_flag(self) -> threading.Event:
+        """The event the period wait blocks on, created on first use (tests build this thread with
+        __new__). Set by stop AND by set_interval; only the stop event says "stopping", so a rate
+        change can never be mistaken for a stop."""
+        ev = self.__dict__.get("_wake_event")
+        if ev is None:
+            ev = self._wake_event = threading.Event()
+        return ev
+
     @property
     def _is_running(self) -> bool:
         return not self._stop_flag().is_set()
@@ -447,12 +462,43 @@ class StatsMonitorThread(QThread):
             self._stop_flag().clear()
         else:
             self._stop_flag().set()
+            self._wake_flag().set()
 
     def _wait_for_stop(self, seconds: float) -> bool:
-        """Sleep up to ``seconds`` in a single wait; returns at once when stopping. True = stopping."""
-        if seconds <= 0:
-            return not self._is_running
-        return self._stop_flag().wait(seconds)
+        """Sleep up to ``seconds`` in a single wait; returns at once when stopping, or early when woken
+        (a rate change). True = stopping."""
+        if not self._is_running:
+            return True
+        if seconds > 0:
+            self._wake_flag().wait(seconds)
+        return not self._is_running
+
+    def _effective_interval(self) -> float:
+        """The period to wait: the update rate, or an exponential backoff while in an error streak so
+        a failing source isn't hammered every second (capped at _MAX_BACKOFF_SEC)."""
+        if self.consecutive_errors == 0:
+            return self.interval
+        return min(self._MAX_BACKOFF_SEC, self.interval * (2 ** min(self.consecutive_errors, 5)))
+
+    def _wait_period(self) -> bool:
+        """ONE wait per period (2.2.1); a rate change (set_interval) wakes it and the rest of the period
+        is re-measured at the new rate - so 10 s -> 0.5 s applies at once, not up to 10 s later.
+        True = stopping."""
+        wake = self._wake_flag()
+        started = time.monotonic()
+        first = True
+        while True:
+            # Clear BEFORE reading the interval: a change after this point sets it again and ends the
+            # wait below; one before it is already in self.interval. A stop is never lost - its own
+            # event is checked first thing in _wait_for_stop.
+            wake.clear()
+            period = self._effective_interval()
+            remaining = period if first else period - (time.monotonic() - started)
+            first = False
+            if self._wait_for_stop(remaining):
+                return True
+            if not wake.is_set():
+                return False   # the period ran out (or was already over at the new rate)
 
     @property
     def lhm_status(self) -> str:
@@ -469,6 +515,8 @@ class StatsMonitorThread(QThread):
         self.interval = max(0.1, interval)
         if previous != self.interval:
             self.logger.info("Monitoring interval changed: %.2fs -> %.2fs", previous, self.interval)
+            # Apply it to the wait in progress (run() re-measures the period), not from the next one.
+            self._wake_flag().set()
 
     def update_config(self, config: Dict[str, Any]) -> None:
         """Update the config copy and FLAG the hardware queries for re-init on the worker thread.
@@ -1724,8 +1772,13 @@ class StatsMonitorThread(QThread):
         constants.lhm.WMI_PROBE_BACKOFF_SEC (2.2.1): it used to run on every poll, up to three times a
         poll, wherever no namespace exists (every NVIDIA desktop without LHM). Still every poll: for
         NOT_DETECTED_GRACE_SEC after the first probe (LHM's WMI coming up at login, or initialising
-        with 0 sensors) and while a connection that worked is lost (a one-poll hiccup recovers on the
-        next poll, as before). A settings change (run) probes again at once.
+        with 0 sensors) and for NOT_DETECTED_GRACE_SEC after a connection that worked is lost (a
+        one-poll hiccup recovers on the next poll, as before). A source lost for longer - LHM/OHM
+        closed for good - backs off too: SourceOutage.lost stays True for the whole outage, and
+        probing every poll then cost ~8-12 failed GetObject calls a second at the 0.5 s rate. Its
+        recovery is still found within WMI_PROBE_BACKOFF_SEC, and SourceOutage still sees one failed()
+        per backoff window, which its "still lost" line needs. A settings change (run) probes again at
+        once.
         """
         if self._wmi_ohm is not None:
             return
@@ -1758,6 +1811,7 @@ class StatsMonitorThread(QThread):
                     self.logger.debug("Hardware monitor: %s exists but exposes 0 sensors.", ns)
                     continue
                 self._wmi_ohm = obj
+                self._ohm_lost_probe_at = None
                 # The first connection is INFO; a reconnect after a lost one is SourceOutage's
                 # "is back" line, and a re-probe after a settings change is DEBUG.
                 level = logging.INFO if self._ohm_outage.succeeded() else logging.DEBUG
@@ -1772,9 +1826,17 @@ class StatsMonitorThread(QThread):
         # Nothing connected across all namespaces. A source that worked earlier is still (or newly)
         # lost: SourceOutage reports a folded outage that outlasts its quiet window (no-op otherwise).
         self._ohm_outage.failed("no LibreHardwareMonitor/OpenHardwareMonitor WMI namespace answered")
-        # Back off only in the steady "never found" state (see the docstring).
-        in_grace = now - self._ohm_first_probe_at < constants.lhm.NOT_DETECTED_GRACE_SEC
-        if not (in_grace or self._ohm_outage.lost):
+        # Back off unless inside the start-up grace or the first NOT_DETECTED_GRACE_SEC of an outage
+        # of a source that worked (see the docstring).
+        grace = constants.lhm.NOT_DETECTED_GRACE_SEC
+        in_grace = now - self._ohm_first_probe_at < grace
+        if self._ohm_outage.lost:
+            if self._ohm_lost_probe_at is None:
+                self._ohm_lost_probe_at = now
+            in_grace = in_grace or now - self._ohm_lost_probe_at < grace
+        else:
+            self._ohm_lost_probe_at = None
+        if not in_grace:
             self._ohm_retry_at = now + constants.lhm.WMI_PROBE_BACKOFF_SEC
         # Surface ONE actionable line, once.
         if not self._ohm_guidance_logged:
@@ -2052,6 +2114,7 @@ class StatsMonitorThread(QThread):
                     self._wmi_ohm = None   # re-probe LHM/OHM on the next temp poll
                     self._ohm_retry_at = 0.0   # now, not after a failed probe's backoff,
                     self._ohm_first_probe_at = None   # with a fresh every-poll grace
+                    self._ohm_lost_probe_at = None
 
                 stats = {}
 
@@ -2182,18 +2245,10 @@ class StatsMonitorThread(QThread):
                                         self._ERROR_NOTIFY_THRESHOLD)
                     self.error_occurred.emit(f"Hardware monitor is having trouble: {e}")
 
-            # Responsive sleep, with exponential backoff while in an error streak so a failing
-            # source isn't hammered every second (capped at _MAX_BACKOFF_SEC; recovers on success).
-            if self.consecutive_errors == 0:
-                effective_interval = self.interval
-            else:
-                effective_interval = min(
-                    self._MAX_BACKOFF_SEC,
-                    self.interval * (2 ** min(self.consecutive_errors, 5)),
-                )
-            # ONE wait per period (2.2.1): stop() sets the event, so a quit still ends it at once.
-            # This replaced 0.1 s slices - ten wake-ups a second at any rate, for nothing.
-            self._wait_for_stop(effective_interval)
+            # ONE wait per period (2.2.1), with the error backoff (_effective_interval): stop() ends it
+            # at once and a rate change re-measures it. This replaced 0.1 s slices - ten wake-ups a
+            # second at any rate, for nothing.
+            self._wait_period()
 
         self._network_identity_monitor.close()
         self._cleanup_gpu_query()
@@ -2221,8 +2276,26 @@ class StatsMonitorThread(QThread):
         except Exception as e:
             self.logger.debug("Monitor COM initialization unavailable: %s", e)
 
+    def _release_com_objects(self) -> None:
+        """Drop every COM object this thread holds - the ACPI root\\wmi connection, the battery WMI
+        connection and the LHM/OHM one - so they are released on this (their) thread while COM is
+        still initialised. The battery's False ("unavailable, do not retry") is kept."""
+        released = False
+        for name in ("_wmi", "_wmi_ohm"):
+            if self.__dict__.get(name) is not None:
+                setattr(self, name, None)
+                released = True
+        if self.__dict__.get("_wmi_battery") not in (None, False):
+            self._wmi_battery = None
+            released = True
+        if released:
+            gc.collect()   # a wrapper caught in a reference cycle (a traceback) is freed now, too
+
     def _cleanup_com(self) -> None:
-        """Balance this worker's successful COM initialization only."""
+        """Release the thread's COM objects, then balance its successful COM initialization only
+        (CoUninitialize with live references leaves them to be released on an uninitialised
+        apartment)."""
+        self._release_com_objects()
         if self._com_initialized:
             try:
                 import pythoncom
