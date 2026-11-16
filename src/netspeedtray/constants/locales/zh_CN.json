@@ -645,5 +645,6 @@
     "BACKUP_HISTORY_ERR_IO": "无法写入副本。请检查能否保存到该文件夹，以及可用空间是否足够。",
     "BACKUP_HISTORY_ERR_BUSY": "已有备份任务正在写入此文件。",
     "CONTEXT_MENU_ITEMS_LABEL": "右键菜单项",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "选择小组件右键菜单中显示的项目。“{settings}”和“{exit}”始终显示。"
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "选择小组件右键菜单中显示的项目。“{settings}”和“{exit}”始终显示。",
+    "ACCENT_TASKBAR_COLORS_NOTE": "你的任务栏显示了主题色，因此在其上难以看清的颜色会以易读的文字颜色绘制。"
 }

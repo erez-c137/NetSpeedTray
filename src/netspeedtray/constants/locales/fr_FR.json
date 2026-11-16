@@ -644,5 +644,6 @@
     "BACKUP_HISTORY_ERR_IO": "Impossible d'écrire la copie. Vérifiez que vous pouvez enregistrer dans ce dossier et qu'il reste assez d'espace libre.",
     "BACKUP_HISTORY_ERR_BUSY": "Une sauvegarde vers ce fichier est déjà en cours.",
     "CONTEXT_MENU_ITEMS_LABEL": "Éléments du menu clic droit",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choisissez ce qu'affiche le menu clic droit du widget. {settings} et {exit} sont toujours affichés."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choisissez ce qu'affiche le menu clic droit du widget. {settings} et {exit} sont toujours affichés.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "Votre barre des tâches affiche une couleur d’accentuation : les couleurs difficiles à lire dessus sont donc dessinées dans une couleur de texte lisible."
 }

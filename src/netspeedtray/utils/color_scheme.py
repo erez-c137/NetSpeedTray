@@ -182,6 +182,9 @@ class PaintColors(Dict[str, Any]):
     high_contrast: bool = False
     coding_off: bool = False
     backdrop: Optional[str] = None      # set on an accent bar: pens are judged against it
+    # The stems the accent-bar guard swapped for the fallback text colour (#556 follow-up): Settings
+    # says so under its colour rows instead of the swap being silent.
+    replaced: Tuple[str, ...] = ()
 
 
 def paint_colors(config: Dict[str, Any], light: Optional[bool] = None) -> PaintColors:
@@ -221,7 +224,44 @@ def paint_colors(config: Dict[str, Any], light: Optional[bool] = None) -> PaintC
             return colors
         backdrop = seen_backdrop(config, shell_light)
         fallback = default_text_on(config, colors, light, backdrop)
+        replaced = []
         for stem in list(colors):
-            colors[stem] = legible_on(colors[stem], backdrop, fallback)
+            painted = legible_on(colors[stem], backdrop, fallback)
+            if painted != colors[stem]:
+                replaced.append(stem)
+            colors[stem] = painted
         colors.backdrop = backdrop
+        colors.replaced = tuple(replaced)
     return colors
+
+
+def accent_swapped(config: Dict[str, Any]) -> Tuple[str, ...]:
+    """The themed colours the widget really paints that the accent-bar guard (``paint_colors``) swaps
+    for a readable text colour right now - for Settings to say so under those rows instead of the swap
+    being silent (#556 follow-up). A pen a setting leaves unused does not count: the band colours with
+    colour coding off, Medium unless strictly between Low and High, the arrow pair with arrows hidden or
+    without custom arrow colours, the graph pair with the graph off. A factory colour counts like any
+    other (the default Low is swapped on a red accent bar, both graph lines on an amber one): a silent
+    swap is the surprise #556 was about. Empty on a plain (or High Contrast) taskbar."""
+    d = constants.config.defaults
+    swapped = set(paint_colors(config).replaced)
+    if not swapped:
+        return ()
+    unused = set()
+    if not config.get("color_coding", d.DEFAULT_COLOR_CODING):
+        unused |= {"high_speed_color", "medium_speed_color", "low_speed_color"}
+    try:   # the renderer's rule (_speed_band): Medium counts only strictly between Low and High
+        low = float(config.get("low_speed_threshold", d.DEFAULT_LOW_SPEED_THRESHOLD) or 0)
+        high = float(config.get("high_speed_threshold", d.DEFAULT_HIGH_SPEED_THRESHOLD) or 0)
+        medium = float(config.get("medium_speed_threshold", d.DEFAULT_MEDIUM_SPEED_THRESHOLD) or 0)
+        medium_on = min(low, high) < medium < max(low, high)
+    except (TypeError, ValueError):
+        medium_on = False
+    if not medium_on:
+        unused.add("medium_speed_color")
+    if (config.get("hide_arrows", d.DEFAULT_HIDE_ARROWS)
+            or not config.get("use_custom_arrow_colors", d.DEFAULT_USE_CUSTOM_ARROW_COLORS)):
+        unused |= {"arrow_up_color", "arrow_down_color"}
+    if not config.get("graph_enabled", d.DEFAULT_GRAPH_ENABLED):
+        unused |= {"graph_upload_color", "graph_download_color"}
+    return tuple(stem for stem in d.THEMED_COLOR_STEMS if stem in swapped and stem not in unused)

@@ -644,5 +644,6 @@
     "BACKUP_HISTORY_ERR_IO": "無法寫入副本。請確認可以儲存到該資料夾，且可用空間足夠。",
     "BACKUP_HISTORY_ERR_BUSY": "已在備份到此檔案。",
     "CONTEXT_MENU_ITEMS_LABEL": "右鍵選單項目",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "選擇小工具右鍵選單中顯示的項目。「{settings}」和「{exit}」一律顯示。"
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "選擇小工具右鍵選單中顯示的項目。「{settings}」和「{exit}」一律顯示。",
+    "ACCENT_TASKBAR_COLORS_NOTE": "你的工作列顯示了輔色，因此在其上難以辨識的色彩會以易讀的文字色彩繪製。"
 }

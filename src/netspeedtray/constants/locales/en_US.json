@@ -644,5 +644,6 @@
     "BACKUP_HISTORY_ERR_IO": "The copy could not be written. Check that you can save to that folder and that there is enough free space.",
     "BACKUP_HISTORY_ERR_BUSY": "A backup to this file is already running.",
     "CONTEXT_MENU_ITEMS_LABEL": "Right-click menu items",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choose what the widget's right-click menu shows. {settings} and {exit} always show."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choose what the widget's right-click menu shows. {settings} and {exit} always show.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "Your taskbar shows an accent color, so colors that are hard to read on it are drawn in a readable text color."
 }

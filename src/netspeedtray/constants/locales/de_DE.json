@@ -644,5 +644,6 @@
     "BACKUP_HISTORY_ERR_IO": "Die Kopie konnte nicht geschrieben werden. Prüfe, ob du in diesem Ordner speichern darfst und genügend freier Speicher vorhanden ist.",
     "BACKUP_HISTORY_ERR_BUSY": "Eine Sicherung in diese Datei läuft bereits.",
     "CONTEXT_MENU_ITEMS_LABEL": "Einträge im Rechtsklick-Menü",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Wählen Sie, was das Rechtsklick-Menü des Widgets anzeigt. {settings} und {exit} werden immer angezeigt."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Wählen Sie, was das Rechtsklick-Menü des Widgets anzeigt. {settings} und {exit} werden immer angezeigt.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "Deine Taskleiste zeigt eine Akzentfarbe. Farben, die darauf schwer lesbar sind, werden deshalb in einer gut lesbaren Textfarbe dargestellt."
 }
