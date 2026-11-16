@@ -409,7 +409,6 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "Pokaż zużycie danych po najechaniu na widżet",
-    "PAUSE_IN_MENU_LABEL": "Dodaj Wstrzymaj/Wznów do menu prawego przycisku",
     "SETTINGS_PREVIEW_LABEL": "Podgląd",
     "HOVER_TIPS_LABEL": "Pokaż wskazówki prawego / podwójnego kliknięcia",
     "ARROW_PRESET_OUTLINE_COMPACT": "Kontur kompaktowy",
@@ -643,5 +642,7 @@
     "BACKUP_HISTORY_ERR_READ": "Nie udało się odczytać pliku historii.",
     "BACKUP_HISTORY_ERR_VERIFY": "Nie udało się sprawdzić kopii, więc nie została zapisana.",
     "BACKUP_HISTORY_ERR_IO": "Nie udało się zapisać kopii. Sprawdź, czy możesz zapisywać w tym folderze i czy jest dość wolnego miejsca.",
-    "BACKUP_HISTORY_ERR_BUSY": "Kopia zapasowa do tego pliku jest już tworzona."
+    "BACKUP_HISTORY_ERR_BUSY": "Kopia zapasowa do tego pliku jest już tworzona.",
+    "CONTEXT_MENU_ITEMS_LABEL": "Pozycje menu prawego przycisku",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Wybierz, co pokazuje menu prawego przycisku widżetu. {settings} i {exit} są zawsze widoczne."
 }

@@ -819,7 +819,19 @@ class ConfigManager:
                 self.logger.warning(f"Invalid format for {key} ('{value}'). Resetting to default.")
                 return default
         
-        # 5. List Item Type Check
+        # 5a. List Item Choices: keep only known items (first occurrence wins), dropping the rest one
+        # by one - unlike the whole-list reset below, a stray entry never costs the user their list.
+        item_choices = rules.get("item_choices")
+        if item_choices is not None and isinstance(value, list):
+            kept = []
+            for item in value:
+                if isinstance(item, str) and item in item_choices and item not in kept:
+                    kept.append(item)
+            if len(kept) != len(value):
+                self.logger.warning(f"Dropped unknown or duplicate items from {key}: kept {kept}.")
+            value = kept
+
+        # 5b. List Item Type Check
         item_type = rules.get("item_type")
         if item_type and isinstance(value, list):
             if not all(isinstance(i, item_type) for i in value):

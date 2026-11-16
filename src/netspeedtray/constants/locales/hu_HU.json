@@ -409,7 +409,6 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "Adathasználat megjelenítése a widget fölé mutatva",
-    "PAUSE_IN_MENU_LABEL": "Szünet/Folytatás hozzáadása a jobb kattintásos menühöz",
     "SETTINGS_PREVIEW_LABEL": "Előnézet",
     "HOVER_TIPS_LABEL": "Jobb kattintás / dupla kattintás tippek megjelenítése",
     "ARROW_PRESET_OUTLINE_COMPACT": "Kompakt körvonalas",
@@ -643,5 +642,7 @@
     "BACKUP_HISTORY_ERR_READ": "Az előzményfájl nem olvasható.",
     "BACKUP_HISTORY_ERR_VERIFY": "A másolat nem ellenőrizhető, ezért nem lett mentve.",
     "BACKUP_HISTORY_ERR_IO": "A másolat nem írható. Ellenőrizd, hogy tudsz-e menteni ebbe a mappába, és van-e elég szabad hely.",
-    "BACKUP_HISTORY_ERR_BUSY": "Már fut egy biztonsági mentés ebbe a fájlba."
+    "BACKUP_HISTORY_ERR_BUSY": "Már fut egy biztonsági mentés ebbe a fájlba.",
+    "CONTEXT_MENU_ITEMS_LABEL": "A jobb kattintásos menü elemei",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Válassza ki, mi jelenjen meg a widget jobb kattintásos menüjében. {settings} és {exit} mindig látható."
 }

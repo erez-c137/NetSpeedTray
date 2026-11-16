@@ -409,7 +409,6 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "Mostra utilizzo dati passando sul widget",
-    "PAUSE_IN_MENU_LABEL": "Aggiungi Pausa/Riprendi al menu del tasto destro",
     "SETTINGS_PREVIEW_LABEL": "Anteprima",
     "HOVER_TIPS_LABEL": "Mostra suggerimenti per clic destro / doppio clic",
     "ARROW_PRESET_OUTLINE_COMPACT": "Contorno compatto",
@@ -643,5 +642,7 @@
     "BACKUP_HISTORY_ERR_READ": "Impossibile leggere il file della cronologia.",
     "BACKUP_HISTORY_ERR_VERIFY": "Impossibile verificare la copia, quindi non è stata salvata.",
     "BACKUP_HISTORY_ERR_IO": "Impossibile scrivere la copia. Controlla di poter salvare in quella cartella e che ci sia abbastanza spazio libero.",
-    "BACKUP_HISTORY_ERR_BUSY": "È già in corso un backup su questo file."
+    "BACKUP_HISTORY_ERR_BUSY": "È già in corso un backup su questo file.",
+    "CONTEXT_MENU_ITEMS_LABEL": "Voci del menu del tasto destro",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Scegli cosa mostra il menu del tasto destro del widget. {settings} e {exit} sono sempre visibili."
 }

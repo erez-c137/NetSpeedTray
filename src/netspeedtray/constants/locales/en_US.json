@@ -409,7 +409,6 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "Show data usage when hovering the widget",
-    "PAUSE_IN_MENU_LABEL": "Add Pause/Resume to the right-click menu",
     "SETTINGS_PREVIEW_LABEL": "Preview",
     "HOVER_TIPS_LABEL": "Show right-click / double-click tips",
     "ARROW_PRESET_OUTLINE_COMPACT": "Outline Compact",
@@ -643,5 +642,7 @@
     "BACKUP_HISTORY_ERR_READ": "The history file could not be read.",
     "BACKUP_HISTORY_ERR_VERIFY": "The copy could not be verified, so it was not saved.",
     "BACKUP_HISTORY_ERR_IO": "The copy could not be written. Check that you can save to that folder and that there is enough free space.",
-    "BACKUP_HISTORY_ERR_BUSY": "A backup to this file is already running."
+    "BACKUP_HISTORY_ERR_BUSY": "A backup to this file is already running.",
+    "CONTEXT_MENU_ITEMS_LABEL": "Right-click menu items",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choose what the widget's right-click menu shows. {settings} and {exit} always show."
 }

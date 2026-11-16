@@ -1,9 +1,10 @@
 """
 General Settings Page.
 """
+import re
 from typing import Dict, Any, Callable, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QWidget, QComboBox
 
@@ -11,10 +12,20 @@ from netspeedtray import constants
 from netspeedtray.constants.update_mode import UpdateMode
 from netspeedtray.utils import styles as su
 from netspeedtray.utils.timer_utils import snap_update_rate
-from netspeedtray.utils.components import Win11Slider, Win11Toggle, SettingCard, Win11ComboBox
+from netspeedtray.utils.components import (Win11Slider, Win11Toggle, SettingCard, Win11ComboBox,
+                                           SettingExpander)
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
+def strip_mnemonic(text: str) -> str:
+    """A menu label as plain text: drops the `&` accelerator marker, including the CJK "(&S)" suffix
+    form, and turns an escaped `&&` back into a literal `&`."""
+    text = re.sub(r"\s*\(&[^)]\)", "", str(text or ""))
+    return "&".join(part.replace("&", "") for part in text.split("&&")).strip()
+
+
 class GeneralPage(QWidget):
+    layout_changed = pyqtSignal()   # the right-click-menu expander opened or closed
+
     def __init__(self, i18n, on_change: Callable[[], None]):
         super().__init__()
         self.i18n = i18n
@@ -138,12 +149,44 @@ class GeneralPage(QWidget):
             getattr(self.i18n, "MIDDLE_CLICK_ACTION_LABEL", "Middle-click action"),
             control=self.middle_click_action))
 
-        # Moved from Advanced > Behavior (2.2 IA pass, change 3): everyday widget-interaction toggles,
-        # not low-frequency / destructive ones. Pause-in-menu first - it is the right-click route to the
-        # same "Pause / Resume" the two click lists above offer - then the hover card's two toggles.
+        # Right-click menu items (2.2.1, from #526): one switch per optional item, in menu order and
+        # labelled with the menu's own text (accelerator stripped), so the only new strings are the title
+        # and its line. Settings and Exit are not listed - they always show. On = shown; the config stores
+        # the hidden ones (`context_menu_hidden_items`), so the default (all on) is an empty list.
+        # Pause / Resume is in the list too but keeps its own opt-in key, `pause_in_menu` (default off) -
+        # it replaced the standalone "Add Pause/Resume to the right-click menu" switch.
+        defaults = constants.config.defaults
+        try:
+            menu_note = str(getattr(
+                self.i18n, "CONTEXT_MENU_ITEMS_DESCRIPTION",
+                "Choose what the widget's right-click menu shows. {settings} and {exit} always show.")).format(
+                settings=strip_mnemonic(getattr(self.i18n, "SETTINGS_MENU_ITEM", "&Settings")),
+                exit=strip_mnemonic(getattr(self.i18n, "EXIT_MENU_ITEM", "E&xit")))
+        except (KeyError, IndexError, ValueError):
+            menu_note = ""   # a broken translation loses the note, never the page
+        self.context_menu_items = SettingExpander(
+            getattr(self.i18n, "CONTEXT_MENU_ITEMS_LABEL", "Right-click menu items"),
+            description=menu_note, expanded=False, i18n=self.i18n)
+        self.context_menu_items.expandedChanged.connect(lambda _on: self.layout_changed.emit())
         self.pause_in_menu = Win11Toggle(label_text="")
         self.pause_in_menu.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.PAUSE_IN_MENU_LABEL, control=self.pause_in_menu))
+        self.context_menu_toggles: Dict[str, Win11Toggle] = {}
+        _PAUSE = object()   # the Pause / Resume row: its own key, not a hidden-items id
+        for item_id, label_key, fallback in (
+                (defaults.CONTEXT_MENU_ITEM_MONITOR, "SHOW_MONITOR_MENU_ITEM", "Show Monitor"),
+                (_PAUSE, "CLICK_ACTION_PAUSE_LABEL", "Pause / Resume"),
+                (defaults.CONTEXT_MENU_ITEM_RESET_POSITION, "RESET_POSITION_MENU_ITEM", "Reset P&osition"),
+                (defaults.CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES, "CHECK_FOR_UPDATES_MENU_ITEM", "Check for &Updates"),
+                (defaults.CONTEXT_MENU_ITEM_SUPPORT, "SUPPORT_MENU_ITEM", "Support this Pro&ject")):
+            if item_id is _PAUSE:
+                toggle = self.pause_in_menu
+            else:
+                toggle = Win11Toggle(label_text="", initial_state=True)
+                toggle.toggled.connect(self.on_change)
+                self.context_menu_toggles[item_id] = toggle
+            self.context_menu_items.contentLayout().addWidget(
+                SettingCard(strip_mnemonic(getattr(self.i18n, label_key, fallback)), control=toggle))
+        layout.addWidget(self.context_menu_items)
 
         self.show_usage_hover = Win11Toggle(label_text="")
         self.show_usage_hover.toggled.connect(self.on_change)
@@ -205,6 +248,12 @@ class GeneralPage(QWidget):
         self._select_click_action(
             self.middle_click_action, config.get("middle_click_action", defaults.DEFAULT_MIDDLE_CLICK_ACTION))
         self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
+        hidden = config.get("context_menu_hidden_items",
+                            constants.config.defaults.DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS)
+        if not isinstance(hidden, (list, tuple)):
+            hidden = []
+        for item_id, toggle in self.context_menu_toggles.items():
+            toggle.setChecked(item_id not in hidden)
         self.show_usage_hover.setChecked(bool(config.get("show_usage_on_hover", True)))
         self.power_display.setChecked(bool(config.get("power_display_enabled", False)))
         self.show_hover_tips.setChecked(bool(config.get("show_hover_tips", True)))
@@ -245,6 +294,9 @@ class GeneralPage(QWidget):
             "double_click_action": self.double_click_action.currentData(),
             "middle_click_action": self.middle_click_action.currentData(),
             "pause_in_menu": self.pause_in_menu.isChecked(),
+            # In the order of CONTEXT_MENU_HIDEABLE_ITEMS, so an unchanged page saves an equal list.
+            "context_menu_hidden_items": [item_id for item_id, toggle in self.context_menu_toggles.items()
+                                          if not toggle.isChecked()],
             "show_usage_on_hover": self.show_usage_hover.isChecked(),
             "power_display_enabled": self.power_display.isChecked(),
             "show_hover_tips": self.show_hover_tips.isChecked(),

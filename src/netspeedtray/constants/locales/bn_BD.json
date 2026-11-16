@@ -409,7 +409,6 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "উইজেটের ওপর মাউস রাখলে ডেটা ব্যবহার দেখান",
-    "PAUSE_IN_MENU_LABEL": "রাইট-ক্লিক মেনুতে বিরতি/পুনরারম্ভ যোগ করুন",
     "SETTINGS_PREVIEW_LABEL": "পূর্বরূপ",
     "HOVER_TIPS_LABEL": "রাইট-ক্লিক / ডাবল-ক্লিক টিপস দেখান",
     "ARROW_PRESET_OUTLINE_COMPACT": "আউটলাইন কম্প্যাক্ট",
@@ -643,5 +642,7 @@
     "BACKUP_HISTORY_ERR_READ": "ইতিহাস ফাইলটি পড়া যায়নি।",
     "BACKUP_HISTORY_ERR_VERIFY": "কপিটি যাচাই করা যায়নি, তাই এটি সংরক্ষণ করা হয়নি।",
     "BACKUP_HISTORY_ERR_IO": "কপিটি লেখা যায়নি। ওই ফোল্ডারে সংরক্ষণের অনুমতি এবং যথেষ্ট ফাঁকা জায়গা আছে কিনা দেখুন।",
-    "BACKUP_HISTORY_ERR_BUSY": "এই ফাইলের একটি ব্যাকআপ ইতিপূর্বেই চালু আছে।"
+    "BACKUP_HISTORY_ERR_BUSY": "এই ফাইলের একটি ব্যাকআপ ইতিপূর্বেই চালু আছে।",
+    "CONTEXT_MENU_ITEMS_LABEL": "রাইট-ক্লিক মেনুর আইটেম",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "উইজেটের রাইট-ক্লিক মেনুতে কী দেখাবে তা বেছে নিন। {settings} এবং {exit} সবসময় দেখায়।"
 }

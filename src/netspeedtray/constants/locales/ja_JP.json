@@ -409,7 +409,6 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "ウィジェットにカーソルを合わせるとデータ使用量を表示",
-    "PAUSE_IN_MENU_LABEL": "右クリックメニューに一時停止/再開を追加",
     "SETTINGS_PREVIEW_LABEL": "プレビュー",
     "HOVER_TIPS_LABEL": "右クリック / ダブルクリックのヒントを表示",
     "ARROW_PRESET_OUTLINE_COMPACT": "アウトライン コンパクト",
@@ -643,5 +642,7 @@
     "BACKUP_HISTORY_ERR_READ": "履歴ファイルを読み取れませんでした。",
     "BACKUP_HISTORY_ERR_VERIFY": "コピーを確認できなかったため、保存しませんでした。",
     "BACKUP_HISTORY_ERR_IO": "コピーを書き込めませんでした。そのフォルダーに保存できること、空き容量が十分にあることを確認してください。",
-    "BACKUP_HISTORY_ERR_BUSY": "このファイルへのバックアップはすでに実行中です。"
+    "BACKUP_HISTORY_ERR_BUSY": "このファイルへのバックアップはすでに実行中です。",
+    "CONTEXT_MENU_ITEMS_LABEL": "右クリックメニューの項目",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "ウィジェットの右クリックメニューに表示する項目を選びます。「{settings}」と「{exit}」は常に表示されます。"
 }

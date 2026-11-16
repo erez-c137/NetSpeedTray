@@ -409,7 +409,6 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "Datagebruik tonen bij hoveren over de widget",
-    "PAUSE_IN_MENU_LABEL": "Pauzeren/Hervatten toevoegen aan het rechtsklikmenu",
     "SETTINGS_PREVIEW_LABEL": "Voorbeeld",
     "HOVER_TIPS_LABEL": "Tips voor rechtsklik / dubbelklik tonen",
     "ARROW_PRESET_OUTLINE_COMPACT": "Compact omtrek",
@@ -643,5 +642,7 @@
     "BACKUP_HISTORY_ERR_READ": "Het geschiedenisbestand kon niet worden gelezen.",
     "BACKUP_HISTORY_ERR_VERIFY": "De kopie kon niet worden gecontroleerd en is daarom niet opgeslagen.",
     "BACKUP_HISTORY_ERR_IO": "De kopie kon niet worden geschreven. Controleer of je in die map kunt opslaan en of er genoeg vrije ruimte is.",
-    "BACKUP_HISTORY_ERR_BUSY": "Er loopt al een back-up naar dit bestand."
+    "BACKUP_HISTORY_ERR_BUSY": "Er loopt al een back-up naar dit bestand.",
+    "CONTEXT_MENU_ITEMS_LABEL": "Items in het rechtsklikmenu",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Kies wat het rechtsklikmenu van de widget toont. {settings} en {exit} worden altijd getoond."
 }

@@ -409,7 +409,6 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value} %",
     "HOVER_USAGE_CARD_LABEL": "Datennutzung beim Überfahren des Widgets anzeigen",
-    "PAUSE_IN_MENU_LABEL": "Pause/Fortsetzen zum Rechtsklick-Menü hinzufügen",
     "SETTINGS_PREVIEW_LABEL": "Vorschau",
     "HOVER_TIPS_LABEL": "Tipps für Rechts-/Doppelklick anzeigen",
     "ARROW_PRESET_OUTLINE_COMPACT": "Umriss kompakt",
@@ -643,5 +642,7 @@
     "BACKUP_HISTORY_ERR_READ": "Die Verlaufsdatei konnte nicht gelesen werden.",
     "BACKUP_HISTORY_ERR_VERIFY": "Die Kopie konnte nicht überprüft werden und wurde daher nicht gespeichert.",
     "BACKUP_HISTORY_ERR_IO": "Die Kopie konnte nicht geschrieben werden. Prüfe, ob du in diesem Ordner speichern darfst und genügend freier Speicher vorhanden ist.",
-    "BACKUP_HISTORY_ERR_BUSY": "Eine Sicherung in diese Datei läuft bereits."
+    "BACKUP_HISTORY_ERR_BUSY": "Eine Sicherung in diese Datei läuft bereits.",
+    "CONTEXT_MENU_ITEMS_LABEL": "Einträge im Rechtsklick-Menü",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Wählen Sie, was das Rechtsklick-Menü des Widgets anzeigt. {settings} und {exit} werden immer angezeigt."
 }

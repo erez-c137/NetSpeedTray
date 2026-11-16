@@ -41,6 +41,16 @@ _LOCALE_NAMES = {
     "tr_TR": {"Duraklat", "Devam", "Et"},
 }
 
+# The right-click menu items' switches (Settings > General, 2.2.1) are titled with the menu commands'
+# own text, so they read exactly as in the menu - menu-command names, as above.
+_MENU_COMMAND_WORDS = {
+    "en_US": {"Position", "Updates", "Project"},
+    "sl_SI": {"Monitor"},
+    "tr_TR": {"Göster", "Denetle", "Projeyi"},
+}
+for _loc, _words in _MENU_COMMAND_WORDS.items():
+    _LOCALE_NAMES[_loc] = _LOCALE_NAMES[_loc] | _words
+
 
 def _dialog(qtbot, monkeypatch, locale):
     for n in ("critical", "information", "warning"):

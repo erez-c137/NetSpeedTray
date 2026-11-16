@@ -410,7 +410,6 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "悬停小组件时显示流量信息",
-    "PAUSE_IN_MENU_LABEL": "右键菜单添加“暂停/继续”",
     "SETTINGS_PREVIEW_LABEL": "预览",
     "HOVER_TIPS_LABEL": "显示操作提示",
     "ARROW_PRESET_OUTLINE_COMPACT": "紧凑描边",
@@ -644,5 +643,7 @@
     "BACKUP_HISTORY_ERR_READ": "无法读取历史记录文件。",
     "BACKUP_HISTORY_ERR_VERIFY": "无法验证副本，因此未保存。",
     "BACKUP_HISTORY_ERR_IO": "无法写入副本。请检查能否保存到该文件夹，以及可用空间是否足够。",
-    "BACKUP_HISTORY_ERR_BUSY": "已有备份任务正在写入此文件。"
+    "BACKUP_HISTORY_ERR_BUSY": "已有备份任务正在写入此文件。",
+    "CONTEXT_MENU_ITEMS_LABEL": "右键菜单项",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "选择小组件右键菜单中显示的项目。“{settings}”和“{exit}”始终显示。"
 }

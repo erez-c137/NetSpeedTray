@@ -409,7 +409,6 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "הצג צריכת נתונים בעת ריחוף מעל היישומון",
-    "PAUSE_IN_MENU_LABEL": "הוסף השהה/המשך לתפריט הלחיצה הימנית",
     "SETTINGS_PREVIEW_LABEL": "תצוגה מקדימה",
     "HOVER_TIPS_LABEL": "הצג עצות ללחיצה ימנית / לחיצה כפולה",
     "ARROW_PRESET_OUTLINE_COMPACT": "מתאר קומפקטי",
@@ -643,5 +642,7 @@
     "BACKUP_HISTORY_ERR_READ": "לא ניתן היה לקרוא את קובץ ההיסטוריה.",
     "BACKUP_HISTORY_ERR_VERIFY": "לא ניתן היה לאמת את העותק, ולכן הוא לא נשמר.",
     "BACKUP_HISTORY_ERR_IO": "לא ניתן היה לכתוב את העותק. ודא שאפשר לשמור בתיקייה הזו ושיש מספיק מקום פנוי.",
-    "BACKUP_HISTORY_ERR_BUSY": "כבר מתבצע גיבוי לקובץ הזה."
+    "BACKUP_HISTORY_ERR_BUSY": "כבר מתבצע גיבוי לקובץ הזה.",
+    "CONTEXT_MENU_ITEMS_LABEL": "פריטי תפריט הלחיצה הימנית",
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "בחר מה יוצג בתפריט הלחיצה הימנית של הווידג'ט. {settings} ו{exit} מוצגים תמיד."
 }
