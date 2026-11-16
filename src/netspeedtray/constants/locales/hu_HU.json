@@ -75,7 +75,7 @@
     "HOVER_LIST_ALL_GPUS_LABEL": "Összes GPU megjelenítése a widget fölé mutatva",
     "GPU_ON_TASKBAR_MARKER": "a tálcán",
     "GPU_IDLE_LABEL": "Tétlen",
-    "GPU_IDLE_TOOLTIP": "A hőmérséklet és a teljesítmény nem kerül kiolvasásra, amíg ez a GPU tétlen, hogy alvó állapotba léphessen.",
+    "GPU_IDLE_TOOLTIP": "A GPU tétlen állapotában a program nem olvassa ki a hőmérséklet- és teljesítményadatokat, így a GPU alvó állapotba léphet.",
     "TEMPERATURE_UNIT_LABEL": "Hőmérséklet mértékegysége",
     "TEMPERATURE_UNIT_CELSIUS": "Celsius (°C)",
     "TEMPERATURE_UNIT_FAHRENHEIT": "Fahrenheit (°F)",
@@ -580,7 +580,7 @@
     "BAND_DISPLAY_COLORED": "Színkódolt (2,4 GHz / 5 GHz)",
     "BAND_DISPLAY_ALERT_ONLY": "Csak riasztás (figyelmeztetés 2,4 GHz-en)",
     "IDENTITY_MODE_LABEL": "Megjelenítés",
-    "IDENTITY_MODE_SUB": "A csatlakoztatott Wi-Fi neve a közeli hálózatok keresése nélkül olvasható ki.",
+    "IDENTITY_MODE_SUB": "A csatlakoztatott Wi-Fi-hálózat nevét a közeli hálózatok keresése nélkül olvassa ki.",
     "IDENTITY_MODE_BAND": "Csak frekvenciasáv (2,4 GHz / 5 GHz)",
     "IDENTITY_MODE_SSID": "Hálózatnév (SSID)",
     "IDENTITY_MODE_BOTH": "Név és sáv",
@@ -644,5 +644,5 @@
     "BACKUP_HISTORY_ERR_IO": "A másolat nem írható. Ellenőrizd, hogy tudsz-e menteni ebbe a mappába, és van-e elég szabad hely.",
     "BACKUP_HISTORY_ERR_BUSY": "Már fut egy biztonsági mentés ebbe a fájlba.",
     "CONTEXT_MENU_ITEMS_LABEL": "A jobb kattintásos menü elemei",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Válassza ki, mi jelenjen meg a widget jobb kattintásos menüjében. {settings} és {exit} mindig látható."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Válaszd ki, mely elemek jelenjenek meg a widget jobb kattintásos menüjében. A {settings} és a {exit} mindig látható."
 }
