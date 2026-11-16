@@ -153,7 +153,7 @@ def test_the_app_yield_judges_the_stepped_spot():
 @pytest.mark.parametrize("offset,fallback,expect", [
     (0, False, False),     # the default spot: clear by construction - a probe mismatch never nudges
     (10, False, False),    # a pre-1.3.0 default is the default too
-    (0, True, True),       # the full-bar fallback sits on the button's padding (rc.2's spot): nudge
+    (0, True, False),      # the full-bar fallback's tray spot: the app moved it there (2.2.1)
     (50, False, True),     # a user's drag onto the button: nudge, as #200 always did
 ])
 def test_the_200_nudge_on_a_top_bottom_bar(offset, fallback, expect):

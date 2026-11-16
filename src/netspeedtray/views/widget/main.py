@@ -3262,13 +3262,37 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
 
+    @staticmethod
+    def _widgets_text_within(rect, content, side: bool):
+        """The #200 probe's ``rect`` narrowed to the layout probe's weather icon + text (``content``),
+        the extent the placement keeps clear of: the #200 probe unions every descendant of the button,
+        its full-size container too, so it reaches the button's padding (2.2.1 live: 1538..1674 against
+        text at 1541..1644). The layout answer may only NARROW the fresh rect, never move it: on the
+        primary bar its slot never ages and nothing re-probes it with hiding off, so after a re-layout
+        (left-aligned -> centred) it can describe a button that is no longer there - the TaskbarInfo
+        builder prefers the #200 rect over an aged primary box for the same reason (#473 review). So:
+        the overlap of the two on the bar's long axis (x, or y on a side bar), else ``rect`` as is."""
+        from netspeedtray.utils.taskbar_utils import valid_rect
+        rect = valid_rect(rect)
+        content = valid_rect(content)
+        if rect is None or content is None:
+            return rect
+        lo, hi = (1, 3) if side else (0, 2)
+        start, end = max(rect[lo], content[lo]), min(rect[hi], content[hi])
+        if end <= start:
+            return rect
+        narrowed = list(rect)
+        narrowed[lo], narrowed[hi] = start, end
+        return tuple(narrowed)
+
     def _maybe_nudge_widgets_overlap(self, taskbar_info) -> None:
         """One-time heads-up (#200): if the widget currently overlaps the Win11 Widgets/weather panel's
         visible content, tell the user once that they can drag the widget wherever they like and it's
         remembered. A dragged widget is never auto-moved off it - the user may want it right where it
         is. (Since rc.3 the DEFAULT spot steps left of a Widgets button beside the tray - its box keeps
-        one width across weather texts - so this mostly fires for drags.) Fires at most once, ever
-        (session flag + persisted config flag)."""
+        one width across weather texts - so on a top/bottom bar this fires only for drags: a spot the
+        app chose itself, the full-bar fallback by the tray included, never shows it.) Fires at most
+        once, ever (session flag + persisted config flag)."""
         try:
             if self._widgets_nudge_shown or self.config.get("widgets_overlap_nudge_shown", False):
                 # Nothing else reads the Widgets rect: stop probing for it (taskbar_utils).
@@ -3277,6 +3301,9 @@ class NetworkSpeedWidget(QWidget):
                 return
             from netspeedtray.utils import taskbar_utils as tbu
             widgets_rect = getattr(taskbar_info, "widgets_rect", None)
+            hwnd = int(getattr(taskbar_info, "hwnd", 0) or 0)
+            # The #200 probe's own rect (fresh, 30 s) may be narrowed to the weather text below.
+            narrow_to_text = bool(widgets_rect) and bool(hwnd)
             if not widgets_rect and getattr(taskbar_info, "is_primary", True) is False:
                 # A secondary bar: the #200 probe is primary-only, so read that bar's own Widgets box
                 # from the per-HWND layout cache (#373) - its visible content (what widgets_rect is on
@@ -3284,7 +3311,6 @@ class NetworkSpeedWidget(QWidget):
                 # another dock's or Widgets is off, so the content is only trusted alongside it.
                 extent = getattr(taskbar_info, "widgets_extent", None)
                 if extent:
-                    hwnd = int(getattr(taskbar_info, "hwnd", 0) or 0)
                     widgets_rect = (tbu.taskbar_layout_widgets_content(hwnd) if hwnd else None) or extent
             if not widgets_rect:
                 return
@@ -3295,20 +3321,26 @@ class NetworkSpeedWidget(QWidget):
                 edge = taskbar_info.get_edge_position()
             except Exception:
                 edge = None
-            if edge in (constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT):
+            side = edge in (constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT)
+            if narrow_to_text:
+                widgets_rect = NetworkSpeedWidget._widgets_text_within(
+                    widgets_rect, tbu.taskbar_layout_widgets_content(hwnd), side)
+            if side:
                 # A side bar: the widget and the Widgets button both span the bar's width, so only
                 # their y-extents can tell an overlap apart (comparing x always "overlapped").
                 overlaps = tbu.rect_overlaps_y(self.y(), self.y() + self.height(), widgets_rect, dpi,
                                                origin=y_origin)
             else:
                 from netspeedtray.core.position_manager import user_placed_horizontal_offset
-                pm = getattr(self, "position_manager", None)
-                if (not user_placed_horizontal_offset(self.config)
-                        and not (pm is not None and pm.is_widgets_fallback_active())):
-                    # The default spot keeps clear of the button by construction (rc.3). An overlap
-                    # seen here is the #200 probe and the layout probe disagreeing for a moment while
-                    # the bar re-lays (rc.3 VM: a tray icon appearing slid the button under the
-                    # widget for one probe) - never a reason for a one-time, never-again notice.
+                if not user_placed_horizontal_offset(self.config):
+                    # A spot the app chose, never the user - the notice is about dragging it. The
+                    # default spot keeps clear of the button by construction (rc.3); an overlap seen
+                    # there is the #200 probe and the layout probe disagreeing for a moment while the
+                    # bar re-lays (rc.3 VM: a tray icon appearing slid the button under the widget for
+                    # one probe). The full-bar fallback's tray spot (the #24 yield's retreat, hiding on
+                    # or off - #463/#522) is taken only when it clears the weather text (#466), yet it
+                    # always overlaps the button's box: the app moved it there on purpose (2.2.1 live).
+                    # Neither is a reason for a one-time, never-again notice.
                     return
                 overlaps = tbu.rect_overlaps_x(self.x(), self.x() + self.width(), widgets_rect, dpi,
                                                origin=x_origin)
