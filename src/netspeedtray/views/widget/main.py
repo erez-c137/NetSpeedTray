@@ -3,7 +3,6 @@ from __future__ import annotations
 # --- Standard Library Imports ---
 import ctypes
 import logging
-import math
 import os
 import sys
 import time
@@ -16,7 +15,6 @@ import win32api
 import win32con
 import win32gui
 import win32process
-from win32con import MONITOR_DEFAULTTONEAREST
 from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QTimer, Qt
 from PyQt6.QtGui import (
     QCloseEvent, QColor, QContextMenuEvent, QFont, QFontMetrics, QHideEvent,
@@ -67,14 +65,9 @@ if TYPE_CHECKING:
 
 # Win32 MSG layout for reading native messages in nativeEvent(). Defined once at
 # module scope - nativeEvent is a hot path (fires for every native message), so we
-# must not rebuild this Structure on each call.
-class _NativeMSG(ctypes.Structure):
-    _fields_ = [
-        ("hwnd", wintypes.HWND), ("message", wintypes.UINT),
-        ("wParam", ctypes.c_size_t), ("lParam", ctypes.c_ssize_t),
-        ("time", wintypes.DWORD), ("pt_x", wintypes.LONG), ("pt_y", wintypes.LONG),
-    ]
-
+# The Win32 MSG layout lives in utils.taskbar_utils (one shared definition);
+# re-exported here because the native-event resume test imports it from this module.
+from netspeedtray.utils.taskbar_utils import _NativeMSG  # noqa: E402  (re-export)
 _WM_POWERBROADCAST = 0x0218
 _WM_QUERYENDSESSION = 0x0011
 _WM_ENDSESSION = 0x0016
@@ -1088,23 +1081,26 @@ class NetworkSpeedWidget(QWidget):
         stored either way - the hover card and the Monitor window use it."""
         return effective_display_mode(self.config) in modes
 
-    def update_cpu_usage(self, usage: float) -> None:
-        """Update CPU usage and trigger repaint."""
+    def _set_hw_metric(self, attr: str, value, modes: "Tuple[str, ...]",
+                       refresh_hover: bool = False) -> None:
+        """Store a hardware reading, refresh the hover card when it shows hardware, and repaint
+        when the painted bar displays that metric's family. The reading is stored either way -
+        the hover card and the Monitor window use it."""
         if self.is_paused:
             return
-        self.cpu_usage = usage
-        self._refresh_hover_hardware()
-        if self._bar_shows(_CPU_BAR_MODES):
+        setattr(self, attr, value)
+        if refresh_hover:
+            self._refresh_hover_hardware()
+        if self._bar_shows(modes):
             self.update()
+
+    def update_cpu_usage(self, usage: float) -> None:
+        """Update CPU usage and trigger repaint."""
+        self._set_hw_metric("cpu_usage", usage, _CPU_BAR_MODES, refresh_hover=True)
 
     def update_gpu_usage(self, usage: float) -> None:
         """Update GPU usage and trigger repaint."""
-        if self.is_paused:
-            return
-        self.gpu_usage = usage
-        self._refresh_hover_hardware()
-        if self._bar_shows(_GPU_BAR_MODES):
-            self.update()
+        self._set_hw_metric("gpu_usage", usage, _GPU_BAR_MODES, refresh_hover=True)
 
     def update_network_identity(self, identity: Optional[object]) -> None:
         """Update the connected network's identity (Wi-Fi band / SSID) and repaint if shown.
@@ -1130,47 +1126,26 @@ class NetworkSpeedWidget(QWidget):
                 pass
         self.update()
 
-    def update_cpu_temp(self, temp: Optional[float]) -> None:
+    def update_cpu_temp(self, temp: "Optional[float]") -> None:
         """Update CPU temperature and trigger repaint."""
-        if self.is_paused:
-            return
-        self.cpu_temp = temp
-        if self._bar_shows(_CPU_BAR_MODES):
-            self.update()
+        self._set_hw_metric("cpu_temp", temp, _CPU_BAR_MODES)
 
-    def update_gpu_temp(self, temp: Optional[float]) -> None:
+    def update_gpu_temp(self, temp: "Optional[float]") -> None:
         """Update GPU temperature and trigger repaint."""
-        if self.is_paused:
-            return
-        self.gpu_temp = temp
-        if self._bar_shows(_GPU_BAR_MODES):
-            self.update()
+        self._set_hw_metric("gpu_temp", temp, _GPU_BAR_MODES)
 
-    def update_cpu_power(self, power: Optional[float]) -> None:
+    def update_cpu_power(self, power: "Optional[float]") -> None:
         """Update CPU power draw and trigger repaint."""
-        if self.is_paused:
-            return
-        self.cpu_power = power
-        if self._bar_shows(_CPU_BAR_MODES):
-            self.update()
+        self._set_hw_metric("cpu_power", power, _CPU_BAR_MODES)
 
-    def update_gpu_power(self, power: Optional[float]) -> None:
+    def update_gpu_power(self, power: "Optional[float]") -> None:
         """Update GPU power draw and trigger repaint."""
-        if self.is_paused:
-            return
-        self.gpu_power = power
-        if self._bar_shows(_GPU_BAR_MODES):
-            self.update()
+        self._set_hw_metric("gpu_power", power, _GPU_BAR_MODES)
 
     def update_ram_info(self, used: float, total: float) -> None:
         """Update RAM info and trigger repaint."""
-        if self.is_paused:
-            return
-        self.ram_used = used
-        self.ram_total = total
-        self._refresh_hover_hardware()
-        if self._bar_shows(_CPU_BAR_MODES):
-            self.update()
+        self._set_hw_metric("ram_used", used, _CPU_BAR_MODES, refresh_hover=True)
+        self._set_hw_metric("ram_total", total, _CPU_BAR_MODES)
 
     def update_vram_info(self, used: float, total: float) -> None:
         """Update VRAM info and trigger repaint."""
@@ -2288,7 +2263,6 @@ class NetworkSpeedWidget(QWidget):
 
  
 
-    @property
     def position_manager_property(self):
         # Expose position manager for binding if needed, though self.position_manager exists
         return self.position_manager
@@ -2469,10 +2443,6 @@ class NetworkSpeedWidget(QWidget):
                                   self._execute_refresh)
         except Exception as e:
             self.logger.error("Error recovering from taskbar restart: %s", e, exc_info=True)
-
-    def _enforce_topmost_status(self) -> None:
-        """Delegates to PositionManager."""
-        self.position_manager.enforce_topmost_status()
 
     def reset_to_default_position(self) -> None:
         """Right-click > Reset position: back to the automatic spot by the tray (or the side bar's
@@ -2889,28 +2859,9 @@ class NetworkSpeedWidget(QWidget):
 
 
 
-    def _rollback_config(self, old_config: Dict[str, Any]) -> None:
-        """Delegates to ConfigController."""
-        self.config_controller.rollback_config(old_config)
-
-
     def update_config(self, updates: Dict[str, Any], save_to_disk: bool = True) -> None:
         """Delegates to ConfigController."""
         self.config_controller.update_config(updates, save_to_disk)
-
-
-    def handle_graph_settings_update(self, updates: Dict[str, Any]) -> None:
-        """
-        Public method called by the GraphWindow to update and save configuration.
-        This centralizes the saving logic and prevents race conditions.
-        """
-        self.logger.debug(f"Received settings update from graph window: {updates}")
-        # The update_config method already updates the in-memory config and saves to disk.
-        # We can just call it directly.
-        self.update_config(updates)
-
-
-
 
 
     def open_monitor_window(self) -> None:
@@ -3363,14 +3314,6 @@ class NetworkSpeedWidget(QWidget):
 
 
     # update_config (redundant definition) removed
-
-
-    def get_config(self) -> Dict[str, Any]:
-        return self.config.copy() if self.config else {}
-
-
-    def get_widget_size(self) -> QSize:
-        return self.size()
 
 
     def set_app_version(self, version: str) -> None:
