@@ -804,3 +804,37 @@ def reveal_in_explorer(path: str) -> None:
         subprocess.Popen(f'"{explorer}" /select,"{target}"', cwd=neutral_cwd())
     except Exception as e:
         logging.getLogger("NetSpeedTray.helpers").debug("reveal_in_explorer failed: %s", e)
+
+
+def known_downloads_dir() -> "Optional[str]":
+    """Ask Windows where the user's Downloads folder actually is (FOLDERID_Downloads), or None.
+
+    Guessing `~/Downloads` is wrong for anyone who has **moved** their Downloads folder - right-click
+    -> Properties -> Location, which people do routinely to keep it off the system drive. The guess
+    then silently misses, and the caller falls back to dumping a folder in the user's home directory
+    instead, where they will not think to look. Windows knows the real path; ask it. (One
+    implementation for both update paths; callers keep their own thin module-level wrappers, which
+    the tests monkeypatch.)
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _GUID(ctypes.Structure):
+            _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                        ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+        guid = _GUID(0x374DE290, 0x123F, 0x4565,
+                     (ctypes.c_ubyte * 8)(0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B))
+        out = ctypes.c_wchar_p()
+        # 0 = current user, no default-path fallback, no forced creation.
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None,
+                                                      ctypes.byref(out)) != 0:
+            return None
+        try:
+            path = out.value
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(out)
+        return path if path and os.path.isdir(path) else None
+    except Exception:
+        return None
