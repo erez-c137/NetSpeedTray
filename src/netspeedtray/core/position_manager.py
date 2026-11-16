@@ -1379,16 +1379,14 @@ class PositionManager(QObject):
         return False
 
     def _apply_geometry(self, x: int, y: int) -> None:
-        """Moves the widget with geometry debouncing to prevent redundant OS calls."""
-        # Note: We use QRect to track both position and size, as a size change 
-        # (calculated in layout.py) should also invalidate the debounce.
+        """Moves the widget to (x, y) unless it is already there (no redundant OS calls)."""
         new_rect = QRect(x, y, self._state.widget.width(), self._state.widget.height())
-        
-        if self._last_applied_geometry == new_rect:
-            return
 
-        # Double check against current actual position to avoid even one redundant call
-        # if the widget was moved by external means but matches our target.
+        # Judged against where the widget IS, never only against what we last applied: Windows moves
+        # top-level windows on a display-topology change (a Remote Desktop connect, #314) while the
+        # computed taskbar spot stays the same, and a "same target as last time" skip left the widget
+        # mid-screen for the whole session - the 1 s refresh and the screenAdded / screenRemoved
+        # recovery both landed here and returned. pos() round-trips exactly at any scale >= 100 %.
         if self._state.widget.pos() == QPoint(x, y):
             self._last_applied_geometry = new_rect
             return
