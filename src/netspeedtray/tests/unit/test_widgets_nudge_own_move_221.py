@@ -43,7 +43,11 @@ def _fake(x, config, fallback=False):
 
 
 def _bar():
-    return types.SimpleNamespace(widgets_rect=CONTAINER, hwnd=0x4242, is_primary=True, dpi_scale=1.0,
+    return _bar_with(CONTAINER)
+
+
+def _bar_with(widgets_rect):
+    return types.SimpleNamespace(widgets_rect=widgets_rect, hwnd=0x4242, is_primary=True, dpi_scale=1.0,
                                  get_edge_position=lambda: E.BOTTOM)
 
 
@@ -98,4 +102,70 @@ def test_a_drag_is_judged_on_the_weather_text_not_the_container():
 def test_a_drag_falls_back_to_the_200_rect_while_the_layout_probe_has_no_answer():
     fake = _fake(TRAY_SPOT_X, {"tray_offset_x": 50})
     _run(fake, _bar(), content=None)
+    assert fake._widgets_nudge_shown is True
+
+
+# --- The layout answer may only NARROW the fresh #200 rect, never move it (#552 review) ----------
+# On the primary bar the layout slot never ages and, with hiding off, nothing re-probes it: after the
+# user switches the bar from left-aligned to centred, it still describes the button by the tray while
+# the #200 probe (30 s) already sees it at the far left.
+CENTRED_CONTAINER = (6, 1036, 142, 1076)
+
+
+def test_a_stale_layout_answer_never_hides_a_drag_onto_the_moved_weather():
+    fake = _fake(20, {"tray_offset_x": 50})              # dropped on the far-left weather
+    _run(fake, _bar_with(CENTRED_CONTAINER))             # layout still says 1541..1644
+    assert fake._widgets_nudge_shown is True
+
+
+def test_a_stale_layout_answer_never_nudges_a_drag_onto_the_empty_tray_side():
+    fake = _fake(1560, {"tray_offset_x": 50})            # where the weather USED to be: empty now
+    _run(fake, _bar_with(CENTRED_CONTAINER))
+    assert fake._widgets_nudge_shown is False
+    fake.update_config.assert_not_called()               # the one-time flag is not burnt
+
+
+def test_a_layout_answer_reaching_past_the_200_rect_is_clipped_to_it():
+    # Text 1500..1644 against the fresh 1538..1674: judged on 1538..1644, so 1452..1537 is clear.
+    fake = _fake(1452, {"tray_offset_x": 50})
+    _run(fake, _bar(), content=(1500, 1036, 1644, 1076))
+    assert fake._widgets_nudge_shown is False
+
+
+@pytest.mark.parametrize("content,side,expect", [
+    (TEXT, False, TEXT),                                         # inside: narrowed (the live case)
+    ((1500, 1036, 1644, 1076), False, (1538, 1036, 1644, 1076)),  # reaching past: clipped
+    ((10, 1036, 120, 1076), False, CONTAINER),                   # elsewhere (stale): the #200 rect
+    (None, False, CONTAINER),                                    # no layout answer
+    ((1876, 10, 1916, 50), True, (1872, 10, 1920, 50)),          # side bar: y narrowed, x kept
+    ((1876, 400, 1916, 460), True, (1872, 0, 1920, 120)),        # side bar, stale: the #200 rect
+])
+def test_widgets_text_within(content, side, expect):
+    rect = (1872, 0, 1920, 120) if side else CONTAINER
+    assert NetworkSpeedWidget._widgets_text_within(rect, content, side) == expect
+
+
+def _side_bar():
+    return types.SimpleNamespace(widgets_rect=(1872, 0, 1920, 120), hwnd=0x4242, is_primary=True,
+                                 dpi_scale=1.0, get_edge_position=lambda: E.RIGHT)
+
+
+@pytest.mark.parametrize("y,expect", [(60, False), (20, True)])
+def test_a_primary_side_bar_is_judged_on_the_weather_text(y, expect):
+    # The #200 box is 0..120 on a right bar, the weather 10..50: a widget at 60..118 sits on the
+    # button's padding only - no notice; one at 20..78 covers the weather.
+    fake = types.SimpleNamespace(
+        _widgets_nudge_shown=False, logger=MagicMock(), config={}, update_config=MagicMock(),
+        position_manager=MagicMock(), i18n=MagicMock(),
+        x=lambda: 1872, y=lambda: y, width=lambda: 48, height=lambda: 58)
+    _run(fake, _side_bar(), content=(1876, 10, 1916, 50))
+    assert fake._widgets_nudge_shown is expect
+
+
+def test_a_primary_side_bar_ignores_a_stale_layout_answer():
+    fake = types.SimpleNamespace(
+        _widgets_nudge_shown=False, logger=MagicMock(), config={}, update_config=MagicMock(),
+        position_manager=MagicMock(), i18n=MagicMock(),
+        x=lambda: 1872, y=lambda: 20, width=lambda: 48, height=lambda: 58)
+    _run(fake, _side_bar(), content=(1876, 400, 1916, 460))    # the button moved; layout did not
     assert fake._widgets_nudge_shown is True
