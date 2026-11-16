@@ -259,6 +259,9 @@ class StatsMonitorThread(QThread):
         self._ohm_retry_at: float = 0.0
         # Monotonic time of the first probe (None = none yet): the start of its every-poll grace.
         self._ohm_first_probe_at: Optional[float] = None
+        # Monotonic time of the first failed re-probe of a connection that WAS working (None = not
+        # lost): an outage longer than NOT_DETECTED_GRACE_SEC backs off like the never-found case.
+        self._ohm_lost_probe_at: Optional[float] = None
         # One INFO line when a WMI connection that was working is dropped mid-session, one when it is
         # back (rate-limited if it flaps) - see SourceOutage.
         self._ohm_outage = SourceOutage(self.logger, "the LibreHardwareMonitor/OpenHardwareMonitor WMI source")
@@ -1724,8 +1727,13 @@ class StatsMonitorThread(QThread):
         constants.lhm.WMI_PROBE_BACKOFF_SEC (2.2.1): it used to run on every poll, up to three times a
         poll, wherever no namespace exists (every NVIDIA desktop without LHM). Still every poll: for
         NOT_DETECTED_GRACE_SEC after the first probe (LHM's WMI coming up at login, or initialising
-        with 0 sensors) and while a connection that worked is lost (a one-poll hiccup recovers on the
-        next poll, as before). A settings change (run) probes again at once.
+        with 0 sensors) and for NOT_DETECTED_GRACE_SEC after a connection that worked is lost (a
+        one-poll hiccup recovers on the next poll, as before). A source lost for longer - LHM/OHM
+        closed for good - backs off too: SourceOutage.lost stays True for the whole outage, and
+        probing every poll then cost ~8-12 failed GetObject calls a second at the 0.5 s rate. Its
+        recovery is still found within WMI_PROBE_BACKOFF_SEC, and SourceOutage still sees one failed()
+        per backoff window, which its "still lost" line needs. A settings change (run) probes again at
+        once.
         """
         if self._wmi_ohm is not None:
             return
@@ -1758,6 +1766,7 @@ class StatsMonitorThread(QThread):
                     self.logger.debug("Hardware monitor: %s exists but exposes 0 sensors.", ns)
                     continue
                 self._wmi_ohm = obj
+                self._ohm_lost_probe_at = None
                 # The first connection is INFO; a reconnect after a lost one is SourceOutage's
                 # "is back" line, and a re-probe after a settings change is DEBUG.
                 level = logging.INFO if self._ohm_outage.succeeded() else logging.DEBUG
@@ -1772,9 +1781,17 @@ class StatsMonitorThread(QThread):
         # Nothing connected across all namespaces. A source that worked earlier is still (or newly)
         # lost: SourceOutage reports a folded outage that outlasts its quiet window (no-op otherwise).
         self._ohm_outage.failed("no LibreHardwareMonitor/OpenHardwareMonitor WMI namespace answered")
-        # Back off only in the steady "never found" state (see the docstring).
-        in_grace = now - self._ohm_first_probe_at < constants.lhm.NOT_DETECTED_GRACE_SEC
-        if not (in_grace or self._ohm_outage.lost):
+        # Back off unless inside the start-up grace or the first NOT_DETECTED_GRACE_SEC of an outage
+        # of a source that worked (see the docstring).
+        grace = constants.lhm.NOT_DETECTED_GRACE_SEC
+        in_grace = now - self._ohm_first_probe_at < grace
+        if self._ohm_outage.lost:
+            if self._ohm_lost_probe_at is None:
+                self._ohm_lost_probe_at = now
+            in_grace = in_grace or now - self._ohm_lost_probe_at < grace
+        else:
+            self._ohm_lost_probe_at = None
+        if not in_grace:
             self._ohm_retry_at = now + constants.lhm.WMI_PROBE_BACKOFF_SEC
         # Surface ONE actionable line, once.
         if not self._ohm_guidance_logged:
@@ -2052,6 +2069,7 @@ class StatsMonitorThread(QThread):
                     self._wmi_ohm = None   # re-probe LHM/OHM on the next temp poll
                     self._ohm_retry_at = 0.0   # now, not after a failed probe's backoff,
                     self._ohm_first_probe_at = None   # with a fresh every-poll grace
+                    self._ohm_lost_probe_at = None
 
                 stats = {}
 
