@@ -85,6 +85,39 @@ def test_com_cleanup_failure_is_contained_and_not_retried(worker, monkeypatch):
     cleanup.assert_called_once()
 
 
+def test_com_objects_are_released_before_couninitialize(worker, monkeypatch):
+    """R4 (2.2.1 beta.1 readiness): the ACPI, battery and LHM/OHM WMI connections are COM objects owned
+    by this thread - they must be released before its CoUninitialize, not after it."""
+    import pythoncom
+    events = []
+
+    class _Com:
+        def __init__(self, name):
+            self.name = name
+
+        def __del__(self):
+            events.append(self.name)
+
+    monkeypatch.setattr(pythoncom, "CoUninitialize", lambda: events.append("CoUninitialize"))
+    worker._wmi = _Com("acpi")
+    worker._wmi_battery = _Com("battery")
+    worker._wmi_ohm = _Com("ohm")
+    worker._com_initialized = True
+    worker._cleanup_com()
+    assert events[-1] == "CoUninitialize"
+    assert sorted(events[:-1]) == ["acpi", "battery", "ohm"]
+    assert worker._wmi is None and worker._wmi_battery is None and worker._wmi_ohm is None
+
+
+def test_com_release_keeps_the_battery_unavailable_marker(worker, monkeypatch):
+    import pythoncom
+    monkeypatch.setattr(pythoncom, "CoUninitialize", lambda: None)
+    worker._wmi_battery = False
+    worker._com_initialized = True
+    worker._cleanup_com()
+    assert worker._wmi_battery is False
+
+
 def test_widget_resume_requests_identity_update(worker):
     from netspeedtray.views.widget.main import NetworkSpeedWidget
     widget = SimpleNamespace(is_paused=True, logger=Mock(), monitor_thread=worker,

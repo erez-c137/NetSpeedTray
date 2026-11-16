@@ -10,6 +10,7 @@ Offloading this I/O from the main UI thread ensures consistent 60+ FPS widget mo
 and prevents micro-stutters during system stack latency.
 """
 
+import gc
 import logging
 import math
 import threading
@@ -2275,8 +2276,26 @@ class StatsMonitorThread(QThread):
         except Exception as e:
             self.logger.debug("Monitor COM initialization unavailable: %s", e)
 
+    def _release_com_objects(self) -> None:
+        """Drop every COM object this thread holds - the ACPI root\\wmi connection, the battery WMI
+        connection and the LHM/OHM one - so they are released on this (their) thread while COM is
+        still initialised. The battery's False ("unavailable, do not retry") is kept."""
+        released = False
+        for name in ("_wmi", "_wmi_ohm"):
+            if self.__dict__.get(name) is not None:
+                setattr(self, name, None)
+                released = True
+        if self.__dict__.get("_wmi_battery") not in (None, False):
+            self._wmi_battery = None
+            released = True
+        if released:
+            gc.collect()   # a wrapper caught in a reference cycle (a traceback) is freed now, too
+
     def _cleanup_com(self) -> None:
-        """Balance this worker's successful COM initialization only."""
+        """Release the thread's COM objects, then balance its successful COM initialization only
+        (CoUninitialize with live references leaves them to be released on an uninitialised
+        apartment)."""
+        self._release_com_objects()
         if self._com_initialized:
             try:
                 import pythoncom
