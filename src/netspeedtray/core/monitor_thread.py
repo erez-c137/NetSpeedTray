@@ -2099,6 +2099,16 @@ class StatsMonitorThread(QThread):
         except Exception:
             pass
 
+        # The loop catches its own errors, but anything that still escapes it (the error handler, the
+        # wait) must not skip the release of the PDH queries, the WMI/COM objects and the identity
+        # monitor: the cleanup runs in `finally`, each step on its own.
+        try:
+            self._poll_loop(_in_rdp)
+        finally:
+            self._release_thread_resources()
+
+    def _poll_loop(self, _in_rdp: bool) -> None:
+        """The poll / emit / wait loop of ``run`` - until ``_is_running`` goes False."""
         while self._is_running:
             try:
                 # Apply any config-driven hardware-query reset HERE, on the owning thread (set by
@@ -2250,12 +2260,17 @@ class StatsMonitorThread(QThread):
             # second at any rate, for nothing.
             self._wait_period()
 
-        self._network_identity_monitor.close()
-        self._cleanup_gpu_query()
-        self._cleanup_thermal_query()
-        self._cleanup_power_query()
-        self._cleanup_ohm_wmi()
-        self._cleanup_com()
+    def _release_thread_resources(self) -> None:
+        """End-of-thread cleanup, on this thread: every step runs even if an earlier one fails, and
+        COM is uninitialized last (after the WMI objects that need it are gone)."""
+        for step in (self._network_identity_monitor.close, self._cleanup_gpu_query,
+                     self._cleanup_thermal_query, self._cleanup_power_query, self._cleanup_ohm_wmi,
+                     self._cleanup_com):
+            try:
+                step()
+            except Exception as e:
+                self.logger.error("Monitor thread cleanup step %s failed: %s",
+                                  getattr(step, "__name__", step), e)
 
     def _cleanup_ohm_wmi(self) -> None:
         """Releases the cached WMI connection to LHM/OHM."""

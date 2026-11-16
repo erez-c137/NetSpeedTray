@@ -118,6 +118,29 @@ def test_com_release_keeps_the_battery_unavailable_marker(worker, monkeypatch):
     assert worker._wmi_battery is False
 
 
+def test_run_releases_everything_even_when_the_loop_escapes(worker, monkeypatch):
+    """R8 (2.2.1 beta.1 readiness): an exception that escapes the poll loop (its error handler, the
+    wait) still runs the whole end-of-thread cleanup, and one failing step does not skip the rest."""
+    calls = []
+    monkeypatch.setattr(worker, "_init_com", lambda: None)
+
+    def escape(_in_rdp):
+        raise RuntimeError("escaped the loop")
+    monkeypatch.setattr(worker, "_poll_loop", escape)
+    for name in ("_cleanup_gpu_query", "_cleanup_thermal_query", "_cleanup_power_query",
+                 "_cleanup_ohm_wmi", "_cleanup_com"):
+        monkeypatch.setattr(worker, name, lambda n=name: calls.append(n))
+
+    def failing_close():
+        calls.append("identity")
+        raise OSError("close failed")
+    monkeypatch.setattr(worker._network_identity_monitor, "close", failing_close)
+    with pytest.raises(RuntimeError):
+        worker.run()
+    assert calls == ["identity", "_cleanup_gpu_query", "_cleanup_thermal_query",
+                     "_cleanup_power_query", "_cleanup_ohm_wmi", "_cleanup_com"]
+
+
 def test_widget_resume_requests_identity_update(worker):
     from netspeedtray.views.widget.main import NetworkSpeedWidget
     widget = SimpleNamespace(is_paused=True, logger=Mock(), monitor_thread=worker,
