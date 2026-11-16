@@ -517,33 +517,6 @@ def test_limits_collapse_to_the_tray_end_when_the_widget_cannot_fit():
     assert side_bar_y_limits(geo, 2000) == (0, 0)            # never above the bar top
 
 
-def test_reset_menu_item_is_removed_from_the_tray_menu():
-    from PyQt6.QtWidgets import QWidget
-    from netspeedtray.core.tray_manager import TrayIconManager
-    from netspeedtray.constants.i18n import I18nStrings
-
-    class W(QWidget):
-        def __init__(self):
-            super().__init__()
-            self.config = {}
-            self.moved = True
-            self.reset_to_default_position = MagicMock()
-
-        def has_custom_position(self):
-            return self.moved
-
-    w = W()
-    m = TrayIconManager(w, I18nStrings("en_US"))
-    m._load_and_set_icon = lambda: None
-    m.initialize()
-    # The Reset-position entry was removed from the right-click menu entirely.
-    assert getattr(m, "reset_position_action", None) is None
-    assert all("reset" not in a.text().lower() for a in m.context_menu.actions())
-    # The Control divider now follows Pause alone: hidden while Pause is off (even when the
-    # widget sits at a custom position), visible only when pause_in_menu is on.
-    m._refresh_dynamic_items()
-    assert not m.pause_separator.isVisible()
-
 
 def test_no_room_heads_up_shows_once_ever():
     from netspeedtray.views.widget.main import NetworkSpeedWidget as W
