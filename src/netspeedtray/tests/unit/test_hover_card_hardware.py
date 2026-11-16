@@ -210,8 +210,10 @@ def _hover_fake(layout="horizontal", fit=None, **config):
         _HOVER_HW_REFRESH_SEC=W._HOVER_HW_REFRESH_SEC)
     for name in ("_side_bar_fit", "_hover_hardware_wanted", "_hover_hardware_snapshot",
                  "_identity_presentation", "_identity_ssid_text", "_refresh_hover_hardware",
-                 "_bar_shows", "update_cpu_usage", "update_gpu_usage", "update_ram_info",
-                 "update_vram_info", "update_cpu_temp", "update_gpu_power"):
+                 "_bar_shows", "_set_hw_metric",
+                 "update_cpu_usage", "update_gpu_usage", "update_ram_info",
+                 "update_vram_info", "update_cpu_temp", "update_gpu_temp",
+                 "update_cpu_power", "update_gpu_power"):
         setattr(fake, name, types.MethodType(getattr(W, name), fake))
     return fake
 
@@ -380,6 +382,73 @@ def test_widget_keeps_every_reading_but_stops_repainting_for_hardware_it_hides(q
     off._refresh_hover_hardware = MagicMock()
     off.update_cpu_usage(81.0)
     off.update.assert_called_once()
+
+
+# --- 4b. Per-metric update_* semantics (the _set_hw_metric consolidation's contract) ---------------
+
+# (updater args, attributes set by the call, stored values, hover-card refreshes the call makes)
+_METRIC_CALLS = [
+    ("cpu", lambda f: f.update_cpu_usage(81.0), {"cpu_usage": 81.0}, 1),
+    ("gpu", lambda f: f.update_gpu_usage(12.0), {"gpu_usage": 12.0}, 1),
+    ("cpu_temp", lambda f: f.update_cpu_temp(70.0), {"cpu_temp": 70.0}, 0),
+    ("gpu_temp", lambda f: f.update_gpu_temp(65.0), {"gpu_temp": 65.0}, 0),
+    ("cpu_power", lambda f: f.update_cpu_power(45.0), {"cpu_power": 45.0}, 0),
+    ("gpu_power", lambda f: f.update_gpu_power(99.0), {"gpu_power": 99.0}, 0),
+    ("ram", lambda f: f.update_ram_info(10.0, 16.0), {"ram_used": 10.0, "ram_total": 16.0}, 1),
+    ("vram", lambda f: f.update_vram_info(4.0, 8.0), {"vram_used": 4.0, "vram_total": 8.0}, 1),
+]
+
+
+@pytest.mark.parametrize("name,call,stored,refreshes", _METRIC_CALLS, ids=[m[0] for m in _METRIC_CALLS])
+def test_update_stores_the_reading_and_follows_the_card_exactly_as_before(name, call, stored, refreshes):
+    """Every update_* stores its reading (the hover card and the Monitor window read it either
+    way), and the open hover card follows exactly the metrics it did upstream: CPU/GPU usage,
+    RAM and VRAM refresh it (RAM once, on the `used` half of its call); the temps and powers
+    don't - the card has no row for them."""
+    f = _hover_fake(widget_display_mode="network_only")     # the bar shows no hardware -> no repaints
+    f._refresh_hover_hardware = MagicMock()
+    call(f)
+    for attr, want in stored.items():
+        assert getattr(f, attr) == want, (attr, getattr(f, attr), want)
+    assert f._refresh_hover_hardware.call_count == refreshes
+
+
+@pytest.mark.parametrize("name,call,stored,refreshes", _METRIC_CALLS, ids=[m[0] for m in _METRIC_CALLS])
+def test_update_repaints_only_when_the_bar_shows_that_metric_family(name, call, stored, refreshes):
+    """The repaint gate: CPU-family metrics (cpu_usage, cpu_temp, cpu_power, RAM) repaint when the
+    painted bar is cpu_only / combined / side_by_side / cycle; GPU-family (gpu_usage, gpu_temp,
+    gpu_power, VRAM) when it is gpu_only / combined / side_by_side / cycle. The other family's
+    exclusive mode and network_only never repaint for it. (RAM's consolidated body repaints on
+    both halves of its call - Qt coalesces them into one paint, as upstream's single update()
+    did.)"""
+    cpu_family = name in ("cpu", "cpu_temp", "cpu_power", "ram")
+    for mode, want in (("cpu_only", cpu_family), ("gpu_only", not cpu_family),
+                       ("network_only", False), ("side_by_side", True), ("cycle", True)):
+        f = _hover_fake(widget_display_mode=mode)
+        f._refresh_hover_hardware = MagicMock()
+        call(f)
+        (f.update.assert_called if want else f.update.assert_not_called)()
+
+
+def test_paused_updates_store_nothing_and_repaint_nothing():
+    """The pause gate sits in front of the store: a paused widget keeps its last readings for
+    every metric family (the partial-freeze fix), hover card included."""
+    f = _hover_fake(widget_display_mode="side_by_side")
+    f._refresh_hover_hardware = MagicMock()
+    f.is_paused = True
+    f.update_cpu_usage(81.0)
+    f.update_gpu_usage(12.0)
+    f.update_cpu_temp(70.0)
+    f.update_gpu_temp(65.0)
+    f.update_cpu_power(45.0)
+    f.update_gpu_power(99.0)
+    f.update_ram_info(10.0, 16.0)
+    f.update_vram_info(4.0, 8.0)
+    assert (f.cpu_usage, f.gpu_usage) == (37.0, 52.0)         # the fixture's seeded values
+    assert (f.cpu_temp, f.gpu_temp, f.cpu_power, f.gpu_power) == (58.0, 64.0, 35.0, 120.0)
+    assert (f.ram_used, f.ram_total, f.vram_used, f.vram_total) == (9.2, 16.0, 3.1, 8.0)
+    f._refresh_hover_hardware.assert_not_called()
+    f.update.assert_not_called()
 
 
 def _controller_widget(cfg):
