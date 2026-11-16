@@ -339,10 +339,18 @@ class StatsMonitorThread(QThread):
         self._gpu_util_settling: bool = False
         # The hover card's "Idle" tag (2.2.1): (the NVIDIA adapters the Optimus gate judged on the last
         # poll - empty = not judged, whether it found them idle with nvidia-smi healthy). Kept as is over
-        # ONE poll whose engine array could not be read (the blind path), so a transient PDH failure
-        # does not take the tag's row away from an open card and rebuild it twice.
+        # a blind blip (below), so a transient PDH failure does not take the tag's row away from an open
+        # card and rebuild it twice.
         self._gpu_idle_gate: Tuple[frozenset, bool] = (frozenset(), False)
-        self._gpu_idle_gate_kept: bool = False
+        # Blind blips in a row (2.2.1): hybrid polls that wanted temperature / power, whose \GPU Engine
+        # counter exists but whose array read failed. Below HYBRID_BLIND_FAIL_OPEN_AFTER the Optimus gate
+        # keeps its last verdict (_nvidia_gate_verdict) and the Idle tag its own; from it, both give way
+        # to the fail-open blind path. Any poll that is not a blip resets it.
+        self._gpu_blind_streak: int = 0
+        # The Optimus gate's last judged verdict (True open / False closed), None when the last poll did
+        # not judge it (temperature / power off, no counter, a fail-open poll). A blip with None keeps
+        # the gate closed: like the settling sample, a poll that cannot judge never wakes the dGPU.
+        self._nvidia_gate_verdict: Optional[bool] = None
 
         # PDH Queries for GPU
         self._gpu_query: Optional[int] = None
@@ -628,6 +636,7 @@ class StatsMonitorThread(QThread):
             self._gpu_shared_counter = None
             self._gpu_collect_at = None
             self._gpu_util_settling = False
+            self._nvidia_gate_verdict = None   # a rebuilt query (resume) re-judges before it trusts
             # _gpu_engine_seen is deliberately NOT reset: a settings change or a resume rebuilds
             # the query, and forgetting that this machine has a GPU would blink the Monitor's GPU
             # tiles out until the next non-idle tick.
@@ -820,8 +829,24 @@ class StatsMonitorThread(QThread):
         gate_open = may_query = True
         gate_luids: List[Tuple[int, int]] = []   # the NVIDIA adapters the gate judged this poll
         self._nvidia_interval_now = self._NVIDIA_POLL_INTERVAL_SEC
+        # A blind blip (2.2.1): the counter exists but this poll's engine array could not be read - a
+        # transient PDH error. The first HYBRID_BLIND_FAIL_OPEN_AFTER - 1 in a row keep the gate's last
+        # verdict (closed stays closed: no nvidia-smi, so one blip never wakes a sleeping dGPU); a
+        # lasting failure then fails open below. No counter at all is not a blip: open at once.
+        blind_blip = (hybrid and self._gpu_util_counter is not None and util_arr is None
+                      and (include_temp or include_power))
+        self._gpu_blind_streak = self._gpu_blind_streak + 1 if blind_blip else 0
+        blip_kept = blind_blip and self._gpu_blind_streak < constants.gpu.HYBRID_BLIND_FAIL_OPEN_AFTER
+        if blip_kept:
+            # The verdict is kept, but no NEW nvidia-smi call is made on a blip (cached readings only):
+            # the kept verdict may be stale (a resume, a rebuild) and this poll has no sample to check it.
+            gate_open, may_query = bool(self._nvidia_gate_verdict), False
+        else:
+            self._nvidia_gate_verdict = None   # until the gate judges this poll's sample below
         if hybrid:
-            if self._gpu_util_counter is None or util_arr is None:
+            if blip_kept:
+                pass   # the kept verdict above: no battery cadence, no "unavailable" line
+            elif self._gpu_util_counter is None or util_arr is None:
                 # No utilization to judge by: fail OPEN - readings never go blank - but on battery at
                 # a slower cadence (each call may wake the dGPU). Power source unknown: as on AC.
                 if self._on_battery_power():
@@ -842,6 +867,7 @@ class StatsMonitorThread(QThread):
                     engine_util.per_adapter if engine_util is not None else {}, nvidia_luids, window_start,
                     settling=settling)
                 gate_luids = nvidia_luids
+                self._nvidia_gate_verdict = gate_open
             # else: GPU temperature and power both off - nvidia-smi cannot be asked this poll (the total
             # is never a reason on a hybrid), so the gate is not judged (2.2.1). Nothing else reads it
             # then: the hover list drops temperature / power with the same switches, the LHM notice
@@ -853,16 +879,11 @@ class StatsMonitorThread(QThread):
                 pick_name, pick = self._nvidia_pick_cache
                 self._nvidia_pick_cache = (pick_name, (None, None, pick[2]))
         self._nvidia_gate_open = gate_open
-        # A known sensor that is only asleep (no failure so far): not "no sensor" (the LHM notice).
-        self._gpu_sensor_asleep = hybrid and not gate_open and self._nvidia_fail_streak == 0
-        # Which cards that verdict is about - the hover card's "Idle" tag (2.2.1). A poll that could not
-        # read the engine array keeps the last verdict once (see _gpu_idle_gate).
-        blind_blip = (hybrid and self._gpu_util_counter is not None and util_arr is None
-                      and (include_temp or include_power))
-        if blind_blip and not self._gpu_idle_gate_kept:
-            self._gpu_idle_gate_kept = True
-        else:
-            self._gpu_idle_gate_kept = False
+        # Which cards that verdict is about - the hover card's "Idle" tag (2.2.1) - and whether the dGPU's
+        # sensor is a known one that is only asleep (no failure so far): not "no sensor" (the LHM
+        # notice). A kept blind blip changes neither: the tag and the notice agree with the gate it kept.
+        if not blip_kept:
+            self._gpu_sensor_asleep = hybrid and not gate_open and self._nvidia_fail_streak == 0
             self._gpu_idle_gate = (frozenset(gate_luids), self._gpu_sensor_asleep)
         if selected is None:
             # On a hybrid the total alone is never a reason to call (owner decision 2026-11-11: zero
