@@ -1,14 +1,14 @@
 """
-NetworkHeader - the Monitor Network tab's header band. Verifies the period segmented control emits
-the right PERIOD_MAP index, programmatic selection is silent, and the totals format with the
-locale decimal separator (matching the graph's localized text in the same window).
+NetworkHeader - the Monitor Network tab's header band. Verifies the period-key mapping, that a
+period pick on the shared TimelineSelector is re-emitted as the PERIOD_MAP index, and that the
+totals format with the locale decimal separator (matching the graph's localized text in the same
+window). (The old PeriodSegmentedControl pill row was retired - the header hosts the shared
+TimelineSelector dropdown now.)
 """
 import pytest
 
 from netspeedtray.constants.i18n import I18nStrings
-from netspeedtray.views.monitor.network.header import (
-    NetworkHeader, PeriodSegmentedControl, _period_value,
-)
+from netspeedtray.views.monitor.network.header import NetworkHeader, _period_value
 
 
 def test_period_value_maps_keys():
@@ -16,28 +16,6 @@ def test_period_value_maps_keys():
     assert _period_value("TIMELINE_24_HOURS") == 2
     assert _period_value("TIMELINE_ALL") == 5
     assert _period_value("nonsense") == 2  # safe default
-
-
-def test_pills_emit_index_on_click(q_app):
-    seen = []
-    pills = PeriodSegmentedControl("TIMELINE_24_HOURS")
-    pills.period_changed.connect(seen.append)
-    pills._buttons["TIMELINE_WEEK"].click()
-    assert seen == [3]
-    assert pills._buttons["TIMELINE_WEEK"].isChecked()
-    assert not pills._buttons["TIMELINE_24_HOURS"].isChecked()  # exclusive
-
-
-def test_set_period_key_is_silent(q_app):
-    seen = []
-    pills = PeriodSegmentedControl("TIMELINE_24_HOURS")
-    pills.period_changed.connect(seen.append)
-    pills.set_period_key("TIMELINE_MONTH")           # programmatic -> no signal
-    assert seen == []
-    assert pills._buttons["TIMELINE_MONTH"].isChecked()
-    pills.set_period_key("bogus")                     # unknown -> falls back to 24H, still silent
-    assert seen == []
-    assert pills._buttons["TIMELINE_24_HOURS"].isChecked()
 
 
 def test_header_forwards_period_change(q_app):
@@ -73,121 +51,3 @@ def test_initial_value_placeholders_seeded(q_app):
     assert h._up[1].text() == "↑ -"
 
 
-def test_pills_style_is_theme_aware(q_app):
-    """The Monitor pills must restyle by theme (the dark-only graph style is invisible in light mode)."""
-    from netspeedtray.utils import styles as su
-    assert su.segmented_pills_style(True) != su.segmented_pills_style(False)
-    assert "rgba(0,0,0" in su.segmented_pills_style(False)      # light uses dark-on-light fills
-    assert "rgba(255,255,255" in su.segmented_pills_style(True)  # dark uses light-on-dark fills
-
-
-def test_set_period_raises_dedup_floor_and_routes(q_app):
-    """set_period must drop any in-flight previous-period reply (stale-totals race) and route the
-    period change through the coordinator (debounce + ylim reset), not a direct refresh."""
-    from unittest.mock import MagicMock
-    from netspeedtray.views.monitor.graph_host import GraphHost
-    mw = MagicMock(); mw.config = {}
-    host = GraphHost(mw, {}, I18nStrings("en_US"))
-    host._loaded = True                      # bypass ensure_loaded (no matplotlib/thread in the test)
-    host.coordinator = MagicMock()
-    host._current_request_id = 7
-    host.set_period(3)                       # user picks Week
-    assert host._accept_from_seq == 8        # floor raised past every in-flight request
-    host.coordinator.handle_timeline_change.assert_called_once_with("TIMELINE_WEEK")
-    assert host._history_period_value == 3
-
-
-def test_interface_dropdown_populates_and_emits(q_app):
-    h = NetworkHeader(I18nStrings("en_US"), "TIMELINE_24_HOURS")
-    h.set_interfaces(["Wi-Fi", "Ethernet"])
-    assert len(h._iface_menu.actions()) == 3      # "All Interfaces" + 2 NICs
-    seen = []
-    h.interface_changed.connect(seen.append)
-    h._select_iface("Ethernet", "Ethernet")       # as if the menu item were clicked
-    assert seen == ["Ethernet"]
-    assert h._iface_value == "Ethernet"
-    assert "Ethernet" in h._iface_btn.text()       # button reflects the selection
-
-
-def test_set_interfaces_preserves_selection(q_app):
-    h = NetworkHeader(I18nStrings("en_US"), "TIMELINE_24_HOURS")
-    h.set_interfaces(["Wi-Fi", "Ethernet"])
-    h._select_iface("Wi-Fi", "Wi-Fi")
-    h.set_interfaces(["Wi-Fi", "Ethernet", "vEthernet"])   # repopulate (e.g. a NIC appeared)
-    assert h._iface_value == "Wi-Fi"                       # selection kept
-    h.set_interfaces(["Ethernet"])                         # Wi-Fi disappeared -> fall back to all
-    assert h._iface_value == "all"
-
-
-def test_set_interface_filter_raises_dedup_floor(q_app):
-    from unittest.mock import MagicMock
-    from netspeedtray.views.monitor.graph_host import GraphHost
-    host = GraphHost(MagicMock(), {}, I18nStrings("en_US"))
-    host._loaded = True
-    host.update_graph = MagicMock()
-    host._current_request_id = 5
-    host.set_interface_filter("Ethernet")
-    assert host.interface_filter == "Ethernet" and host._accept_from_seq == 6
-    host.set_interface_filter("all")
-    assert host.interface_filter is None                   # "all" -> no filter
-
-
-def test_header_totals_localized_separator(q_app):
-    """On a comma-decimal locale the totals must use ',' (so they match the graph's localized text)."""
-    h = NetworkHeader(I18nStrings("de_DE"), "TIMELINE_24_HOURS")
-    h.set_totals(up_bytes=1.2e9, down_bytes=3.4e9, period_key="TIMELINE_24_HOURS")
-    sep = getattr(I18nStrings("de_DE"), "DECIMAL_SEPARATOR", ".")
-    if sep == ",":
-        assert "," in h._down[1].text()
-        assert "." not in h._down[1].text().split("GB")[0]
-
-
-# --- rc.2 S7: the band at the Monitor's 660 px minimum, with the D5 note on --------------------------
-
-def _header_with_note(qtbot, locale):
-    from types import SimpleNamespace
-    h = NetworkHeader(I18nStrings(locale), "TIMELINE_24_HOURS",
-                      graph_host=SimpleNamespace(is_live=True))   # adds the Live pill, like the real tab
-    qtbot.addWidget(h)
-    h.set_totals(up_bytes=98.7e9, down_bytes=1234.5e9, period_key="TIMELINE_24_HOURS", reconstructed=True)
-    return h
-
-
-@pytest.mark.parametrize("nic", ["all", "Ethernet 3 (Realtek PCIe 2.5GbE Family Controller)"])
-@pytest.mark.parametrize("locale", ["en_US", "de_DE", "ru_RU", "hu_HU", "fr_FR", "it_IT", "ja_JP", "he_IL",
-                                    "es_ES", "nl_NL", "pl_PL", "tr_TR", "sl_SI"])
-def test_history_note_never_pushes_the_band_past_its_width(qtbot, locale, nic):
-    """At the Monitor's 660 px minimum the note held its 160 px floor, so the band's minimum overran
-    the window and Qt squeezed the timeline ("Mu…") and the Live pill ("tempo r") below their own
-    minimums in every locale (rc.2 S7). The note must give way instead: narrow, then hide - with its
-    text on the totals' tooltips. Swept over widths (both directions) rather than pinned to 660 px,
-    because the test platform's font metrics are not Windows'."""
-    from netspeedtray import constants
-    L = constants.layout
-    h = _header_with_note(qtbot, locale)
-    if nic != "all":
-        h._iface_value = nic
-        h._sync_iface_text()
-    btn = h._iface_btn
-    # What the NIC button needs beyond its eliding floor to show its whole name (up to its max).
-    shortfall = max(0, min(btn.sizeHint().width(), btn.maximumWidth()) - btn.minimumSizeHint().width())
-    lay, note = h.layout(), h._history_note
-    widths = list(range(300, 2800, 20))
-    for w in widths + widths[::-1]:
-        h._fit(w)
-        lay.activate()
-        base = h._min_without_note()
-        if not note.isHidden():
-            # ... and never at the cost of the NIC name: the button still gets its full width.
-            assert lay.minimumSize().width() + shortfall <= w, \
-                f"{locale} @ {w}: the note overran the band or truncated the NIC name"
-            assert note.minimumWidth() >= L.MONITOR_HISTORY_NOTE_COMPACT_MIN_WIDTH
-            assert h._down[1].toolTip() == ""
-        else:
-            assert h._down[1].toolTip() == h._up[1].toolTip() == note.full_text() != ""
-        if w >= base + shortfall + L.MONITOR_HISTORY_NOTE_MIN_WIDTH + lay.spacing():
-            assert not note.isHidden() and note.minimumWidth() == L.MONITOR_HISTORY_NOTE_MIN_WIDTH
-    # Not estimated any more: no note, no tooltip.
-    h.set_totals(up_bytes=1.0, down_bytes=2.0, period_key="TIMELINE_24_HOURS", reconstructed=False)
-    h._fit(300)
-    assert note.isHidden() and h._down[1].toolTip() == ""

@@ -27,27 +27,6 @@ logger = logging.getLogger("NetSpeedTray.NetworkUtils")
 _WLAN_OPCODE_CHANNEL_NUMBER = 8
 
 
-def guid_to_friendly_name(guid: str) -> Optional[str]:
-    """
-    On Windows, maps a network interface GUID (e.g., '{7BB8DA25-E8B9-44C0-8BC8-09F08D0BC446}')
-    to its friendly name (e.g., 'Ethernet') using WMI.
-    Returns the friendly name if found, else None.
-    """
-    if sys.platform != "win32":
-        return None
-    try:
-        from netspeedtray.utils.com_utils import import_wmi
-        c = import_wmi().WMI()
-        for iface in c.Win32_NetworkAdapter():
-            # NetConnectionID is the friendly name, GUID is in the GUID property
-            if hasattr(iface, 'GUID') and iface.GUID and iface.GUID.lower() == guid.strip('{}').lower():
-                return getattr(iface, 'NetConnectionID', None)
-    except ImportError:
-        logger.warning("The 'wmi' module is not installed; cannot map GUID to friendly name.")
-    except Exception as e:
-        logger.error(f"Error mapping GUID to friendly name: {e}", exc_info=True)
-    return None
-
 # --- transient-state logging ------------------------------------------------------------------
 #
 # `get_primary_interface_name()` sits on the per-poll path. Logging a warning on every failed

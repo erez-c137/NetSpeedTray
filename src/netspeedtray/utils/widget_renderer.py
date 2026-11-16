@@ -879,20 +879,6 @@ class WidgetRenderer:
         }
 
 
-    def _draw_error(self, painter: QPainter, rect: QRect, message: str) -> None:
-        """Draws an error message on the widget."""
-        painter.save()
-        painter.fillRect(rect, QColor(150, 0, 0, 200))
-        painter.setPen(Qt.GlobalColor.white)
-        # Use simple fallback if config failed
-        base_size = self.config.font_size if self.config else 9
-        error_font = QFont(self.font)
-        error_font.setPointSize(max(6, base_size - 2))
-        painter.setFont(error_font)
-        draw_text_centered(painter, rect, message)
-        painter.restore()
-
-
     def draw_background(self, painter: QPainter, rect: QRect, config: RenderConfig) -> None:
         """Draws the widget background. Ensures at least minimal opacity for hit testing."""
         # Check if we need to refresh cache (if config values moved)

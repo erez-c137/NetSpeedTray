@@ -18,7 +18,8 @@ class UnitsPage(QWidget):
         self._setup_ui()
 
     def _tr(self, key: str, default: str) -> str:
-        return str(getattr(self.i18n, key, default)) if self.i18n is not None else default
+        from netspeedtray.utils.helpers import tr
+        return tr(self.i18n, key, default)
 
     def _setup_ui(self):
         # 2.0 IA: one Win11 Settings card per setting under light section captions (was QGroupBox grids).

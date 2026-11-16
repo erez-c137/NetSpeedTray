@@ -210,7 +210,8 @@ def _hover_fake(layout="horizontal", fit=None, **config):
         _HOVER_HW_REFRESH_SEC=W._HOVER_HW_REFRESH_SEC)
     for name in ("_side_bar_fit", "_hover_hardware_wanted", "_hover_hardware_snapshot",
                  "_identity_presentation", "_identity_ssid_text", "_refresh_hover_hardware",
-                 "_bar_shows", "update_cpu_usage", "update_gpu_usage", "update_ram_info",
+                 "_bar_shows", "_set_hw_metric",
+                 "update_cpu_usage", "update_gpu_usage", "update_ram_info",
                  "update_vram_info", "update_cpu_temp", "update_gpu_power"):
         setattr(fake, name, types.MethodType(getattr(W, name), fake))
     return fake

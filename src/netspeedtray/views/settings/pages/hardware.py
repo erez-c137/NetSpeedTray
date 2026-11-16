@@ -578,15 +578,8 @@ class HardwarePage(QWidget):
         self.on_change()
 
     def _set_card_enabled(self, card: SettingCard, enabled: bool) -> None:
-        """Gray out a dependent card when its prerequisite is off. setEnabled alone won't visually dim
-        our fixed-color custom toggle, so pair it with an opacity effect for the Win11 'unavailable'
-        look (and to make the card non-interactive)."""
-        card.setEnabled(enabled)
-        eff = card.graphicsEffect()
-        if not isinstance(eff, QGraphicsOpacityEffect):
-            eff = QGraphicsOpacityEffect(card)
-            card.setGraphicsEffect(eff)
-        eff.setOpacity(1.0 if enabled else 0.4)
+        from netspeedtray.views.settings.pages._fluent import set_card_enabled
+        set_card_enabled(card, enabled)
 
     def _sync_dependent_cards(self) -> None:
         """Gray out the toggles that have nowhere to render (Win11 dependent-control pattern):

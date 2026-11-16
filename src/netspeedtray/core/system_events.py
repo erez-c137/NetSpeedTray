@@ -19,6 +19,7 @@ from PyQt6.QtGui import QGuiApplication
 
 from netspeedtray.constants import timeouts
 from netspeedtray.constants.shell import shell as shell_constants
+from netspeedtray.utils.taskbar_utils import _NativeMSG
 from netspeedtray.utils.taskbar_utils import (
     get_taskbar_info, is_taskbar_obstructed, is_window_on_screen, TaskbarInfo
 )

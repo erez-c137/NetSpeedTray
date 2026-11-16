@@ -37,7 +37,6 @@ class GraphLogic:
 
         return start_time, now
 
-    @staticmethod
     def get_db_size_mb(db_path: Optional[str]) -> float:
         """Calculates the size of the database file in megabytes."""
         if db_path and os.path.exists(db_path):
@@ -47,7 +46,6 @@ class GraphLogic:
                 pass
         return 0.0
 
-    @staticmethod
     def days_to_retention_slider_value(days: int) -> int:
         """Maps a day count to the 0-6 slider index based on constants."""
         for slider_value, mapped_days in constants.data.retention.DAYS_MAP.items():
@@ -55,7 +53,6 @@ class GraphLogic:
                 return slider_value
         return 3 # Default to 30 days
 
-    @staticmethod
     def slider_value_to_retention_days(slider_value: int) -> int:
         """Maps a slider index (0-6) back to a day count."""
         return constants.data.retention.DAYS_MAP.get(slider_value, 30)
@@ -72,7 +69,6 @@ class GraphLogic:
             slider_value, constants.data.history_period.DEFAULT_PERIOD
         )
 
-    @staticmethod
     def calculate_stats(history_data: List[Tuple[float, float, float]]) -> Dict[str, float]:
         """
         Calculates Max and Average speeds (Mbps) from raw history data.

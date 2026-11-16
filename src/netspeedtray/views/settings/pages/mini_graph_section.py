@@ -234,11 +234,6 @@ class MiniGraphSection(QWidget):
 
     @staticmethod
     def _set_card_enabled(card: SettingCard, enabled: bool) -> None:
-        """The Win11 dependent-control look HardwarePage uses: setEnabled alone won't dim our fixed-color
-        toggle, hence the opacity effect."""
-        card.setEnabled(enabled)
-        eff = card.graphicsEffect()
-        if not isinstance(eff, QGraphicsOpacityEffect):
-            eff = QGraphicsOpacityEffect(card)
-            card.setGraphicsEffect(eff)
-        eff.setOpacity(1.0 if enabled else 0.4)
+        """The Win11 dependent-control look (shared helper - HardwarePage's docstring applies)."""
+        from netspeedtray.views.settings.pages._fluent import set_card_enabled
+        set_card_enabled(card, enabled)

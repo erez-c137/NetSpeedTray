@@ -88,6 +88,14 @@ def _rgb(hex_code: str):
     return tuple(int(hex_code[i:i + 2], 16) for i in (1, 3, 5))
 
 
+def _bg_alpha(config: "Dict[str, Any]") -> float:
+    """The user background opacity (0-100) as a 0.0-1.0 composite factor."""
+    try:
+        return max(0.0, min(1.0, float(config.get("background_opacity", 0) or 0) / 100.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def backdrop_is_light(config: Dict[str, Any], shell_light: Optional[bool] = None) -> bool:
     """Which half of the scheme the widget's text sits on: the widget's own background colour,
     composited at its opacity over the taskbar (the mode's reference colour), as DWM shows it.
@@ -100,10 +108,7 @@ def backdrop_is_light(config: Dict[str, Any], shell_light: Optional[bool] = None
     if shell_light is None:
         shell_light = shell_is_light()
     taskbar = taskbar_color(shell_light)
-    try:
-        alpha = max(0.0, min(1.0, float(config.get("background_opacity", 0) or 0) / 100.0))
-    except (TypeError, ValueError):
-        alpha = 0.0
+    alpha = _bg_alpha(config)
     bg = config.get("background_color")
     accent = taskbar not in (constants.color.TASKBAR_REFERENCE_DARK, constants.color.TASKBAR_REFERENCE_LIGHT)
     if alpha <= 0.0 or not _is_hex(bg):
@@ -144,10 +149,7 @@ def seen_backdrop(config: Dict[str, Any], shell_light: Optional[bool] = None) ->
     if shell_light is None:
         shell_light = shell_is_light()
     bar = taskbar_color(shell_light)
-    try:
-        alpha = max(0.0, min(1.0, float(config.get("background_opacity", 0) or 0) / 100.0))
-    except (TypeError, ValueError):
-        alpha = 0.0
+    alpha = _bg_alpha(config)
     bg = config.get("background_color")
     if alpha <= 0.0 or not _is_hex(bg):
         return bar
