@@ -235,6 +235,8 @@ class StatsMonitorThread(QThread):
         # every 0.1 s to look at a bool, and stop() still ends that wait at once. _is_running stays
         # the public face (a property over this event).
         self._stop_event = threading.Event()
+        # What the period wait blocks on: set by stop and by a rate change (set_interval, GUI thread).
+        self._wake_event = threading.Event()
         self._is_running = True
         # Runtime override: the Monitor window flips this on while it's open so its Overview/Hardware
         # screens show CPU/GPU/RAM/VRAM (+ temps) even when the TASKBAR WIDGET has hardware monitoring
@@ -439,6 +441,15 @@ class StatsMonitorThread(QThread):
             ev = self._stop_event = threading.Event()
         return ev
 
+    def _wake_flag(self) -> threading.Event:
+        """The event the period wait blocks on, created on first use (tests build this thread with
+        __new__). Set by stop AND by set_interval; only the stop event says "stopping", so a rate
+        change can never be mistaken for a stop."""
+        ev = self.__dict__.get("_wake_event")
+        if ev is None:
+            ev = self._wake_event = threading.Event()
+        return ev
+
     @property
     def _is_running(self) -> bool:
         return not self._stop_flag().is_set()
@@ -450,12 +461,43 @@ class StatsMonitorThread(QThread):
             self._stop_flag().clear()
         else:
             self._stop_flag().set()
+            self._wake_flag().set()
 
     def _wait_for_stop(self, seconds: float) -> bool:
-        """Sleep up to ``seconds`` in a single wait; returns at once when stopping. True = stopping."""
-        if seconds <= 0:
-            return not self._is_running
-        return self._stop_flag().wait(seconds)
+        """Sleep up to ``seconds`` in a single wait; returns at once when stopping, or early when woken
+        (a rate change). True = stopping."""
+        if not self._is_running:
+            return True
+        if seconds > 0:
+            self._wake_flag().wait(seconds)
+        return not self._is_running
+
+    def _effective_interval(self) -> float:
+        """The period to wait: the update rate, or an exponential backoff while in an error streak so
+        a failing source isn't hammered every second (capped at _MAX_BACKOFF_SEC)."""
+        if self.consecutive_errors == 0:
+            return self.interval
+        return min(self._MAX_BACKOFF_SEC, self.interval * (2 ** min(self.consecutive_errors, 5)))
+
+    def _wait_period(self) -> bool:
+        """ONE wait per period (2.2.1); a rate change (set_interval) wakes it and the rest of the period
+        is re-measured at the new rate - so 10 s -> 0.5 s applies at once, not up to 10 s later.
+        True = stopping."""
+        wake = self._wake_flag()
+        started = time.monotonic()
+        first = True
+        while True:
+            # Clear BEFORE reading the interval: a change after this point sets it again and ends the
+            # wait below; one before it is already in self.interval. A stop is never lost - its own
+            # event is checked first thing in _wait_for_stop.
+            wake.clear()
+            period = self._effective_interval()
+            remaining = period if first else period - (time.monotonic() - started)
+            first = False
+            if self._wait_for_stop(remaining):
+                return True
+            if not wake.is_set():
+                return False   # the period ran out (or was already over at the new rate)
 
     @property
     def lhm_status(self) -> str:
@@ -472,6 +514,8 @@ class StatsMonitorThread(QThread):
         self.interval = max(0.1, interval)
         if previous != self.interval:
             self.logger.info("Monitoring interval changed: %.2fs -> %.2fs", previous, self.interval)
+            # Apply it to the wait in progress (run() re-measures the period), not from the next one.
+            self._wake_flag().set()
 
     def update_config(self, config: Dict[str, Any]) -> None:
         """Update the config copy and FLAG the hardware queries for re-init on the worker thread.
@@ -2200,18 +2244,10 @@ class StatsMonitorThread(QThread):
                                         self._ERROR_NOTIFY_THRESHOLD)
                     self.error_occurred.emit(f"Hardware monitor is having trouble: {e}")
 
-            # Responsive sleep, with exponential backoff while in an error streak so a failing
-            # source isn't hammered every second (capped at _MAX_BACKOFF_SEC; recovers on success).
-            if self.consecutive_errors == 0:
-                effective_interval = self.interval
-            else:
-                effective_interval = min(
-                    self._MAX_BACKOFF_SEC,
-                    self.interval * (2 ** min(self.consecutive_errors, 5)),
-                )
-            # ONE wait per period (2.2.1): stop() sets the event, so a quit still ends it at once.
-            # This replaced 0.1 s slices - ten wake-ups a second at any rate, for nothing.
-            self._wait_for_stop(effective_interval)
+            # ONE wait per period (2.2.1), with the error backoff (_effective_interval): stop() ends it
+            # at once and a rate change re-measures it. This replaced 0.1 s slices - ten wake-ups a
+            # second at any rate, for nothing.
+            self._wait_period()
 
         self._network_identity_monitor.close()
         self._cleanup_gpu_query()
