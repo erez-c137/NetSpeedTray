@@ -645,5 +645,5 @@
     "BACKUP_HISTORY_ERR_BUSY": "Már fut egy biztonsági mentés ebbe a fájlba.",
     "CONTEXT_MENU_ITEMS_LABEL": "A jobb kattintásos menü elemei",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Válaszd ki, mely elemek jelenjenek meg a widget jobb kattintásos menüjében. A {settings} és a {exit} mindig látható.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "A tálcád kiemelőszínt mutat, ezért a rajta nehezen olvasható színek jól olvasható szövegszínnel jelennek meg."
+    "ACCENT_TASKBAR_COLORS_NOTE": "A tálcán kiemelőszín van beállítva, ezért a nehezen olvasható színek helyett a program jól látható szövegszínt használ."
 }
