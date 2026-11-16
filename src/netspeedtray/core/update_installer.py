@@ -574,15 +574,19 @@ class _DownloadWorker(QObject):
                 # uses. Anything swapped in before the guard was taken - including a
                 # same-certificate replacement - fails here instead of riding the elevation
                 # prompt. Fail-closed: a missing checksum entry is a refusal.
-                if self._checksums_url and self._expected_name:
-                    checksums = _fetch_checksums(self._checksums_url)
-                    expected = _expected_hash_for(checksums, self._expected_name)
-                    if not expected:
-                        raise RuntimeError("no published checksum for the installer")
-                    if _sha256_file(self._dest) != expected:
-                        logger.warning("Installer checksum MISMATCH for %s", self._expected_name)
-                        raise RuntimeError("checksum mismatch - the download may be corrupt or tampered")
-                    logger.info("Installer checksum verified for %s", self._expected_name)
+                if not self._checksums_url or not self._expected_name:
+                    # Fail-closed like the portable path: without the release's checksums
+                    # reference the pin cannot be tied to this release, so the update is
+                    # refused - a silently skipped check would be worse than no check.
+                    raise RuntimeError("missing checksums reference for the installer update")
+                checksums = _fetch_checksums(self._checksums_url)
+                expected = _expected_hash_for(checksums, self._expected_name)
+                if not expected:
+                    raise RuntimeError("no published checksum for the installer")
+                if _sha256_file(self._dest) != expected:
+                    logger.warning("Installer checksum MISMATCH for %s", self._expected_name)
+                    raise RuntimeError("checksum mismatch - the download may be corrupt or tampered")
+                logger.info("Installer checksum verified for %s", self._expected_name)
                 result = verify_file(self._dest)
                 self.verified.emit(self._dest, result.trusted, result.reason)
         except Exception as e:  # noqa: BLE001

@@ -667,6 +667,39 @@ def test_a_hands_off_update_is_staged_in_the_app_folder_not_downloads(
     assert list((tmp_path / "Downloads").iterdir()) == [], "nothing is put in the user's Downloads"
 
 
+def test_the_downloaded_zip_is_kept_beside_the_staged_copy_once_the_pin_is_gone(
+        tmp_path, root, checksums, monkeypatch):
+    """Review round 2: the hands-off staging moves the downloaded ZIP beside the staged copy -
+    which needs the launch pin on the ZIP RELEASED first. While the pin held, that move would fail
+    with a sharing violation and be swallowed by the keep-the-package `except`, silently discarding
+    the package the post-update janitor still needs. Full worker run, real guards, real hash."""
+    from netspeedtray.core import update_installer as ui
+    install = _portable(tmp_path / "Apps", "NetSpeedTray")
+    (tmp_path / "Downloads").mkdir()
+    z = _release_zip(tmp_path)
+    payload = z.read_bytes()
+    checksums(z)
+    acquired = []
+    real_acquire = ui._acquire_launch_guards
+
+    def recording_acquire(path):
+        acquired.append(path)
+        return real_acquire(path)
+    monkeypatch.setattr(ui, "_acquire_launch_guards", recording_acquire)
+    monkeypatch.setattr(ui, "download_to", lambda *a, **k: None)  # the ZIP is already at the dest
+
+    w = _worker(tmp_path, z, app_dir=str(install), staging_target=str(root / "NetSpeedTray-9.9.9"))
+    got = []
+    w.staged.connect(got.append)
+    w.run()
+
+    assert got == [str(root / "NetSpeedTray-9.9.9")]
+    assert acquired == [str(z)], "the ZIP was pinned for the checksum read"
+    assert (root / "NetSpeedTray-9.9.9.zip").read_bytes() == payload, (
+        "the update package is kept, intact, beside its staged copy")
+    assert ui._LAUNCH_GUARDS is None, "the pin is dropped once the ZIP has been consumed"
+
+
 def test_the_guided_fallback_still_stages_in_downloads(tmp_path, root, checksums):
     """No hands-off possible (here: no install to swap) -> the user copies it by hand, so it
     goes where they will find it, and no zip is kept."""

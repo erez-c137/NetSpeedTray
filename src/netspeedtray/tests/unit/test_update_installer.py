@@ -359,3 +359,195 @@ def test_start_connects_every_worker_signal(q_app, tmp_path, monkeypatch, portab
         up._close_progress()
         up._thread = None
         up._worker = None
+
+
+# ---------------------------------- review round 2: the installer worker's guarded re-verification
+# The installer branch of _DownloadWorker.run() must pin the download FIRST, tie the pinned file to
+# the release via checksums.txt, and refuse closed on every mismatch - each refusal drops the pins
+# and routes to `failed` (the browser fallback). Removing any of these steps used to leave every
+# other updater test green (review round 2), so each one is pinned directly here.
+
+import hashlib
+
+_INSTALLER_URL = "https://github.com/x/y/releases/download/v2.2.0/NetSpeedTray-2.2.0-x64-Setup.exe"
+_CHECKSUMS_URL = "https://github.com/x/y/releases/download/v2.2.0/checksums.txt"
+_SETUP_NAME = "NetSpeedTray-2.2.0-x64-Setup.exe"
+_FAKE_INSTALLER = b"MZ fake installer"
+
+
+@pytest.fixture(autouse=True)
+def _drop_any_guards_left_behind():
+    """The worker's success path leaves the pins held ON PURPOSE (launch_installer releases them
+    once the elevated shell has started); drop whatever a test here left behind so handles and pins
+    never leak into a later test."""
+    yield
+    ui._release_launch_guards()
+
+
+def _installer_worker(tmp_path, monkeypatch, *, checksums_text=None, fetch_error=False,
+                      acquire_result=None):
+    """An installer-mode worker harness: the download writes a real dummy file, the checksums fetch
+    and the Authenticode gate are faked (recorded), but the launch guards and the SHA-256 run for
+    real. Returns (worker, caps) with the captured signals and calls."""
+    from netspeedtray.utils import signature_verifier
+
+    dest = tmp_path / _SETUP_NAME
+
+    def fake_download(url, d, progress_cb=None, is_cancelled=None):
+        with open(d, "wb") as f:
+            f.write(_FAKE_INSTALLER)
+    monkeypatch.setattr(ui, "download_to", fake_download)
+
+    if fetch_error:
+        def broken_fetch(url):
+            raise RuntimeError("simulated: checksums.txt unreachable")
+        monkeypatch.setattr(ui, "_fetch_checksums", broken_fetch)
+    else:
+        monkeypatch.setattr(ui, "_fetch_checksums", lambda url: checksums_text)
+
+    verify_calls = []
+
+    def recording_verify(path):
+        verify_calls.append(path)
+        return signature_verifier.VerifyResult(True, "", subject_cn="X")
+    monkeypatch.setattr(ui, "verify_file", recording_verify)
+
+    acquire_calls = []
+    real_acquire = ui._acquire_launch_guards
+
+    def recording_acquire(path):
+        acquire_calls.append(path)
+        return real_acquire(path) if acquire_result is None else acquire_result
+    monkeypatch.setattr(ui, "_acquire_launch_guards", recording_acquire)
+
+    w = ui._DownloadWorker(_INSTALLER_URL, str(dest), portable=False,
+                           checksums_url=_CHECKSUMS_URL, expected_name=_SETUP_NAME)
+    failed, verified = [], []
+    w.failed.connect(failed.append)
+    w.verified.connect(lambda path, trusted, reason: verified.append((path, trusted, reason)))
+    return w, {"failed": failed, "verified": verified, "verify_calls": verify_calls,
+               "acquire_calls": acquire_calls, "dest": dest}
+
+
+def _match_line() -> str:
+    """A checksums.txt line that really matches the fake download (uppercase, as published)."""
+    return f"{hashlib.sha256(_FAKE_INSTALLER).hexdigest().upper()} {_SETUP_NAME}\n"
+
+
+def test_installer_worker_checksum_mismatch_fails_and_drops_the_guards(tmp_path, monkeypatch):
+    w, caps = _installer_worker(tmp_path, monkeypatch,
+                                checksums_text=f"{'F' * 64} {_SETUP_NAME}\n")
+
+    w.run()
+
+    assert len(caps["failed"]) == 1 and "checksum mismatch" in caps["failed"][0]
+    assert caps["verified"] == [] and caps["verify_calls"] == [], "a tampered download never reaches the gate"
+    assert caps["acquire_calls"] == [str(caps["dest"])], "the pin was taken before the check"
+    assert ui._LAUNCH_GUARDS is None, "a refusal must not carry the pins with it"
+
+
+def test_installer_worker_missing_checksum_entry_fails_and_drops_the_guards(tmp_path, monkeypatch):
+    """Fail closed: a checksums.txt that does not list THIS artifact is a refusal, not a pass."""
+    w, caps = _installer_worker(tmp_path, monkeypatch,
+                                checksums_text=f"{'A' * 64} some-other-asset.exe\n")
+
+    w.run()
+
+    assert len(caps["failed"]) == 1 and "no published checksum" in caps["failed"][0]
+    assert caps["verified"] == [] and caps["verify_calls"] == []
+    assert ui._LAUNCH_GUARDS is None
+
+
+def test_installer_worker_checksum_fetch_error_fails_and_drops_the_guards(tmp_path, monkeypatch):
+    w, caps = _installer_worker(tmp_path, monkeypatch, fetch_error=True)
+
+    w.run()
+
+    assert len(caps["failed"]) == 1 and "checksums.txt unreachable" in caps["failed"][0]
+    assert caps["verified"] == [] and caps["verify_calls"] == []
+    assert ui._LAUNCH_GUARDS is None
+
+
+def test_installer_worker_checksum_match_reaches_verify_file(tmp_path, monkeypatch):
+    """The happy path: the pinned file's SHA-256 matches the release, and the Authenticode gate
+    actually runs - `verified` carries its verdict while the pin holds (releasing it is
+    launch_installer's job, after the elevated shell has started)."""
+    w, caps = _installer_worker(tmp_path, monkeypatch, checksums_text=_match_line())
+
+    w.run()
+
+    assert caps["failed"] == []
+    assert caps["verify_calls"] == [str(caps["dest"])], "the signature gate ran on the pinned file"
+    assert caps["verified"] == [(str(caps["dest"]), True, "")]
+    assert caps["acquire_calls"] == [str(caps["dest"])]
+    if os.name == "nt":
+        assert ui._LAUNCH_GUARDS is not None, "the pins hold until the elevated launch"
+    ui._release_launch_guards()
+
+
+@pytest.mark.parametrize("missing", ["url", "name"])
+def test_installer_worker_without_a_checksums_reference_fails_closed(
+        tmp_path, monkeypatch, missing):
+    """Review round 2: the installer checksum preconditions must not silently skip the check when
+    either reference is empty - like the portable path, a missing checksums reference is a refusal,
+    so the check cannot turn itself off."""
+    w, caps = _installer_worker(tmp_path, monkeypatch, checksums_text=_match_line())
+    if missing == "url":
+        w._checksums_url = ""    # as if start() had failed to derive it
+    else:
+        w._expected_name = ""
+
+    w.run()
+
+    assert len(caps["failed"]) == 1 and "missing checksums reference" in caps["failed"][0]
+    assert caps["verified"] == [] and caps["verify_calls"] == []
+    assert ui._LAUNCH_GUARDS is None
+
+
+def test_installer_worker_failed_guard_acquire_fails_closed(tmp_path, monkeypatch):
+    """The pin itself could not be taken: nothing is verified and nothing is launched - the update
+    is refused before anything can ride the elevation prompt."""
+    w, caps = _installer_worker(tmp_path, monkeypatch, checksums_text=_match_line(),
+                                acquire_result=False)
+
+    w.run()
+
+    assert len(caps["failed"]) == 1 and "could not pin" in caps["failed"][0]
+    assert caps["verified"] == [] and caps["verify_calls"] == [], "nothing runs unpinned"
+    assert ui._LAUNCH_GUARDS is None
+
+
+def test_start_passes_the_installer_checksums_url_to_the_worker(q_app, tmp_path, monkeypatch):
+    """start() derives checksums.txt from the installer asset's own release-download folder and
+    hands it (with the artifact's basename) to the worker - both feed the guarded re-verification,
+    so a regression here would silently strip the check for every installer update."""
+    class _NoStartThread(ui.QThread):
+        def start(self, *a, **k):   # wire everything, run nothing
+            pass
+
+    captured = {}
+
+    class _RecordingWorker(ui._DownloadWorker):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            captured.update(kwargs)
+
+        def run(self):   # never invoked: the thread never starts; belt and braces
+            raise AssertionError("the worker must not run in this test")
+
+    monkeypatch.setattr(ui, "QThread", _NoStartThread)
+    monkeypatch.setattr(ui, "_DownloadWorker", _RecordingWorker)
+    monkeypatch.setattr(ui, "sweep_stale_update_dirs", lambda: None)
+    monkeypatch.setattr(ui.tempfile, "mkdtemp", lambda prefix="": str(tmp_path))
+
+    up = ui.SecureUpdater(None, _INSTALLER_URL, "https://example/release", SimpleNamespace(),
+                          portable=False, latest_version="2.2.0")
+    try:
+        up.start()
+        assert captured["checksums_url"] == _CHECKSUMS_URL
+        assert captured["expected_name"] == _SETUP_NAME
+        assert captured["portable"] is False
+    finally:
+        up._close_progress()
+        up._thread = None
+        up._worker = None
