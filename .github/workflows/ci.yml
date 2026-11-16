@@ -5,7 +5,7 @@ name: CI
 # concurrency group did not dedupe them); the pull_request run is the one that matters, because it
 # tests the merge with main. Forks' locale/contributor PRs are covered by the same trigger.
 # Mirrors the test step in release.yml so a green CI here means the tag build's tests will pass too
-# (release.yml runs the same tests, serially, in one step).
+# (release.yml runs the same tests, serially, in one step; this workflow runs the main lane in parallel).
 on:
   push:
     branches: [main]
@@ -21,11 +21,14 @@ permissions:
   contents: read
 
 jobs:
-  # The main lane: everything except the native-desktop tests. Serial for now: run in other orders
-  # (pytest -n), the suite can hit an order-dependent access violation that already exists on main
-  # (test_app_overlap_yield followed by Settings dialog builds; see the Phase A PR). Switch this step
-  # to `-n auto` once that is fixed - it is already xdist-ready (unique registry names, the native
-  # group kept on one worker by tests/conftest.py).
+  # The main lane: everything except the native-desktop tests, in parallel (pytest-xdist `-n auto`, one
+  # worker per runner core). The order-dependent access violation that kept it serial (a module
+  # fixture destroying the QApplication) was fixed by #514; the order-dependent module state found
+  # while switching (the layout slot's "probing" gen, font_release's shut_down flag, a test file's
+  # fake date, a modal sheet left open) is reset per test in tests/unit/conftest.py and the files
+  # themselves. Registry names
+  # are unique per test. release.yml's test step stays SERIAL on purpose: the tag build is the one
+  # run that must not depend on xdist's scheduling, and it gives a second, different order.
   test:
     runs-on: windows-latest
 
@@ -49,7 +52,7 @@ jobs:
           pip install -r requirements.txt
           pip install -r dev-requirements.txt
 
-      - name: Run unit tests (all but native_desktop)
+      - name: Run unit tests (all but native_desktop, parallel)
         env:
           # Run the PyQt6 GUI tests headless + deterministically (conftest.py also sets this via
           # setdefault; this makes the CI environment explicit).
@@ -57,7 +60,7 @@ jobs:
           QT_SCALE_FACTOR: "1"
         run: |
           .\.venv\Scripts\Activate.ps1
-          python -m pytest -v -m "not native_desktop" --durations=25
+          python -m pytest -v -n auto -m "not native_desktop" --durations=25
 
   # The native lane: tests that show real windows on the runner's desktop or read its foreground /
   # hit-test state (their child processes run on Qt's "windows" platform). One at a time, so no test's

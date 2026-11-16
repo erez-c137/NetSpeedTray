@@ -184,6 +184,30 @@ def _fresh_per_taskbar_layout_cache(monkeypatch):
     taskbar_utils._layout_by_hwnd.clear()
     del taskbar_utils._layout_background[:]
     getattr(taskbar_utils, "_layout_superseded", {}).clear()
+    # The slot's "probing" key (the gen whose probe has started) is set by _layout_worker and is in
+    # none of the tests' FRESH dicts, which reset "gen" to 0. A stale value from an earlier test then
+    # equals a low gen of the next one, and request_taskbar_layout_probe takes a never-started request
+    # for a started one - it is dropped instead of moved to the background queue. Order-dependent:
+    # surfaced by `pytest -n auto` (test_a_stand_in_box_expires_when_no_probe_confirms_it, then
+    # test_slot_requests_from_several_bars_in_one_tick_all_get_probed).
+    taskbar_utils._layout_state.pop("probing", None)
     yield
+    taskbar_utils._layout_state.pop("probing", None)
     taskbar_utils._layout_by_hwnd.clear()
     del taskbar_utils._layout_background[:]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_font_release_state():
+    """utils/font_release keeps one process-wide flag: ``shut_down``, set by NetworkSpeedWidget.cleanup()
+    (app quit) so that no window destroyed during cleanup schedules a release - and never cleared, as
+    the process is exiting. Tests run cleanup() on real widgets (test_quit_bounded, test_quit_order_...)
+    and the process does NOT exit, so every later schedule_font_release in that process was a silent
+    no-op: test_settings_font_memory's release tests timed out whenever a quit test had run before them
+    on the same pytest-xdist worker. Each test starts (and ends) with no release pending and the flag off."""
+    from netspeedtray.utils import font_release
+    font_release.cancel_pending_release()
+    font_release._state["shut_down"] = False
+    yield
+    font_release.cancel_pending_release()
+    font_release._state["shut_down"] = False
