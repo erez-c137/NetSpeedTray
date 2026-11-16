@@ -112,6 +112,17 @@ jobs:
           NST_SKIP_INSTALLER: "1"
         run: .\build\build.bat
 
+      # The signed zip is checked against the exe's bundle manifest only after approval 1 (in
+      # use-signed-exe.ps1). Check the UNSIGNED zip first, so a zipping/manifest problem fails here
+      # instead of after the owner has spent an approval. No --require-signed: it isn't signed yet.
+      - name: Verify the unsigned portable zip against its bundle manifest
+        shell: pwsh
+        run: |
+          $zips = @(Get-ChildItem -Path dist -Recurse -Filter "NetSpeedTray-Portable-*.zip")
+          if ($zips.Count -ne 1) { throw "Expected exactly one portable zip under dist, found $($zips.Count)" }
+          & .\.venv\Scripts\python.exe build/ci/verify-manifest.py $zips[0].FullName --tamper-test
+          if ($LASTEXITCODE -ne 0) { throw "verify-manifest failed on the unsigned zip ($LASTEXITCODE)" }
+
       - name: Upload Unsigned Portable Zip
         id: upload_portable
         uses: actions/upload-artifact@v7
