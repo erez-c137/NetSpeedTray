@@ -100,6 +100,11 @@ class GpuConstants:
     # A hybrid whose PDH GPU utilization cannot be read polls nvidia-smi without the gate (readings
     # never go blank): every 5 s on AC or an unknown power source, every this many seconds on battery.
     HYBRID_BLIND_BATTERY_POLL_SEC: Final[float] = 30.0
+    # A hybrid whose \GPU Engine counter exists but whose array read failed this poll (a transient PDH
+    # error) keeps the gate's last verdict - closed stays closed, so one blip never wakes the dGPU - and
+    # fails open (above) only from this many such polls in a row (2.2.1). The hover card's "Idle" tag
+    # keeps its verdict over the same polls. No counter at all fails open at once.
+    HYBRID_BLIND_FAIL_OPEN_AFTER: Final[int] = 2
     # nvidia-smi that keeps failing (timeout, non-zero exit) is retried after BASE * 2^(n-1) s for the
     # n-th failure in a row, capped at MAX - never every 5 s forever. Logged once per failure streak,
     # at the LOG_AFTER-th failure.
@@ -140,6 +145,8 @@ class GpuConstants:
             raise ValueError("HYBRID_DGPU_AWAKE_* must be non-negative / positive.")
         if not 0 < self.NVIDIA_SMI_BACKOFF_BASE_SEC <= self.NVIDIA_SMI_BACKOFF_MAX_SEC:
             raise ValueError("NVIDIA_SMI_BACKOFF_BASE_SEC must be in (0, NVIDIA_SMI_BACKOFF_MAX_SEC].")
+        if self.HYBRID_BLIND_FAIL_OPEN_AFTER < 1:
+            raise ValueError("HYBRID_BLIND_FAIL_OPEN_AFTER must be >= 1.")
         if self.NVIDIA_SMI_BACKOFF_LOG_AFTER < 1 or self.HYBRID_DGPU_AWAKE_HOLD_WINDOWS < 2:
             # Fewer than 2 windows: one ambiguous sample between two clean ones would close the gate.
             raise ValueError("NVIDIA_SMI_BACKOFF_LOG_AFTER must be >= 1, HYBRID_DGPU_AWAKE_HOLD_WINDOWS >= 2.")
