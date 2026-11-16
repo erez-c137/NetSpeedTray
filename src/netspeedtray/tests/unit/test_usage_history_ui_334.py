@@ -167,7 +167,9 @@ def test_widget_state_daily_volume_uses_the_cards_scope(tmp_path):
     S8.create_v8_schema(c)
     c.execute("INSERT INTO metadata (key, value) VALUES ('db_version', '8')")
     c.commit()
-    now = int(time.time())
+    # A fixed midday clock: with the real one, a run in the first minute after midnight had no
+    # sample in "today" yet (the last one is a minute before now) and the [0] below raised.
+    now = int(datetime(2026, 10, 23, 12, 0, 0).timestamp())
     w = W.WriterV8(c, version="t", poll_ms=1000, is_physical=lambda n: n == "Ethernet")
     for i in range(0, 3 * 3600, 60):
         w.add_net_sample(W.NetSample(ts=now - 3 * 3600 + i, dt_ms=1000, byte_deltas={
