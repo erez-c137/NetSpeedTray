@@ -10,15 +10,7 @@
     "HARDWARE_HISTORY_OFF_MESSAGE": "ハードウェアの履歴はオフです。\n設定 → ハードウェアで CPU または GPU の監視をオンにしてください。",
     "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "ハードウェアの履歴はオフです。\n設定 → 詳細設定で「ハードウェア履歴を記録」をオンにしてください。",
     "SETTINGS_ERROR_MESSAGE": "1つ以上の設定の適用に失敗しました。",
-<<<<<<< ours
-    "EXPORT_SUCCESS_MESSAGE": "エクスポートに成功しました:\n{file_path}",
-    "NO_HISTORY_DATA_MESSAGE": "エクスポートする履歴データがありません。",
-    "EXPORT_ERROR_MESSAGE": "データのエクスポートに失敗しました:\n{error}",
-    "PERMISSION_DENIED_MESSAGE": "ログのエクスポート中にアクセス権限が拒否されました。",
     "ERROR_UI_SETUP_FAILED": "設定ダイアログのセットアップに失敗しました: {error}",
-=======
-    "ERROR_UI_SETUP_FAILED": "設定ダイアログのセットアップに失敗しました : {error}",
->>>>>>> theirs
     "NO_APP_DATA_MESSAGE": "この期間のアプリ使用状況データはありません。",
     "LANGUAGE_RESTART_MESSAGE": "言語の変更はアプリケーションの再起動後に反映されます。",
     "DEFAULT_TEXT": "N/A",

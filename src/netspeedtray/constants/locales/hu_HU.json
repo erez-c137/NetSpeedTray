@@ -565,19 +565,11 @@
     "BAND_DISPLAY_LABEL": "Sáv megjelenítése",
     "BAND_DISPLAY_SUB": "A csak riasztás mód letisztultan tartja a widgetet, és csak akkor jelenít meg piros 2,4G jelzést, amikor annak jelentősége van.",
     "BAND_DISPLAY_ALWAYS": "Mindig",
-<<<<<<< ours
     "BAND_DISPLAY_COLORED": "Színkódolt (2,4 GHz / 5 GHz)",
     "BAND_DISPLAY_ALERT_ONLY": "Csak riasztás (figyelmeztetés 2,4 GHz-en)",
     "IDENTITY_MODE_LABEL": "Megjelenítés",
     "IDENTITY_MODE_SUB": "A csatlakoztatott Wi-Fi neve a közeli hálózatok keresése nélkül olvasható ki.",
     "IDENTITY_MODE_BAND": "Csak frekvenciasáv (2,4 GHz / 5 GHz)",
-=======
-    "BAND_DISPLAY_COLORED": "Színkódolt (2,4GHz / 5GHz / 6GHz)",
-    "BAND_DISPLAY_ALERT_ONLY": "Csak riasztás (figyelmeztetés 2,4GHz-en)",
-    "IDENTITY_MODE_LABEL": "Megjelenítés",
-    "IDENTITY_MODE_SUB": "A sáv minden PC-n megjeleníthető. A hálózatnévhez (SSID) be kell kapcsolni a Windows Helymeghatározás funkcióját.",
-    "IDENTITY_MODE_BAND": "Csak sáv (2,4GHz / 5GHz)",
->>>>>>> theirs
     "IDENTITY_MODE_SSID": "Hálózatnév (SSID)",
     "IDENTITY_MODE_BOTH": "Név és sáv",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "A NetSpeedTray átfedi a Widgetek panelt",
