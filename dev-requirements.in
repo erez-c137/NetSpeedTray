@@ -13,6 +13,7 @@ pytest>=9.0.3   # Security: vulnerable tmpdir handling fix
 parameterized
 pytest-qt       # GUI interaction tests (qtbot) for the PyQt6 dialogs, run headless via offscreen
 pytest-xdist    # parallel runs: python -m pytest -n auto (see pytest.ini)
+pytest-timeout  # per-test backstop (pytest.ini): a hung or spinning test fails instead of starving the PC
 
 # PyInstaller pulls these in on Windows only. Listed here so the compiled pins carry the marker
 # too (pip-compile drops transitive markers); Dependabot resolves on Linux.
