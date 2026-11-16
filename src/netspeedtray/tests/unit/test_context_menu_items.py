@@ -107,6 +107,22 @@ def test_separators_never_lead_trail_or_double(qt_owned, i18n, hidden, pause, mo
     assert shown.count("-") == non_empty - 1, shown
 
 
+def test_separators_still_collapse_when_a_refresh_step_fails(qt_owned, i18n):
+    """A step of _refresh_dynamic_items that raises (here the update-policy read) must not leave the
+    separators of the previous open: the Pause/Reset group emptied since then would show a doubled
+    divider."""
+    config = {"context_menu_hidden_items": [], "pause_in_menu": True}
+    m = _menu(qt_owned, i18n, config, moved=True)          # every group has items
+    config["pause_in_menu"] = False                         # the Pause/Reset group is now empty...
+    m.widget.has_custom_position = lambda: False
+    with patch("netspeedtray.core.update_checker.update_check_disabled_by_policy",
+               side_effect=OSError("policy read failed")):
+        m._refresh_dynamic_items()
+    shown = _shown(m)
+    assert all(not (a == "-" and b == "-") for a, b in zip(shown, shown[1:])), shown
+    assert shown[0] != "-" and shown[-1] != "-", shown
+
+
 def test_accelerators_kept_on_shown_items(qt_owned, i18n):
     m = _menu(qt_owned, i18n, {"context_menu_hidden_items": ["monitor"]})
     assert m.update_action.text() == i18n.CHECK_FOR_UPDATES_MENU_ITEM and "&" in m.update_action.text()
