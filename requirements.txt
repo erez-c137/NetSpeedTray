@@ -47,27 +47,17 @@ python-dateutil==2.9.0.post0
     # via
     #   -r requirements.in
     #   matplotlib
-pywin32==312 ; sys_platform == "win32"
-    # via
-    #   -r requirements.in
-    #   wmi
 six==1.17.0
     # via python-dateutil
 truststore==0.10.5
     # via -r requirements.in
 typing-extensions==4.16.0
     # via winrt-runtime
-winrt-runtime==3.2.1 ; sys_platform == "win32"
+winrt-runtime==4.1.0
     # via
-    #   -r requirements.in
     #   winrt-windows-foundation
     #   winrt-windows-foundation-collections
-    #   winrt-windows-networking-connectivity
-winrt-windows-foundation==3.2.1 ; sys_platform == "win32"
-    # via -r requirements.in
-winrt-windows-foundation-collections==3.2.1 ; sys_platform == "win32"
-    # via -r requirements.in
-winrt-windows-networking-connectivity==3.2.1 ; sys_platform == "win32"
-    # via -r requirements.in
-wmi==1.5.1 ; sys_platform == "win32"
-    # via -r requirements.in
+winrt-windows-foundation==4!10.0.28000.2957
+    # via winrt-windows-foundation-collections
+winrt-windows-foundation-collections==4!10.0.28000.2957
+    # via winrt-windows-foundation
