@@ -804,13 +804,3 @@ def reveal_in_explorer(path: str) -> None:
         subprocess.Popen(f'"{explorer}" /select,"{target}"', cwd=neutral_cwd())
     except Exception as e:
         logging.getLogger("NetSpeedTray.helpers").debug("reveal_in_explorer failed: %s", e)
-
-
-def tr(i18n, key: str, default: str) -> str:
-    """One shared i18n lookup: the translated string for `key`, or `default` when the key is
-    missing or no i18n instance is available. The per-class ``_tr`` helpers across the UI
-    modules are thin delegates to this (their lowercase placeholder call shape is pinned by
-    test_i18n_keys' translation scan)."""
-    if i18n is None:
-        return default
-    return str(getattr(i18n, key, default))

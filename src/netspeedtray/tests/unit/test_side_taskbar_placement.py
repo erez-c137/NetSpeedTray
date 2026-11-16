@@ -517,6 +517,82 @@ def test_limits_collapse_to_the_tray_end_when_the_widget_cannot_fit():
     assert side_bar_y_limits(geo, 2000) == (0, 0)            # never above the bar top
 
 
+# --- 5. Reset position -----------------------------------------------------------------------------
+
+def test_position_manager_reset_clears_offsets_and_re_decides():
+    tb = _taskbar(apps=(300, 900))
+    cfg = {"tray_offset_y": 709, "tray_offset_x": 250, "position_x": 5, "position_y": 6}
+    pm = _manager(tb, cfg)
+    with _layout(uia=(300, 900), sync=True) as ctl, patch.object(pm, "ensure_topmost"), \
+            patch.object(pm_mod, "get_taskbar_info", return_value=tb):
+        pm.get_calculated_position()
+        pm.reset_to_default()
+    assert cfg == {"tray_offset_y": DEFAULT_Y, "tray_offset_x": constants.config.defaults.DEFAULT_TRAY_OFFSET_X,
+                   "position_x": None, "position_y": None}
+    assert ctl.requests == 2                                 # decided afresh after the reset
+    y = pm._state.widget.move.call_args[0][1]
+    assert y == round(120 + (300 - 120 - H) / 2)             # back to the automatic (top-gap) spot
+
+
+def _reset_fake(config):
+    from netspeedtray.views.widget.main import NetworkSpeedWidget as W
+    fake = types.SimpleNamespace(config=config, logger=MagicMock(), position_manager=MagicMock(),
+                                 update_config=MagicMock(), _hide_usage_hover_card=MagicMock())
+    fake.reset_to_default_position = types.MethodType(W.reset_to_default_position, fake)
+    fake.has_custom_position = types.MethodType(W.has_custom_position, fake)
+    return fake
+
+
+def test_widget_reset_persists_every_cleared_key():
+    fake = _reset_fake({"tray_offset_y": 709})
+    fake.reset_to_default_position()
+    fake.position_manager.reset_to_default.assert_called_once()
+    fake._hide_usage_hover_card.assert_called_once()
+    (updates,), _ = fake.update_config.call_args
+    assert updates == {"position_x": None, "position_y": None,
+                       "tray_offset_x": constants.config.defaults.DEFAULT_TRAY_OFFSET_X,
+                       "tray_offset_y": DEFAULT_Y}
+
+
+@pytest.mark.parametrize("config,moved", [
+    ({}, False),
+    ({"tray_offset_y": DEFAULT_Y, "tray_offset_x": 0, "position_x": None}, False),
+    ({"tray_offset_y": 709}, True),
+    ({"tray_offset_x": 120}, True),
+    ({"position_x": 10, "position_y": 20}, True),
+])
+def test_has_custom_position(config, moved):
+    assert _reset_fake(config).has_custom_position() is moved
+
+
+def test_reset_menu_item_shows_once_moved_and_triggers_the_reset():
+    from PyQt6.QtWidgets import QWidget
+    from netspeedtray.core.tray_manager import TrayIconManager
+    from netspeedtray.constants.i18n import I18nStrings
+
+    class W(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.config = {}
+            self.moved = False
+            self.reset_to_default_position = MagicMock()
+
+        def has_custom_position(self):
+            return self.moved
+
+    w = W()
+    m = TrayIconManager(w, I18nStrings("en_US"))
+    m._load_and_set_icon = lambda: None
+    m.initialize()
+    assert m.reset_position_action.text() == "Reset P&osition"
+    m._refresh_dynamic_items()
+    assert not m.reset_position_action.isVisible() and not m.pause_separator.isVisible()
+    w.moved = True
+    m._refresh_dynamic_items()
+    assert m.reset_position_action.isVisible() and m.pause_separator.isVisible()
+    m.reset_position_action.trigger()
+    w.reset_to_default_position.assert_called_once()
+
 
 def test_no_room_heads_up_shows_once_ever():
     from netspeedtray.views.widget.main import NetworkSpeedWidget as W

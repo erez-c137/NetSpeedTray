@@ -954,8 +954,7 @@ class SettingExpander(QWidget):
             self.setExpanded(not self._expanded)
 
     def _tr(self, key: str, default: str) -> str:
-        from netspeedtray.utils.helpers import tr
-        return tr(self._i18n, key, default)
+        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
 
     def _sync(self) -> None:
         self._content.setVisible(self._expanded)

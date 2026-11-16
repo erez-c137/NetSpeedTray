@@ -122,17 +122,15 @@ class TestOverlay:
         with pytest.raises(TypeError):
             del cfg["position_x"]
 
-    def test_pinned_writes_through_the_overlay_touch_only_pinned_keys(self):
-        """The writes a position reset makes (position_x/y, tray offsets) are pinned keys: they
-        land in the mirror's overlay and never reach the main config (review L5)."""
-        d = constants.config.defaults
+    def test_reset_to_default_through_the_overlay_touches_only_pinned_keys(self):
+        from netspeedtray.core.position_manager import PositionManager, WindowState
         main = {"tray_offset_x": -200, "position_x": 5, "font_size": 9}
         cfg = _MirrorConfig(lambda: main, "D2")
-        cfg["position_x"] = None
-        cfg["tray_offset_x"] = d.DEFAULT_TRAY_OFFSET_X
+        pm = PositionManager(WindowState(config=cfg, widget=MagicMock()))
+        pm.update_position = lambda *a, **k: None
+        pm.ensure_topmost = lambda: None
+        pm.reset_to_default()
         assert main == {"tray_offset_x": -200, "position_x": 5, "font_size": 9}
-        assert cfg["position_x"] is None
-        assert cfg["tray_offset_x"] == d.DEFAULT_TRAY_OFFSET_X
 
 
 # --- 2. reconcile ----------------------------------------------------------------------------------

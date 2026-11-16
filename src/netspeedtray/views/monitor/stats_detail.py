@@ -598,5 +598,4 @@ class StatsDetailSheet(QDialog):
         )
 
     def _tr(self, key: str, default: str) -> str:
-        from netspeedtray.utils.helpers import tr
-        return tr(self._i18n, key, default)
+        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default

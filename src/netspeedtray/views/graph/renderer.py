@@ -75,10 +75,7 @@ class GraphRenderer(QObject):
         self._gradient_patch_download = None
         self._gradient_im_upload = None
         self._gradient_patch_upload = None
-        
-        self._peak_artists_download = {}  # {'outer': artist, 'middle': artist, 'inner': artist, 'label': artist}
-        self._peak_artists_upload = {}
-        
+
         # Event Markers (Boot time, etc.)
         self._event_artists = []
 
@@ -113,17 +110,7 @@ class GraphRenderer(QObject):
         if self.fill_upload is not None:
             self.fill_upload.remove()
             self.fill_upload = None
-        
-        # Clear peak markers
-        for artist in self._peak_artists_download.values():
-            if hasattr(artist, 'remove'):
-                artist.remove()
-        for artist in self._peak_artists_upload.values():
-            if hasattr(artist, 'remove'):
-                artist.remove()
-        self._peak_artists_download = {}
-        self._peak_artists_upload = {}
-        
+
         # Redraw
         self.canvas.draw_idle()
 

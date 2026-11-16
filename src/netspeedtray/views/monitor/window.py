@@ -300,8 +300,7 @@ class MonitorWindow(QWidget):
         self.move(g.x() + (g.width() - self.width()) // 2, g.y() + (g.height() - self.height()) // 2)
 
     def _tr(self, key: str, default: str) -> str:
-        from netspeedtray.utils.helpers import tr
-        return tr(self.i18n, key, default)
+        return str(getattr(self.i18n, key, default)) if self.i18n is not None else default
 
     # ----------------------------------------------------------------- lifecycle
 

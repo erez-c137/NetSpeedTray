@@ -556,12 +556,6 @@ class SettingsDialog(QDialog):
         from netspeedtray.utils.components import install_wheel_guard
         install_wheel_guard(page)
 
-    def _wrap_in_scroll(cls, page: QWidget) -> QScrollArea:
-        """Wraps a settings page in a frameless, transparent scroll area."""
-        scroll = cls._make_scroll()
-        cls._fill_scroll(scroll, page)
-        return scroll
-
     def _init_ui_state(self) -> None:
         """Loads current configuration into all UI elements and restores window position."""
         self.logger.debug("Initializing UI state from config...")

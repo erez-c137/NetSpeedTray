@@ -18,9 +18,6 @@ def _fake():
     f.gpu_usage = 0.0
     f.config = {"widget_display_mode": "cycle"}
     f.update = lambda: None
-    f._bar_shows = lambda modes: f.config.get("widget_display_mode") in modes
-    f._refresh_hover_hardware = lambda: None
-    f._set_hw_metric = types.MethodType(NetworkSpeedWidget._set_hw_metric, f)
     return f
 
 
