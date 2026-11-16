@@ -70,7 +70,8 @@ class NetworkIdentitySettings(QWidget):
         root.addWidget(self._exp)
 
     def _tr(self, key: str, default: str) -> str:
-        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
+        from netspeedtray.utils.helpers import tr
+        return tr(self._i18n, key, default)
 
     def load_settings(self, config: Dict[str, Any]) -> None:
         self._exp.setChecked(bool(config.get("show_network_identity", False)))

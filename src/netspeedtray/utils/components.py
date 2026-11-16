@@ -954,7 +954,8 @@ class SettingExpander(QWidget):
             self.setExpanded(not self._expanded)
 
     def _tr(self, key: str, default: str) -> str:
-        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
+        from netspeedtray.utils.helpers import tr
+        return tr(self._i18n, key, default)
 
     def _sync(self) -> None:
         self._content.setVisible(self._expanded)
@@ -1318,7 +1319,8 @@ class ArrowStylePicker(QWidget):
 
     def _tr(self, key: str, default: str) -> str:
         """Graceful i18n lookup: the picker may be constructed without an i18n object."""
-        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
+        from netspeedtray.utils.helpers import tr
+        return tr(self._i18n, key, default)
 
     def _on_segment(self, value) -> None:
         self._custom_row.setVisible(value == self._CUSTOM)
