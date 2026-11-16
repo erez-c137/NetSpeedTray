@@ -92,6 +92,12 @@ class InputHandler(QObject):
         if not self._drag_start_pos:
             return
 
+        # Left-edge pin (`pin_left_edge`): the widget is fixed 15px from its screen's left edge,
+        # so it cannot be dragged out of its pinned spot. Single clicks still land (the press /
+        # release path never reaches this), and turning the pin off restores dragging.
+        if self.widget.config.get("pin_left_edge", False):
+            return
+
         # Check for minimum drag distance to prevent accidental moves (Fix for sticky Free Move)
         if (event.globalPosition().toPoint() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
             return

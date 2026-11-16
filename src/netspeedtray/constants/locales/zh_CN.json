@@ -409,7 +409,7 @@
     "RESET_ALL_CONFIRM_TEXT": "所有设置将恢复为默认值，历史记录不会丢失。是否继续？",
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
-    "HOVER_USAGE_CARD_LABEL": "悬停小组件时显示流量信息",
+    "PIN_LEFT_EDGE_LABEL": "将小部件固定在左边缘",
     "SETTINGS_PREVIEW_LABEL": "预览",
     "HOVER_TIPS_LABEL": "显示操作提示",
     "ARROW_PRESET_OUTLINE_COMPACT": "紧凑描边",

@@ -409,6 +409,7 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "ウィジェットにカーソルを合わせるとデータ使用量を表示",
+    "PIN_LEFT_EDGE_LABEL": "ウィジェットを左端に固定",
     "SETTINGS_PREVIEW_LABEL": "プレビュー",
     "HOVER_TIPS_LABEL": "右クリック / ダブルクリックのヒントを表示",
     "ARROW_PRESET_OUTLINE_COMPACT": "アウトライン コンパクト",
