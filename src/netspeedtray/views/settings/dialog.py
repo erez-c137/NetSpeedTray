@@ -8,10 +8,8 @@ Handles live updates to the parent widget via signals and throttling.
 
 from __future__ import annotations
 
-from netspeedtray.core.controller import StatsController
 
 import logging
-import shutil
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 # Use TYPE_CHECKING to avoid circular import issues at runtime
@@ -38,7 +36,6 @@ from netspeedtray.utils.support_bundle import build_support_bundle
 from netspeedtray.utils.dwm import apply_win11_chrome
 
 # --- Settings Pages (2.0 IA: General · Widget · Appearance · Hardware · Network · Advanced) ---
-from netspeedtray.utils.config import ConfigManager
 from netspeedtray.views.settings.pages.interfaces import InterfacesPage
 from netspeedtray.views.settings.pages.general import GeneralPage
 from netspeedtray.views.settings.pages.widget import WidgetPage
@@ -561,13 +558,6 @@ class SettingsDialog(QDialog):
         # happens to pass over. The guard forwards stray wheel events to this scroll area.
         from netspeedtray.utils.components import install_wheel_guard
         install_wheel_guard(page)
-
-    @classmethod
-    def _wrap_in_scroll(cls, page: QWidget) -> QScrollArea:
-        """Wraps a settings page in a frameless, transparent scroll area."""
-        scroll = cls._make_scroll()
-        cls._fill_scroll(scroll, page)
-        return scroll
 
     def _init_ui_state(self) -> None:
         """Loads current configuration into all UI elements and restores window position."""

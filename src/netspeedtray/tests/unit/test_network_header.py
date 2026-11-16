@@ -1,16 +1,14 @@
 """
-NetworkHeader - the Monitor Network tab's header band. Verifies the period segmented control emits
-the right PERIOD_MAP index, programmatic selection is silent, and the totals format with the
-locale decimal separator (matching the graph's localized text in the same window).
+NetworkHeader - the Monitor Network tab's header band. Verifies the period-key mapping, that a
+period pick on the shared TimelineSelector is re-emitted as the PERIOD_MAP index, and that the
+totals format with the locale decimal separator (matching the graph's localized text in the same
+window). (The old PeriodSegmentedControl pill row was retired - the header hosts the shared
+TimelineSelector dropdown now.)
 """
 import pytest
 
 from netspeedtray.constants.i18n import I18nStrings
-from netspeedtray.views.monitor.network.header import (
-    NetworkHeader, PeriodSegmentedControl, _period_value,
-)
-
-
+from netspeedtray.views.monitor.network.header import NetworkHeader, _period_value
 def test_period_value_maps_keys():
     assert _period_value("TIMELINE_SESSION") == 0
     assert _period_value("TIMELINE_24_HOURS") == 2
@@ -18,26 +16,6 @@ def test_period_value_maps_keys():
     assert _period_value("nonsense") == 2  # safe default
 
 
-def test_pills_emit_index_on_click(q_app):
-    seen = []
-    pills = PeriodSegmentedControl("TIMELINE_24_HOURS")
-    pills.period_changed.connect(seen.append)
-    pills._buttons["TIMELINE_WEEK"].click()
-    assert seen == [3]
-    assert pills._buttons["TIMELINE_WEEK"].isChecked()
-    assert not pills._buttons["TIMELINE_24_HOURS"].isChecked()  # exclusive
-
-
-def test_set_period_key_is_silent(q_app):
-    seen = []
-    pills = PeriodSegmentedControl("TIMELINE_24_HOURS")
-    pills.period_changed.connect(seen.append)
-    pills.set_period_key("TIMELINE_MONTH")           # programmatic -> no signal
-    assert seen == []
-    assert pills._buttons["TIMELINE_MONTH"].isChecked()
-    pills.set_period_key("bogus")                     # unknown -> falls back to 24H, still silent
-    assert seen == []
-    assert pills._buttons["TIMELINE_24_HOURS"].isChecked()
 
 
 def test_header_forwards_period_change(q_app):
@@ -72,13 +50,6 @@ def test_initial_value_placeholders_seeded(q_app):
     assert h._down[1].text() == "↓ -"
     assert h._up[1].text() == "↑ -"
 
-
-def test_pills_style_is_theme_aware(q_app):
-    """The Monitor pills must restyle by theme (the dark-only graph style is invisible in light mode)."""
-    from netspeedtray.utils import styles as su
-    assert su.segmented_pills_style(True) != su.segmented_pills_style(False)
-    assert "rgba(0,0,0" in su.segmented_pills_style(False)      # light uses dark-on-light fills
-    assert "rgba(255,255,255" in su.segmented_pills_style(True)  # dark uses light-on-dark fills
 
 
 def test_set_period_raises_dedup_floor_and_routes(q_app):

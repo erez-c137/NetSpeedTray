@@ -32,10 +32,6 @@ Contains **Pure Domain Knowledge**. This file houses the non-UI logic specific t
 - **Responsibility**: Mapping slider values to time periods, calculating DB statistics, determining query ranges.
 - **Rules**: Stateless functions where possible; no PyQt/GUI dependencies.
 
-### 7. [The specialized Exporters] exporters.py (in utils)
-Handles **Data Persistence**. Moving file-saving logic here ensures the UI code is strictly about the view.
-- **Responsibility**: CSV generation, PNG snapshot saving.
-
 ## Principles
 
 1. **DRY (Don't Repeat Yourself)**: Shared formatting and mapping logic must reside in `logic.py` or `utils/helpers.py`.

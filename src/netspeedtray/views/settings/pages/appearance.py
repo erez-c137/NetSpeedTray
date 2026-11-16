@@ -318,12 +318,6 @@ class AppearancePage(QWidget):
         self.arrow_font_size.setValue(int(size))
         self.on_change()
 
-    def set_arrow_font_family(self, font: QFont):
-        fam = font.family()
-        style_utils.set_text_in_face(self.arrow_font_family_label, fam)   # a font's own (maybe CJK) name
-        self.current_arrow_font.setFamily(fam)
-        self.on_change()
-
     def set_color_input(self, key: str, hex_code: str):
         """Show a picked colour in the field of config key ``key`` (e.g. ``arrow_down_color_light``)."""
         if key in self._swatches:

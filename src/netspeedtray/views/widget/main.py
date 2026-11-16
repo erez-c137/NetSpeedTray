@@ -3,7 +3,6 @@ from __future__ import annotations
 # --- Standard Library Imports ---
 import ctypes
 import logging
-import math
 import os
 import sys
 import time
@@ -16,8 +15,7 @@ import win32api
 import win32con
 import win32gui
 import win32process
-from win32con import MONITOR_DEFAULTTONEAREST
-from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QTimer, Qt
+from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QTimer, Qt
 from PyQt6.QtGui import (
     QCloseEvent, QColor, QContextMenuEvent, QFont, QFontMetrics, QHideEvent,
     QIcon, QMouseEvent, QPaintEvent, QPainter, QShowEvent, QWheelEvent
@@ -65,16 +63,11 @@ if TYPE_CHECKING:
     from netspeedtray.views.settings import SettingsDialog
 
 
-# Win32 MSG layout for reading native messages in nativeEvent(). Defined once at
-# module scope - nativeEvent is a hot path (fires for every native message), so we
-# must not rebuild this Structure on each call.
-class _NativeMSG(ctypes.Structure):
-    _fields_ = [
-        ("hwnd", wintypes.HWND), ("message", wintypes.UINT),
-        ("wParam", ctypes.c_size_t), ("lParam", ctypes.c_ssize_t),
-        ("time", wintypes.DWORD), ("pt_x", wintypes.LONG), ("pt_y", wintypes.LONG),
-    ]
-
+# The Win32 MSG layout for reading native messages in nativeEvent() lives in
+# utils.taskbar_utils (one shared definition - nativeEvent is a hot path, firing for
+# every native message, so the structure must not be rebuilt per call); re-exported
+# here because the native-event resume test imports it from this module.
+from netspeedtray.utils.taskbar_utils import _NativeMSG  # noqa: E402  (re-export)
 _WM_POWERBROADCAST = 0x0218
 _WM_QUERYENDSESSION = 0x0011
 _WM_ENDSESSION = 0x0016
@@ -2288,11 +2281,6 @@ class NetworkSpeedWidget(QWidget):
 
  
 
-    @property
-    def position_manager_property(self):
-        # Expose position manager for binding if needed, though self.position_manager exists
-        return self.position_manager
-
     def _ensure_win32_topmost(self) -> None:
         """Delegates to PositionManager. No-op while hidden (e.g. over a fullscreen app)."""
         if not self.isVisible():
@@ -2469,10 +2457,6 @@ class NetworkSpeedWidget(QWidget):
                                   self._execute_refresh)
         except Exception as e:
             self.logger.error("Error recovering from taskbar restart: %s", e, exc_info=True)
-
-    def _enforce_topmost_status(self) -> None:
-        """Delegates to PositionManager."""
-        self.position_manager.enforce_topmost_status()
 
     def reset_to_default_position(self) -> None:
         """Right-click > Reset position: back to the automatic spot by the tray (or the side bar's
@@ -2889,28 +2873,9 @@ class NetworkSpeedWidget(QWidget):
 
 
 
-    def _rollback_config(self, old_config: Dict[str, Any]) -> None:
-        """Delegates to ConfigController."""
-        self.config_controller.rollback_config(old_config)
-
-
     def update_config(self, updates: Dict[str, Any], save_to_disk: bool = True) -> None:
         """Delegates to ConfigController."""
         self.config_controller.update_config(updates, save_to_disk)
-
-
-    def handle_graph_settings_update(self, updates: Dict[str, Any]) -> None:
-        """
-        Public method called by the GraphWindow to update and save configuration.
-        This centralizes the saving logic and prevents race conditions.
-        """
-        self.logger.debug(f"Received settings update from graph window: {updates}")
-        # The update_config method already updates the in-memory config and saves to disk.
-        # We can just call it directly.
-        self.update_config(updates)
-
-
-
 
 
     def open_monitor_window(self) -> None:
@@ -3363,14 +3328,6 @@ class NetworkSpeedWidget(QWidget):
 
 
     # update_config (redundant definition) removed
-
-
-    def get_config(self) -> Dict[str, Any]:
-        return self.config.copy() if self.config else {}
-
-
-    def get_widget_size(self) -> QSize:
-        return self.size()
 
 
     def set_app_version(self, version: str) -> None:

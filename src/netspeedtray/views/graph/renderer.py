@@ -75,10 +75,7 @@ class GraphRenderer(QObject):
         self._gradient_patch_download = None
         self._gradient_im_upload = None
         self._gradient_patch_upload = None
-        
-        self._peak_artists_download = {}  # {'outer': artist, 'middle': artist, 'inner': artist, 'label': artist}
-        self._peak_artists_upload = {}
-        
+
         # Event Markers (Boot time, etc.)
         self._event_artists = []
 
@@ -113,17 +110,7 @@ class GraphRenderer(QObject):
         if self.fill_upload is not None:
             self.fill_upload.remove()
             self.fill_upload = None
-        
-        # Clear peak markers
-        for artist in self._peak_artists_download.values():
-            if hasattr(artist, 'remove'):
-                artist.remove()
-        for artist in self._peak_artists_upload.values():
-            if hasattr(artist, 'remove'):
-                artist.remove()
-        self._peak_artists_download = {}
-        self._peak_artists_upload = {}
-        
+
         # Redraw
         self.canvas.draw_idle()
 
@@ -364,142 +351,6 @@ class GraphRenderer(QObject):
             setattr(self, patch_attr, patch)
 
     # ========== PHASE 3: ANALYTICAL INTELLIGENCE ==========
-    def _get_peak_label_placement(self, ax, peak_x: float, peak_y: float) -> Tuple[Tuple[int, int], str, str]:
-        """
-        Decide peak label offset/alignment so labels stay inside the plot area.
-        Returns (xytext_offset_points, horizontal_alignment, vertical_alignment).
-        """
-        x_offset = 8
-        y_offset = 8
-        ha = 'left'
-        va = 'bottom'
-
-        try:
-            x_min, x_max = ax.get_xlim()
-            y_min, y_max = ax.get_ylim()
-
-            if x_max > x_min:
-                x_norm = (peak_x - x_min) / (x_max - x_min)
-                # If peak is in the right 20% of the graph, flip label to the left
-                # Threshold reduced from 0.88 to 0.8 to be more aggressive against cutoffs.
-                if x_norm >= 0.8:
-                    x_offset = -8
-                    ha = 'right'
-
-            if y_max > y_min:
-                y_norm = (peak_y - y_min) / (y_max - y_min)
-                # If peak is in the top 10% of the graph, move label below peak
-                if y_norm >= 0.9:
-                    y_offset = -8
-                    va = 'top'
-        except Exception as e:
-            self.logger.debug(f"Error calculating peak label placement: {e}")
-            # Keep defaults if calculation fails
-
-        return (x_offset, y_offset), ha, va
-    
-    def _add_peak_markers(self, ax, x_data, y_data, color_hex: str, label_prefix: str, artist_prefix: str):
-        """
-        Adds or updates a marker at the maximum value with a persistent label.
-        Creates a "glowing dot" effect with outer glow + inner dot.
-        Uses the 'Reuse, Don't Recreate' pattern.
-        """
-        if y_data is None or len(y_data) == 0:
-            # Hide existing artists if no data
-            artist_dict = getattr(self, f'_peak_artists_{artist_prefix}', {})
-            for artist in artist_dict.values():
-                if artist: artist.set_visible(False)
-            return
-        
-        try:
-            peak_idx = np.argmax(y_data)
-            peak_x = x_data[peak_idx]
-            peak_y = y_data[peak_idx]
-            
-            # Skip if peak is negligible (< 0.1 Mbps)
-            if peak_y < 0.1:
-                artist_dict = getattr(self, f'_peak_artists_{artist_prefix}', {})
-                for artist in artist_dict.values():
-                    if artist: artist.set_visible(False)
-                return
-            
-            # Convert to matplotlib date number if needed
-            if isinstance(peak_x, datetime):
-                peak_x = mdates.date2num(peak_x)
-            
-            artist_dict = getattr(self, f'_peak_artists_{artist_prefix}', {})
-            
-            # FAST PATH: Update existing artists
-            if artist_dict and 'inner' in artist_dict and artist_dict['inner'].axes is not None:
-                artist_dict['outer'].set_data([peak_x], [peak_y])
-                artist_dict['middle'].set_data([peak_x], [peak_y])
-                artist_dict['inner'].set_data([peak_x], [peak_y])
-                
-                label = artist_dict['label']
-                label_offset, label_ha, label_va = self._get_peak_label_placement(ax, peak_x, peak_y)
-                label.xy = (peak_x, peak_y)
-                label.set_position(label_offset)
-                label.set_ha(label_ha)
-                label.set_va(label_va)
-                label.set_text(f"{label_prefix}: {format_decimal(peak_y, self.i18n, 1)} {self.i18n.MBITS_UNIT}")
-                label.get_bbox_patch().set_edgecolor(color_hex)
-                
-                for artist in artist_dict.values():
-                    artist.set_visible(True)
-                return
-
-            # SLOW PATH: Create new artists
-            artist_dict = {}
-            
-            # Outer glow (soft, large, transparent)
-            artist_dict['outer'] = ax.plot(peak_x, peak_y, 'o', 
-                    markersize=RendererConstants.PEAK_MARKER_SIZE_OUTER, 
-                    color=color_hex, 
-                    alpha=RendererConstants.PEAK_MARKER_ALPHA_OUTER,
-                    zorder=10)[0]
-            
-            # Middle glow
-            artist_dict['middle'] = ax.plot(peak_x, peak_y, 'o', 
-                    markersize=RendererConstants.PEAK_MARKER_SIZE_MIDDLE, 
-                    color=color_hex, 
-                    alpha=RendererConstants.PEAK_MARKER_ALPHA_MIDDLE,
-                    zorder=11)[0]
-            
-            # Inner dot (solid, small)
-            artist_dict['inner'] = ax.plot(peak_x, peak_y, 'o', 
-                    markersize=RendererConstants.PEAK_MARKER_SIZE_INNER, 
-                    color=color_hex, 
-                    alpha=RendererConstants.PEAK_MARKER_ALPHA_INNER,
-                    zorder=12)[0]
-
-            label_offset, label_ha, label_va = self._get_peak_label_placement(ax, peak_x, peak_y)
-            
-            # Label with background
-            artist_dict['label'] = ax.annotate(
-                f"{label_prefix}: {format_decimal(peak_y, self.i18n, 1)} {self.i18n.MBITS_UNIT}",
-                xy=(peak_x, peak_y),
-                xytext=label_offset,
-                textcoords='offset points',
-                fontsize=8,
-                color='white',
-                weight='medium',
-                ha=label_ha,
-                va=label_va,
-                bbox=dict(
-                    boxstyle='round,pad=0.3', 
-                    facecolor='#2d2d2d', 
-                    edgecolor=color_hex,
-                    linewidth=0.5,
-                    alpha=0.9
-                ),
-                zorder=13
-            )
-            
-            setattr(self, f'_peak_artists_{artist_prefix}', artist_dict)
-            
-        except Exception as e:
-            self.logger.debug(f"Could not add/update peak marker: {e}")
-
     def _add_event_markers(self, ax, start_time: datetime, end_time: datetime, boot_time: Optional[datetime] = None):
         """
         Draws or updates vertical lines for significant system events (e.g., boot time).
@@ -1190,107 +1041,6 @@ class GraphRenderer(QObject):
         # so this is the single authoritative y-limit - mirroring _render_hwcombined's override order.
         self._apply_hw_ylim(ax, fixed, float(values.max()) if len(values) else 0.0)
 
-    def _plot_aggregated(self, plot_datetimes, upload_mbps, download_mbps, mode="daily", target_end_time=None):
-        """
-        Plots aggregated data using Bar Charts for "thicker" visibility.
-        Uses ax.bar for distinct time blocks.
-        """
-        if len(plot_datetimes) == 0: return [], [], []
-
-        # Binning logic... (rest of the code remains same until end of method)
-
-        # 1. Binning Logic (Safety: ensures alignment even if SQL returns slight offsets)
-        if mode == "daily":
-            # Bin by ord day
-            bins = np.array([dt.date().toordinal() for dt in plot_datetimes])
-            bar_width = 0.8 # Days
-        elif mode == "hourly":
-            # Bin by hour: ordinal * 24 + hour
-            bins = np.array([dt.date().toordinal() * 24 + dt.hour for dt in plot_datetimes])
-            bar_width = 0.8 / 24.0 # Hours converted to days
-        else:
-             # Fallback to lines for minute/raw
-             return self._plot_high_res(plot_datetimes, upload_mbps, download_mbps)
-            
-        unique_bins, indices = np.unique(bins, return_inverse=True)
-        counts = np.bincount(indices)
-        
-        # Use per-bin peak speeds so timeline changes preserve event amplitude.
-        down_peak = np.full(len(unique_bins), -np.inf, dtype=float)
-        up_peak = np.full(len(unique_bins), -np.inf, dtype=float)
-        np.maximum.at(down_peak, indices, download_mbps)
-        np.maximum.at(up_peak, indices, upload_mbps)
-        down_peak = np.where(np.isfinite(down_peak), down_peak, 0.0)
-        up_peak = np.where(np.isfinite(up_peak), up_peak, 0.0)
-        
-        # Calculate Bin Centers (Timestamps)
-        timestamps_float = np.array([dt.timestamp() for dt in plot_datetimes])
-        bin_timestamps = np.bincount(indices, weights=timestamps_float) / counts
-        agg_dates = [datetime.fromtimestamp(ts) for ts in bin_timestamps]
-        
-        # 2. Render Bars
-        # Since bars are hard to animate efficiently (number of bars changes),
-        # we treat this as a "Rebuild" scenario for simplicity. 
-        # Aggregated views don't update frequently enough to cause lag.
-        
-        # Clear previous lines if switching modes
-        if self.line_download: 
-            self.line_download.remove(); self.line_download = None
-        if self.line_upload:
-            self.line_upload.remove(); self.line_upload = None
-        if self.fill_download:
-            self.fill_download.remove(); self.fill_download = None
-        if self.fill_upload:
-            self.fill_upload.remove(); self.fill_upload = None
-            
-        # Check for existing bars to update (optimization)
-        # We store the container in self.bars_download / self.bars_upload
-        existing_bars_down = getattr(self, 'bars_download', None)
-        existing_bars_up = getattr(self, 'bars_upload', None)
-        
-        # If count matches, we can update heights? No, positions might change.
-        # Safest is to remove and redraw for bars.
-        if existing_bars_down:
-            for b in existing_bars_down: b.remove()
-        if existing_bars_up:
-            for b in existing_bars_up: b.remove()
-            
-        self.bars_download = self.ax_download.bar(
-            agg_dates, down_peak, width=bar_width,
-            color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.9, zorder=10
-        )
-        
-        self.bars_upload = self.ax_upload.bar(
-            agg_dates, up_peak, width=bar_width,
-            color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.9, zorder=10
-        )
-        
-        # Store for cleanup
-        setattr(self, 'bars_download', self.bars_download)
-        setattr(self, 'bars_upload', self.bars_upload)
-
-        # === TRAILING BRIDGE for Aggregated Views ===
-        # If bars don't reach now, draw a subtle flat line
-        if target_end_time is not None and len(agg_dates) > 0:
-            last_date = agg_dates[-1]
-            gap_to_now = (target_end_time - last_date).total_seconds()
-            
-            # Use appropriate threshold based on mode
-            threshold = 3600 * 24 if mode == "daily" else 3600
-            
-            if gap_to_now > threshold:
-                bridge_ts = [last_date, target_end_time]
-                bridge_zero = [0.0, 0.0]
-                self.ax_download.plot(bridge_ts, bridge_zero, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.4, linestyle='--')
-                self.ax_upload.plot(bridge_ts, bridge_zero, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.4, linestyle='--')
-
-        return agg_dates, up_peak, down_peak
-
-    # --- measured samples behind each drawn line (S1) ------------------------------------------
-    # The network line is a spline through the samples (3 interpolated points between each pair at
-    # Week / short sessions) and the hardware lines may be smoothed, so the plotted array is mostly
-    # values nobody measured. Each labelled line therefore carries the samples it was drawn FROM, and
-    # the hover tooltip reads those (graph_hover.measured_xy).
     MEASURED_ATTR = "_nst_measured_xy"
 
     @classmethod

@@ -82,74 +82,7 @@ def test_hw_percent_without_a_measurement_is_na():
     assert f(0) == "0%"
     assert f(0.0) == "0%"
 
-def test_peak_label_placement_logic(stub_init):
-    # Mock dependencies for GraphRenderer (stub_init avoids actual window/canvas creation)
-    parent_widget = MagicMock()
-    i18n = MagicMock()
-    renderer = GraphRenderer(parent_widget, i18n)
-    
-    ax = MagicMock()
-    
-    # CASE 1: Mid-graph peak (No flipping)
-    # x: [0, 100], y: [0, 100], peak at (50, 50)
-    ax.get_xlim.return_value = (0, 100)
-    ax.get_ylim.return_value = (0, 100)
-    
-    offset, ha, va = renderer._get_peak_label_placement(ax, 50, 50)
-    assert ha == 'left'
-    assert va == 'bottom'
-    assert offset == (8, 8)
-    
-    # CASE 2: Right-edge peak (Flip horizontal)
-    # x: [0, 100], y: [0, 100], peak at (85, 50) -> x_norm = 0.85 >= 0.8
-    offset, ha, va = renderer._get_peak_label_placement(ax, 85, 50)
-    assert ha == 'right'
-    assert va == 'bottom'
-    assert offset == (-8, 8)
-    
-    # CASE 3: Top-edge peak (Flip vertical)
-    # x: [0, 100], y: [0, 100], peak at (50, 95) -> y_norm = 0.95 >= 0.9
-    offset, ha, va = renderer._get_peak_label_placement(ax, 50, 95)
-    assert ha == 'left'
-    assert va == 'top'
-    assert offset == (8, -8)
-    
-    # CASE 4: Top-right corner (Flip both)
-    # peak at (90, 92)
-    offset, ha, va = renderer._get_peak_label_placement(ax, 90, 92)
-    assert ha == 'right'
-    assert va == 'top'
-    assert offset == (-8, -8)
-
-    print("Peak label placement tests passed!")
-
-
-def test_peak_label_is_localized(stub_init):
-    """The peak marker label must use the locale decimal separator AND the locale's
-    speed unit, not a hardcoded '.'/'Mbps'. Regression guard for the graph-i18n fix:
-    a German user's graph showed '12.3 Mbps' while the widget showed '12,3 Mbit/s'.
-    Drives the real _add_peak_markers path with a real de_DE i18n."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from netspeedtray.constants.i18n import I18nStrings
-
-    i18n = I18nStrings("de_DE")               # sep=',', MBITS_UNIT='Mbit/s'
-    renderer = GraphRenderer(MagicMock(), i18n)
-
-    fig, ax = plt.subplots()
-    ax.set_xlim(0, 5)
-    ax.set_ylim(0, 20)
-    x_data = [0, 1, 2, 3, 4]
-    y_data = [0.3, 0.6, 0.4, 12.34, 5.2]      # peak = 12.34 Mbps at index 3
-    renderer._add_peak_markers(ax, x_data, y_data, "#4aa3ff", "Download", "download")
-    text = renderer._peak_artists_download["label"].get_text()
-    plt.close(fig)
-
-    assert "12,3" in text, f"expected comma decimal separator, got {text!r}"
-    assert "Mbit/s" in text, f"expected localized unit, got {text!r}"
-    assert "Mbps" not in text and "12.3" not in text, f"leaked English unit/decimal: {text!r}"
-
+# --- 6.2b hardware-graph shaping (smoothing + fixed/auto axis) -------------------
 
 # --- 6.2b hardware-graph shaping (smoothing + fixed/auto axis) -------------------
 

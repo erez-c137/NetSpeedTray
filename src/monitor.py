@@ -103,7 +103,7 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from netspeedtray import constants
-from netspeedtray.utils.config import ConfigManager, ConfigError
+from netspeedtray.utils.config import ConfigManager
 from netspeedtray.utils.taskbar_utils import get_taskbar_height
 from netspeedtray.views.widget import NetworkSpeedWidget
 

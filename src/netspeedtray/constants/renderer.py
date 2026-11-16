@@ -149,14 +149,6 @@ class RendererConstants:
     PANEL_RESIZE_THRESHOLD_PX: Final[int] = 5    # Threshold to detect actual panel changes
     MIN_SETTINGS_PANEL_WIDTH_PX: Final[int] = 320  # Fallback panel width
     
-    # Peak Markers - Glowing Effects
-    PEAK_MARKER_SIZE_OUTER: Final[int] = 14      # Outer circle size (pts)
-    PEAK_MARKER_SIZE_MIDDLE: Final[int] = 9      # Middle circle size (pts)
-    PEAK_MARKER_SIZE_INNER: Final[int] = 5       # Inner circle size (pts)
-    PEAK_MARKER_ALPHA_OUTER: Final[float] = 0.15 # Outer transparency
-    PEAK_MARKER_ALPHA_MIDDLE: Final[float] = 0.35  # Middle transparency
-    PEAK_MARKER_ALPHA_INNER: Final[float] = 1.0  # Inner (solid)
-    MIN_SPEED_FOR_PEAK_MARKER_MBPS: Final[float] = 0.1  # Don't show markers for negligible peaks
     
     # Gradient Fills
     GRADIENT_ALPHA_TOP: Final[float] = 0.35      # Gradient opacity at top
