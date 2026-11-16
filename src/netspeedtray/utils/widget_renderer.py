@@ -1689,7 +1689,9 @@ class WidgetRenderer:
 
         - match_text: the widget's text colour, so the labels follow it onto a light taskbar (it turns
           black there) instead of the hard-coded white that pre-2.2 "monochrome" painted, invisibly.
-        - custom: the two picked colours (an unparsable one falls back to the text colour).
+        - custom: the two picked colours (an unparsable one falls back to the text colour), painted as
+          picked even on an accent taskbar (#556): the accent shade Windows reports can be wrong (taskbar
+          mods such as Windhawk repaint the bar), and the user sees the result and can pick again.
         - brand (default branch): the vendor palette in hardware_vendors. The taskbar is judged light
           or dark from the text colour - the widget background is usually transparent, and the text
           colour is the current taskbar's half of the themed pair (the user's choice for that taskbar,
@@ -1704,6 +1706,7 @@ class WidgetRenderer:
             for key in ('cpu_label_color', 'gpu_label_color'):
                 value = str(getattr(config, key, '') or '')
                 pair.append(value if QColor.isValidColorName(value) else text)
+            return pair[0], pair[1]
         else:
             text_qc = QColor(text)
             light_taskbar = text_qc.isValid() and text_qc.lightnessF() < 0.5
