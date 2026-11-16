@@ -1175,32 +1175,15 @@ def staging_root() -> str:
     return os.path.join(base, "NetSpeedTray", "updates")
 
 
-# FOLDERID_Downloads (as update_installer; duplicated to keep this module free of Qt imports).
-_FOLDERID_DOWNLOADS = (0x374DE290, 0x123F, 0x4565, (0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B))
-
-
 def _downloads_dirs() -> List[str]:
-    """Where any build ever staged a portable update: Windows' Downloads folder, and the
-    ``~/Downloads`` / home fallbacks update_installer._downloads_dir() used."""
+    """Where any build ever staged a portable update: Windows' Downloads folder (asked via
+    helpers.known_downloads_dir - FOLDERID_Downloads), then the ``~/Downloads`` / home
+    fallbacks update_installer._downloads_dir() used."""
+    from netspeedtray.utils.helpers import known_downloads_dir
     out: List[str] = []
-    try:
-        import ctypes
-
-        class GUID(ctypes.Structure):
-            _fields_ = [("d1", ctypes.c_uint32), ("d2", ctypes.c_uint16),
-                        ("d3", ctypes.c_uint16), ("d4", ctypes.c_ubyte * 8)]
-        a, b, c, d = _FOLDERID_DOWNLOADS
-        g = GUID(a, b, c, (ctypes.c_ubyte * 8)(*d))
-        p = ctypes.c_wchar_p()
-        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(g), 0, None,
-                                                      ctypes.byref(p)) == 0:
-            try:
-                if p.value:
-                    out.append(p.value)
-            finally:
-                ctypes.windll.ole32.CoTaskMemFree(p)
-    except Exception:
-        pass
+    real = known_downloads_dir()
+    if real:
+        out.append(real)
     home = os.path.expanduser("~")
     out += [os.path.join(home, "Downloads"), home]
     return out

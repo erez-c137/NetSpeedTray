@@ -207,7 +207,11 @@ class _CheckWorker(QThread):
                          "User-Agent": f"NetSpeedTray/{constants.app.VERSION}"}
             )
             with https.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
+                # Cap the read like update_installer._fetch_checksums does: a hostile response
+                # must not be able to balloon memory before json.loads sees it. A "latest
+                # release" payload over 1 MB is malformed by definition; the truncated JSON
+                # fails to parse and lands in the normal failed path.
+                data = json.loads(resp.read(1_000_000).decode())
 
             tag = data.get("tag_name", "")
             html_url = data.get("html_url", "")

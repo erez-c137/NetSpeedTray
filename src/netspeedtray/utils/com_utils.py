@@ -35,7 +35,13 @@ def _redirect_gen_path() -> None:
     ImportError, so an ImportError-only guard let it through and the app failed to start (#210).
     Point the generated-code cache at a writable per-user temp dir BEFORE importing
     win32com.client. (We only ever use late-bound GetObject("winmgmts:...") for WMI, which doesn't
-    need this cache at all; the redirect just keeps the import from crashing.)"""
+    need this cache at all; the redirect just keeps the import from crashing.)
+
+    SECURITY: never call win32com.client.EnsureDispatch / makepy in this app. Those would
+    WRITE generated Python modules into this fixed %TEMP% path and IMPORT them - and the
+    directory is not ACL-hardened, so any process running as the same user can pre-plant or
+    overwrite modules there and get code into ours. Late-bound GetObject never populates the
+    cache; keep it that way."""
     import win32com
     try:
         gen_dir = os.path.join(tempfile.gettempdir(), "netspeedtray_win32com_gen")
