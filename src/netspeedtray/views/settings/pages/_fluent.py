@@ -162,3 +162,16 @@ def page_layout(widget) -> QVBoxLayout:
     layout.setContentsMargins(0, 0, 0, 10)
     layout.setSpacing(tokens.SPACE_XS)
     return layout
+
+
+def set_card_enabled(card, enabled: bool) -> None:
+    """Gray out a dependent card when its prerequisite is off. setEnabled alone won't visually dim
+    our fixed-color custom toggle, so pair it with an opacity effect for the Win11 'unavailable'
+    look (and to make the card non-interactive)."""
+    from PyQt6.QtWidgets import QGraphicsOpacityEffect
+    card.setEnabled(enabled)
+    eff = card.graphicsEffect()
+    if not isinstance(eff, QGraphicsOpacityEffect):
+        eff = QGraphicsOpacityEffect(card)
+        card.setGraphicsEffect(eff)
+    eff.setOpacity(1.0 if enabled else 0.4)

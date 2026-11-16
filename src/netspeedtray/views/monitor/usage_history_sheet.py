@@ -39,7 +39,7 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.core import usage_history as U
 from netspeedtray.utils import styles as su
 from netspeedtray.utils.components import Win11Segmented
-from netspeedtray.utils.helpers import fixed_digits, format_data_size, format_decimal, reveal_in_explorer
+from netspeedtray.utils.helpers import fixed_digits, format_data_size, format_decimal, reveal_in_explorer, tr as _tr
 from netspeedtray.views.monitor.graph_host import bind_reader_thread, stop_reader_thread
 
 VIEW_DAYS, VIEW_MONTHS, VIEW_YEARS = "days", "months", "years"
@@ -53,10 +53,6 @@ def _load(ws):
     if available is not None and not available():
         return _PENDING_UPGRADE
     return ws.get_metered_daily_volume(None, datetime.now())
-
-
-def _tr(i18n, key: str, default: str) -> str:
-    return str(getattr(i18n, key, default)) if i18n is not None else default
 
 
 class _Loader(QObject):
