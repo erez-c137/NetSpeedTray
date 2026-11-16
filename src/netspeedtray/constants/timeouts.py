@@ -50,6 +50,9 @@ class TimeoutConstants:
     # for the 1s state-watcher tick (a visible ~1s lag). Cheap: short-circuits
     # before any taskbar query unless the foreground window is actually fullscreen.
     FULLSCREEN_POLL_INTERVAL_MS: Final[int] = 250
+    # Bound on waiting for the elevated update shell to have created the installer, before the
+    # launch guards are dropped anyway (update_installer.launch_installer).
+    UPDATE_GUARD_WAIT_MS: Final[int] = 10_000
     # Leaving fullscreen needs two agreeing "not covered" readings at least this far apart (#503):
     # one stray foreground reading must not flash the widget over a fullscreen app. Entering
     # fullscreen (hide) stays immediate.

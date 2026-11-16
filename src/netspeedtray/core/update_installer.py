@@ -157,11 +157,15 @@ def _shell_execute_runas(path: str, params: str, hwnd: int = 0, show: int = 1):
 # Windows (os.mkdir ignores POSIX mode bits), so the download directory inherits the per-user
 # %TEMP% ACL: any process running as the SAME user could swap the verified Setup.exe in that
 # window and ride the updater's elevation prompt. While these handles are open, Windows itself
-# refuses every open-for-write/delete of the file and every rename/delete of its directory, so
-# the file that gets elevated is provably the file that was verified. Acquired in _DownloadWorker
+# refuses every open-for-write/delete of the file and every rename/delete of its directory.
+# That is defense in depth, not a closed window: the guard drops once the elevated shell has
+# started the image, a running exe can still be renamed and replaced, and Inno's loader opens
+# Setup.exe by path again after it starts (to unpack setup.tmp, which reads its payload from
+# that path too). The stronger tie is the SHA-256 re-check against the release's published
+# checksums.txt below, done WHILE the guard holds (like the portable path) - it binds the
+# guarded file to this release, not merely to the signer certificate. Acquired in _DownloadWorker
 # right before verify_file(); released in launch_installer (and by every refusal/cleanup path).
 _LAUNCH_GUARDS: Optional[list] = None
-_GUARD_WAIT_MS = 10_000   # bound on waiting for the elevated shell to have created the installer
 
 
 def _acquire_launch_guards(path: str) -> bool:
@@ -184,17 +188,29 @@ def _acquire_launch_guards(path: str) -> bool:
         return True
     try:
         import ctypes
+        import ctypes.wintypes as wintypes
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        # Prototypes: handles are c_void_p (never truncated to c_int), strings wide, results typed.
+        k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                    wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        k32.CreateFileW.restype = wintypes.HANDLE
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.CloseHandle.restype = wintypes.BOOL
+        k32.GetFileAttributesW.argtypes = [wintypes.LPCWSTR]
+        k32.GetFileAttributesW.restype = wintypes.DWORD
         GENERIC_READ, OPEN_EXISTING = 0x80000000, 3
         FILE_SHARE_READ, FILE_SHARE_WRITE = 0x1, 0x2
         FILE_ATTRIBUTE_NORMAL, FILE_FLAG_BACKUP_SEMANTICS = 0x80, 0x02000000
         FILE_FLAG_OPEN_REPARSE_POINT, FILE_ATTRIBUTE_REPARSE_POINT = 0x00200000, 0x400
+        FILE_LIST_DIRECTORY = 0x0001
+        INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+        INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
         def _is_reparse(p) -> bool:
-            # INVALID_FILE_ATTRIBUTES (0xFFFFFFFF as c_int: -1) also refuses here - a vanished
-            # or unreadable path is no place to pin an installer.
+            # INVALID_FILE_ATTRIBUTES also refuses here - a vanished or unreadable path is no
+            # place to pin an installer.
             attrs = k32.GetFileAttributesW(str(p))
-            return attrs == -1 or bool(attrs & FILE_ATTRIBUTE_REPARSE_POINT)
+            return attrs == INVALID_FILE_ATTRIBUTES or bool(attrs & FILE_ATTRIBUTE_REPARSE_POINT)
 
         if _is_reparse(path) or _is_reparse(os.path.dirname(path) or "."):
             logger.warning("Refusing launch guards: the download path or its directory is a "
@@ -206,16 +222,22 @@ def _acquire_launch_guards(path: str) -> bool:
         h_file = k32.CreateFileW(str(path), GENERIC_READ, FILE_SHARE_READ,
                                  None, OPEN_EXISTING,
                                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, None)
-        if h_file == -1:   # INVALID_HANDLE_VALUE (ctypes default restype: c_int)
+        if not h_file or h_file == INVALID_HANDLE_VALUE:
             return False
-        # A directory handle requires FILE_FLAG_BACKUP_SEMANTICS; access 0 = query only.
-        h_dir = k32.CreateFileW(os.path.dirname(path) or ".", 0,
+        # The rename/delete protection for `path` comes from the open file handle above: an
+        # in-place rewrite or a rename-over needs write/delete access to the FILE, and the
+        # rename of its containing folder is refused while a handle to a file inside is open.
+        # This second handle keeps the folder itself from being renamed away independently
+        # (belt and braces). It must be a real query (FILE_LIST_DIRECTORY): an access-0 handle
+        # records no sharing restriction at all and pins nothing.
+        h_dir = k32.CreateFileW(os.path.dirname(path) or ".", FILE_LIST_DIRECTORY,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
                                 None, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, None)
-        if h_dir == -1:
+        if not h_dir or h_dir == INVALID_HANDLE_VALUE:
             k32.CloseHandle(h_file)
             return False
-        _LAUNCH_GUARDS = [h_file, h_dir]
+        _LAUNCH_GUARDS = [h_file.value if hasattr(h_file, "value") else int(h_file),
+                          h_dir.value if hasattr(h_dir, "value") else int(h_dir)]
         return True
     except Exception:
         logger.warning("Could not take the launch guards for %s", path, exc_info=True)
@@ -285,16 +307,22 @@ def launch_installer(path: str, hwnd: int = 0) -> None:
         if proc_handle:
             try:
                 import ctypes
+                import ctypes.wintypes as wintypes
                 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                k32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+                k32.WaitForSingleObject.restype = wintypes.DWORD
+                k32.CloseHandle.argtypes = [wintypes.HANDLE]
+                k32.CloseHandle.restype = wintypes.BOOL
+                wait_ms = constants.timeouts.UPDATE_GUARD_WAIT_MS
                 try:
                     # WAIT_OBJECT_0 (0) means cmd exited - `start` has created the installer
                     # process from the pinned file. Anything else (WAIT_TIMEOUT on a stalled
                     # machine, WAIT_FAILED) means the pins are dropped before that confirmation;
                     # say so loudly rather than drop them silently.
-                    if k32.WaitForSingleObject(int(proc_handle), _GUARD_WAIT_MS) != 0:
+                    if k32.WaitForSingleObject(int(proc_handle), wait_ms) != 0:
                         logger.warning("The elevated shell did not exit within %s ms; dropping "
                                        "the launch guards before the installer process was "
-                                       "confirmed.", _GUARD_WAIT_MS)
+                                       "confirmed.", wait_ms)
                 finally:
                     k32.CloseHandle(int(proc_handle))
             except Exception:
@@ -481,8 +509,9 @@ class _DownloadWorker(QObject):
 
     Installer mode: the downloaded Setup.exe is Authenticode-verified (publisher-pinned) and the emitted
     path is that EXE; the caller launches it. From just before verification until the elevated
-    launch completes, the file and its directory are pinned (launch guards) so the verified file
-    is provably the file that gets elevated.
+    launch completes, the file and its directory are pinned (launch guards), and while the guard
+    holds the file's SHA-256 is checked against the release's checksums.txt - the pinned file is
+    bound to this release before it can be elevated (defense in depth: see the launch-guards note).
 
     Portable mode: a PyInstaller onedir ZIP is not one signed file, so instead of Authenticode the whole
     ZIP's SHA-256 is checked against the release's published checksums.txt - i.e. the download is exactly
@@ -540,6 +569,20 @@ class _DownloadWorker(QObject):
                 # taken, refuse the elevated launch and fall back to the browser.
                 if not _acquire_launch_guards(self._dest):
                     raise RuntimeError("could not pin the downloaded installer for a safe launch")
+                # While the guard holds, tie the file to THIS release: hash the guarded file and
+                # compare it with the published checksums.txt - the same tie the portable path
+                # uses. Anything swapped in before the guard was taken - including a
+                # same-certificate replacement - fails here instead of riding the elevation
+                # prompt. Fail-closed: a missing checksum entry is a refusal.
+                if self._checksums_url and self._expected_name:
+                    checksums = _fetch_checksums(self._checksums_url)
+                    expected = _expected_hash_for(checksums, self._expected_name)
+                    if not expected:
+                        raise RuntimeError("no published checksum for the installer")
+                    if _sha256_file(self._dest) != expected:
+                        logger.warning("Installer checksum MISMATCH for %s", self._expected_name)
+                        raise RuntimeError("checksum mismatch - the download may be corrupt or tampered")
+                    logger.info("Installer checksum verified for %s", self._expected_name)
                 result = verify_file(self._dest)
                 self.verified.emit(self._dest, result.trusted, result.reason)
         except Exception as e:  # noqa: BLE001
@@ -558,7 +601,7 @@ class _DownloadWorker(QObject):
         # zip beside it, which needs the pin gone. (A swap of the extracted EXE is caught only
         # while that gate has not yet run; the verify->hands-off-launch window stays unguarded by
         # design - the applier launches unelevated, so there is no elevation boundary there.
-        # What remains overall is finding-U8's unsigned-manifest gap.)
+        # The unsigned-manifest gap from finding U8 is closed by the manifest check below.)
         if not _acquire_launch_guards(self._dest):
             raise RuntimeError("could not pin the downloaded update package for a safe extraction")
         checksums = _fetch_checksums(self._checksums_url)
@@ -705,12 +748,14 @@ class SecureUpdater(QObject):
         self._progress.canceled.connect(self._on_cancel)
 
         checksums_url = expected_name = ready_target = staging_target = app_dir = ""
+        # checksums.txt is published next to each artifact in the same release-download folder;
+        # the expected filename is that artifact's own basename as listed there. Both update
+        # paths use it: the portable ZIP for the whole-archive check, the installer for the
+        # guarded-file re-verification before the elevated launch.
+        base, _, fname = url.rpartition("/")
+        checksums_url = f"{base}/checksums.txt" if base else ""
+        expected_name = fname
         if self._portable:
-            # checksums.txt is published next to the portable ZIP in the same release-download folder;
-            # the expected filename is the ZIP's own basename as listed there.
-            base, _, fname = self._portable_url.rpartition("/")
-            checksums_url = f"{base}/checksums.txt" if base else ""
-            expected_name = fname
             name = (f"{constants.app.APP_NAME}-{self._latest_version}"
                     if self._latest_version else f"{constants.app.APP_NAME}-update")
             ready_target = os.path.join(_downloads_dir(), name)
