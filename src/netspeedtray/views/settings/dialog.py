@@ -8,10 +8,8 @@ Handles live updates to the parent widget via signals and throttling.
 
 from __future__ import annotations
 
-from netspeedtray.core.controller import StatsController
 
 import logging
-import shutil
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 # Use TYPE_CHECKING to avoid circular import issues at runtime
@@ -38,7 +36,6 @@ from netspeedtray.utils.support_bundle import build_support_bundle
 from netspeedtray.utils.dwm import apply_win11_chrome
 
 # --- Settings Pages (2.0 IA: General · Widget · Appearance · Hardware · Network · Advanced) ---
-from netspeedtray.utils.config import ConfigManager
 from netspeedtray.views.settings.pages.interfaces import InterfacesPage
 from netspeedtray.views.settings.pages.general import GeneralPage
 from netspeedtray.views.settings.pages.widget import WidgetPage
@@ -333,6 +330,7 @@ class SettingsDialog(QDialog):
                 ps_label.setStyleSheet(
                     f"color: {style_utils.semantic_colors()['text_secondary']}; background: transparent;")
                 ps_layout.addWidget(ps_label)
+                self._preview_label = ps_label   # recoloured on an accent strip (_paint_preview_backdrop)
                 ps_layout.addStretch(1)
                 self.preview_widget = PreviewWidget(self.config, self.i18n, width=300, height=40)
                 ps_layout.addWidget(self.preview_widget)
@@ -456,6 +454,8 @@ class SettingsDialog(QDialog):
                     self.get_settings() or self.config, pv.side_fit if pv is not None else None))
             except Exception as e:
                 self.logger.debug("display-mode note not set: %s", e)
+        if name in ("appearance", "widget"):   # its accent-taskbar note, from the settings as they stand
+            self._sync_accent_notes()
         return page
 
     def _wire_page(self, name: str, page: QWidget) -> None:
@@ -558,13 +558,6 @@ class SettingsDialog(QDialog):
         # happens to pass over. The guard forwards stray wheel events to this scroll area.
         from netspeedtray.utils.components import install_wheel_guard
         install_wheel_guard(page)
-
-    @classmethod
-    def _wrap_in_scroll(cls, page: QWidget) -> QScrollArea:
-        """Wraps a settings page in a frameless, transparent scroll area."""
-        scroll = cls._make_scroll()
-        cls._fill_scroll(scroll, page)
-        return scroll
 
     def _init_ui_state(self) -> None:
         """Loads current configuration into all UI elements and restores window position."""
@@ -712,6 +705,24 @@ class SettingsDialog(QDialog):
                 self._built_pages["widget"].set_display_mode_note(self._display_mode_note_kind(merged, pv.side_fit))
         except Exception as e:
             self.logger.debug("preview update failed: %s", e)
+        self._sync_accent_notes(settings)
+
+    def _sync_accent_notes(self, settings: Optional[Dict[str, Any]] = None) -> None:
+        """The accent-taskbar notes (#556) on the built Appearance / Widget pages: each shown, right under
+        its colour rows, while the widget - painting these settings - swaps one of those colours for a
+        readable text colour (color_scheme.accent_swapped), the swap the paint-time guard used to make
+        silently."""
+        try:
+            if not (self._is_built("appearance") or self._is_built("widget")):
+                return
+            merged = {**self.config, **(settings if settings is not None else (self.get_settings() or {}))}
+            swapped = set(color_scheme.accent_swapped(merged))
+            if self._is_built("appearance"):
+                self._built_pages["appearance"].set_accent_notes(swapped)
+            if self._is_built("widget"):
+                self._built_pages["widget"].mini_graph_section.set_accent_notes(swapped)
+        except Exception as e:
+            self.logger.debug("accent-taskbar notes not set: %s", e)
 
     @staticmethod
     def _display_mode_note_kind(settings: Dict[str, Any], side_fit) -> Optional[str]:
@@ -810,7 +821,20 @@ class SettingsDialog(QDialog):
         if strip is None:
             return
         c = constants.color.PREVIEW_STRIP_LIGHT if color_scheme.shell_is_light() else constants.color.PREVIEW_STRIP_DARK
+        # On an accent-coloured taskbar the strip is that bar's shade - the one the widget's colours are
+        # judged against (#556) - so a colour the guard swaps, or a custom label colour that is hard to
+        # read there, shows as it will on the taskbar instead of on a neutral grey.
+        label_color = style_utils.semantic_colors()['text_secondary']
+        app = color_scheme.appearance()
+        if app.accent_on and app.accent_bar and not app.high_contrast:
+            c = app.accent_bar
+            # The app theme's muted grey can vanish on the bar's shade (a light app on a dark accent).
+            label_color = max((constants.color.WHITE, constants.color.TEXT_LIGHT),
+                              key=lambda t: color_scheme.contrast_ratio(t, c))
         strip.setStyleSheet(f"#previewStrip {{ background: {c}; border-radius: 6px; }}")
+        label = getattr(self, "_preview_label", None)
+        if label is not None:
+            label.setStyleSheet(f"color: {label_color}; background: transparent;")
 
     def on_taskbar_theme_changed(self) -> None:
         """A Windows Light/Dark flip (called by the widget after the theme manager refreshed the flag):
@@ -822,6 +846,7 @@ class SettingsDialog(QDialog):
                 preview.set_config(self.get_settings() or self.config)   # re-resolves the colour pairs
             except Exception as e:
                 self.logger.debug("Preview refresh after a theme flip failed: %s", e)
+        self._sync_accent_notes()
 
     def _color_pages(self) -> list:
         """The sections that hold colour fields, most specific first (Appearance's get_settings also

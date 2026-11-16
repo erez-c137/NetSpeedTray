@@ -1,11 +1,8 @@
 {
     "//_1": "--- Unità e formattazione ---",
     "SETTINGS_WINDOW_TITLE": "Impostazioni",
-    "EXPORT_CSV_TITLE": "Esporta cronologia",
-    "EXPORT_GRAPH_IMAGE_TITLE": "Salva immagine del grafico",
     "SELECT_COLOR_TITLE": "Seleziona colore",
     "ERROR_TITLE": "Errore",
-    "WARNING_TITLE": "Avviso",
     "SUCCESS_TITLE": "Operazione riuscita",
     "ERROR_WINDOW_TITLE": "Errore dell'applicazione",
     "LANGUAGE_RESTART_TITLE": "Riavvio necessario",
@@ -13,10 +10,6 @@
     "HARDWARE_HISTORY_OFF_MESSAGE": "La cronologia hardware è disattivata.\nAttiva il monitoraggio di CPU o GPU in Impostazioni → Hardware.",
     "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "La cronologia hardware è disattivata.\nAttiva «Registra cronologia hardware» in Impostazioni → Avanzate.",
     "SETTINGS_ERROR_MESSAGE": "Impossibile applicare una o più impostazioni.",
-    "EXPORT_SUCCESS_MESSAGE": "Esportazione completata in:\n{file_path}",
-    "NO_HISTORY_DATA_MESSAGE": "Nessun dato storico disponibile da esportare.",
-    "EXPORT_ERROR_MESSAGE": "Impossibile esportare i dati:\n{error}",
-    "PERMISSION_DENIED_MESSAGE": "Permesso negato durante l'esportazione del registro.",
     "ERROR_UI_SETUP_FAILED": "Impossibile configurare la finestra delle impostazioni: {error}",
     "NO_APP_DATA_MESSAGE": "Nessun dato di utilizzo delle applicazioni disponibile per questo periodo.",
     "LANGUAGE_RESTART_MESSAGE": "La modifica della lingua avrà effetto dopo il riavvio dell'applicazione.",
@@ -258,11 +251,6 @@
     "SHORT_UNIT_LABELS_LABEL": "Etichette unità abbreviate (es. Mb)",
     "DISPLAY_FORMAT_GROUP": "Formato visualizzazione",
     "INTERFACE_LAYOUT_GROUP": "Layout interfaccia",
-    "CSV_FILE_FILTER": "File CSV (*.csv);;Tutti i file (*.*)",
-    "PNG_FILE_FILTER": "Immagini PNG (*.png);;Tutti i file (*.*)",
-    "CSV_HEADER_TIMESTAMP": "Data e ora",
-    "CSV_HEADER_UPLOAD_MBPS": "Upload (Mbps)",
-    "CSV_HEADER_DOWNLOAD_MBPS": "Download (Mbps)",
     "FONT_WEIGHT_THIN": "Sottile",
     "FONT_WEIGHT_EXTRALIGHT": "Extra leggero",
     "FONT_WEIGHT_LIGHT": "Leggero",
@@ -644,5 +632,6 @@
     "BACKUP_HISTORY_ERR_IO": "Impossibile scrivere la copia. Controlla di poter salvare in quella cartella e che ci sia abbastanza spazio libero.",
     "BACKUP_HISTORY_ERR_BUSY": "È già in corso un backup su questo file.",
     "CONTEXT_MENU_ITEMS_LABEL": "Voci del menu del tasto destro",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Scegli cosa mostra il menu del tasto destro del widget. {settings} e {exit} sono sempre visibili."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Scegli cosa mostra il menu del tasto destro del widget. {settings} e {exit} sono sempre visibili.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "La barra delle applicazioni mostra un colore principale, quindi i colori difficili da leggere su di essa vengono disegnati con un colore del testo leggibile."
 }

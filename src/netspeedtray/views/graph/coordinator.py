@@ -1,6 +1,5 @@
 
 from PyQt6.QtCore import QObject, QTimer, Qt
-from datetime import datetime
 import logging
 from netspeedtray import constants
 from netspeedtray.views.graph.logic import GraphLogic
@@ -66,20 +65,6 @@ class GraphCoordinator(QObject):
         if hasattr(self.window, 'config_handler'):
             self.window.config_handler.queue_config_update({'history_period_slider_value': period_index})
 
-    def handle_zoom_selection(self, start_dt: datetime, end_dt: datetime):
-        """Processes a custom zoom range selection."""
-        self.is_custom_zoom_active = True
-        self.custom_zoom_start = start_dt
-        self.custom_zoom_end = end_dt
-        
-        # Update UI overlays
-        self.window.ui.reset_zoom_btn.show()
-        self.window.ui.show_zoom_hint()
-        self.window.ui.reposition_overlay_elements()
-        
-        # Trigger immediate update
-        self.trigger_refresh(use_custom_range=True)
-
     def reset_zoom_state(self, trigger_update: bool = True):
         """Clears custom zoom and returns to timeline view."""
         self.is_custom_zoom_active = False
@@ -109,14 +94,6 @@ class GraphCoordinator(QObject):
     def stop_realtime(self):
         """Stops periodic updates."""
         self.realtime_timer.stop()
-
-    def pause_realtime(self):
-        """Temporarily pauses updates (e.g. during UI interaction)."""
-        self.stop_realtime()
-
-    def resume_realtime(self):
-        """Resumes periodic updates if still enabled."""
-        self.start_realtime()
 
     def _execute_debounced_update(self):
         """Callback for the debounce timer."""

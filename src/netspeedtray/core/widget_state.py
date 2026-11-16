@@ -22,7 +22,6 @@ import logging
 import sqlite3
 import threading
 import time
-import shutil
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, date

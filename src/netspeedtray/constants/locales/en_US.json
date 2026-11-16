@@ -1,11 +1,8 @@
 {
     "//_1": "--- Units and Formatting ---",
     "SETTINGS_WINDOW_TITLE": "Settings",
-    "EXPORT_CSV_TITLE": "Export History",
-    "EXPORT_GRAPH_IMAGE_TITLE": "Save Graph Image",
     "SELECT_COLOR_TITLE": "Select color",
     "ERROR_TITLE": "Error",
-    "WARNING_TITLE": "Warning",
     "SUCCESS_TITLE": "Success",
     "ERROR_WINDOW_TITLE": "Application Error",
     "LANGUAGE_RESTART_TITLE": "Restart required",
@@ -13,10 +10,6 @@
     "HARDWARE_HISTORY_OFF_MESSAGE": "Hardware history is off.\nTurn on CPU or GPU monitoring in Settings → Hardware.",
     "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "Hardware history is off.\nTurn on Record hardware history in Settings → Advanced.",
     "SETTINGS_ERROR_MESSAGE": "Failed to apply one or more settings.",
-    "EXPORT_SUCCESS_MESSAGE": "Exported successfully to:\n{file_path}",
-    "NO_HISTORY_DATA_MESSAGE": "No history data available to export.",
-    "EXPORT_ERROR_MESSAGE": "Failed to export data:\n{error}",
-    "PERMISSION_DENIED_MESSAGE": "Permission denied while exporting the log.",
     "ERROR_UI_SETUP_FAILED": "Failed to set up the settings dialog: {error}",
     "NO_APP_DATA_MESSAGE": "No application usage data available for this period.",
     "LANGUAGE_RESTART_MESSAGE": "Language changes will take effect after restarting the application.",
@@ -258,11 +251,6 @@
     "SHORT_UNIT_LABELS_LABEL": "Short unit labels (e.g. Mb)",
     "DISPLAY_FORMAT_GROUP": "Display format",
     "INTERFACE_LAYOUT_GROUP": "Interface layout",
-    "CSV_FILE_FILTER": "CSV Files (*.csv);;All Files (*.*)",
-    "PNG_FILE_FILTER": "PNG Images (*.png);;All Files (*.*)",
-    "CSV_HEADER_TIMESTAMP": "Timestamp",
-    "CSV_HEADER_UPLOAD_MBPS": "Upload (Mbps)",
-    "CSV_HEADER_DOWNLOAD_MBPS": "Download (Mbps)",
     "FONT_WEIGHT_THIN": "Thin",
     "FONT_WEIGHT_EXTRALIGHT": "ExtraLight",
     "FONT_WEIGHT_LIGHT": "Light",
@@ -644,5 +632,6 @@
     "BACKUP_HISTORY_ERR_IO": "The copy could not be written. Check that you can save to that folder and that there is enough free space.",
     "BACKUP_HISTORY_ERR_BUSY": "A backup to this file is already running.",
     "CONTEXT_MENU_ITEMS_LABEL": "Right-click menu items",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choose what the widget's right-click menu shows. {settings} and {exit} always show."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choose what the widget's right-click menu shows. {settings} and {exit} always show.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "Your taskbar shows an accent color, so colors that are hard to read on it are drawn in a readable text color."
 }

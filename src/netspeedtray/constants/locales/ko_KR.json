@@ -1,11 +1,8 @@
 {
     "//_1": "--- Units and Formatting ---",
     "SETTINGS_WINDOW_TITLE": "설정",
-    "EXPORT_CSV_TITLE": "기록 내보내기",
-    "EXPORT_GRAPH_IMAGE_TITLE": "그래프 이미지 저장",
     "SELECT_COLOR_TITLE": "색상 선택",
     "ERROR_TITLE": "오류",
-    "WARNING_TITLE": "경고",
     "SUCCESS_TITLE": "성공",
     "ERROR_WINDOW_TITLE": "응용 프로그램 오류",
     "LANGUAGE_RESTART_TITLE": "재시작 필요",
@@ -13,10 +10,6 @@
     "HARDWARE_HISTORY_OFF_MESSAGE": "하드웨어 기록이 꺼져 있습니다.\n설정 → 하드웨어에서 CPU 또는 GPU 모니터링을 켜세요.",
     "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "하드웨어 기록이 꺼져 있습니다.\n설정 → 고급에서 '하드웨어 기록 저장'을 켜세요.",
     "SETTINGS_ERROR_MESSAGE": "하나 이상의 설정을 적용하지 못했습니다.",
-    "EXPORT_SUCCESS_MESSAGE": "성공적으로 내보냈습니다:\n{file_path}",
-    "NO_HISTORY_DATA_MESSAGE": "내보낼 수 있는 기록 데이터가 없습니다.",
-    "EXPORT_ERROR_MESSAGE": "데이터를 내보내지 못했습니다:\n{error}",
-    "PERMISSION_DENIED_MESSAGE": "로그를 내보내는 동안 권한이 거부되었습니다.",
     "ERROR_UI_SETUP_FAILED": "설정 대화 상자를 설정하지 못했습니다: {error}",
     "NO_APP_DATA_MESSAGE": "이 기간 동안 사용할 수 있는 응용 프로그램 사용 데이터가 없습니다.",
     "LANGUAGE_RESTART_MESSAGE": "언어 변경은 응용 프로그램을 재시작한 후에 적용됩니다.",
@@ -258,11 +251,6 @@
     "SHORT_UNIT_LABELS_LABEL": "짧은 단위 레이블 (예: Mb)",
     "DISPLAY_FORMAT_GROUP": "표시 형식",
     "INTERFACE_LAYOUT_GROUP": "인터페이스 레이아웃",
-    "CSV_FILE_FILTER": "CSV 파일 (*.csv);;모든 파일 (*.*)",
-    "PNG_FILE_FILTER": "PNG 이미지 (*.png);;모든 파일 (*.*)",
-    "CSV_HEADER_TIMESTAMP": "타임스탬프",
-    "CSV_HEADER_UPLOAD_MBPS": "업로드 (Mbps)",
-    "CSV_HEADER_DOWNLOAD_MBPS": "다운로드 (Mbps)",
     "FONT_WEIGHT_THIN": "얇은",
     "FONT_WEIGHT_EXTRALIGHT": "매우 가벼운",
     "FONT_WEIGHT_LIGHT": "가벼운",
@@ -644,5 +632,6 @@
     "BACKUP_HISTORY_ERR_IO": "사본을 쓸 수 없습니다. 해당 폴더에 저장할 수 있는지, 여유 공간이 충분한지 확인하세요.",
     "BACKUP_HISTORY_ERR_BUSY": "이 파일로 백업이 이미 진행 중입니다.",
     "CONTEXT_MENU_ITEMS_LABEL": "마우스 오른쪽 메뉴 항목",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "위젯의 마우스 오른쪽 메뉴에 표시할 항목을 선택합니다. {settings} 및 {exit}은(는) 항상 표시됩니다."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "위젯의 마우스 오른쪽 메뉴에 표시할 항목을 선택합니다. {settings} 및 {exit}은(는) 항상 표시됩니다.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "작업 표시줄에 강조 색이 표시되어 있어서, 그 위에서 읽기 어려운 색은 읽기 쉬운 텍스트 색으로 그려집니다."
 }

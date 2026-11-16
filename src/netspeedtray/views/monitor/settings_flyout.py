@@ -180,4 +180,5 @@ class MonitorSettingsFlyout(QFrame):
         self._set(key, None)                                 # but store None == "auto"
 
     def _tr(self, key: str, default: str) -> str:
-        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
+        from netspeedtray.utils.helpers import tr
+        return tr(self._i18n, key, default)

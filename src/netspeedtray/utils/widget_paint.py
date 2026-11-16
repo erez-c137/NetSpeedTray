@@ -1074,6 +1074,7 @@ def _draw_content(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
     if (mode == "side_by_side" or config.widget_display_mode == "cycle") and layout_mode != "vertical" and width > 0:
         stashed_graph_painter = getattr(renderer, "_graph_painter", None)
         renderer._graph_painter = None   # the probe measures text only: no graph into the live layer
+        mp: Optional[QPainter] = None
         try:
             probe = QImage(max(1, width), max(1, height), QImage.Format.Format_ARGB32_Premultiplied)
             mp = QPainter(probe)
@@ -1096,6 +1097,10 @@ def _draw_content(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
         except Exception:
             align_dx = 0
         finally:
+            # A draw that raised mid-probe must still end the painter: Qt aborts the whole process when
+            # the probe image is freed while a QPainter is still active on it.
+            if mp is not None and mp.isActive():
+                mp.end()
             renderer._graph_painter = stashed_graph_painter
             renderer.reset_content_bounds()
 

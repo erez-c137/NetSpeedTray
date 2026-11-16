@@ -55,6 +55,7 @@ def mock_i18n():
     i18n.THEME_DARK_TASKBAR = "Dark taskbar"
     i18n.THEME_LIGHT_TASKBAR = "Light taskbar"
     i18n.THEMED_COLORS_NOTE = "Each color has two versions"
+    i18n.ACCENT_TASKBAR_COLORS_NOTE = "Your taskbar uses an accent color"
     i18n.GRAPH_UPLOAD_COLOR_LABEL = "Upload graph color"
     i18n.GRAPH_DOWNLOAD_COLOR_LABEL = "Download graph color"
     i18n.MBITS_UNIT = "Mbps"  # threshold spin-box suffix (legacy key)

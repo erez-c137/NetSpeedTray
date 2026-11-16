@@ -1,11 +1,8 @@
 {
     "//_1": "--- Units and Formatting ---",
     "SETTINGS_WINDOW_TITLE": "Ayarlar",
-    "EXPORT_CSV_TITLE": "Geçmişi Dışa Aktar",
-    "EXPORT_GRAPH_IMAGE_TITLE": "Grafik Görselini Kaydet",
     "SELECT_COLOR_TITLE": "Renk seç",
     "ERROR_TITLE": "Hata",
-    "WARNING_TITLE": "Uyarı",
     "SUCCESS_TITLE": "Başarılı",
     "ERROR_WINDOW_TITLE": "Uygulama Hatası",
     "LANGUAGE_RESTART_TITLE": "Yeniden başlatma gerekli",
@@ -13,10 +10,6 @@
     "HARDWARE_HISTORY_OFF_MESSAGE": "Donanım geçmişi kapalı.\nAyarlar → Donanım bölümünden CPU veya GPU izlemeyi açın.",
     "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "Donanım geçmişi kapalı.\nAyarlar → Gelişmiş bölümünden 'Donanım geçmişini kaydet'i açın.",
     "SETTINGS_ERROR_MESSAGE": "Bir veya daha fazla ayar bulunamadı.",
-    "EXPORT_SUCCESS_MESSAGE": "Başarıyla şuraya aktarıldı :\n{file_path}",
-    "NO_HISTORY_DATA_MESSAGE": "Dışa aktarabilecek geçmiş verisi yok",
-    "EXPORT_ERROR_MESSAGE": "Veri dışa aktarılamadı:\n{error}",
-    "PERMISSION_DENIED_MESSAGE": "Log dosyası dışa aktarılırken erişim reddedildi.",
     "ERROR_UI_SETUP_FAILED": "Ayarlar penceresi başlatılamadı : {error}",
     "NO_APP_DATA_MESSAGE": "Bu dönem için uygulama verisi mevcut değil.",
     "LANGUAGE_RESTART_MESSAGE": "Dil değişiklikleri uygulama yeniden başlatıldıktan sonra geçerli olacaktır.",
@@ -258,11 +251,6 @@
     "SHORT_UNIT_LABELS_LABEL": "Kısa birim etiketleri (örn. Mb)",
     "DISPLAY_FORMAT_GROUP": "Görüntüleme biçimi",
     "INTERFACE_LAYOUT_GROUP": "Arayüz düzeni",
-    "CSV_FILE_FILTER": "CSV Dostaları (*.csv);;Tüm Dosyalar (*.*)",
-    "PNG_FILE_FILTER": "PNG Görselleri (*.png);;TÜm Dosyalar (*.*)",
-    "CSV_HEADER_TIMESTAMP": "Zaman Damgası",
-    "CSV_HEADER_UPLOAD_MBPS": "Upload (Mbps)",
-    "CSV_HEADER_DOWNLOAD_MBPS": "Download (Mbps)",
     "FONT_WEIGHT_THIN": "İnce",
     "FONT_WEIGHT_EXTRALIGHT": "Eksta İnce",
     "FONT_WEIGHT_LIGHT": "Hafif",
@@ -644,5 +632,6 @@
     "BACKUP_HISTORY_ERR_IO": "Kopya yazılamadı. O klasöre kaydedebildiğinizi ve yeterli boş alan olduğunu denetleyin.",
     "BACKUP_HISTORY_ERR_BUSY": "Bu dosyaya zaten bir yedekleme yapılıyor.",
     "CONTEXT_MENU_ITEMS_LABEL": "Sağ tıklama menüsü öğeleri",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Widget'ın sağ tıklama menüsünde nelerin görüneceğini seçin. {settings} ve {exit} her zaman görünür."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Widget'ın sağ tıklama menüsünde nelerin görüneceğini seçin. {settings} ve {exit} her zaman görünür.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "Görev çubuğunuz bir vurgu rengi gösteriyor; bu yüzden üzerinde okunması zor renkler okunaklı bir metin rengiyle çizilir."
 }

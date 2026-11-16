@@ -1,11 +1,8 @@
 {
     "//_1": "--- Units and Formatting ---",
     "SETTINGS_WINDOW_TITLE": "Nastavitve",
-    "EXPORT_CSV_TITLE": "Izvozi zgodovino",
-    "EXPORT_GRAPH_IMAGE_TITLE": "Shrani sliko grafa",
     "SELECT_COLOR_TITLE": "Izberi barvo",
     "ERROR_TITLE": "Napaka",
-    "WARNING_TITLE": "Opozorilo",
     "SUCCESS_TITLE": "Uspeh",
     "ERROR_WINDOW_TITLE": "Napaka aplikacije",
     "LANGUAGE_RESTART_TITLE": "Potreben je ponovni zagon",
@@ -13,10 +10,6 @@
     "HARDWARE_HISTORY_OFF_MESSAGE": "Zgodovina strojne opreme je izklopljena.\nVklopite nadzor CPU ali GPU v Nastavitve → Strojna oprema.",
     "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "Zgodovina strojne opreme je izklopljena.\nVklopite »Beleži zgodovino strojne opreme« v Nastavitve → Napredno.",
     "SETTINGS_ERROR_MESSAGE": "Uveljavitev ene ali več nastavitev je spodletela.",
-    "EXPORT_SUCCESS_MESSAGE": "Izvoz uspešen v:\n{file_path}",
-    "NO_HISTORY_DATA_MESSAGE": "Ni podatkov zgodovine za izvoz.",
-    "EXPORT_ERROR_MESSAGE": "Izvoz podatkov je spodletel:\n{error}",
-    "PERMISSION_DENIED_MESSAGE": "Dovoljenje zavrnjeno med izvozom dnevnika.",
     "ERROR_UI_SETUP_FAILED": "Nastavitev pogovornega okna nastavitev je spodletela: {error}",
     "NO_APP_DATA_MESSAGE": "Ni podatkov o uporabi aplikacije za to obdobje.",
     "LANGUAGE_RESTART_MESSAGE": "Spremembe jezika bodo uveljavljene po ponovnem zagonu aplikacije.",
@@ -258,11 +251,6 @@
     "SHORT_UNIT_LABELS_LABEL": "Kratke oznake enot (npr. Mb)",
     "DISPLAY_FORMAT_GROUP": "Oblika prikaza",
     "INTERFACE_LAYOUT_GROUP": "Postavitev vmesnika",
-    "CSV_FILE_FILTER": "CSV datoteke (*.csv);;Vse datoteke (*.*)",
-    "PNG_FILE_FILTER": "PNG slike (*.png);;Vse datoteke (*.*)",
-    "CSV_HEADER_TIMESTAMP": "Časovni žig",
-    "CSV_HEADER_UPLOAD_MBPS": "Nalaganje (Mbps)",
-    "CSV_HEADER_DOWNLOAD_MBPS": "Prenos (Mbps)",
     "FONT_WEIGHT_THIN": "Tanka",
     "FONT_WEIGHT_EXTRALIGHT": "Ekstra lahka",
     "FONT_WEIGHT_LIGHT": "Lahka",
@@ -644,5 +632,6 @@
     "BACKUP_HISTORY_ERR_IO": "Kopije ni bilo mogoče zapisati. Preverite, ali lahko shranjujete v to mapo in ali je dovolj prostega prostora.",
     "BACKUP_HISTORY_ERR_BUSY": "Varnostno kopiranje v to datoteko že poteka.",
     "CONTEXT_MENU_ITEMS_LABEL": "Elementi menija desnega klika",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Izberite, kaj prikaže meni desnega klika pripomočka. {settings} in {exit} sta vedno prikazana."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Izberite, kaj prikaže meni desnega klika pripomočka. {settings} in {exit} sta vedno prikazana.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "Opravilna vrstica prikazuje barvo poudarka, zato so barve, ki so na njej težko berljive, narisane v berljivi barvi besedila."
 }

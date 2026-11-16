@@ -1,11 +1,8 @@
 {
     "//_1": "--- Units and Formatting ---",
     "SETTINGS_WINDOW_TITLE": "Configuración",
-    "EXPORT_CSV_TITLE": "Exportar historial",
-    "EXPORT_GRAPH_IMAGE_TITLE": "Guardar imagen del gráfico",
     "SELECT_COLOR_TITLE": "Seleccionar color",
     "ERROR_TITLE": "Error",
-    "WARNING_TITLE": "Advertencia",
     "SUCCESS_TITLE": "Éxito",
     "ERROR_WINDOW_TITLE": "Error de la aplicación",
     "LANGUAGE_RESTART_TITLE": "Reinicio necesario",
@@ -13,10 +10,6 @@
     "HARDWARE_HISTORY_OFF_MESSAGE": "El historial de hardware está desactivado.\nActiva la supervisión de CPU o GPU en Configuración → Hardware.",
     "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "El historial de hardware está desactivado.\nActiva «Registrar historial de hardware» en Configuración → Avanzado.",
     "SETTINGS_ERROR_MESSAGE": "No se pudieron aplicar uno o más ajustes.",
-    "EXPORT_SUCCESS_MESSAGE": "Exportado correctamente en:\n{file_path}",
-    "NO_HISTORY_DATA_MESSAGE": "No hay datos de historial disponibles para exportar.",
-    "EXPORT_ERROR_MESSAGE": "Error al exportar los datos:\n{error}",
-    "PERMISSION_DENIED_MESSAGE": "Permiso denegado al exportar el registro.",
     "ERROR_UI_SETUP_FAILED": "No se pudo abrir la ventana de configuración: {error}",
     "NO_APP_DATA_MESSAGE": "No hay datos de uso de aplicaciones disponibles para este período.",
     "LANGUAGE_RESTART_MESSAGE": "Los cambios de idioma tendrán efecto después de reiniciar la aplicación.",
@@ -258,11 +251,6 @@
     "SHORT_UNIT_LABELS_LABEL": "Etiquetas cortas (ej. Mb)",
     "DISPLAY_FORMAT_GROUP": "Formato de visualización",
     "INTERFACE_LAYOUT_GROUP": "Diseño de interfaz",
-    "CSV_FILE_FILTER": "Archivos CSV (*.csv);;Todos los archivos (*.*)",
-    "PNG_FILE_FILTER": "Imágenes PNG (*.png);;Todos los archivos (*.*)",
-    "CSV_HEADER_TIMESTAMP": "Marca de tiempo",
-    "CSV_HEADER_UPLOAD_MBPS": "Subida (Mbps)",
-    "CSV_HEADER_DOWNLOAD_MBPS": "Descarga (Mbps)",
     "FONT_WEIGHT_THIN": "Fino",
     "FONT_WEIGHT_EXTRALIGHT": "Extrafino",
     "FONT_WEIGHT_LIGHT": "Ligero",
@@ -644,5 +632,6 @@
     "BACKUP_HISTORY_ERR_IO": "No se pudo escribir la copia. Comprueba que puedes guardar en esa carpeta y que hay espacio libre suficiente.",
     "BACKUP_HISTORY_ERR_BUSY": "Ya se está haciendo una copia de seguridad en este archivo.",
     "CONTEXT_MENU_ITEMS_LABEL": "Elementos del menú contextual",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Elige qué muestra el menú contextual del widget. {settings} y {exit} siempre se muestran."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Elige qué muestra el menú contextual del widget. {settings} y {exit} siempre se muestran.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "Tu barra de tareas muestra un color de énfasis, así que los colores difíciles de leer sobre ella se dibujan en un color de texto legible."
 }

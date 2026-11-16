@@ -11,7 +11,6 @@ import logging
 import time
 import win32api
 import win32gui
-from ctypes import wintypes
 from typing import Optional
 
 from PyQt6.QtCore import QAbstractNativeEventFilter, QObject, QTimer, pyqtSignal
@@ -19,6 +18,7 @@ from PyQt6.QtGui import QGuiApplication
 
 from netspeedtray.constants import timeouts
 from netspeedtray.constants.shell import shell as shell_constants
+from netspeedtray.utils.taskbar_utils import _NativeMSG
 from netspeedtray.utils.taskbar_utils import (
     get_taskbar_info, is_taskbar_obstructed, is_window_on_screen, TaskbarInfo
 )
@@ -60,14 +60,6 @@ def read_taskbar_alignment() -> Optional[int]:
             winreg.CloseKey(key)
     except (OSError, ValueError, TypeError):
         return None
-
-
-class _NativeMSG(ctypes.Structure):
-    _fields_ = [
-        ("hwnd", wintypes.HWND), ("message", wintypes.UINT),
-        ("wParam", ctypes.c_size_t), ("lParam", ctypes.c_ssize_t),
-        ("time", wintypes.DWORD), ("pt_x", wintypes.LONG), ("pt_y", wintypes.LONG),
-    ]
 
 
 class _ImmersiveColorSetFilter(QAbstractNativeEventFilter):

@@ -10,6 +10,7 @@ Offloading this I/O from the main UI thread ensures consistent 60+ FPS widget mo
 and prevents micro-stutters during system stack latency.
 """
 
+import gc
 import logging
 import math
 import threading
@@ -235,6 +236,8 @@ class StatsMonitorThread(QThread):
         # every 0.1 s to look at a bool, and stop() still ends that wait at once. _is_running stays
         # the public face (a property over this event).
         self._stop_event = threading.Event()
+        # What the period wait blocks on: set by stop and by a rate change (set_interval, GUI thread).
+        self._wake_event = threading.Event()
         self._is_running = True
         # Runtime override: the Monitor window flips this on while it's open so its Overview/Hardware
         # screens show CPU/GPU/RAM/VRAM (+ temps) even when the TASKBAR WIDGET has hardware monitoring
@@ -259,6 +262,9 @@ class StatsMonitorThread(QThread):
         self._ohm_retry_at: float = 0.0
         # Monotonic time of the first probe (None = none yet): the start of its every-poll grace.
         self._ohm_first_probe_at: Optional[float] = None
+        # Monotonic time of the first failed re-probe of a connection that WAS working (None = not
+        # lost): an outage longer than NOT_DETECTED_GRACE_SEC backs off like the never-found case.
+        self._ohm_lost_probe_at: Optional[float] = None
         # One INFO line when a WMI connection that was working is dropped mid-session, one when it is
         # back (rate-limited if it flaps) - see SourceOutage.
         self._ohm_outage = SourceOutage(self.logger, "the LibreHardwareMonitor/OpenHardwareMonitor WMI source")
@@ -333,10 +339,18 @@ class StatsMonitorThread(QThread):
         self._gpu_util_settling: bool = False
         # The hover card's "Idle" tag (2.2.1): (the NVIDIA adapters the Optimus gate judged on the last
         # poll - empty = not judged, whether it found them idle with nvidia-smi healthy). Kept as is over
-        # ONE poll whose engine array could not be read (the blind path), so a transient PDH failure
-        # does not take the tag's row away from an open card and rebuild it twice.
+        # a blind blip (below), so a transient PDH failure does not take the tag's row away from an open
+        # card and rebuild it twice.
         self._gpu_idle_gate: Tuple[frozenset, bool] = (frozenset(), False)
-        self._gpu_idle_gate_kept: bool = False
+        # Blind blips in a row (2.2.1): hybrid polls that wanted temperature / power, whose \GPU Engine
+        # counter exists but whose array read failed. Below HYBRID_BLIND_FAIL_OPEN_AFTER the Optimus gate
+        # keeps its last verdict (_nvidia_gate_verdict) and the Idle tag its own; from it, both give way
+        # to the fail-open blind path. Any poll that is not a blip resets it.
+        self._gpu_blind_streak: int = 0
+        # The Optimus gate's last judged verdict (True open / False closed), None when the last poll did
+        # not judge it (temperature / power off, no counter, a fail-open poll). A blip with None keeps
+        # the gate closed: like the settling sample, a poll that cannot judge never wakes the dGPU.
+        self._nvidia_gate_verdict: Optional[bool] = None
 
         # PDH Queries for GPU
         self._gpu_query: Optional[int] = None
@@ -436,6 +450,15 @@ class StatsMonitorThread(QThread):
             ev = self._stop_event = threading.Event()
         return ev
 
+    def _wake_flag(self) -> threading.Event:
+        """The event the period wait blocks on, created on first use (tests build this thread with
+        __new__). Set by stop AND by set_interval; only the stop event says "stopping", so a rate
+        change can never be mistaken for a stop."""
+        ev = self.__dict__.get("_wake_event")
+        if ev is None:
+            ev = self._wake_event = threading.Event()
+        return ev
+
     @property
     def _is_running(self) -> bool:
         return not self._stop_flag().is_set()
@@ -447,12 +470,43 @@ class StatsMonitorThread(QThread):
             self._stop_flag().clear()
         else:
             self._stop_flag().set()
+            self._wake_flag().set()
 
     def _wait_for_stop(self, seconds: float) -> bool:
-        """Sleep up to ``seconds`` in a single wait; returns at once when stopping. True = stopping."""
-        if seconds <= 0:
-            return not self._is_running
-        return self._stop_flag().wait(seconds)
+        """Sleep up to ``seconds`` in a single wait; returns at once when stopping, or early when woken
+        (a rate change). True = stopping."""
+        if not self._is_running:
+            return True
+        if seconds > 0:
+            self._wake_flag().wait(seconds)
+        return not self._is_running
+
+    def _effective_interval(self) -> float:
+        """The period to wait: the update rate, or an exponential backoff while in an error streak so
+        a failing source isn't hammered every second (capped at _MAX_BACKOFF_SEC)."""
+        if self.consecutive_errors == 0:
+            return self.interval
+        return min(self._MAX_BACKOFF_SEC, self.interval * (2 ** min(self.consecutive_errors, 5)))
+
+    def _wait_period(self) -> bool:
+        """ONE wait per period (2.2.1); a rate change (set_interval) wakes it and the rest of the period
+        is re-measured at the new rate - so 10 s -> 0.5 s applies at once, not up to 10 s later.
+        True = stopping."""
+        wake = self._wake_flag()
+        started = time.monotonic()
+        first = True
+        while True:
+            # Clear BEFORE reading the interval: a change after this point sets it again and ends the
+            # wait below; one before it is already in self.interval. A stop is never lost - its own
+            # event is checked first thing in _wait_for_stop.
+            wake.clear()
+            period = self._effective_interval()
+            remaining = period if first else period - (time.monotonic() - started)
+            first = False
+            if self._wait_for_stop(remaining):
+                return True
+            if not wake.is_set():
+                return False   # the period ran out (or was already over at the new rate)
 
     @property
     def lhm_status(self) -> str:
@@ -469,6 +523,8 @@ class StatsMonitorThread(QThread):
         self.interval = max(0.1, interval)
         if previous != self.interval:
             self.logger.info("Monitoring interval changed: %.2fs -> %.2fs", previous, self.interval)
+            # Apply it to the wait in progress (run() re-measures the period), not from the next one.
+            self._wake_flag().set()
 
     def update_config(self, config: Dict[str, Any]) -> None:
         """Update the config copy and FLAG the hardware queries for re-init on the worker thread.
@@ -580,6 +636,7 @@ class StatsMonitorThread(QThread):
             self._gpu_shared_counter = None
             self._gpu_collect_at = None
             self._gpu_util_settling = False
+            self._nvidia_gate_verdict = None   # a rebuilt query (resume) re-judges before it trusts
             # _gpu_engine_seen is deliberately NOT reset: a settings change or a resume rebuilds
             # the query, and forgetting that this machine has a GPU would blink the Monitor's GPU
             # tiles out until the next non-idle tick.
@@ -772,8 +829,24 @@ class StatsMonitorThread(QThread):
         gate_open = may_query = True
         gate_luids: List[Tuple[int, int]] = []   # the NVIDIA adapters the gate judged this poll
         self._nvidia_interval_now = self._NVIDIA_POLL_INTERVAL_SEC
+        # A blind blip (2.2.1): the counter exists but this poll's engine array could not be read - a
+        # transient PDH error. The first HYBRID_BLIND_FAIL_OPEN_AFTER - 1 in a row keep the gate's last
+        # verdict (closed stays closed: no nvidia-smi, so one blip never wakes a sleeping dGPU); a
+        # lasting failure then fails open below. No counter at all is not a blip: open at once.
+        blind_blip = (hybrid and self._gpu_util_counter is not None and util_arr is None
+                      and (include_temp or include_power))
+        self._gpu_blind_streak = self._gpu_blind_streak + 1 if blind_blip else 0
+        blip_kept = blind_blip and self._gpu_blind_streak < constants.gpu.HYBRID_BLIND_FAIL_OPEN_AFTER
+        if blip_kept:
+            # The verdict is kept, but no NEW nvidia-smi call is made on a blip (cached readings only):
+            # the kept verdict may be stale (a resume, a rebuild) and this poll has no sample to check it.
+            gate_open, may_query = bool(self._nvidia_gate_verdict), False
+        else:
+            self._nvidia_gate_verdict = None   # until the gate judges this poll's sample below
         if hybrid:
-            if self._gpu_util_counter is None or util_arr is None:
+            if blip_kept:
+                pass   # the kept verdict above: no battery cadence, no "unavailable" line
+            elif self._gpu_util_counter is None or util_arr is None:
                 # No utilization to judge by: fail OPEN - readings never go blank - but on battery at
                 # a slower cadence (each call may wake the dGPU). Power source unknown: as on AC.
                 if self._on_battery_power():
@@ -794,6 +867,7 @@ class StatsMonitorThread(QThread):
                     engine_util.per_adapter if engine_util is not None else {}, nvidia_luids, window_start,
                     settling=settling)
                 gate_luids = nvidia_luids
+                self._nvidia_gate_verdict = gate_open
             # else: GPU temperature and power both off - nvidia-smi cannot be asked this poll (the total
             # is never a reason on a hybrid), so the gate is not judged (2.2.1). Nothing else reads it
             # then: the hover list drops temperature / power with the same switches, the LHM notice
@@ -805,16 +879,11 @@ class StatsMonitorThread(QThread):
                 pick_name, pick = self._nvidia_pick_cache
                 self._nvidia_pick_cache = (pick_name, (None, None, pick[2]))
         self._nvidia_gate_open = gate_open
-        # A known sensor that is only asleep (no failure so far): not "no sensor" (the LHM notice).
-        self._gpu_sensor_asleep = hybrid and not gate_open and self._nvidia_fail_streak == 0
-        # Which cards that verdict is about - the hover card's "Idle" tag (2.2.1). A poll that could not
-        # read the engine array keeps the last verdict once (see _gpu_idle_gate).
-        blind_blip = (hybrid and self._gpu_util_counter is not None and util_arr is None
-                      and (include_temp or include_power))
-        if blind_blip and not self._gpu_idle_gate_kept:
-            self._gpu_idle_gate_kept = True
-        else:
-            self._gpu_idle_gate_kept = False
+        # Which cards that verdict is about - the hover card's "Idle" tag (2.2.1) - and whether the dGPU's
+        # sensor is a known one that is only asleep (no failure so far): not "no sensor" (the LHM
+        # notice). A kept blind blip changes neither: the tag and the notice agree with the gate it kept.
+        if not blip_kept:
+            self._gpu_sensor_asleep = hybrid and not gate_open and self._nvidia_fail_streak == 0
             self._gpu_idle_gate = (frozenset(gate_luids), self._gpu_sensor_asleep)
         if selected is None:
             # On a hybrid the total alone is never a reason to call (owner decision 2026-11-11: zero
@@ -1724,8 +1793,13 @@ class StatsMonitorThread(QThread):
         constants.lhm.WMI_PROBE_BACKOFF_SEC (2.2.1): it used to run on every poll, up to three times a
         poll, wherever no namespace exists (every NVIDIA desktop without LHM). Still every poll: for
         NOT_DETECTED_GRACE_SEC after the first probe (LHM's WMI coming up at login, or initialising
-        with 0 sensors) and while a connection that worked is lost (a one-poll hiccup recovers on the
-        next poll, as before). A settings change (run) probes again at once.
+        with 0 sensors) and for NOT_DETECTED_GRACE_SEC after a connection that worked is lost (a
+        one-poll hiccup recovers on the next poll, as before). A source lost for longer - LHM/OHM
+        closed for good - backs off too: SourceOutage.lost stays True for the whole outage, and
+        probing every poll then cost ~8-12 failed GetObject calls a second at the 0.5 s rate. Its
+        recovery is still found within WMI_PROBE_BACKOFF_SEC, and SourceOutage still sees one failed()
+        per backoff window, which its "still lost" line needs. A settings change (run) probes again at
+        once.
         """
         if self._wmi_ohm is not None:
             return
@@ -1758,6 +1832,7 @@ class StatsMonitorThread(QThread):
                     self.logger.debug("Hardware monitor: %s exists but exposes 0 sensors.", ns)
                     continue
                 self._wmi_ohm = obj
+                self._ohm_lost_probe_at = None
                 # The first connection is INFO; a reconnect after a lost one is SourceOutage's
                 # "is back" line, and a re-probe after a settings change is DEBUG.
                 level = logging.INFO if self._ohm_outage.succeeded() else logging.DEBUG
@@ -1772,9 +1847,17 @@ class StatsMonitorThread(QThread):
         # Nothing connected across all namespaces. A source that worked earlier is still (or newly)
         # lost: SourceOutage reports a folded outage that outlasts its quiet window (no-op otherwise).
         self._ohm_outage.failed("no LibreHardwareMonitor/OpenHardwareMonitor WMI namespace answered")
-        # Back off only in the steady "never found" state (see the docstring).
-        in_grace = now - self._ohm_first_probe_at < constants.lhm.NOT_DETECTED_GRACE_SEC
-        if not (in_grace or self._ohm_outage.lost):
+        # Back off unless inside the start-up grace or the first NOT_DETECTED_GRACE_SEC of an outage
+        # of a source that worked (see the docstring).
+        grace = constants.lhm.NOT_DETECTED_GRACE_SEC
+        in_grace = now - self._ohm_first_probe_at < grace
+        if self._ohm_outage.lost:
+            if self._ohm_lost_probe_at is None:
+                self._ohm_lost_probe_at = now
+            in_grace = in_grace or now - self._ohm_lost_probe_at < grace
+        else:
+            self._ohm_lost_probe_at = None
+        if not in_grace:
             self._ohm_retry_at = now + constants.lhm.WMI_PROBE_BACKOFF_SEC
         # Surface ONE actionable line, once.
         if not self._ohm_guidance_logged:
@@ -2037,6 +2120,16 @@ class StatsMonitorThread(QThread):
         except Exception:
             pass
 
+        # The loop catches its own errors, but anything that still escapes it (the error handler, the
+        # wait) must not skip the release of the PDH queries, the WMI/COM objects and the identity
+        # monitor: the cleanup runs in `finally`, each step on its own.
+        try:
+            self._poll_loop(_in_rdp)
+        finally:
+            self._release_thread_resources()
+
+    def _poll_loop(self, _in_rdp: bool) -> None:
+        """The poll / emit / wait loop of ``run`` - until ``_is_running`` goes False."""
         while self._is_running:
             try:
                 # Apply any config-driven hardware-query reset HERE, on the owning thread (set by
@@ -2052,6 +2145,7 @@ class StatsMonitorThread(QThread):
                     self._wmi_ohm = None   # re-probe LHM/OHM on the next temp poll
                     self._ohm_retry_at = 0.0   # now, not after a failed probe's backoff,
                     self._ohm_first_probe_at = None   # with a fresh every-poll grace
+                    self._ohm_lost_probe_at = None
 
                 stats = {}
 
@@ -2182,25 +2276,22 @@ class StatsMonitorThread(QThread):
                                         self._ERROR_NOTIFY_THRESHOLD)
                     self.error_occurred.emit(f"Hardware monitor is having trouble: {e}")
 
-            # Responsive sleep, with exponential backoff while in an error streak so a failing
-            # source isn't hammered every second (capped at _MAX_BACKOFF_SEC; recovers on success).
-            if self.consecutive_errors == 0:
-                effective_interval = self.interval
-            else:
-                effective_interval = min(
-                    self._MAX_BACKOFF_SEC,
-                    self.interval * (2 ** min(self.consecutive_errors, 5)),
-                )
-            # ONE wait per period (2.2.1): stop() sets the event, so a quit still ends it at once.
-            # This replaced 0.1 s slices - ten wake-ups a second at any rate, for nothing.
-            self._wait_for_stop(effective_interval)
+            # ONE wait per period (2.2.1), with the error backoff (_effective_interval): stop() ends it
+            # at once and a rate change re-measures it. This replaced 0.1 s slices - ten wake-ups a
+            # second at any rate, for nothing.
+            self._wait_period()
 
-        self._network_identity_monitor.close()
-        self._cleanup_gpu_query()
-        self._cleanup_thermal_query()
-        self._cleanup_power_query()
-        self._cleanup_ohm_wmi()
-        self._cleanup_com()
+    def _release_thread_resources(self) -> None:
+        """End-of-thread cleanup, on this thread: every step runs even if an earlier one fails, and
+        COM is uninitialized last (after the WMI objects that need it are gone)."""
+        for step in (self._network_identity_monitor.close, self._cleanup_gpu_query,
+                     self._cleanup_thermal_query, self._cleanup_power_query, self._cleanup_ohm_wmi,
+                     self._cleanup_com):
+            try:
+                step()
+            except Exception as e:
+                self.logger.error("Monitor thread cleanup step %s failed: %s",
+                                  getattr(step, "__name__", step), e, exc_info=True)
 
     def _cleanup_ohm_wmi(self) -> None:
         """Releases the cached WMI connection to LHM/OHM."""
@@ -2221,8 +2312,26 @@ class StatsMonitorThread(QThread):
         except Exception as e:
             self.logger.debug("Monitor COM initialization unavailable: %s", e)
 
+    def _release_com_objects(self) -> None:
+        """Drop every COM object this thread holds - the ACPI root\\wmi connection, the battery WMI
+        connection and the LHM/OHM one - so they are released on this (their) thread while COM is
+        still initialised. The battery's False ("unavailable, do not retry") is kept."""
+        released = False
+        for name in ("_wmi", "_wmi_ohm"):
+            if self.__dict__.get(name) is not None:
+                setattr(self, name, None)
+                released = True
+        if self.__dict__.get("_wmi_battery") not in (None, False):
+            self._wmi_battery = None
+            released = True
+        if released:
+            gc.collect()   # a wrapper caught in a reference cycle (a traceback) is freed now, too
+
     def _cleanup_com(self) -> None:
-        """Balance this worker's successful COM initialization only."""
+        """Release the thread's COM objects, then balance its successful COM initialization only
+        (CoUninitialize with live references leaves them to be released on an uninitialised
+        apartment)."""
+        self._release_com_objects()
         if self._com_initialized:
             try:
                 import pythoncom

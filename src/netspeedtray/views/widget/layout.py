@@ -4,7 +4,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, Dict, Any, Optional
 
-from PyQt6.QtCore import Qt, QRect, QSize
+from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPen
 from PyQt6.QtWidgets import QWidget
 

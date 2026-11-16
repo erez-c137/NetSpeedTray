@@ -288,6 +288,29 @@ def test_every_default_pen_reads_on_green_and_orange_accent_bars(appearance):
             assert color_scheme.contrast_ratio(QColor(c).name(), bar) >= 3.0, (bar, c)
 
 
+def test_custom_label_colours_are_kept_on_an_accent_bar(appearance):
+    """#556: a CPU/GPU label colour the user picked is painted as picked, even when it is faint against
+    the accent shade Windows reports - that shade can be wrong (Windhawk / TranslucentTB repaint the
+    bar), and the colour is an explicit, single-purpose pick the user can see and change. Before the
+    fix, red on a dark-red accent turned white while the green CPU label stayed green."""
+    bar = "#7A0000"
+    appearance(TaskbarAppearance(accent_on=True, accent_bar=bar))
+    rc = RenderConfig.from_dict(_cfg(hardware_label_color="custom",
+                                     cpu_label_color="#00DB0F", gpu_label_color="#E70004"))
+    assert color_scheme.contrast_ratio("#E70004", bar) < 3.0
+    assert WidgetRenderer.hardware_label_colors(rc) == ("#00DB0F", "#E70004")
+
+
+def test_brand_label_colours_still_follow_the_accent_guard(appearance):
+    """The guard stays for colours the user did not pick (brand palette): they still reach 3:1."""
+    bar = "#0B5A2B"
+    appearance(TaskbarAppearance(accent_on=True, accent_bar=bar))
+    rc = RenderConfig.from_dict(_cfg(hardware_label_color="brand"))
+    assert rc.pen_backdrop == bar
+    for c in WidgetRenderer.hardware_label_colors(rc):
+        assert color_scheme.contrast_ratio(QColor(c).name(), bar) >= 3.0, c
+
+
 def test_an_unreadable_accent_shade_turns_coding_off(appearance):
     """5b fallback: the bar is accent-coloured but its shade can't be read."""
     appearance(TaskbarAppearance(accent_on=True, accent_bar=None))

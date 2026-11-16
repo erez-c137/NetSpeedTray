@@ -9,7 +9,7 @@ color and inset.
 """
 from __future__ import annotations
 
-from typing import Callable, Dict
+from typing import Callable, Dict, Iterable
 
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
@@ -129,6 +129,31 @@ class ThemedColorPair(QWidget):
             self.inputs[key] = line
 
 
+class AccentNote(QLabel):
+    """The accent-taskbar note (#556 follow-up): a muted caption placed right under the colour rows it
+    speaks for, shown only while the widget swaps one of ``stems`` for a readable text colour on an
+    accent-coloured taskbar. Under, never above, its rows - showing it never moves the field being
+    edited. The dialog drives every note through ``sync_accent_notes``."""
+
+    def __init__(self, i18n, stems: Iterable[str]) -> None:
+        super().__init__(i18n.ACCENT_TASKBAR_COLORS_NOTE)
+        self.stems = frozenset(stems)
+        self.setObjectName("accent_colors_note")
+        self.setWordWrap(True)
+        self.setStyleSheet(f"color: {su.semantic_colors()['text_secondary']}; background: transparent;"
+                           f" padding: 0 2px;")
+        self.setVisible(False)
+
+    def sync(self, swapped) -> bool:
+        """Show while ``swapped`` (color_scheme.accent_swapped) holds one of this note's stems. True when
+        the visibility changed (the page then re-lays out)."""
+        shown = bool(self.stems & set(swapped))
+        if self.isHidden() == (not shown):
+            return False
+        self.setVisible(shown)
+        return True
+
+
 def page_layout(widget) -> QVBoxLayout:
     """A consistent vertical page layout: tight, even spacing between cards (the card strokes already
     provide the visual separation), plus a small bottom inset so the last card never abuts the fixed
@@ -137,3 +162,16 @@ def page_layout(widget) -> QVBoxLayout:
     layout.setContentsMargins(0, 0, 0, 10)
     layout.setSpacing(tokens.SPACE_XS)
     return layout
+
+
+def set_card_enabled(card, enabled: bool) -> None:
+    """Gray out a dependent card when its prerequisite is off. setEnabled alone won't visually dim
+    our fixed-color custom toggle, so pair it with an opacity effect for the Win11 'unavailable'
+    look (and to make the card non-interactive)."""
+    from PyQt6.QtWidgets import QGraphicsOpacityEffect
+    card.setEnabled(enabled)
+    eff = card.graphicsEffect()
+    if not isinstance(eff, QGraphicsOpacityEffect):
+        eff = QGraphicsOpacityEffect(card)
+        card.setGraphicsEffect(eff)
+    eff.setOpacity(1.0 if enabled else 0.4)

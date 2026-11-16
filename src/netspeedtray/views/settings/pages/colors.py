@@ -11,7 +11,7 @@ from netspeedtray.utils.components import Win11Toggle, SettingCard
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.helpers import get_unit_labels_for_type, threshold_units_per_mbps
 from netspeedtray.views.settings.pages._fluent import (
-    section_header, page_layout, LastValidHex, ThemedColorPair, swatch_style)
+    section_header, page_layout, LastValidHex, ThemedColorPair, swatch_style, AccentNote)
 
 class ColorsPage(QWidget):
     # High, the optional Medium (#9), Low - top to bottom, the order the bands ascend in reverse.
@@ -99,6 +99,10 @@ class ColorsPage(QWidget):
             card = SettingCard(c_label, control=pair)
             setattr(self, f"{key}_color_card", card)
             cc_v_layout.addWidget(card)
+        # The accent-taskbar note for the band colours (#556), right under them (AppearancePage drives it).
+        self.accent_bands_note = AccentNote(
+            self.i18n, tuple(f"{band}_color" for band in self.BANDS))
+        cc_v_layout.addWidget(self.accent_bands_note)
 
         layout.addWidget(self.color_container)
         layout.addStretch()

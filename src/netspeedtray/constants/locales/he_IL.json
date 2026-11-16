@@ -1,11 +1,8 @@
 {
     "//_1": "--- Units and Formatting ---",
     "SETTINGS_WINDOW_TITLE": "הגדרות",
-    "EXPORT_CSV_TITLE": "ייצוא היסטוריה",
-    "EXPORT_GRAPH_IMAGE_TITLE": "שמירת תמונת גרף",
     "SELECT_COLOR_TITLE": "בחירת צבע",
     "ERROR_TITLE": "שגיאה",
-    "WARNING_TITLE": "אזהרה",
     "SUCCESS_TITLE": "הצלחה",
     "ERROR_WINDOW_TITLE": "שגיאת יישום",
     "LANGUAGE_RESTART_TITLE": "נדרשת הפעלה מחדש",
@@ -13,10 +10,6 @@
     "HARDWARE_HISTORY_OFF_MESSAGE": "היסטוריית החומרה כבויה.\nהפעילו ניטור CPU או GPU בהגדרות ← חומרה.",
     "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "היסטוריית החומרה כבויה.\nהפעילו את \"שמור היסטוריית חומרה\" בהגדרות ← מתקדם.",
     "SETTINGS_ERROR_MESSAGE": "החלת הגדרה אחת או יותר נכשלה.",
-    "EXPORT_SUCCESS_MESSAGE": "יוצא בהצלחה אל:\n{file_path}",
-    "NO_HISTORY_DATA_MESSAGE": "אין נתוני היסטוריה זמינים לייצוא.",
-    "EXPORT_ERROR_MESSAGE": "ייצוא הנתונים נכשל:\n{error}",
-    "PERMISSION_DENIED_MESSAGE": "ההרשאה נדחתה בעת ייצוא היומן.",
     "ERROR_UI_SETUP_FAILED": "הגדרת חלון ההגדרות נכשלה: {error}",
     "NO_APP_DATA_MESSAGE": "אין נתוני שימוש ביישומים זמינים לתקופה זו.",
     "LANGUAGE_RESTART_MESSAGE": "שינויי השפה ייכנסו לתוקף לאחר הפעלה מחדש של היישום.",
@@ -258,11 +251,6 @@
     "SHORT_UNIT_LABELS_LABEL": "תוויות יחידה קצרות (למשל Mb)",
     "DISPLAY_FORMAT_GROUP": "פורמט תצוגה",
     "INTERFACE_LAYOUT_GROUP": "פריסת ממשק",
-    "CSV_FILE_FILTER": "קובצי CSV (*.csv);;כל הקבצים (*.*)",
-    "PNG_FILE_FILTER": "תמונות PNG (*.png);;כל הקבצים (*.*)",
-    "CSV_HEADER_TIMESTAMP": "חותמת זמן",
-    "CSV_HEADER_UPLOAD_MBPS": "העלאה (Mbps)",
-    "CSV_HEADER_DOWNLOAD_MBPS": "הורדה (Mbps)",
     "FONT_WEIGHT_THIN": "דק",
     "FONT_WEIGHT_EXTRALIGHT": "דק במיוחד",
     "FONT_WEIGHT_LIGHT": "קל",
@@ -644,5 +632,6 @@
     "BACKUP_HISTORY_ERR_IO": "לא ניתן היה לכתוב את העותק. ודא שאפשר לשמור בתיקייה הזו ושיש מספיק מקום פנוי.",
     "BACKUP_HISTORY_ERR_BUSY": "כבר מתבצע גיבוי לקובץ הזה.",
     "CONTEXT_MENU_ITEMS_LABEL": "פריטי תפריט הלחיצה הימנית",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "בחר מה יוצג בתפריט הלחיצה הימנית של הווידג'ט. {settings} ו{exit} מוצגים תמיד."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "בחר מה יוצג בתפריט הלחיצה הימנית של הווידג'ט. {settings} ו{exit} מוצגים תמיד.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "שורת המשימות שלך מציגה צבע הדגשה, ולכן צבעים שקשה לקרוא עליה מצוירים בצבע טקסט קריא."
 }
