@@ -266,10 +266,15 @@ class TrayIconManager(QObject):
                 from netspeedtray.core.update_checker import update_check_disabled_by_policy
                 self.update_action.setVisible(not update_check_disabled_by_policy()
                                               and ids.CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES not in hidden)
-            # The Pause/Reset divider included: no separator leads, trails or doubles up.
-            self._collapse_separators()
         except Exception as e:
             self.logger.error("Error refreshing dynamic menu items: %s", e, exc_info=True)
+        finally:
+            # The Pause/Reset divider included: no separator leads, trails or doubles up - also when a
+            # step above failed, or the previous open's separators would stay as they were.
+            try:
+                self._collapse_separators()
+            except Exception as e:
+                self.logger.error("Error collapsing menu separators: %s", e, exc_info=True)
 
     def show_context_menu(self, anchor: Optional[QWidget] = None) -> None:
         """
