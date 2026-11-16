@@ -20,6 +20,14 @@ from netspeedtray.core.monitor_thread import StatsMonitorThread
 
 # --- the stats monitor thread ---------------------------------------------------------------------
 
+# run() reads the stop flag about once per loop. A regression that loops without ever waiting would
+# spin an inline run() forever (an early draft of this file did, against the old code, and starved the
+# PC overnight), so the fake stop event forces "stop" after this many reads and the test fails fast.
+_MAX_CHECKS = 1000
+_MAX_GETS = 10_000
+_THREAD_STOP_MS = 5000
+
+
 class _CountingStop:
     """Stands in for the stop event: records every wait and stops after ``polls`` of them."""
 
@@ -27,6 +35,8 @@ class _CountingStop:
         self.polls = polls
         self.waits = []
         self._set = False
+        self.checks = 0
+        self.runaway = False
 
     def wait(self, timeout=None):
         self.waits.append(timeout)
@@ -35,6 +45,10 @@ class _CountingStop:
         return self._set
 
     def is_set(self):
+        self.checks += 1
+        if self.checks >= _MAX_CHECKS and not self._set:
+            self.runaway = True                      # looping without waiting: stop it, fail below
+            self._set = True
         return self._set
 
     def set(self):
@@ -63,8 +77,8 @@ def _cheap_thread(monkeypatch, interval=1.0):
 
 
 def _record_slices(monkeypatch, thread):
-    """time.sleep in the monitor module, recorded - and ending the loop, so the pre-2.2.1 slice loop
-    fails these tests instead of spinning forever."""
+    """time.sleep / QThread.msleep / sleep / usleep, recorded - and ending the loop, so the pre-2.2.1
+    slice loop (or a regression to msleep(1000)) fails these tests at once instead of hanging."""
     sleeps = []
 
     def sleep(seconds):
@@ -72,17 +86,41 @@ def _record_slices(monkeypatch, thread):
         thread._is_running = False
 
     monkeypatch.setattr(module.time, "sleep", sleep)
+    for name in ("msleep", "sleep", "usleep"):
+        monkeypatch.setattr(thread, name, sleep, raising=False)
+        try:
+            monkeypatch.setattr(QThread, name, staticmethod(sleep))
+        except (AttributeError, TypeError):
+            pass                                     # a sip type that refuses it: the instance stub stands
     return sleeps
+
+
+def _run_inline(thread, stop):
+    thread._stop_event = stop
+    thread.run()
+    assert not stop.runaway, f"run() looped {stop.checks} times without waiting"
+
+
+def _reap(thread, stop=None):
+    """Never leave a QThread running (it aborts the interpreter at exit): stop, wait with a bound, and as
+    a last resort terminate it - then fail loudly."""
+    if not thread.isRunning():
+        return
+    (stop or thread.stop)()
+    if thread.wait(_THREAD_STOP_MS):
+        return
+    thread.terminate()
+    thread.wait(_THREAD_STOP_MS)
+    pytest.fail(f"{type(thread).__name__} did not stop within {_THREAD_STOP_MS} ms (terminated)")
 
 
 def test_the_monitor_loop_waits_once_per_period_and_never_slices(q_app, monkeypatch):
     thread = _cheap_thread(monkeypatch, interval=1.0)
     sleeps = _record_slices(monkeypatch, thread)
     stop = _CountingStop(polls=3)
-    thread._stop_event = stop
     polls = []
     thread.stats_ready.connect(lambda s: polls.append(s))
-    thread.run()
+    _run_inline(thread, stop)
     assert sleeps == []                              # the 0.1 s slice loop is gone
     assert stop.waits == [1.0, 1.0, 1.0]             # exactly one full-period wait per poll
     assert len(polls) == 3                           # ... and one poll per period: cadence unchanged
@@ -93,8 +131,7 @@ def test_the_error_backoff_is_still_one_wait(q_app, monkeypatch):
     sleeps = _record_slices(monkeypatch, thread)
     thread._collect_power_stats = Mock(side_effect=RuntimeError("boom"))
     stop = _CountingStop(polls=2)
-    thread._stop_event = stop
-    thread.run()
+    _run_inline(thread, stop)
     # 1 s * 2**errors, capped - the backoff period is unchanged, it is just waited in one go.
     assert sleeps == []
     assert stop.waits == [2.0, 4.0]
@@ -113,8 +150,7 @@ def test_a_rate_change_applies_from_the_next_period(q_app, monkeypatch):
         return real_wait(timeout)
 
     stop.wait = wait
-    thread._stop_event = stop
-    thread.run()
+    _run_inline(thread, stop)
     assert sleeps == []
     assert stop.waits == [1.0, 0.5, 0.5]
 
@@ -135,8 +171,7 @@ def test_stop_ends_a_long_wait_at_once(q_app, monkeypatch):
         assert thread.isFinished()
         assert elapsed < 0.5, f"stop() took {elapsed:.3f}s"
     finally:
-        if thread.isRunning():
-            thread.stop()
+        _reap(thread)
 
 
 def test_clearing_is_running_from_another_thread_ends_the_wait(q_app, monkeypatch):
@@ -153,8 +188,7 @@ def test_clearing_is_running_from_another_thread_ends_the_wait(q_app, monkeypatc
         assert thread.wait(2000)
         assert time.monotonic() - t0 < 0.5
     finally:
-        if thread.isRunning():
-            thread.stop()
+        _reap(thread)
 
 
 def test_is_running_works_on_a_thread_built_without_init():
@@ -187,6 +221,8 @@ def test_db_worker_does_not_wake_while_idle_and_stops_promptly(tmp_path, q_app):
 
     def counting_get(*args, **kwargs):
         gets.append(kwargs.get("timeout", args[1] if len(args) > 1 else None))
+        if len(gets) > _MAX_GETS:                    # a get() that never blocks: end the worker, fail below
+            raise RuntimeError("DatabaseWorker get() spinning")
         return real_get(*args, **kwargs)
 
     w._queue.get = counting_get
@@ -203,9 +239,7 @@ def test_db_worker_does_not_wake_while_idle_and_stops_promptly(tmp_path, q_app):
         assert w.wait(5000)
         assert time.monotonic() - t0 < 1.0           # the sentinel ends the block at once
     finally:
-        if w.isRunning():
-            w.stop()
-            w.wait(5000)
+        _reap(w)
 
 
 def test_db_worker_drains_queued_tasks_before_exiting(tmp_path, q_app):
@@ -220,6 +254,4 @@ def test_db_worker_drains_queued_tasks_before_exiting(tmp_path, q_app):
         assert w.wait(5000)
         assert all(f.is_set() for f in flags)
     finally:
-        if w.isRunning():
-            w.stop()
-            w.wait(5000)
+        _reap(w)
