@@ -645,5 +645,5 @@
     "BACKUP_HISTORY_ERR_BUSY": "Er loopt al een back-up naar dit bestand.",
     "CONTEXT_MENU_ITEMS_LABEL": "Items in het rechtsklikmenu",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Kies wat het rechtsklikmenu van de widget toont. {settings} en {exit} worden altijd getoond.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Je taakbalk gebruikt een accentkleur, dus kleuren die daarop moeilijk leesbaar zijn, worden in een goed leesbare tekstkleur weergegeven."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Je taakbalk toont een accentkleur, dus kleuren die daarop moeilijk leesbaar zijn, worden in een goed leesbare tekstkleur getekend."
 }

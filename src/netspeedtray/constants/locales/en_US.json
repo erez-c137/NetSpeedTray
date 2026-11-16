@@ -645,5 +645,5 @@
     "BACKUP_HISTORY_ERR_BUSY": "A backup to this file is already running.",
     "CONTEXT_MENU_ITEMS_LABEL": "Right-click menu items",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choose what the widget's right-click menu shows. {settings} and {exit} always show.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Your taskbar uses an accent color, so colors that would be hard to read on it are shown in a readable text color instead."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Your taskbar shows an accent color, so colors that are hard to read on it are drawn in a readable text color."
 }

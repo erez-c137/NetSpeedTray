@@ -645,5 +645,5 @@
     "BACKUP_HISTORY_ERR_BUSY": "이 파일로 백업이 이미 진행 중입니다.",
     "CONTEXT_MENU_ITEMS_LABEL": "마우스 오른쪽 메뉴 항목",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "위젯의 마우스 오른쪽 메뉴에 표시할 항목을 선택합니다. {settings} 및 {exit}은(는) 항상 표시됩니다.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "작업 표시줄에 강조 색이 사용되고 있어서, 그 위에서 읽기 어려운 색은 대신 읽기 쉬운 텍스트 색으로 표시됩니다."
+    "ACCENT_TASKBAR_COLORS_NOTE": "작업 표시줄에 강조 색이 표시되어 있어서, 그 위에서 읽기 어려운 색은 읽기 쉬운 텍스트 색으로 그려집니다."
 }

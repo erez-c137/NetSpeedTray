@@ -645,5 +645,5 @@
     "BACKUP_HISTORY_ERR_BUSY": "Ya se está haciendo una copia de seguridad en este archivo.",
     "CONTEXT_MENU_ITEMS_LABEL": "Elementos del menú contextual",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Elige qué muestra el menú contextual del widget. {settings} y {exit} siempre se muestran.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Tu barra de tareas usa un color de énfasis, así que los colores que serían difíciles de leer sobre ella se muestran en un color de texto legible."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Tu barra de tareas muestra un color de énfasis, así que los colores difíciles de leer sobre ella se dibujan en un color de texto legible."
 }

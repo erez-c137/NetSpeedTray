@@ -9,7 +9,7 @@ color and inset.
 """
 from __future__ import annotations
 
-from typing import Callable, Dict
+from typing import Callable, Dict, Iterable
 
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
@@ -127,6 +127,31 @@ class ThemedColorPair(QWidget):
             row.addWidget(line)
             self.buttons[key] = button
             self.inputs[key] = line
+
+
+class AccentNote(QLabel):
+    """The accent-taskbar note (#556 follow-up): a muted caption placed right under the colour rows it
+    speaks for, shown only while the widget swaps one of ``stems`` for a readable text colour on an
+    accent-coloured taskbar. Under, never above, its rows - showing it never moves the field being
+    edited. The dialog drives every note through ``sync_accent_notes``."""
+
+    def __init__(self, i18n, stems: Iterable[str]) -> None:
+        super().__init__(i18n.ACCENT_TASKBAR_COLORS_NOTE)
+        self.stems = frozenset(stems)
+        self.setObjectName("accent_colors_note")
+        self.setWordWrap(True)
+        self.setStyleSheet(f"color: {su.semantic_colors()['text_secondary']}; background: transparent;"
+                           f" padding: 0 2px;")
+        self.setVisible(False)
+
+    def sync(self, swapped) -> bool:
+        """Show while ``swapped`` (color_scheme.accent_swapped) holds one of this note's stems. True when
+        the visibility changed (the page then re-lays out)."""
+        shown = bool(self.stems & set(swapped))
+        if self.isHidden() == (not shown):
+            return False
+        self.setVisible(shown)
+        return True
 
 
 def page_layout(widget) -> QVBoxLayout:

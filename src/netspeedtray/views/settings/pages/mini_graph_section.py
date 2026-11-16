@@ -20,7 +20,7 @@ from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.helpers import format_percent
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, Win11ComboBox, SettingCard
 from netspeedtray.views.settings.pages._fluent import (
-    section_header, page_layout, as_int, LastValidHex, ThemedColorPair, swatch_style)
+    section_header, page_layout, as_int, LastValidHex, ThemedColorPair, swatch_style, AccentNote)
 
 
 class MiniGraphSection(QWidget):
@@ -93,11 +93,9 @@ class MiniGraphSection(QWidget):
             layout.addWidget(card)
 
         # The accent-taskbar note (#556), as on the Appearance page: shown only while the widget swaps
-        # one of the two graph colours above for a readable text colour (set_accent_note).
-        self.accent_colors_note = self._note(self.i18n.ACCENT_TASKBAR_COLORS_NOTE)
-        self.accent_colors_note.setObjectName("accent_colors_note")
-        self.accent_colors_note.setVisible(False)
-        layout.addWidget(self.accent_colors_note)
+        # one of the two graph colours above for a readable text colour (set_accent_notes).
+        self.accent_graph_note = AccentNote(self.i18n, ("graph_upload_color", "graph_download_color"))
+        layout.addWidget(self.accent_graph_note)
 
         # The hardware graphs reuse the two settings right above, so the note sits under them (it used
         # to hang under Display Mode, a page away from the controls it describes).
@@ -141,12 +139,10 @@ class MiniGraphSection(QWidget):
         scale_layout.addWidget(self._ceiling_card)
         layout.addWidget(self.graph_scale_container)
 
-    def set_accent_note(self, shown: bool) -> None:
-        """Show or hide the accent-taskbar note (the dialog calls this on every preview update)."""
-        if self.accent_colors_note.isHidden() == (not shown):
-            return
-        self.accent_colors_note.setVisible(bool(shown))
-        self.layout_changed.emit()
+    def set_accent_notes(self, swapped) -> None:
+        """Show the accent-taskbar note while a graph colour is swapped (color_scheme.accent_swapped)."""
+        if self.accent_graph_note.sync(swapped):
+            self.layout_changed.emit()
 
     @staticmethod
     def _note(text: str) -> QLabel:

@@ -717,28 +717,20 @@ class SettingsDialog(QDialog):
             self.logger.debug("preview update failed: %s", e)
         self._sync_accent_notes(settings)
 
-    # Which page's accent-taskbar note covers which themed colours (the Widget page's is in its
-    # Mini graph section).
-    _ACCENT_NOTE_STEMS = {
-        "appearance": frozenset({"default_color", "high_speed_color", "medium_speed_color",
-                                 "low_speed_color", "arrow_up_color", "arrow_down_color"}),
-        "widget": frozenset({"graph_upload_color", "graph_download_color"}),
-    }
-
     def _sync_accent_notes(self, settings: Optional[Dict[str, Any]] = None) -> None:
-        """The accent-taskbar notes (#556): on the built Appearance / Widget pages, shown while the
-        widget, painting these settings, swaps one of that page's colours for a readable text colour
-        (color_scheme.accent_swapped) - the swap the paint-time guard used to make silently."""
+        """The accent-taskbar notes (#556) on the built Appearance / Widget pages: each shown, right under
+        its colour rows, while the widget - painting these settings - swaps one of those colours for a
+        readable text colour (color_scheme.accent_swapped), the swap the paint-time guard used to make
+        silently."""
         try:
             if not (self._is_built("appearance") or self._is_built("widget")):
                 return
             merged = {**self.config, **(settings if settings is not None else (self.get_settings() or {}))}
             swapped = set(color_scheme.accent_swapped(merged))
             if self._is_built("appearance"):
-                self._built_pages["appearance"].set_accent_note(bool(swapped & self._ACCENT_NOTE_STEMS["appearance"]))
+                self._built_pages["appearance"].set_accent_notes(swapped)
             if self._is_built("widget"):
-                self._built_pages["widget"].mini_graph_section.set_accent_note(
-                    bool(swapped & self._ACCENT_NOTE_STEMS["widget"]))
+                self._built_pages["widget"].mini_graph_section.set_accent_notes(swapped)
         except Exception as e:
             self.logger.debug("accent-taskbar notes not set: %s", e)
 

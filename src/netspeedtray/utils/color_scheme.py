@@ -239,27 +239,28 @@ def accent_swapped(config: Dict[str, Any]) -> Tuple[str, ...]:
     """The themed colours the widget really paints that the accent-bar guard (``paint_colors``) swaps
     for a readable text colour right now - for Settings to say so under those rows instead of the swap
     being silent (#556 follow-up). A pen a setting leaves unused does not count: the band colours with
-    colour coding off, Medium while its threshold is off, the arrow pair without custom arrow colours,
-    the graph pair with the graph off. Nor does a colour still at its factory value (the default upload
-    line is swapped on most accent bars): the note is about the user's own picks, ones they can change
-    back. Empty on a plain (or High Contrast) taskbar."""
+    colour coding off, Medium unless strictly between Low and High, the arrow pair with arrows hidden or
+    without custom arrow colours, the graph pair with the graph off. A factory colour counts like any
+    other (the default Low is swapped on a red accent bar, both graph lines on an amber one): a silent
+    swap is the surprise #556 was about. Empty on a plain (or High Contrast) taskbar."""
     d = constants.config.defaults
     swapped = set(paint_colors(config).replaced)
     if not swapped:
         return ()
-    light = backdrop_is_light(config)
-    picked = resolve(config, light)
-    unused = {stem for stem in swapped
-              if picked[stem].upper() == d.THEMED_COLOR_DEFAULTS[stem][1 if light else 0].upper()}
+    unused = set()
     if not config.get("color_coding", d.DEFAULT_COLOR_CODING):
         unused |= {"high_speed_color", "medium_speed_color", "low_speed_color"}
-    try:
-        medium_on = float(config.get("medium_speed_threshold", d.DEFAULT_MEDIUM_SPEED_THRESHOLD) or 0) > 0
+    try:   # the renderer's rule (_speed_band): Medium counts only strictly between Low and High
+        low = float(config.get("low_speed_threshold", d.DEFAULT_LOW_SPEED_THRESHOLD) or 0)
+        high = float(config.get("high_speed_threshold", d.DEFAULT_HIGH_SPEED_THRESHOLD) or 0)
+        medium = float(config.get("medium_speed_threshold", d.DEFAULT_MEDIUM_SPEED_THRESHOLD) or 0)
+        medium_on = min(low, high) < medium < max(low, high)
     except (TypeError, ValueError):
         medium_on = False
     if not medium_on:
         unused.add("medium_speed_color")
-    if not config.get("use_custom_arrow_colors", d.DEFAULT_USE_CUSTOM_ARROW_COLORS):
+    if (config.get("hide_arrows", d.DEFAULT_HIDE_ARROWS)
+            or not config.get("use_custom_arrow_colors", d.DEFAULT_USE_CUSTOM_ARROW_COLORS)):
         unused |= {"arrow_up_color", "arrow_down_color"}
     if not config.get("graph_enabled", d.DEFAULT_GRAPH_ENABLED):
         unused |= {"graph_upload_color", "graph_download_color"}
