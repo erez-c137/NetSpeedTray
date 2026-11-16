@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
-from netspeedtray.utils.helpers import format_speed, get_machine_id, format_duration_short, reveal_in_explorer
+from netspeedtray.utils.helpers import format_speed, get_machine_id, format_duration_short, reveal_in_explorer, tr as _tr
 from netspeedtray.core.db.schema_v8 import RAW_TS_RESOLUTION_SECONDS
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import summaries as S
@@ -49,10 +49,6 @@ from netspeedtray.views.monitor.graph_host import bind_reader_thread, stop_reade
 _LOSS_SERIES_FOR = constants.network.latency.LOSS_SERIES_FOR
 _ANCHOR_KEY = "latency_anchor"
 _GATEWAY_KEY = "latency_gw"
-
-
-def _tr(i18n, key: str, default: str) -> str:
-    return str(getattr(i18n, key, default)) if i18n is not None else default
 
 
 def run_interactive_export(parent, widget_state, start: datetime, end: datetime, window_label: str,
