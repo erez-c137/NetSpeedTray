@@ -2270,7 +2270,7 @@ class StatsMonitorThread(QThread):
                 step()
             except Exception as e:
                 self.logger.error("Monitor thread cleanup step %s failed: %s",
-                                  getattr(step, "__name__", step), e)
+                                  getattr(step, "__name__", step), e, exc_info=True)
 
     def _cleanup_ohm_wmi(self) -> None:
         """Releases the cached WMI connection to LHM/OHM."""
