@@ -22,6 +22,11 @@ updates:
         versions: [">=6.11"]
       - dependency-name: "PyQt6-sip"
     groups:
+      # The four winrt-* packages (the Wi-Fi name, #493) only work as a matching set, majors included:
+      # one PR for all of them, never four that each break the build on their own (#545-#548).
+      winrt:
+        patterns: ["winrt-*"]
+        update-types: ["major", "minor", "patch"]
       # Runtime pins move together; a bump here needs a real smoke test either way.
       runtime:
         patterns: ["*"]
