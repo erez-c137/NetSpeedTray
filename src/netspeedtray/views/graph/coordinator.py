@@ -1,6 +1,5 @@
 
 from PyQt6.QtCore import QObject, QTimer, Qt
-from datetime import datetime
 import logging
 from netspeedtray import constants
 from netspeedtray.views.graph.logic import GraphLogic

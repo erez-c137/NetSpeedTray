@@ -15,7 +15,7 @@ import win32api
 import win32con
 import win32gui
 import win32process
-from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QTimer, Qt
+from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QTimer, Qt
 from PyQt6.QtGui import (
     QCloseEvent, QColor, QContextMenuEvent, QFont, QFontMetrics, QHideEvent,
     QIcon, QMouseEvent, QPaintEvent, QPainter, QShowEvent, QWheelEvent
@@ -63,10 +63,10 @@ if TYPE_CHECKING:
     from netspeedtray.views.settings import SettingsDialog
 
 
-# Win32 MSG layout for reading native messages in nativeEvent(). Defined once at
-# module scope - nativeEvent is a hot path (fires for every native message), so we
-# The Win32 MSG layout lives in utils.taskbar_utils (one shared definition);
-# re-exported here because the native-event resume test imports it from this module.
+# The Win32 MSG layout for reading native messages in nativeEvent() lives in
+# utils.taskbar_utils (one shared definition - nativeEvent is a hot path, firing for
+# every native message, so the structure must not be rebuilt per call); re-exported
+# here because the native-event resume test imports it from this module.
 from netspeedtray.utils.taskbar_utils import _NativeMSG  # noqa: E402  (re-export)
 _WM_POWERBROADCAST = 0x0218
 _WM_QUERYENDSESSION = 0x0011
@@ -2280,10 +2280,6 @@ class NetworkSpeedWidget(QWidget):
 
 
  
-
-    def position_manager_property(self):
-        # Expose position manager for binding if needed, though self.position_manager exists
-        return self.position_manager
 
     def _ensure_win32_topmost(self) -> None:
         """Delegates to PositionManager. No-op while hidden (e.g. over a fullscreen app)."""

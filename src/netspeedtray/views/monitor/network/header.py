@@ -8,11 +8,11 @@ Monitor's matplotlib firewall, and the Monitor stays decoupled from the graph wi
 """
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 from PyQt6.QtCore import QEvent, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QActionGroup
-from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy,
+from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel, QSizePolicy,
                              QToolButton, QMenu)
 
 from netspeedtray import constants

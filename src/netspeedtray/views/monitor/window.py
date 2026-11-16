@@ -17,12 +17,11 @@ from typing import Any, Dict, List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QApplication, QLabel, QToolButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QApplication, QToolButton,
 )
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
-from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.dwm import apply_win11_chrome
 from netspeedtray.utils.window_state import (
     restore_window_geometry, attach_geometry_memory, save_window_geometry,

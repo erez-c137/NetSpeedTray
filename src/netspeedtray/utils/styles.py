@@ -14,7 +14,7 @@ from typing import Optional
 
 # Import the design tokens (raw values) and other UI constants
 from netspeedtray.constants import styles as style_constants
-from netspeedtray.constants import ui, color as color_constants
+from netspeedtray.constants import color as color_constants
 
 _variable_present = None  # lazy cache: is "Segoe UI Variable" installed?
 
@@ -1108,53 +1108,6 @@ def sidebar_style() -> str:
 
 
 
-def timeline_pills_style() -> str:
-    """
-    Returns stylesheet for the segmented timeline control (Time Pills).
-    Uses the Windows accent color for the active pill.
-    """
-    accent_qcolor = get_accent_color()
-    accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
-    accent_hover = accent_qcolor.lighter(110).name()
-    
-    return f"""
-        QWidget#timelinePills {{
-            background: transparent;
-        }}
-        QWidget#timelinePills QPushButton {{
-            background: rgba(255, 255, 255, 0.05);
-            color: #ccc;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-right: none; /* Join pills */
-            margin: 0px;
-            padding: 4px 2px;
-            font-size: 10px;
-            font-weight: 600;
-            {ui_family_css()}
-        }}
-        QPushButton#pillFirst {{
-            border-top-left-radius: 6px;
-            border-bottom-left-radius: 6px;
-        }}
-        QPushButton#pillLast {{
-            border-top-right-radius: 6px;
-            border-bottom-right-radius: 6px;
-            border-right: 1px solid rgba(255, 255, 255, 0.1);
-        }}
-        QPushButton:hover:!checked {{
-            background: rgba(255, 255, 255, 0.15);
-            color: white;
-        }}
-        QWidget#timelinePills QPushButton:checked {{
-            background-color: {accent_rgb} !important;
-            color: white !important;
-            border: 1px solid {accent_rgb} !important;
-            font-weight: bold;
-        }}
-        QWidget#timelinePills QPushButton#pillLast:checked {{
-            border-right: 1px solid {accent_rgb} !important;
-        }}
-    """
 
 
 def toggle_style(total_track_width: int, total_track_height: int) -> str:
