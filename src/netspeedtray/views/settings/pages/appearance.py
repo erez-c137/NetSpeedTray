@@ -90,6 +90,15 @@ class AppearancePage(QWidget):
         self.themed_colors_note.setStyleSheet(
             f"color: {style_utils.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
         layout.addWidget(self.themed_colors_note)
+        # Shown only while an accent-coloured taskbar makes the widget swap one of this page's colours
+        # (text, speed bands, arrows) for a readable text colour - the swap used to be silent (#556).
+        # The dialog decides on every preview update (set_accent_note).
+        self.accent_colors_note = QLabel(self.i18n.ACCENT_TASKBAR_COLORS_NOTE)
+        self.accent_colors_note.setObjectName("accent_colors_note")
+        self.accent_colors_note.setWordWrap(True)
+        self.accent_colors_note.setStyleSheet(self.themed_colors_note.styleSheet())
+        self.accent_colors_note.setVisible(False)
+        layout.addWidget(self.accent_colors_note)
 
         # Font size.
         self.font_size = Win11Slider(editable=False)
@@ -186,6 +195,13 @@ class AppearancePage(QWidget):
         layout.addWidget(self.arrow_colors_container)
 
         layout.addStretch()
+
+    def set_accent_note(self, shown: bool) -> None:
+        """Show or hide the accent-taskbar note (the dialog calls this on every preview update)."""
+        if self.accent_colors_note.isHidden() == (not shown):
+            return
+        self.accent_colors_note.setVisible(bool(shown))
+        self.layout_changed.emit()
 
     def _themed_pair(self, stem: str, title: str, tooltip: str = "") -> ThemedColorPair:
         """A themed colour row's control. Its widgets are reachable as ``<key>_button`` / ``<key>_input``

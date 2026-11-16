@@ -644,5 +644,6 @@
     "BACKUP_HISTORY_ERR_IO": "Impossibile scrivere la copia. Controlla di poter salvare in quella cartella e che ci sia abbastanza spazio libero.",
     "BACKUP_HISTORY_ERR_BUSY": "È già in corso un backup su questo file.",
     "CONTEXT_MENU_ITEMS_LABEL": "Voci del menu del tasto destro",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Scegli cosa mostra il menu del tasto destro del widget. {settings} e {exit} sono sempre visibili."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Scegli cosa mostra il menu del tasto destro del widget. {settings} e {exit} sono sempre visibili.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "La barra delle applicazioni usa un colore principale, quindi i colori difficili da leggere su di essa vengono mostrati con un colore del testo leggibile."
 }

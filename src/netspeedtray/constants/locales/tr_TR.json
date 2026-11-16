@@ -644,5 +644,6 @@
     "BACKUP_HISTORY_ERR_IO": "Kopya yazılamadı. O klasöre kaydedebildiğinizi ve yeterli boş alan olduğunu denetleyin.",
     "BACKUP_HISTORY_ERR_BUSY": "Bu dosyaya zaten bir yedekleme yapılıyor.",
     "CONTEXT_MENU_ITEMS_LABEL": "Sağ tıklama menüsü öğeleri",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Widget'ın sağ tıklama menüsünde nelerin görüneceğini seçin. {settings} ve {exit} her zaman görünür."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Widget'ın sağ tıklama menüsünde nelerin görüneceğini seçin. {settings} ve {exit} her zaman görünür.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "Görev çubuğunuz vurgu rengi kullanıyor; bu yüzden üzerinde okunması zor olacak renkler bunun yerine okunaklı bir metin rengiyle gösterilir."
 }

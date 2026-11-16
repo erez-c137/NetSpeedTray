@@ -644,5 +644,6 @@
     "BACKUP_HISTORY_ERR_IO": "לא ניתן היה לכתוב את העותק. ודא שאפשר לשמור בתיקייה הזו ושיש מספיק מקום פנוי.",
     "BACKUP_HISTORY_ERR_BUSY": "כבר מתבצע גיבוי לקובץ הזה.",
     "CONTEXT_MENU_ITEMS_LABEL": "פריטי תפריט הלחיצה הימנית",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "בחר מה יוצג בתפריט הלחיצה הימנית של הווידג'ט. {settings} ו{exit} מוצגים תמיד."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "בחר מה יוצג בתפריט הלחיצה הימנית של הווידג'ט. {settings} ו{exit} מוצגים תמיד.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "שורת המשימות שלך משתמשת בצבע הדגשה, ולכן צבעים שקשה לקרוא עליה מוצגים במקום זאת בצבע טקסט קריא."
 }

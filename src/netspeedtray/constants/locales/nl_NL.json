@@ -644,5 +644,6 @@
     "BACKUP_HISTORY_ERR_IO": "De kopie kon niet worden geschreven. Controleer of je in die map kunt opslaan en of er genoeg vrije ruimte is.",
     "BACKUP_HISTORY_ERR_BUSY": "Er loopt al een back-up naar dit bestand.",
     "CONTEXT_MENU_ITEMS_LABEL": "Items in het rechtsklikmenu",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Kies wat het rechtsklikmenu van de widget toont. {settings} en {exit} worden altijd getoond."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Kies wat het rechtsklikmenu van de widget toont. {settings} en {exit} worden altijd getoond.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "Je taakbalk gebruikt een accentkleur, dus kleuren die daarop moeilijk leesbaar zijn, worden in een goed leesbare tekstkleur weergegeven."
 }

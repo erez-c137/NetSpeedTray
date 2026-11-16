@@ -644,5 +644,6 @@
     "BACKUP_HISTORY_ERR_IO": "コピーを書き込めませんでした。そのフォルダーに保存できること、空き容量が十分にあることを確認してください。",
     "BACKUP_HISTORY_ERR_BUSY": "このファイルへのバックアップはすでに実行中です。",
     "CONTEXT_MENU_ITEMS_LABEL": "右クリックメニューの項目",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "ウィジェットの右クリックメニューに表示する項目を選びます。「{settings}」と「{exit}」は常に表示されます。"
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "ウィジェットの右クリックメニューに表示する項目を選びます。「{settings}」と「{exit}」は常に表示されます。",
+    "ACCENT_TASKBAR_COLORS_NOTE": "タスクバーにアクセント カラーが使われているため、その上で読みにくい色は代わりに読みやすい文字色で表示されます。"
 }
