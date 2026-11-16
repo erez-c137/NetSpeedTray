@@ -8,9 +8,10 @@ widget was reported in the middle of the screen for the whole session, and back 
 console). The taskbar spot computed afterwards is the same as before, so neither the 1 s refresh nor
 the screenAdded / screenRemoved recovery (``_on_environment_changed``) ever moved it back.
 """
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from PyQt6.QtCore import QPoint, QRect
+from PyQt6.QtWidgets import QApplication
 
 from netspeedtray import constants
 from netspeedtray.core.position_manager import PositionManager, WindowState
@@ -84,3 +85,31 @@ def test_apply_geometry_corrects_an_external_move_to_the_same_target():
     widget.move.reset_mock()
     m._apply_geometry(1496, 1032)
     widget.move.assert_called_once_with(1496, 1032)
+
+
+# --- a drag in progress owns the position (review of #570) ------------------------------------------
+# Not every reposition path checks _dragging (taskbar_changed, screenAdded/Removed, a resize's
+# update_position); with the "already there?" test, any of them would pull the widget back mid-drag.
+
+def test_docked_drag_in_progress_is_not_yanked():
+    m, widget, state = _manager()
+    _refresh(m)
+    widget._dragging = True
+    state["pos"] = QPoint(1200, state["pos"].y())   # mid-drag
+    widget.move.reset_mock()
+    _refresh(m)          # e.g. taskbar_changed / screenAdded / an identity resize -> update_position
+    widget.move.assert_not_called()
+
+
+def test_free_move_drag_in_progress_is_not_yanked_to_old_saved_spot():
+    app = QApplication.instance() or QApplication([])
+    m, widget, state = _manager()
+    m._state.config.update(free_move=True, position_x=500, position_y=300)
+    with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=app.primaryScreen()):
+        _refresh(m)
+        assert state["pos"] == QPoint(500, 300)
+        widget._dragging = True
+        state["pos"] = QPoint(200, 200)
+        widget.move.reset_mock()
+        _refresh(m)
+    widget.move.assert_not_called()

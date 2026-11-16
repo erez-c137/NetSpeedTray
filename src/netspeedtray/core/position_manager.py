@@ -965,6 +965,8 @@ class PositionManager(QObject):
         
         # Internal State
         self._last_tray_rect: Optional[Tuple[int, int, int, int]] = None
+        # The last rect _apply_geometry moved to - kept for diagnostics and the reset paths only: since
+        # #570 the "skip the move" test uses the widget's ACTUAL position, never this.
         self._last_applied_geometry: Optional[QRect] = None
         self._taskbar_lost_count: int = 0
         # Free-float (#188): set by refresh_float_state() when the preferred monitor is a taskbar-less
@@ -1381,6 +1383,12 @@ class PositionManager(QObject):
     def _apply_geometry(self, x: int, y: int) -> None:
         """Moves the widget to (x, y) unless it is already there (no redundant OS calls)."""
         new_rect = QRect(x, y, self._state.widget.width(), self._state.widget.height())
+
+        # A drag owns the position until its drop saves the new spot. Not every reposition path checks
+        # _dragging (taskbar_changed, screenAdded/Removed, a resize's update_position): with the
+        # "already there?" test below, any of them would yank the widget back mid-drag.
+        if getattr(self._state.widget, "_dragging", False) is True:
+            return
 
         # Judged against where the widget IS, never only against what we last applied: Windows moves
         # top-level windows on a display-topology change (a Remote Desktop connect, #314) while the
