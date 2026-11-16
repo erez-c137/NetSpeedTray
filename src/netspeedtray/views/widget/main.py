@@ -1081,23 +1081,26 @@ class NetworkSpeedWidget(QWidget):
         stored either way - the hover card and the Monitor window use it."""
         return effective_display_mode(self.config) in modes
 
-    def update_cpu_usage(self, usage: float) -> None:
-        """Update CPU usage and trigger repaint."""
+    def _set_hw_metric(self, attr: str, value, modes: "Tuple[str, ...]",
+                       refresh_hover: bool = False) -> None:
+        """Store a hardware reading, refresh the hover card when it shows hardware, and repaint
+        when the painted bar displays that metric's family. The reading is stored either way -
+        the hover card and the Monitor window use it."""
         if self.is_paused:
             return
-        self.cpu_usage = usage
-        self._refresh_hover_hardware()
-        if self._bar_shows(_CPU_BAR_MODES):
+        setattr(self, attr, value)
+        if refresh_hover:
+            self._refresh_hover_hardware()
+        if self._bar_shows(modes):
             self.update()
+
+    def update_cpu_usage(self, usage: float) -> None:
+        """Update CPU usage and trigger repaint."""
+        self._set_hw_metric("cpu_usage", usage, _CPU_BAR_MODES, refresh_hover=True)
 
     def update_gpu_usage(self, usage: float) -> None:
         """Update GPU usage and trigger repaint."""
-        if self.is_paused:
-            return
-        self.gpu_usage = usage
-        self._refresh_hover_hardware()
-        if self._bar_shows(_GPU_BAR_MODES):
-            self.update()
+        self._set_hw_metric("gpu_usage", usage, _GPU_BAR_MODES, refresh_hover=True)
 
     def update_network_identity(self, identity: Optional[object]) -> None:
         """Update the connected network's identity (Wi-Fi band / SSID) and repaint if shown.
@@ -1125,45 +1128,27 @@ class NetworkSpeedWidget(QWidget):
 
     def update_cpu_temp(self, temp: Optional[float]) -> None:
         """Update CPU temperature and trigger repaint."""
-        if self.is_paused:
-            return
-        self.cpu_temp = temp
-        if self._bar_shows(_CPU_BAR_MODES):
-            self.update()
+        self._set_hw_metric("cpu_temp", temp, _CPU_BAR_MODES)
 
     def update_gpu_temp(self, temp: Optional[float]) -> None:
         """Update GPU temperature and trigger repaint."""
-        if self.is_paused:
-            return
-        self.gpu_temp = temp
-        if self._bar_shows(_GPU_BAR_MODES):
-            self.update()
+        self._set_hw_metric("gpu_temp", temp, _GPU_BAR_MODES)
 
     def update_cpu_power(self, power: Optional[float]) -> None:
         """Update CPU power draw and trigger repaint."""
-        if self.is_paused:
-            return
-        self.cpu_power = power
-        if self._bar_shows(_CPU_BAR_MODES):
-            self.update()
+        self._set_hw_metric("cpu_power", power, _CPU_BAR_MODES)
 
     def update_gpu_power(self, power: Optional[float]) -> None:
         """Update GPU power draw and trigger repaint."""
-        if self.is_paused:
-            return
-        self.gpu_power = power
-        if self._bar_shows(_GPU_BAR_MODES):
-            self.update()
+        self._set_hw_metric("gpu_power", power, _GPU_BAR_MODES)
 
     def update_ram_info(self, used: float, total: float) -> None:
         """Update RAM info and trigger repaint."""
-        if self.is_paused:
-            return
-        self.ram_used = used
-        self.ram_total = total
-        self._refresh_hover_hardware()
-        if self._bar_shows(_CPU_BAR_MODES):
-            self.update()
+        # ram_total first: the hover refresh rides the LAST store, so the card can never see
+        # the new used with the old total (on the first sample that renders "10.0 GB" for a
+        # tick instead of "10.0 / 16.0 GB").
+        self._set_hw_metric("ram_total", total, _CPU_BAR_MODES)
+        self._set_hw_metric("ram_used", used, _CPU_BAR_MODES, refresh_hover=True)
 
     def update_vram_info(self, used: float, total: float) -> None:
         """Update VRAM info and trigger repaint."""
