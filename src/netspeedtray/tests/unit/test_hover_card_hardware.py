@@ -430,6 +430,19 @@ def test_update_repaints_only_when_the_bar_shows_that_metric_family(name, call, 
         (f.update.assert_called if want else f.update.assert_not_called)()
 
 
+def test_ram_refresh_sees_both_readings_at_refresh_time():
+    """The refresh must fire only after BOTH ram readings are stored - at refresh time the
+    card reads the full (used, total) pair, never the new used with the old total (on the
+    first sample that would render "10.0 GB" for a tick instead of "10.0 / 16.0 GB")."""
+    f = _hover_fake(widget_display_mode="network_only")   # fixture seeds ram_total=16.0
+    seen = []
+    f._refresh_hover_hardware = MagicMock(
+        side_effect=lambda: seen.append((f.ram_used, f.ram_total)))
+    f.update_ram_info(10.0, 24.0)   # a total DIFFERENT from the seed: the old order is detectable
+    assert f._refresh_hover_hardware.call_count == 1
+    assert seen == [(10.0, 24.0)]
+
+
 def test_paused_updates_store_nothing_and_repaint_nothing():
     """The pause gate sits in front of the store: a paused widget keeps its last readings for
     every metric family (the partial-freeze fix), hover card included."""

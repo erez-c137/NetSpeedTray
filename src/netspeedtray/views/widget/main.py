@@ -1151,8 +1151,11 @@ class NetworkSpeedWidget(QWidget):
 
     def update_ram_info(self, used: float, total: float) -> None:
         """Update RAM info and trigger repaint."""
-        self._set_hw_metric("ram_used", used, _CPU_BAR_MODES, refresh_hover=True)
+        # ram_total first: the hover refresh rides the LAST store, so the card can never see
+        # the new used with the old total (on the first sample that renders "10.0 GB" for a
+        # tick instead of "10.0 / 16.0 GB").
         self._set_hw_metric("ram_total", total, _CPU_BAR_MODES)
+        self._set_hw_metric("ram_used", used, _CPU_BAR_MODES, refresh_hover=True)
 
     def update_vram_info(self, used: float, total: float) -> None:
         """Update VRAM info and trigger repaint."""
