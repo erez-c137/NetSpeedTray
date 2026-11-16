@@ -526,7 +526,7 @@ def test_one_blind_read_keeps_an_open_gate_open(q_app, monkeypatch, clock):
     assert _spawn_times(t, clock, [DGPU_BUSY] * 10) == [0, 5]
     r = _blind_read_tick(t, clock)                      # 5 s after the last call
     assert t._nvidia_gate_open is True
-    assert t._run_child.call_count == 3 and (r.temp, r.power) == (52.0, 21.5)
+    assert t._run_child.call_count == 2 and (r.temp, r.power) == (52.0, 21.5)   # cached, no new call
     assert _blind_logs(t) == []
 
 
@@ -535,3 +535,26 @@ def test_no_counter_at_all_still_fails_open_at_once(q_app, monkeypatch, clock):
     _asleep(t, clock)
     spawns, r = _blind_spawns(t, clock, 1)              # \GPU Engine counter gone: no blip to ride out
     assert spawns == [0] and r.temp == 52.0
+
+
+def test_a_blip_never_calls_nvidia_smi_even_with_an_open_verdict(q_app, monkeypatch, clock):
+    """Review: a kept OPEN verdict may be stale - e.g. awake before a suspend. The blip poll reads the
+    cache; it never starts nvidia-smi itself."""
+    t = _thread([UHD, RTX, BRD], True, monkeypatch)
+    _spawn_times(t, clock, [DGPU_BUSY] * 3)            # awake: verdict open, a call at 0
+    clock.t += 3600                                     # the cadence (and any hold) long elapsed
+    before = t._run_child.call_count
+    r = _blind_read_tick(t, clock)
+    assert t._run_child.call_count == before
+
+
+def test_a_verdict_from_before_temp_and_power_were_off_is_not_reused(q_app, monkeypatch, clock):
+    """Review (mutation 'no verdict reset' survived): open, then temperature + power off for a while,
+    then on again with a blip as the first poll - closed (no verdict), never the stale open one."""
+    t = _thread([UHD, RTX, BRD], True, monkeypatch)
+    _spawn_times(t, clock, [DGPU_BUSY] * 3)
+    for _ in range(10):
+        _tick(t, clock, IGPU_BUSY, temp=False, power=False)
+    clock.t += 3600
+    r = _blind_read_tick(t, clock)
+    assert t._nvidia_gate_open is False and (r.temp, r.power) == (None, None)

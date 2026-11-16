@@ -588,6 +588,7 @@ class StatsMonitorThread(QThread):
             self._gpu_shared_counter = None
             self._gpu_collect_at = None
             self._gpu_util_settling = False
+            self._nvidia_gate_verdict = None   # a rebuilt query (resume) re-judges before it trusts
             # _gpu_engine_seen is deliberately NOT reset: a settings change or a resume rebuilds
             # the query, and forgetting that this machine has a GPU would blink the Monitor's GPU
             # tiles out until the next non-idle tick.
@@ -789,7 +790,9 @@ class StatsMonitorThread(QThread):
         self._gpu_blind_streak = self._gpu_blind_streak + 1 if blind_blip else 0
         blip_kept = blind_blip and self._gpu_blind_streak < constants.gpu.HYBRID_BLIND_FAIL_OPEN_AFTER
         if blip_kept:
-            gate_open = may_query = bool(self._nvidia_gate_verdict)
+            # The verdict is kept, but no NEW nvidia-smi call is made on a blip (cached readings only):
+            # the kept verdict may be stale (a resume, a rebuild) and this poll has no sample to check it.
+            gate_open, may_query = bool(self._nvidia_gate_verdict), False
         else:
             self._nvidia_gate_verdict = None   # until the gate judges this poll's sample below
         if hybrid:
