@@ -8,6 +8,8 @@ body:
       value: |
         Thanks for taking the time to file a bug report. Filling in every field below dramatically reduces the back-and-forth needed to diagnose the issue.
 
+        Not sure it's a bug, or just have a question? [Q&A in Discussions](https://github.com/erez-c137/NetSpeedTray/discussions/categories/q-a) is quicker.
+
         > **Privacy note:** The Support Bundle (Settings → Troubleshooting → Export Support Bundle) automatically redacts usernames, file paths, IP/MAC addresses, hostnames, and interface GUIDs from the log before bundling. It's safe to attach.
 
   - type: input

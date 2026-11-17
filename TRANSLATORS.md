@@ -108,5 +108,5 @@ Other locales (English, German, Spanish) are currently maintained by the project
 Every locale is kept in the **exact same key order as `en_US.json`** - so the same line number is the same key in every file. To see what's new or changed for your language:
 
 - **Side-by-side:** open your `xx_XX.json` next to `en_US.json`; matching lines are matching keys.
-- **What changed since the last release:** `git diff v1.3.3 -- src/netspeedtray/constants/locales/en_US.json` shows every English string added or reworded (a reworded source means your existing translation is now stale - worth a re-check).
-- The maintainer also posts a digest of new/changed strings to the translation thread ([#157](https://github.com/erez-c137/NetSpeedTray/issues/157)) when a batch lands, so you can reply there or open a PR - whichever is easier.
+- **What changed since the last release:** `git diff v2.2.0 -- src/netspeedtray/constants/locales/en_US.json` shows every English string added or reworded (a reworded source means your existing translation is now stale - worth a re-check).
+- The maintainer also posts a digest of new/changed strings to the current translation thread ([#364](https://github.com/erez-c137/NetSpeedTray/issues/364)) when a batch lands, so you can reply there or open a PR - whichever is easier.

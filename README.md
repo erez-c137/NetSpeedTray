@@ -9,7 +9,7 @@
 **Live network speeds, CPU/GPU stats, temperatures, and power draw - right on your Windows taskbar.**
 Open source, signed, no ads, no telemetry. The feature Windows forgot.
 
-[**Install**](#install) · [**Quick Start**](#quick-start) · [**Features**](#what-you-get) · [**The Monitor**](#the-monitor) · [**Hardware & temperatures**](#hardware-monitoring---do-i-need-librehardwaremonitor) · [**FAQ**](#faq) · [**Support 💛**](#-support-netspeedtray)
+[**Install**](#install) · [**Quick Start**](#quick-start) · [**Features**](#what-you-get) · [**The Monitor**](#the-monitor) · [**Hardware & temperatures**](#hardware-monitoring---do-i-need-librehardwaremonitor) · [**FAQ**](#faq) · [**Discussions**](https://github.com/erez-c137/NetSpeedTray/discussions) · [**Support 💛**](#-support-netspeedtray)
 
 </div>
 
@@ -414,11 +414,12 @@ I'm not doing this for the money - but I'd be lying if I said a little support d
   </a>
 </p>
 
-**No pressure, ever** - the app is never paywalled and never will be. If money isn't an option, three free things help just as much:
+**No pressure, ever** - the app is never paywalled and never will be. If money isn't an option, a few free things help just as much:
 
 - ⭐ **Star the repo** - one click, and it genuinely helps others find the project.
 - 🐛 **File a good bug report** - use the [template](https://github.com/erez-c137/NetSpeedTray/issues/new?template=bug_report.yml) and attach a Support Bundle; it saves me real triage time.
 - 🌍 **Improve a translation** - German, Spanish and Hebrew especially could use a native-speaker review. See [TRANSLATORS.md](TRANSLATORS.md).
+- 💬 **Join the [Discussions](https://github.com/erez-c137/NetSpeedTray/discussions)** - answer someone's question, or tell me what you'd like to see next.
 
 ---
 
@@ -491,7 +492,14 @@ Output lands in `dist/`. *(On a Python newer than 3.13? If a stable wheel isn't 
 
 ## Contributing
 
-Issues and pull requests welcome. Use the [bug report template](https://github.com/erez-c137/NetSpeedTray/issues/new?template=bug_report.yml) for bugs and the [feature request template](https://github.com/erez-c137/NetSpeedTray/issues/new?template=feature_request.yml) for ideas. Even small things - a typo, a clearer error message, a translation polish - are very welcome.
+Issues and pull requests welcome. Where to go:
+
+- **Something's broken:** the [bug report template](https://github.com/erez-c137/NetSpeedTray/issues/new?template=bug_report.yml), with a support bundle attached (the **Export support bundle** button at the bottom of Settings).
+- **A question, or "how do I...?":** [Q&A in Discussions](https://github.com/erez-c137/NetSpeedTray/discussions/categories/q-a).
+- **An idea you'd like to talk through,** or to see whether others want it too: [Ideas in Discussions](https://github.com/erez-c137/NetSpeedTray/discussions/categories/ideas). A concrete, well-defined request can go straight to the [feature request template](https://github.com/erez-c137/NetSpeedTray/issues/new?template=feature_request.yml).
+- **A translation fix:** the [translation thread](https://github.com/erez-c137/NetSpeedTray/issues/364) or a pull request - see [TRANSLATORS.md](TRANSLATORS.md).
+
+Even small things - a typo, a clearer error message, a translation polish - are very welcome.
 
 ---
 
