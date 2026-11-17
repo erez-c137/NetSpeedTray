@@ -2,23 +2,19 @@
 
 # NetSpeedTray
 
-![GitHub release](https://img.shields.io/github/v/release/erez-c137/NetSpeedTray?style=flat-square) ![Downloads](https://img.shields.io/github/downloads/erez-c137/NetSpeedTray/total?style=flat-square) ![License](https://img.shields.io/github/license/erez-c137/NetSpeedTray?style=flat-square) ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?style=flat-square&logo=windows&logoColor=white) ![Made with Python](https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white) [![winget](https://img.shields.io/badge/winget-install-blue?style=flat-square&logo=windows&logoColor=white)](#install) [![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-get-0078D6?style=flat-square&logo=windows&logoColor=white)](https://apps.microsoft.com/detail/XP9MHWQZJPLQM8) ![Stars](https://img.shields.io/github/stars/erez-c137/NetSpeedTray?style=flat-square&color=yellow)
+![GitHub release](https://img.shields.io/github/v/release/erez-c137/NetSpeedTray?style=flat-square) ![Downloads](https://img.shields.io/github/downloads/erez-c137/NetSpeedTray/total?style=flat-square) ![License](https://img.shields.io/github/license/erez-c137/NetSpeedTray?style=flat-square) ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?style=flat-square&logo=windows&logoColor=white) [![winget](https://img.shields.io/badge/winget-install-blue?style=flat-square&logo=windows&logoColor=white)](#install) [![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-get-0078D6?style=flat-square&logo=windows&logoColor=white)](https://apps.microsoft.com/detail/XP9MHWQZJPLQM8) ![Stars](https://img.shields.io/github/stars/erez-c137/NetSpeedTray?style=flat-square&color=yellow)
 
-![NetSpeedTray Banner](./screenshots/netspeedtray-hero.jpg)
+<img src="screenshots/widget_hero_2.2.gif" alt="NetSpeedTray widget on the Windows taskbar, next to the clock - live upload and download speeds, the mini graph in Trend and Detailed styles, CPU and GPU stats, everything at once, split graphs, a light taskbar, and the compact layout on a side taskbar" width="626" />
 
 **Live network speeds, CPU/GPU stats, temperatures, and power draw - right on your Windows taskbar.**
 Open source, signed, no ads, no telemetry. The feature Windows forgot.
 
-[**Install**](#install) · [**Features**](#what-you-get) · [**The Monitor**](#the-monitor) · [**Hardware & temperatures**](#hardware-monitoring---do-i-need-librehardwaremonitor) · [**FAQ**](#faq) · [**Support 💛**](#-support-netspeedtray)
+[**Install**](#install) · [**Quick Start**](#quick-start) · [**Features**](#what-you-get) · [**The Monitor**](#the-monitor) · [**Hardware & temperatures**](#hardware-monitoring---do-i-need-librehardwaremonitor) · [**FAQ**](#faq) · [**Support 💛**](#-support-netspeedtray)
 
 </div>
 
-> 🎉 **The 2.x era.** The widget **docks to the taskbar itself**, so it no longer vanishes behind the
-> Start menu or system flyouts. Everything beyond the readout lives in one calm window - the **Monitor** -
-> with history charts, honest per-app and per-process detail, exportable statistics, network latency, and
-> data-usage tracking. And since 2.1.4, the **portable build updates itself** - verified, swapped, and
-> relaunched without you touching a file. **2.2** makes your history exact, follows the taskbar to the top,
-> the sides and the Small size, and uses about half the memory. [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/latest)
+> 🎉 **New in 2.2:** your history is exact, the widget follows the taskbar to the top, the sides and the
+> Small size, and it uses about half the memory. [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/latest)
 
 ---
 
@@ -32,19 +28,51 @@ Or grab the latest [**Setup.exe** or **Portable.zip**](https://github.com/erez-c
 
 Also on the [**Microsoft Store**](https://apps.microsoft.com/detail/XP9MHWQZJPLQM8) - the same signed installer and the same free, open-source app, one click from the Store. It's the *only* NetSpeedTray on the Store; anything with a similar name isn't this project.
 
-**Requirements:** Windows 11 or 10 (64-bit) - Windows 11 is the main target, Windows 10 is best-effort. The widget needs no admin rights. CPU/GPU **temperatures** on some hardware need an optional helper - [see below](#hardware-monitoring---do-i-need-librehardwaremonitor).
+**Which one?** **Setup.exe** installs NetSpeedTray for you; **Portable.zip** runs from any folder and updates itself in place. WinGet and the Store install the same signed Setup.
+
+**Requirements:** Windows 11 or 10 (64-bit) - Windows 11 is the main target, Windows 10 is best-effort, and Windows 7 and 8 aren't supported. The widget needs no admin rights. CPU/GPU **temperatures** on some hardware need an optional helper - [see below](#hardware-monitoring---do-i-need-librehardwaremonitor).
 
 **Deploying to several PCs?** Silent install, per-machine and per-user details, the update policy and every network connection the app makes are in [DEPLOYING.md](DEPLOYING.md).
 
 ---
 
-## See it in action
+## Quick Start
 
-The widget lives on your taskbar, next to the clock - live speeds and a mini-graph, at work:
+1. **Right-click the widget** for **Settings**, the **Monitor**, **Check for Updates**, or **Exit**.
+2. **Double-click the widget** to open the **Monitor** (history, per-app activity, hardware, statistics).
+3. **Hover over it** for the hover card - the data you've used today and this month (and your cap, if you set one), plus CPU, GPU, memory and, on a laptop, battery if you turn them on. Click to pin it open.
+4. **Drag it to reposition** - grab the widget and drag it along the taskbar to wherever you like; it remembers the spot. Turn on **Free move (no snapping)** in **Settings → Widget** to place it anywhere, including off the taskbar.
+5. **Want temperatures?** Many NVIDIA and Intel PCs show some out of the box; for the rest, see [Do I need LibreHardwareMonitor?](#hardware-monitoring---do-i-need-librehardwaremonitor)
 
-<div align="center">
-  <img src="screenshots/widget_hero_2.2.gif" alt="NetSpeedTray widget on the Windows taskbar, next to the clock - live upload and download speeds, the mini graph in Trend and Detailed styles, CPU and GPU stats, everything at once, split graphs, a light taskbar, and the compact layout on a side taskbar" width="626" />
-</div>
+---
+
+## Why NetSpeedTray?
+
+Windows has shown network usage in Task Manager since forever - but you have to *open Task Manager to see it*, and it's gone the moment you click away. That's the gap I wanted to fill on my own machine, and I couldn't find a widget I trusted to do it cleanly.
+
+So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatures, and power draw - all sitting in your taskbar where you can glance at them without breaking your flow. No browser tab open, no telemetry, no ads, no tracking. Built with Python and PyQt6, and signed by the [SignPath Foundation](https://signpath.org/) so it installs cleanly.
+
+---
+
+## What You Get
+
+🌐 **Network on your taskbar.** Live upload and download speeds, updated every second by default. Auto-detects your primary internet connection or lets you pick specific adapters. Color-code Low / Medium / High speeds so heavy traffic stands out at a glance. The readout sits *inside* the taskbar's layer - it stays put through the Start menu, Quick Settings, and the tray overflow instead of disappearing.
+
+📍 **Every taskbar, every position.** Bottom, top, left or right, and Windows 11's Small taskbar - move or resize the taskbar and the widget follows, no restart. When your app buttons reach the widget it steps aside and comes back when there's room. With "Show my taskbar on all displays" on, it can put a copy on every taskbar.
+
+🖥️ **Hardware stats too.** CPU and GPU utilization beside your network speeds, with optional temperature (°C or °F), power (Watts), RAM, and VRAM. Vendor-agnostic GPU support - NVIDIA, AMD, and Intel - and on a PC with two GPUs you pick which one to show. ([When do temps need a helper? →](#hardware-monitoring---do-i-need-librehardwaremonitor))
+
+🪟 **A hover card.** Point at the widget for today's and this month's data usage - and, if you like, CPU, GPU, memory and, on a laptop, battery, so the taskbar itself can stay just your network speed. Click to pin it open.
+
+📊 **The Monitor.** One window, three tabs - **Overview, Network, Hardware** - with history charts, per-app connections, per-process resource use, and statistics you can export to CSV/JSON. Double-click the widget to open it.
+
+📈 **Usage & data caps.** Usage by day, month and year, a settable monthly cap with a billing reset day, and 80% / 100% alerts - shown as a quiet flyout above the widget, no extra tray icon. Your history is exact bytes in a local SQLite file you can back up, query or wipe from Settings.
+
+🩺 **Network latency & packet loss.** A light probe of your own router shows a plain-word verdict - **Internet: Good / OK / Slow** - with the milliseconds as quiet subtext. It stays on your LAN; pinging a public host is up to you. **Check connection** tells you whether packet loss starts on your Wi-Fi or beyond it.
+
+🎨 **Make it yours.** Layout modes, fonts, decimals, arrow styles, color thresholds, a mini graph (Trend or Detailed, your colors, or split upload/download), one color scheme that switches with Windows' light/dark mode, and a live preview in Settings that shows the exact effect before you commit.
+
+🔒 **Trustworthy by design.** Open source under GPLv3. Signed installer, zero ads/tracking/telemetry, logs auto-redacted of paths/IPs/MACs/hostnames/adapter names, and an in-app updater that *verifies the signature* before running anything. And it stays free: GPLv3 means that even if I lose interest or get hit by a bus, the code can't be bought, closed, or paywalled out from under you - anyone can fork it.
 
 <details>
   <summary>&nbsp;&nbsp;<b>➕ Choose what it shows</b> - just speeds, a mini-graph, CPU/GPU/RAM, temps &amp; power</summary>
@@ -87,33 +115,6 @@ The widget lives on your taskbar, next to the clock - live speeds and a mini-gra
   </div>
 </details>
 
-<p align="center">Double-click it for the <b>Monitor</b> - the whole story behind the numbers:</p>
-
-<div align="center">
-  <img src="screenshots/monitor_overview_2.0.png" alt="NetSpeedTray Monitor - Overview tab" width="860" />
-  <p><sub><b>Overview.</b> Live tiles + adaptive sparklines, a network hero with inline latency, a data-usage card, and the apps with the most connections - every card drills into detail.</sub></p>
-</div>
-
-<p align="center"><i>↓ Click to explore the rest ↓</i></p>
-
-<details>
-  <summary>&nbsp;&nbsp;<b>🌐 Network</b> - history graph + honest per-app connections</summary>
-  <br/>
-  <div align="center">
-    <img src="screenshots/monitor_network_2.0.png" alt="NetSpeedTray Monitor - Network tab" width="820" />
-    <p><sub>Up/down history over a live per-app <b>connection</b> list - how many each program holds, how many are active, and the distinct hosts it reaches - with a per-NIC filter. No fake per-app "speeds": Windows can't attribute network bytes per app without a kernel driver, so nothing is dressed up.</sub></p>
-  </div>
-</details>
-
-<details>
-  <summary>&nbsp;&nbsp;<b>🖥️ Hardware</b> - combined CPU/GPU graph + per-process usage</summary>
-  <br/>
-  <div align="center">
-    <img src="screenshots/monitor_hardware_2.0.png" alt="NetSpeedTray Monitor - Hardware tab" width="820" />
-    <p><sub>A combined CPU + GPU + RAM history graph over a live per-process <b>CPU / RAM / GPU%</b> list, plus a telemetry band of temperatures, power, and memory.</sub></p>
-  </div>
-</details>
-
 <details>
   <summary>&nbsp;&nbsp;<b>⚙️ Settings</b> - six pages, a live preview, and a Windows 11 feel</summary>
   <br/>
@@ -128,45 +129,34 @@ The widget lives on your taskbar, next to the clock - live speeds and a mini-gra
 
 ---
 
-## Why NetSpeedTray?
-
-Windows has shown network usage in Task Manager since forever - but you have to *open Task Manager to see it*, and it's gone the moment you click away. That's the gap I wanted to fill on my own machine, and I couldn't find a widget I trusted to do it cleanly.
-
-So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatures, and power draw - all sitting in your taskbar where you can glance at them without breaking your flow. No browser tab open, no third process to babysit, no telemetry, no ads, no tracking. Built with Python and PyQt6, and signed by the [SignPath Foundation](https://signpath.org/) so it installs cleanly.
-
----
-
-## What You Get
-
-🌐 **Network on your taskbar.** Live upload and download speeds, updated every second by default. Auto-detects your primary internet connection or lets you pick specific adapters. Color-code Low / Medium / High speeds so heavy traffic stands out at a glance. The readout sits *inside* the taskbar's layer - it stays put through the Start menu, Quick Settings, and the tray overflow instead of disappearing.
-
-📍 **Every taskbar, every position.** Bottom, top, left or right, and Windows 11's Small taskbar - move or resize the taskbar and the widget follows, no restart. When your app buttons reach the widget it steps aside and comes back when there's room. With "Show my taskbar on all displays" on, it can put a copy on every taskbar.
-
-🖥️ **Hardware stats too.** CPU and GPU utilization beside your network speeds, with optional temperature (°C or °F), power (Watts), RAM, and VRAM. Vendor-agnostic GPU support - NVIDIA, AMD, and Intel - and on a PC with two GPUs you pick which one to show. ([When do temps need a helper? →](#hardware-monitoring---do-i-need-librehardwaremonitor))
-
-🪟 **A hover card.** Point at the widget for today's and this month's data usage - and, if you like, CPU, GPU, memory and, on a laptop, battery, so the taskbar itself can stay just your network speed. Click to pin it open.
-
-📊 **The Monitor.** One window, three tabs - **Overview, Network, Hardware** - with history charts, per-app connections, per-process resource use, and statistics you can export to CSV/JSON. Double-click the widget to open it.
-
-📈 **Usage & data caps.** Usage by day, month and year, a settable monthly cap with a billing reset day, and 80% / 100% alerts - shown as a quiet flyout above the widget, no extra tray icon. Your history is exact bytes in a local SQLite file you can back up, query or wipe from Settings.
-
-🩺 **Network latency & packet loss.** A light probe of your own router shows a plain-word verdict - **Internet: Good / OK / Slow** - with the milliseconds as quiet subtext. It stays on your LAN; pinging a public host is up to you. **Check connection** tells you whether packet loss starts on your Wi-Fi or beyond it.
-
-🎨 **Make it yours.** Layout modes, fonts, decimals, arrow styles, color thresholds, a mini graph (Trend or Detailed, your colors, or split upload/download), one color scheme that switches with Windows' light/dark mode, and a live preview in Settings that shows the exact effect before you commit.
-
-🔒 **Trustworthy by design.** Open source under GPLv3. Signed installer, zero ads/tracking/telemetry, logs auto-redacted of paths/IPs/MACs/hostnames/adapter names, and an in-app updater that *verifies the signature* before running anything. And it stays free: GPLv3 means that even if I lose interest or get hit by a bus, the code can't be bought, closed, or paywalled out from under you - anyone can fork it.
-
----
-
 ## The Monitor
 
-Double-click the widget (or pick **Show Monitor** from the right-click menu) to open it. One window replaces the two older, separate Graph and App Activity windows. Three tabs share a single graph engine and timeline - and the Overview is intentionally chart-free, so a quick glance never loads the heavy plotting libraries.
+Double-click the widget (or pick **Show Monitor** from the right-click menu) for the whole story behind the numbers: one window, three tabs - **Overview, Network, Hardware** - on one shared timeline.
 
-- **🏠 Overview - the at-a-glance control center.** Live tiles for network, CPU, GPU, RAM, and VRAM, each with a sparkline that adapts its scale so low-but-varying activity reads in detail. A network "hero" card shows download and upload as co-equal headline numbers with an inline latency read, a context strip across the top (session uptime, period totals, CPU + GPU power), a **Data usage** card, and a **Most connections** list (apps ranked by live connections). Every card is clickable and drills into detail.
+<div align="center">
+  <img src="screenshots/monitor_overview_2.0.png" alt="NetSpeedTray Monitor - Overview tab" width="860" />
+  <p><sub><b>Overview.</b> Live tiles for network, CPU, GPU, RAM and VRAM with sparklines that adapt their scale, a network hero with inline latency, a strip with session uptime, period totals and CPU + GPU power, a data-usage card, and the apps with the most connections - every card drills into detail. Its sparklines are drawn natively, so a quick glance never loads the plotting library.</sub></p>
+</div>
 
-- **🌐 Network - history + who's actually talking.** The history graph over a per-app **connection** list: how many live connections each program holds, how many are active, and the distinct remote hosts it's reaching. Honest by design - Windows can't attribute network bytes per app without a kernel driver, so nothing is dressed up as a per-app "speed." A per-NIC filter scopes both the graph and the totals.
+<p align="center"><i>↓ Click to explore the rest ↓</i></p>
 
-- **🖥️ Hardware - the system, in depth.** A combined CPU + GPU history graph (with separate-axis and one-at-a-time modes, optional smoothing, and a fixed/auto y-axis) over a live per-process **CPU / RAM / GPU%** list, plus a telemetry band of temperatures, power, and memory.
+<details>
+  <summary>&nbsp;&nbsp;<b>🌐 Network</b> - history graph + honest per-app connections</summary>
+  <br/>
+  <div align="center">
+    <img src="screenshots/monitor_network_2.0.png" alt="NetSpeedTray Monitor - Network tab" width="820" />
+    <p><sub>Up/down history over a live per-app <b>connection</b> list - how many each program holds, how many are active, and the distinct hosts it reaches - with a per-NIC filter that scopes the graph and the totals. No fake per-app "speeds": Windows can't attribute network bytes per app without a kernel driver, so nothing is dressed up.</sub></p>
+  </div>
+</details>
+
+<details>
+  <summary>&nbsp;&nbsp;<b>🖥️ Hardware</b> - combined CPU/GPU graph + per-process usage</summary>
+  <br/>
+  <div align="center">
+    <img src="screenshots/monitor_hardware_2.0.png" alt="NetSpeedTray Monitor - Hardware tab" width="820" />
+    <p><sub>A combined CPU + GPU + RAM history graph (separate axes or one at a time, optional smoothing, fixed or auto scale) over a live per-process <b>CPU / RAM / GPU%</b> list, plus a telemetry band of temperatures, power, and memory.</sub></p>
+  </div>
+</details>
 
 - **📐 Honest statistics & export.** Click any card for a **Statistics** sheet: the real distribution (min / avg / peak, with percentiles shown only where they're exact), peak vs off-peak, throttle and connection-drop counts. **Copy** or **Export** the window to a CSV + JSON bundle - and there's a headless `NetSpeedTray.exe --export-csv` for scripted/automation use.
 
@@ -197,63 +187,7 @@ Double-click the widget (or pick **Show Monitor** from the right-click menu) to 
 
 ---
 
-## Local metrics endpoint (Prometheus / Grafana)
-
-Off by default. Turn it on in **Settings → Advanced → Integrations**, and NetSpeedTray serves
-[Prometheus text format](https://prometheus.io/docs/instrumenting/exposition_formats/) at
-`http://127.0.0.1:9184/metrics` (the port is configurable). It answers **this PC only** - it binds the
-loopback address and refuses everything else - and it never sends anything anywhere.
-
-What's in it: live download/upload rates (the widget's numbers and the raw measured ones, total and per
-monitored adapter), the data-usage odometer for the current period and since it began, the data cap if
-you set one, router (and, if you enabled it, internet) latency and loss, and CPU/GPU/RAM/VRAM use for
-whatever you already monitor. Names follow Prometheus conventions (`netspeedtray_*`, bytes, seconds,
-`_total` counters).
-
-```yaml
-# prometheus.yml - Prometheus running on the same PC
-scrape_configs:
-  - job_name: netspeedtray
-    scrape_interval: 15s
-    static_configs:
-      - targets: ["127.0.0.1:9184"]
-```
-
-```promql
-rate(netspeedtray_period_receive_bytes_total[5m]) * 8   # download, bits/s, from the odometer
-netspeedtray_period_receive_bytes_total / netspeedtray_data_cap_bytes   # share of your cap used
-```
-
-**Grafana** reads it through that Prometheus data source. **Home Assistant, or a Prometheus/Grafana on
-another machine,** can't reach `127.0.0.1` on this PC - by design. Run a small agent here (Prometheus
-in agent mode, or Grafana Alloy) that scrapes the endpoint and `remote_write`s to your server.
-
-The response includes your network adapter names as labels, so anything running on this PC can read
-them while it's on. Any local program, or a web page by probing, can also tell the port is open; web
-pages are refused before they count against the request limit, but a local program could use it up.
-See the [Privacy Policy](privacy.md).
-
----
-
-## Quick Start
-
-1. **Install** with the Winget command [above](#install) (or the installer).
-2. **Right-click the widget** for **Settings**, the **Monitor**, **Check for Updates**, or **Exit**.
-3. **Double-click the widget** to open the **Monitor** (history, per-app activity, hardware, statistics).
-4. **Hover over it** for the hover card - the data you've used today and this month (and your cap, if you set one), plus CPU, GPU, memory and, on a laptop, battery if you turn them on. Click to pin it open.
-5. **Drag it to reposition** - grab the widget and drag it along the taskbar to wherever you like; it remembers the spot. Turn on **Free move (no snapping)** in **Settings → Widget** to place it anywhere, including off the taskbar.
-6. **Want temperatures?** Most NVIDIA/Intel systems show them out of the box. For full coverage (or any AMD CPU), install and run [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest) as Administrator and turn on its **Options → Remote Web Server**.
-
----
-
 ## FAQ
-
-<details>
-<summary><b>How is this different from Task Manager?</b></summary>
-
-Task Manager shows network speed too - but you have to *open* it, and it disappears the moment you click away. NetSpeedTray lives permanently on your taskbar, live every second, in the corner of your eye while you work.
-
-</details>
 
 <details>
 <summary><b>Will it slow down my PC?</b></summary>
@@ -265,7 +199,28 @@ Idle RAM is about **40-50 MB** - that's the number Windows Task Manager shows yo
 <details>
 <summary><b>Does it work with a top, side or Small taskbar?</b></summary>
 
-Yes. Since 2.2 the widget docks to Windows 11's taskbar at the bottom, top, left or right, and on the Small (32 px) taskbar; move or resize the taskbar and it follows without a restart. On a side taskbar it switches to a compact layout and shows the details on hover. When your app buttons reach the widget it steps aside, and comes back when there's room. On Windows 10 and ExplorerPatcher taskbars it docks the way it always did, without the step-aside.
+Yes. The widget docks to Windows 11's taskbar at the bottom, top, left or right, and on the Small (32 px) taskbar; move or resize the taskbar and it follows without a restart. On a side taskbar it switches to a compact layout and shows the details on hover. When your app buttons reach the widget it steps aside, and comes back when there's room. On Windows 10 and ExplorerPatcher taskbars it docks the way it always did, without the step-aside.
+
+</details>
+
+<details>
+<summary><b>The widget disappeared, or it's in the wrong spot - what now?</b></summary>
+
+If you dragged it somewhere odd, right-click it and pick **Reset Position** (it shows in the menu once you've moved the widget). If it vanished while your taskbar filled up with app buttons, it stepped aside so it wouldn't cover them - it comes back when there's room, or turn off **Hide while app buttons cover the widget** in **Settings → Widget** to keep it visible. If it isn't running at all, start NetSpeedTray from the Start menu; **Start with Windows** in **Settings → General** brings it back after every restart.
+
+</details>
+
+<details>
+<summary><b>How do I update?</b></summary>
+
+The app looks for a new release when it starts and offers it, and **Check for Updates** in the right-click menu checks right away. Every download is verified before anything runs, and the portable build updates itself in place. With WinGet you can also run `winget upgrade erez-c137.NetSpeedTray`. Betas are never offered - trying one is always a manual download. To turn update checks off across many PCs, see [DEPLOYING.md](DEPLOYING.md).
+
+</details>
+
+<details>
+<summary><b>How do I uninstall it?</b></summary>
+
+Installed with Setup, WinGet or the Store: **Settings → Apps → Installed apps → NetSpeedTray → Uninstall**, and the uninstaller asks whether to delete your settings and history too. Portable: turn off **Start with Windows** in Settings, exit, and delete the folder. Settings and history live in `%APPDATA%\NetSpeedTray\` - delete that folder to remove them.
 
 </details>
 
@@ -313,16 +268,9 @@ No. 2.1.x over-counted quiet minutes; 2.2 stores the exact bytes measured, and e
 </details>
 
 <details>
-<summary><b>Does it work on Windows 7 or 8?</b></summary>
-
-Officially Windows 10 and 11 (64-bit). The taskbar APIs changed enough after Win8 that older versions aren't tested. It might work; it's not supported.
-
-</details>
-
-<details>
 <summary><b>SmartScreen or Smart App Control blocks it - is that a problem?</b></summary>
 
-You probably grabbed an unsigned dev build. The official releases ([Setup.exe / Portable.zip](https://github.com/erez-c137/NetSpeedTray/releases/latest)) are signed by the SignPath Foundation and shouldn't trip SmartScreen, and since 2.2 the installed app itself is signed too, so a clean install runs with Smart App Control on.
+You probably grabbed an unsigned dev build. The official releases ([Setup.exe / Portable.zip](https://github.com/erez-c137/NetSpeedTray/releases/latest)) are signed by the SignPath Foundation and shouldn't trip SmartScreen, and the installed app itself is signed too, so a clean install runs with Smart App Control on.
 
 </details>
 
@@ -389,13 +337,58 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **PII obfuscation** - logs auto-redact paths, IPs (incl. IPv6), MACs, hostnames, and interface GUIDs - and network-adapter names are replaced with **stable pseudonyms**, so repeated log lines still correlate for debugging without carrying the labels you gave your adapters
 - **Latency boundary** - pings only your own router by default; a public host only if you opt in and name it
 - **Local metrics endpoint** - off by default; when on, it answers this PC only (loopback-bound, non-local peers and foreign `Host` headers refused) and sends nothing
-- **Verified updates** - the in-app updater authenticates every download (Windows `WinVerifyTrust` + a publisher pin) before running it, with a GitHub fallback. Since 2.1.4 the **portable build updates itself in place**, and the updater never offers a prerelease - trying a beta is always a deliberate download
+- **Verified updates** - the in-app updater authenticates every download (Windows `WinVerifyTrust` + a publisher pin) before running it, with a GitHub fallback. The **portable build updates itself in place**, and the updater never offers a prerelease - trying a beta is always a deliberate download
 - **Support Bundle** - one-click sanitized zip of logs + config + system info for bug reports
 - **IT-friendly** - silent install, and update checks can be turned off machine-wide by policy ([DEPLOYING.md](DEPLOYING.md))
 
 ### Localization
 - **17 languages:** English, Korean, French, German, Russian, Spanish, Dutch, Polish, Slovenian, Japanese, Simplified Chinese, Traditional Chinese, Hebrew (RTL), Turkish, Italian, Hungarian, Bengali
 - 100% key parity across all locales
+
+</details>
+
+---
+
+## For power users
+
+Your history is a plain SQLite file - schema, units and example queries are in [DATABASE.md](DATABASE.md). `NetSpeedTray.exe --export-csv` exports statistics without opening a window, for scripts. Silent installs, policies and every network connection the app makes are in [DEPLOYING.md](DEPLOYING.md).
+
+<details>
+<summary><b>📡 Local metrics endpoint (Prometheus / Grafana)</b> (click to expand)</summary>
+
+Off by default. Turn it on in **Settings → Advanced → Integrations**, and NetSpeedTray serves
+[Prometheus text format](https://prometheus.io/docs/instrumenting/exposition_formats/) at
+`http://127.0.0.1:9184/metrics` (the port is configurable). It answers **this PC only** - it binds the
+loopback address and refuses everything else - and it never sends anything anywhere.
+
+What's in it: live download/upload rates (the widget's numbers and the raw measured ones, total and per
+monitored adapter), the data-usage odometer for the current period and since it began, the data cap if
+you set one, router (and, if you enabled it, internet) latency and loss, and CPU/GPU/RAM/VRAM use for
+whatever you already monitor. Names follow Prometheus conventions (`netspeedtray_*`, bytes, seconds,
+`_total` counters).
+
+```yaml
+# prometheus.yml - Prometheus running on the same PC
+scrape_configs:
+  - job_name: netspeedtray
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["127.0.0.1:9184"]
+```
+
+```promql
+rate(netspeedtray_period_receive_bytes_total[5m]) * 8   # download, bits/s, from the odometer
+netspeedtray_period_receive_bytes_total / netspeedtray_data_cap_bytes   # share of your cap used
+```
+
+**Grafana** reads it through that Prometheus data source. **Home Assistant, or a Prometheus/Grafana on
+another machine,** can't reach `127.0.0.1` on this PC - by design. Run a small agent here (Prometheus
+in agent mode, or Grafana Alloy) that scrapes the endpoint and `remote_write`s to your server.
+
+The response includes your network adapter names as labels, so anything running on this PC can read
+them while it's on. Any local program, or a web page by probing, can also tell the port is open; web
+pages are refused before they count against the request limit, but a local program could use it up.
+See the [Privacy Policy](privacy.md).
 
 </details>
 
