@@ -1442,7 +1442,16 @@ class WidgetRenderer:
         painter.setFont(self.font)
         val_width = self.metrics.horizontalAdvance(val)
         aligned_number_x = number_x + (number_area_width - val_width)
-        draw_text(painter, int(aligned_number_x), y, val)
+        # A number reads left to right in every language. In a right-to-left (Hebrew) app the painter lays
+        # text out RTL, which mirrors the direction-neutral "<" of "<0.1" into "0.1>" (#578). Forcing the
+        # painter LTR for the value alone keeps it "<0.1"; plain digits are unaffected. (No LRE/PDF
+        # characters: a user-chosen widget font may lack them and set off Qt's every-font fallback scan.)
+        prev_direction = painter.layoutDirection()
+        painter.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        try:
+            draw_text(painter, int(aligned_number_x), y, val)
+        finally:
+            painter.setLayoutDirection(prev_direction)
         
         # 3. Draw Unit
         if not config.hide_unit_suffix:

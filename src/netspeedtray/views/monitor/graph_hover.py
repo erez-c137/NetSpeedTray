@@ -13,6 +13,7 @@ top-level matplotlib import here is fine - this module is only imported from ins
 """
 from __future__ import annotations
 
+import html
 import logging
 from typing import List, Optional, Tuple, Dict
 
@@ -195,7 +196,9 @@ class GraphHoverTooltip(QObject):
             # but format_speed() takes bytes/sec - convert back, or every readout is off by 125,000x.
             val = self._fmt_speed(y * constants.network.units.MEGA_DIVISOR / constants.network.units.BITS_PER_BYTE) if is_net else f"{y:.0f}%"
             name = to_ui(lbl) if callable(to_ui) else lbl
-            parts.append(f"<span style='color:{color};'>{name}</span> {val}")
+            # The label is rich text: a "<0.1 Mbps" readout (#578) would otherwise open a tag and swallow the
+            # value and every row after it. Escape the value and the series name.
+            parts.append(f"<span style='color:{color};'>{html.escape(str(name))}</span> {html.escape(val)}")
         return "<br>".join(parts)
 
     def _fmt_speed(self, bps: float) -> str:

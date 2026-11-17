@@ -75,3 +75,77 @@ def test_floor_fits_the_reserved_width_in_the_widget_font(q_app, decimal_places,
     floor = FLOORS[decimal_places].replace(".", sep)
     ref = get_reference_value_string(False, decimal_places).replace(".", sep)
     assert fm.horizontalAdvance(floor) <= fm.horizontalAdvance(ref), (floor, ref)
+
+
+def test_rounding_edge_pair(en):
+    # 6249 B/s = 0.049992 Mbps rounds to 0.0 -> floor; 6250 B/s = 0.05 Mbps rounds to "0.1" -> a real digit.
+    assert format_speed(6_249, en, force_mega_unit=True, split_unit=True)[0] == "<0.1"
+    assert format_speed(6_250, en, force_mega_unit=True, split_unit=True)[0] == "0.1"
+
+
+def test_monitor_graph_hover_keeps_a_floor_value_and_the_rows_after_it(q_app):
+    # The hover label is rich text; an unescaped "<0.1 Mbps<br>..." opened a tag and Qt dropped the value and
+    # every row after it (review of #578). Parse it the way the QLabel does.
+    from types import SimpleNamespace
+
+    import matplotlib.dates as mdates
+    from datetime import datetime
+    from PyQt6.QtGui import QTextDocument
+
+    from netspeedtray.views.monitor.graph_hover import GraphHoverTooltip
+
+    host = SimpleNamespace(_current_stat="network", i18n=I18nStrings("en_US"),
+                           config={"unit_type": "bits_decimal", "decimal_places": 1,
+                                   "speed_display_mode": "always_mbps"})
+    x = mdates.date2num(datetime(2026, 6, 28, 14, 30, 0))
+    rich = GraphHoverTooltip(host)._format(x, [("Download", 0.01, "#42B883"), ("Upload", 0.3, "#E91E63")])
+    doc = QTextDocument()
+    doc.setHtml(rich)
+    text = doc.toPlainText()
+    assert "Download <0.1 Mbps" in text, text
+    assert "Upload 0.3 Mbps" in text, text
+
+
+def _draw_frame(direction, spy):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtGui import QColor, QImage, QPainter
+
+    from netspeedtray.utils import widget_renderer as wr
+    from netspeedtray.utils.widget_paint import WidgetMetrics, font_from_config, render_widget
+
+    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
+    cfg.update(widget_display_mode="network_only", graph_enabled=False, default_color="#FFFFFF")
+    assert cfg["speed_display_mode"] == "always_mbps"
+    img = QImage(220, 40, QImage.Format.Format_ARGB32)
+    img.fill(QColor(0, 0, 0, 255))
+    renderer = wr.WidgetRenderer(cfg, I18nStrings("he_IL"))
+    p = QPainter(img)
+    p.setLayoutDirection(direction)
+    orig = wr.draw_text
+    wr.draw_text = lambda painter, x, y, text, user=False: (spy.append((text, painter.layoutDirection())),
+                                                           orig(painter, x, y, text, user))
+    try:
+        render_widget(p, QRect(0, 0, 220, 40), renderer, renderer.config,
+                      WidgetMetrics(upload_mbps=0.008, download_mbps=0.024),   # both read "<0.1 Mbps"
+                      layout_mode="horizontal", cycle_mode="network_only", network_width=None,
+                      font=font_from_config(cfg))
+    finally:
+        wr.draw_text = orig
+    after = p.layoutDirection()
+    p.end()
+    return after
+
+
+def test_hebrew_widget_draws_the_floor_left_to_right(q_app):
+    # In the RTL (he_IL) app the widget's painter lays text out right to left, and Qt mirrors the
+    # direction-neutral "<" of "<0.1" into "0.1>" (seen on the native platform; the offscreen test platform's
+    # fallback face draws < and > alike, so this pins the mechanism, not pixels): the value must be drawn
+    # with the painter LTR, and the painter's own direction must come back afterwards.
+    from PyQt6.QtCore import Qt
+
+    spy = []
+    after = _draw_frame(Qt.LayoutDirection.RightToLeft, spy)
+    values = [d for text, d in spy if text == "<0.1"]
+    assert len(values) == 2, spy
+    assert all(d == Qt.LayoutDirection.LeftToRight for d in values), spy
+    assert after == Qt.LayoutDirection.RightToLeft
