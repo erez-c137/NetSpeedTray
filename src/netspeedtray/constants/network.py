@@ -21,6 +21,9 @@ class UnitConstants:
     MEGA_THRESHOLD: Final[int] = MEGA_DIVISOR
     GIGA_THRESHOLD: Final[int] = GIGA_DIVISOR
     MINIMUM_DISPLAY_SPEED: Final[float] = 0.0
+    # A non-zero rate that rounds to zero at the chosen precision reads "<0.1" (this prefix + the smallest
+    # step), never a false-looking "0.0" (#556). ASCII, so every widget font has it.
+    BELOW_STEP_PREFIX: Final[str] = "<"
     
     # Decimal (SI) unit labels - i18n keys
     BPS_LABEL: Final[str] = "BPS_LABEL"
