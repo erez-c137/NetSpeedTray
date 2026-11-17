@@ -80,10 +80,13 @@ ALSO
 *A beta, for testers. It's a manual download from the release page - the in-app updater, WinGet
 and the Store never offer prereleases.*
 
-The first beta of 2.2.1, the first patch after 2.2.0: the hover card lists every GPU, a hybrid
-laptop's NVIDIA GPU gets to sleep, and - as promised - the 0.5 s update rate is back as an option. RAM and VRAM can be shown on
-their own, the Wi-Fi name no longer needs Location access, the app checks for updates while it
-keeps running, and portable updates check every file they install.
+The first beta of 2.2.1, the first patch after 2.2.0: the hover card lists every GPU, a hybrid laptop's NVIDIA GPU gets to
+sleep, and - as promised - the 0.5 s update rate is back as an option. RAM and VRAM can be shown on
+their own, the Wi-Fi name no longer needs Location access, you choose what the right-click menu
+shows, and the app checks for updates while it keeps running. A docked widget that Windows moves
+(Remote Desktop) goes back onto the taskbar, the app wakes far less often at idle, and in-app
+updates are checked harder: the installer against the release's checksums, a portable update file
+by file.
 
 > **Upgrading:** a few things will look different, all on purpose.
 >
@@ -119,7 +122,7 @@ keeps running, and portable updates check every file they install.
   a time, a non-list resets to `[]`; 2.2.0 keeps it as an unknown key). Hidden items are applied on
   every menu open, on top of the existing rules (Reset Position only after a move, Check for Updates
   under the IT policy), and separators collapse so none leads, trails or doubles - replacing the old
-  Pause/Reset special case. The switches reuse the menu's own labels minus the `&` marker, so the
+  Pause/Reset special case - even when refreshing an item fails ([#565]). The switches reuse the menu's own labels minus the `&` marker, so the
   only new strings are the section title and its note; `PAUSE_IN_MENU_LABEL` is removed.*
 
 - **"Idle" on the hover card for a hybrid laptop's NVIDIA GPU.** While NetSpeedTray lets the GPU
@@ -163,7 +166,7 @@ keeps running, and portable updates check every file they install.
   per active interface per second. Two readings that would have been halved at 0.5 s are fixed
   before they could ship - hardware coverage (`hw_raw` keeps one row per metric per second, so the
   Stats sheet would have read 50%) and the "Above <throttle> for" time - both now count one row per
-  `max(poll, 1 s)`. The Monitor window, LHM, nvidia-smi and link-stat cadences don't change. The
+  `max(poll, 1 s)`, including history still waiting for its 2.2 upgrade ([#538]). The Monitor window, LHM, nvidia-smi and link-stat cadences don't change. The
   "Turn on temperatures" tip's wait for LibreHardwareMonitor is now time-based
   (`NOT_DETECTED_GRACE_SEC = 4.0`, exactly what five polls gave at 1 s) instead of five polls, which
   would have halved it at 0.5 s ([#532]).*
@@ -192,7 +195,8 @@ keeps running, and portable updates check every file they install.
   stored -4 px (main-branch builds only, #455 never shipped) resets to the default through the
   validator. +5 px goes through the same docked-bar give-way, and its tests run at +5. The row wraps
   (`Win11Segmented(wrap=True)`) only at the dialog's minimum width, so the localized "Default" no
-  longer sets the window's minimum width (en 769 → 647 px).*
+  longer sets the window's minimum width (en 769 → 647 px). The offsets are left-to-right isolated,
+  so Hebrew reads "+1", not "1+" ([#538]).*
 
 ### Changed
 
@@ -274,9 +278,10 @@ keeps running, and portable updates check every file they install.
   display on the NVIDIA adapter's own outputs (`EnumOutputs`). Awake = its own PDH engine
   utilization (which Task Manager reads too and never wakes a GPU) above 0 within max(15 s, 3
   sample windows). A sample whose window holds our own nvidia-smi call is never counted, so our
-  own wake can't keep the gate open at any update rate. If utilization can't be read, a hybrid
-  fails open: every 5 s on AC, every 30 s on battery. The hover list and the taskbar show the same
-  "—" while it sleeps.*
+  own wake can't keep the gate open at any update rate. If utilization can't be read two polls in a
+  row, a hybrid fails open: every 5 s on AC, every 30 s on battery; a single failed read keeps the
+  last verdict without a new nvidia-smi call, so a one-off counter glitch can't wake the GPU
+  ([#566]). The hover list and the taskbar show the same "—" while it sleeps.*
 
 - **A failing nvidia-smi backs off** - 10 s, doubling, up to 300 s between tries - instead of
   retrying every 5 s forever, on every PC. It's logged once per streak and once on recovery, and
@@ -285,12 +290,31 @@ keeps running, and portable updates check every file they install.
   leaving the last good value up for the rest of the session. ([#500])
 - **An NVIDIA eGPU unplugged mid-session takes its VRAM total with it**, instead of leaving it on
   the remaining GPU's memory in Automatic. ([#500])
+- **A docked widget that Windows moved goes back onto the taskbar.** Connecting over Remote
+  Desktop (or any display change that keeps the same resolution) can make Windows move the window;
+  NetSpeedTray only ever compared against the spot it had placed it last, so it never moved it back.
+  It now checks where the widget really is - and leaves a widget you're dragging alone. ([#570];
+  [#314], thanks [@bobbergen])
+- **A CPU/GPU label color you picked is painted as picked on an accent-colored taskbar.** With
+  "Show accent color on Start and taskbar" on, the legibility guard swapped any color too faint
+  against the accent shade Windows reports for the text color - your custom label colors
+  included, so a red GPU label could turn white while the green CPU label stayed green. The shade
+  Windows reports can also be wrong (taskbar mods such as Windhawk repaint the bar). Custom label
+  colors now skip the guard; brand colors and the speed/arrow/graph colors keep it. When the
+  guard does swap one of your other colors, Settings now says so in a short note under those color
+  rows, and the preview strip shows the accent shade the colors are judged against instead of a
+  neutral gray. ([#556], [#558], [#559]; thanks [@Buuuush])
+- **A rare crash while drawing the widget is gone.** In side-by-side or cycle mode on a top or
+  bottom taskbar, a drawing error while the widget measured its right alignment left a painter open on
+  a freed image, which ends the process (also in the Settings preview). It is closed in every case now.
+  ([#564])
 - **The app hears about new releases while it keeps running.** It checked once, 5 s after launch,
   so a PC that sleeps instead of restarting could run for weeks without seeing an update. It now
   checks every 3 hours and a minute after waking from sleep - GitHub is still asked at most about
   once a day, and the policy and the "Check for updates automatically" switch still apply. The offer waits while
   a fullscreen app, a modal dialog or the lock screen is up, or while nobody has touched the PC for
-  2 minutes, so it can't time out unseen. ([#508])
+  2 minutes, so it can't time out unseen - and is dropped if automatic checks are turned off (or a
+  policy turns them off) before it shows. ([#508], [#538], [#541])
 - **The Monitor's "No traffic recorded" note no longer blames Pause.** It said the PC was off, idle
   or paused, but NetSpeedTray's Pause only freezes the widget - recording carries on. It now says the
   PC was off, asleep or idle, or NetSpeedTray wasn't running. ([#533]; raised in [#525], thanks
@@ -348,22 +372,16 @@ keeps running, and portable updates check every file they install.
   The Optimus check is skipped when GPU temperature and power are both off. ([#537])
 - **No more WMI probing every second on PCs without LibreHardwareMonitor.** With temperatures on
   and no LibreHardwareMonitor or OpenHardwareMonitor found, both were looked for on every update
-  (every NVIDIA desktop without LHM). After the first 4 s it now looks every 30 s - and still
-  every update while a connection that worked is down, so a hiccup recovers at once. ([#537])
-- **Hebrew: the line-spacing buttons read "+1" and "-1"**, not "1+" and "1-". ([#538])
+  (every NVIDIA desktop without LHM). After the first 4 s it now looks every 30 s. A source that
+  was working and drops out is retried on every update for a few seconds, so a hiccup recovers at
+  once, then every 30 s too - a closed LibreHardwareMonitor is found again within 30 s of coming
+  back. ([#537], [#567])
 - **Small notices (update offer, data cap alerts) open on the widget's own monitor.** On a monitor
   left of or above the main one, or next to a left-side taskbar, they jumped to the main monitor's
   edge. ([#538])
-- **A waiting update notice is dropped when automatic update checks are turned off** (or a policy
-  turns them off) before it shows. ([#538])
-- **A portable update that fails its file check isn't offered again the next day.** The refused
-  version waits 3 days, like "Not now" (only from 2.2.1 on - the copy that restarts has to know
-  about it). "Check for Updates" still shows it. ([#538])
 - **Update cleanup keeps every failure record.** Several failures for one install collapsed into
   copies of the newest, which could drop the record that protects a backup from a failed restore.
   ([#538])
-- **At the 0.5 s rate, history still waiting for its 2.2 upgrade shows full coverage and volume**,
-  not half. ([#538])
 
 - **The widget no longer sits on the taskbar's Desktop or Links toolbars** (Windows 10 and
   Windows 10-style taskbars). 2.2.0 already moved it left of a toolbar, but lined it up with the
@@ -383,12 +401,8 @@ keeps running, and portable updates check every file they install.
   more update. ([#542])
 - **Automatic update checks survive a clock that was set ahead and back.** A last-check time in
   the future (more than 5 minutes) stopped automatic checks until real time caught up. ([#541])
-- **A portable update with a desktop.ini or Thumbs.db in its folder isn't refused** for them
-  anymore - Explorer writes those on its own. They're never copied over your own, either.
-  ([#541])
 - **The Trend line never pokes above the top of the graph.** On narrow graphs a lone spike could
   sit a hair above the auto-fit. ([#541])
-- Finished update-check threads are cleaned up. ([#541])
 
 - **Fewer wake-ups at idle, for battery.** NetSpeedTray's background threads woke about 13 times a
   second just to check whether there was work; now each waits once per update. (The process still
@@ -407,36 +421,8 @@ keeps running, and portable updates check every file they install.
   pop up as if you had dragged it onto the weather button. It's now only for a widget you dragged
   onto the weather text, judged on the text itself rather than the whole button. ([#552])
 
-- **A CPU/GPU label color you picked is painted as picked on an accent-colored taskbar.** With
-  "Show accent color on Start and taskbar" on, the legibility guard swapped any color too faint
-  against the accent shade Windows reports for the text color - your custom label colors
-  included, so a red GPU label could turn white while the green CPU label stayed green. The shade
-  Windows reports can also be wrong (taskbar mods such as Windhawk repaint the bar). Custom label
-  colors now skip the guard; brand colors and the speed/arrow/graph colors keep it. When the
-  guard does swap one of your other colors, Settings now says so in a short note under those color
-  rows, and the preview strip shows the accent shade the colors are judged against instead of a
-  neutral gray. ([#556], [#558], [#559]; thanks [@Buuuush])
-
-- **One failed GPU reading no longer wakes a sleeping NVIDIA GPU** on a hybrid (Optimus) laptop. When
-  Windows' GPU-usage counter failed to read for a single update, NetSpeedTray asked nvidia-smi anyway,
-  which woke the GPU. One failed read now keeps the last verdict (no new nvidia-smi call); only two in
-  a row fall back to asking, as before. ([#566])
 - **A new update rate applies at once.** Moving the slider from a slow rate to a fast one used to wait
   out the old period first - up to 10 s. ([#567])
-- **A closed LibreHardwareMonitor / OpenHardwareMonitor is no longer probed several times a second.**
-  Once a sensor source that was working stays gone for more than a few seconds, NetSpeedTray checks
-  for it every 30 s instead of on every update; it is still found within 30 s when it comes back. ([#567])
-- **A rare crash while drawing the widget is gone.** In side-by-side or cycle mode on a top or
-  bottom taskbar, a drawing error while the widget measured its right alignment left a painter open on
-  a freed image, which ends the process (also in the Settings preview). It is closed in every case now.
-  ([#564])
-- **A docked widget that Windows moved goes back onto the taskbar.** Connecting over Remote
-  Desktop (or any display change that keeps the same resolution) can make Windows move the window;
-  NetSpeedTray only ever compared against the spot it had placed it last, so it never moved it back.
-  It now checks where the widget really is - and leaves a widget you're dragging alone. ([#570];
-  [#314], thanks [@bobbergen])
-- **The right-click menu never shows a doubled divider**, even if refreshing one of its items fails. ([#565])
-
 ### Removed
 
 - **The Location explainer** and its "just show the band" choice. Windows hands the connected Wi-Fi
@@ -452,9 +438,11 @@ keeps running, and portable updates check every file they install.
 
 - **Portable updates check every file, not just NetSpeedTray.exe.** The signed exe carries a
   fingerprint of every bundled file, and an update with any missing, extra or changed file is
-  refused: the download is deleted, nothing is staged and the current version keeps running. Full
-  protection starts with updates *from* 2.2.1; the update to 2.2.1 itself gets the second check
-  below. ([#524])
+  refused: the download is deleted, nothing is staged and the current version keeps running, and
+  that version isn't offered again for 3 days ("Check for Updates" still shows it). The desktop.ini
+  and Thumbs.db that Explorer drops into a folder don't count, and are never copied over your own.
+  Full protection starts with updates *from* 2.2.1; the update to 2.2.1 itself gets the second
+  check below. ([#524], [#538], [#541])
 
   *Under the hood: the build hashes every file of the onedir folder (SHA-256) and embeds the list in
   `NetSpeedTray.exe` as an `RT_RCDATA` resource (`NST_MANIFEST`, format v1) before SignPath signs
@@ -566,10 +554,11 @@ keeps running, and portable updates check every file they install.
   and `hw_raw` keep at most one row per second (same-second intervals merge; gauges keep the
   second's first sample, the error/drop counts add up), `app_sessions.poll_ms` is the rate when the
   session started (500-10000), and `ram` is recorded on its own switch. ([#532])
-- **VRAM on its own no longer logs a wrong nvidia-smi line on a hybrid (Optimus) laptop.** The
-  memory-only query has no utilization counter, so the poll took the "can't tell if it's awake"
-  branch and logged that nvidia-smi is polled without the sleep check - it never runs in that mode -
-  and used up the once-per-session flag before GPU monitoring could need it. ([#532])
+- The monitor thread's end-of-run cleanup (network-identity watcher, GPU counters, the
+  LibreHardwareMonitor connection, COM last) runs in `finally`, each step on its own, so an error
+  escaping the poll loop or one failing step no longer skips the rest. ([#568])
+- A usage-history test that failed in the first minute after midnight runs on a pinned midday
+  clock. ([#569])
 - Tests: 8,486 passed, 45 skipped - the full suite on the release commit.
 
 [#236]: https://github.com/erez-c137/NetSpeedTray/issues/236
@@ -626,6 +615,8 @@ keeps running, and portable updates check every file they install.
 [#561]: https://github.com/erez-c137/NetSpeedTray/pull/561
 [#562]: https://github.com/erez-c137/NetSpeedTray/pull/562
 [#563]: https://github.com/erez-c137/NetSpeedTray/pull/563
+[#568]: https://github.com/erez-c137/NetSpeedTray/pull/568
+[#569]: https://github.com/erez-c137/NetSpeedTray/pull/569
 [#570]: https://github.com/erez-c137/NetSpeedTray/pull/570
 [#572]: https://github.com/erez-c137/NetSpeedTray/pull/572
 [#314]: https://github.com/erez-c137/NetSpeedTray/issues/314
