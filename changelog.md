@@ -496,6 +496,8 @@ keeps running, and portable updates check every file they install.
 
 ### Developer notes
 
+- Code scanning's one open warning is gone: the "unreadable LibreHardwareMonitor password" warn-once
+  set is keyed by the stored DPAPI blob itself instead of a SHA-256 of it. ([#572])
 - About 1,500 lines of dead code removed (the old graph exporters, unused style helpers, peak
   markers), one shared `helpers.tr()` for the per-class translation lookups, and one
   `_set_hw_metric()` helper behind the per-metric `update_*` methods. ([#555], [#561], [#562],
@@ -625,6 +627,7 @@ keeps running, and portable updates check every file they install.
 [#562]: https://github.com/erez-c137/NetSpeedTray/pull/562
 [#563]: https://github.com/erez-c137/NetSpeedTray/pull/563
 [#570]: https://github.com/erez-c137/NetSpeedTray/pull/570
+[#572]: https://github.com/erez-c137/NetSpeedTray/pull/572
 [#314]: https://github.com/erez-c137/NetSpeedTray/issues/314
 [@Achaean]: https://github.com/Achaean
 [@bobbergen]: https://github.com/bobbergen
