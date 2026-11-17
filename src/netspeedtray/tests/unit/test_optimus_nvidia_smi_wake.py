@@ -306,7 +306,9 @@ def test_no_utilization_to_judge_by_fails_open_and_logs_once(q_app, monkeypatch,
         clock.t += 1.0
         if t._run_child.call_count > before:
             spawns.append(i)
-    assert spawns == [0, 5, 10] and r.temp == 52.0
+    # A failed read (the counter exists) is a blip for its first poll - no verdict yet, so closed, like
+    # the settling sample (R1, 2.2.1) - and fails open from the second in a row. No counter: at once.
+    assert spawns == ([0, 5, 10] if missing == "counter" else [1, 6]) and r.temp == 52.0
     logs = [c for c in t.logger.info.call_args_list if "utilization unavailable" in c.args[0]]
     assert len(logs) == 1
 
@@ -448,3 +450,111 @@ def test_the_cached_total_goes_with_an_unplugged_nvidia_card(q_app, monkeypatch,
     clock.t += 5
     r = _tick(t, clock, {_eng(IG_LUID, 10): 25.0})
     assert r.vram_total != 8188.0
+
+
+# --- R1 (2.2.1): one failed utilization read never wakes a sleeping dGPU ------------------------
+
+def _blind_read_tick(t, clock, temp=True, power=True):
+    """A poll whose GPU Engine counter exists but whose array read fails (a transient PDH error)."""
+    dedicated = {_inst(IG_LUID): 100 * MIB, _inst(NV_LUID): 100 * MIB}
+    arrays = [RuntimeError("PDH_CSTATUS_INVALID_DATA"), dedicated, {}]
+    with patch("win32pdh.CollectQueryData"), \
+         patch("win32pdh.GetFormattedCounterArray", side_effect=arrays), \
+         patch.object(mt.psutil, "virtual_memory", return_value=types.SimpleNamespace(total=32 * GIB)), \
+         patch.object(StatsMonitorThread, "_init_ohm_wmi"):
+        r = t._poll_gpu_hybrid(include_temp=temp, include_power=power)
+    clock.t += 1.0
+    return r
+
+
+def _asleep(t, clock, polls=20):
+    """A hybrid whose dGPU is idle past any hold: the gate closed, nvidia-smi never run (so its 5 s
+    cadence has long elapsed - a fail-open poll would call it at once)."""
+    for _ in range(polls):
+        _tick(t, clock, IGPU_BUSY)
+    assert t._run_child.call_count == 0 and t._nvidia_gate_open is False
+
+
+def test_one_blind_read_keeps_a_closed_gate_closed(q_app, monkeypatch, clock):
+    t = _thread([UHD, RTX, BRD], True, monkeypatch)
+    _asleep(t, clock)
+    r = _blind_read_tick(t, clock)
+    assert t._run_child.call_count == 0                 # no nvidia-smi: the dGPU is not woken
+    assert (r.temp, r.power) == (None, None)            # still N/A, as on the polls before
+    assert t._nvidia_gate_open is False
+    assert t._gpu_sensor_asleep is True                 # still "asleep", not "no sensor" (LHM notice)
+    nv = next(c for c in t._gpu_cards(True, True) if c.luid == RTX.luid)
+    assert nv.idle is True and (nv.temp, nv.power) == (None, None)   # the Idle tag agrees with the gate
+    assert _blind_logs(t) == []                         # not the fail-open path
+
+
+def test_two_blind_reads_in_a_row_fail_open_as_before(q_app, monkeypatch, clock):
+    t = _thread([UHD, RTX, BRD], True, monkeypatch, ac=0)
+    _asleep(t, clock)
+    _blind_read_tick(t, clock)
+    assert t._run_child.call_count == 0
+    r = _blind_read_tick(t, clock)                      # the second in a row: fail open
+    assert t._run_child.call_count == 1 and r.temp == 52.0
+    assert len(_blind_logs(t)) == 1
+    nv = next(c for c in t._gpu_cards(True, True) if c.luid == RTX.luid)
+    assert nv.idle is None                              # a lasting failure: no longer judged
+    spawns = []
+    for i in range(61):                                 # still blind, on battery: the 30 s cadence
+        before = t._run_child.call_count
+        _blind_read_tick(t, clock)
+        if t._run_child.call_count > before:
+            spawns.append(i)
+    assert spawns == [29, 59]
+    assert len(_blind_logs(t)) == 1                     # logged once per session
+
+
+def test_a_good_read_resets_the_blind_streak(q_app, monkeypatch, clock):
+    t = _thread([UHD, RTX, BRD], True, monkeypatch)
+    _asleep(t, clock)
+    for _ in range(30):                                 # a flaky counter: every other read fails
+        _blind_read_tick(t, clock)
+        assert t._run_child.call_count == 0             # never two in a row: never woken
+        assert t._gpu_blind_streak == 1
+        _tick(t, clock, IGPU_BUSY)
+        assert t._gpu_blind_streak == 0
+    assert t._run_child.call_count == 0
+
+
+def test_one_blind_read_keeps_an_open_gate_open(q_app, monkeypatch, clock):
+    """Open stays open at the normal cadence - not the fail-open battery cadence, no log line."""
+    t = _thread([UHD, RTX, BRD], True, monkeypatch, ac=0)
+    assert _spawn_times(t, clock, [DGPU_BUSY] * 10) == [0, 5]
+    r = _blind_read_tick(t, clock)                      # 5 s after the last call
+    assert t._nvidia_gate_open is True
+    assert t._run_child.call_count == 2 and (r.temp, r.power) == (52.0, 21.5)   # cached, no new call
+    assert _blind_logs(t) == []
+
+
+def test_no_counter_at_all_still_fails_open_at_once(q_app, monkeypatch, clock):
+    t = _thread([UHD, RTX, BRD], True, monkeypatch)
+    _asleep(t, clock)
+    spawns, r = _blind_spawns(t, clock, 1)              # \GPU Engine counter gone: no blip to ride out
+    assert spawns == [0] and r.temp == 52.0
+
+
+def test_a_blip_never_calls_nvidia_smi_even_with_an_open_verdict(q_app, monkeypatch, clock):
+    """Review: a kept OPEN verdict may be stale - e.g. awake before a suspend. The blip poll reads the
+    cache; it never starts nvidia-smi itself."""
+    t = _thread([UHD, RTX, BRD], True, monkeypatch)
+    _spawn_times(t, clock, [DGPU_BUSY] * 3)            # awake: verdict open, a call at 0
+    clock.t += 3600                                     # the cadence (and any hold) long elapsed
+    before = t._run_child.call_count
+    r = _blind_read_tick(t, clock)
+    assert t._run_child.call_count == before
+
+
+def test_a_verdict_from_before_temp_and_power_were_off_is_not_reused(q_app, monkeypatch, clock):
+    """Review (mutation 'no verdict reset' survived): open, then temperature + power off for a while,
+    then on again with a blip as the first poll - closed (no verdict), never the stale open one."""
+    t = _thread([UHD, RTX, BRD], True, monkeypatch)
+    _spawn_times(t, clock, [DGPU_BUSY] * 3)
+    for _ in range(10):
+        _tick(t, clock, IGPU_BUSY, temp=False, power=False)
+    clock.t += 3600
+    r = _blind_read_tick(t, clock)
+    assert t._nvidia_gate_open is False and (r.temp, r.power) == (None, None)

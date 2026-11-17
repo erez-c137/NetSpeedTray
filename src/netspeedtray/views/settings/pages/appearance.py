@@ -13,7 +13,7 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, ArrowStylePicker, SettingCard
 from netspeedtray.views.settings.pages._fluent import (
-    section_header, page_layout, LastValidHex, ThemedColorPair, swatch_style)
+    section_header, page_layout, LastValidHex, ThemedColorPair, swatch_style, AccentNote)
 from netspeedtray.views.settings.pages.units import UnitsPage
 from netspeedtray.views.settings.pages.colors import ColorsPage
 
@@ -90,6 +90,10 @@ class AppearancePage(QWidget):
         self.themed_colors_note.setStyleSheet(
             f"color: {style_utils.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
         layout.addWidget(self.themed_colors_note)
+        # The accent-taskbar notes (#556): each sits right under the colour rows it speaks for - the text
+        # colour here, the speed bands in the Color coding section, the arrows under their colours.
+        self.accent_text_note = AccentNote(self.i18n, ("default_color",))
+        layout.addWidget(self.accent_text_note)
 
         # Font size.
         self.font_size = Win11Slider(editable=False)
@@ -183,9 +187,18 @@ class AppearancePage(QWidget):
         for stem, label in (("arrow_up_color", self.i18n.ARROW_UP_COLOR_LABEL),
                             ("arrow_down_color", self.i18n.ARROW_DOWN_COLOR_LABEL)):
             arrow_c_layout.addWidget(SettingCard(label, control=self._themed_pair(stem, label)))
+        self.accent_arrows_note = AccentNote(self.i18n, ("arrow_up_color", "arrow_down_color"))
+        arrow_c_layout.addWidget(self.accent_arrows_note)
         layout.addWidget(self.arrow_colors_container)
 
         layout.addStretch()
+
+    def set_accent_notes(self, swapped) -> None:
+        """Show each accent-taskbar note on this page (text, speed bands, arrows) while one of its
+        colours is swapped (``swapped``: color_scheme.accent_swapped). Called on every preview update."""
+        notes = (self.accent_text_note, self.colors_section.accent_bands_note, self.accent_arrows_note)
+        if any([note.sync(swapped) for note in notes]):
+            self.layout_changed.emit()
 
     def _themed_pair(self, stem: str, title: str, tooltip: str = "") -> ThemedColorPair:
         """A themed colour row's control. Its widgets are reachable as ``<key>_button`` / ``<key>_input``
@@ -303,12 +316,6 @@ class AppearancePage(QWidget):
         style_utils.set_text_in_face(self.arrow_font_family_label, family)   # a font's own (maybe CJK) name
         self.current_arrow_font.setFamily(family)
         self.arrow_font_size.setValue(int(size))
-        self.on_change()
-
-    def set_arrow_font_family(self, font: QFont):
-        fam = font.family()
-        style_utils.set_text_in_face(self.arrow_font_family_label, fam)   # a font's own (maybe CJK) name
-        self.current_arrow_font.setFamily(fam)
         self.on_change()
 
     def set_color_input(self, key: str, hex_code: str):

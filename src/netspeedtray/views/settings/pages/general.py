@@ -2,7 +2,7 @@
 General Settings Page.
 """
 import re
-from typing import Dict, Any, Callable, Optional
+from typing import Dict, Any, Callable
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont

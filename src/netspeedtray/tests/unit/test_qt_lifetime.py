@@ -43,22 +43,34 @@ class _Cyclic(QWidget):
 
 def test_without_the_handover_the_gc_destroys_a_window_on_a_worker_thread(q_app):
     """The hazard itself (control case)."""
-    _Cyclic.deleted_on = None
-    w = _Cyclic()
-    w.show()
-    del w
-    _gc_on_a_worker_thread()
+    # Automatic GC paused: an allocation on this thread between `del w` and the worker's collect could
+    # trigger a threshold collection HERE and destroy the cycle on MainThread (seen once on CI, -n auto).
+    # An explicit gc.collect() still runs while automatic collection is off.
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        _Cyclic.deleted_on = None
+        w = _Cyclic()
+        w.show()
+        del w
+        _gc_on_a_worker_thread()
+    finally:
+        if was_enabled:
+            gc.enable()
     assert _Cyclic.deleted_on == "nst-test-worker"
 
 
 def test_a_handed_over_window_survives_the_gc_and_dies_by_qt(q_app):
-    from netspeedtray.utils.qt_lifetime import kept_count
-    before = kept_count()
+    from netspeedtray.utils import qt_lifetime
+    # Assert on THIS window's entry, not on the global count: _run_deferred_deletes() below also
+    # destroys any window an earlier test on this worker left with a pending deleteLater, so the
+    # count can drop below its starting value (CI run 44065514030: 4 == 7).
     _Cyclic.deleted_on = None
     w = _Cyclic()
     w.show()
     hand_to_qt(w)
-    assert kept_count() == before + 1
+    key = id(w)
+    assert qt_lifetime._KEPT.get(key) is w
     ref = weakref.ref(w)
     button = w.button
     w.hide()
@@ -68,7 +80,7 @@ def test_a_handed_over_window_survives_the_gc_and_dies_by_qt(q_app):
     assert _Cyclic.deleted_on is None and ref() is not None and not sip.isdeleted(button)
     _run_deferred_deletes()
     assert sip.isdeleted(button), "Qt destroyed it on the GUI thread"
-    assert kept_count() == before, "the registry lets go once Qt has destroyed it"
+    assert key not in qt_lifetime._KEPT, "the registry lets go once Qt has destroyed it"
 
 
 def test_a_dropped_alert_flyout_is_only_destroyed_by_its_own_close(q_app):

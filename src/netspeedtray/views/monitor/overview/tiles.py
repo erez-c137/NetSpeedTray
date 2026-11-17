@@ -403,7 +403,8 @@ class NetworkHero(ClickableCard):
         self._latency.setVisible(bool(html))
 
     def _tr(self, key: str, default: str) -> str:
-        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
+        from netspeedtray.utils.helpers import tr
+        return tr(self._i18n, key, default)
 
 
 class UsageTile(QFrame):
@@ -616,4 +617,5 @@ class UsageTile(QFrame):
         return f"{ran} · {this_pc}"
 
     def _tr(self, key: str, default: str) -> str:
-        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
+        from netspeedtray.utils.helpers import tr
+        return tr(self._i18n, key, default)

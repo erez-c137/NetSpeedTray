@@ -879,20 +879,6 @@ class WidgetRenderer:
         }
 
 
-    def _draw_error(self, painter: QPainter, rect: QRect, message: str) -> None:
-        """Draws an error message on the widget."""
-        painter.save()
-        painter.fillRect(rect, QColor(150, 0, 0, 200))
-        painter.setPen(Qt.GlobalColor.white)
-        # Use simple fallback if config failed
-        base_size = self.config.font_size if self.config else 9
-        error_font = QFont(self.font)
-        error_font.setPointSize(max(6, base_size - 2))
-        painter.setFont(error_font)
-        draw_text_centered(painter, rect, message)
-        painter.restore()
-
-
     def draw_background(self, painter: QPainter, rect: QRect, config: RenderConfig) -> None:
         """Draws the widget background. Ensures at least minimal opacity for hit testing."""
         # Check if we need to refresh cache (if config values moved)
@@ -1456,7 +1442,16 @@ class WidgetRenderer:
         painter.setFont(self.font)
         val_width = self.metrics.horizontalAdvance(val)
         aligned_number_x = number_x + (number_area_width - val_width)
-        draw_text(painter, int(aligned_number_x), y, val)
+        # A number reads left to right in every language. In a right-to-left (Hebrew) app the painter lays
+        # text out RTL, which mirrors the direction-neutral "<" of "<0.1" into "0.1>" (#578). Forcing the
+        # painter LTR for the value alone keeps it "<0.1"; plain digits are unaffected. (No LRE/PDF
+        # characters: a user-chosen widget font may lack them and set off Qt's every-font fallback scan.)
+        prev_direction = painter.layoutDirection()
+        painter.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        try:
+            draw_text(painter, int(aligned_number_x), y, val)
+        finally:
+            painter.setLayoutDirection(prev_direction)
         
         # 3. Draw Unit
         if not config.hide_unit_suffix:
@@ -1689,7 +1684,9 @@ class WidgetRenderer:
 
         - match_text: the widget's text colour, so the labels follow it onto a light taskbar (it turns
           black there) instead of the hard-coded white that pre-2.2 "monochrome" painted, invisibly.
-        - custom: the two picked colours (an unparsable one falls back to the text colour).
+        - custom: the two picked colours (an unparsable one falls back to the text colour), painted as
+          picked even on an accent taskbar (#556): the accent shade Windows reports can be wrong (taskbar
+          mods such as Windhawk repaint the bar), and the user sees the result and can pick again.
         - brand (default branch): the vendor palette in hardware_vendors. The taskbar is judged light
           or dark from the text colour - the widget background is usually transparent, and the text
           colour is the current taskbar's half of the themed pair (the user's choice for that taskbar,
@@ -1704,6 +1701,7 @@ class WidgetRenderer:
             for key in ('cpu_label_color', 'gpu_label_color'):
                 value = str(getattr(config, key, '') or '')
                 pair.append(value if QColor.isValidColorName(value) else text)
+            return pair[0], pair[1]
         else:
             text_qc = QColor(text)
             light_taskbar = text_qc.isValid() and text_qc.lightnessF() < 0.5

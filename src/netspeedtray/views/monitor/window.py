@@ -12,17 +12,16 @@ imported lazily, inside the Network/Hardware tab factories, never here.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QApplication, QLabel, QToolButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QApplication, QToolButton,
 )
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
-from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.dwm import apply_win11_chrome
 from netspeedtray.utils.window_state import (
     restore_window_geometry, attach_geometry_memory, save_window_geometry,
@@ -292,19 +291,6 @@ class MonitorWindow(QWidget):
     def _placeholder(self) -> QWidget:
         return QWidget()
 
-    def _coming_soon(self, text: str) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.addStretch(1)
-        lbl = QLabel(text)
-        lbl.setWordWrap(True)
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setStyleSheet(f"color: {su.semantic_colors()['text_secondary']}; background: transparent;")
-        lbl.setFont(su.font(tokens.TYPE_BODY))
-        lay.addWidget(lbl)
-        lay.addStretch(1)
-        return w
-
     def _center_on_primary(self) -> None:
         screen = QApplication.primaryScreen()
         if not screen:
@@ -313,7 +299,8 @@ class MonitorWindow(QWidget):
         self.move(g.x() + (g.width() - self.width()) // 2, g.y() + (g.height() - self.height()) // 2)
 
     def _tr(self, key: str, default: str) -> str:
-        return str(getattr(self.i18n, key, default)) if self.i18n is not None else default
+        from netspeedtray.utils.helpers import tr
+        return tr(self.i18n, key, default)
 
     # ----------------------------------------------------------------- lifecycle
 

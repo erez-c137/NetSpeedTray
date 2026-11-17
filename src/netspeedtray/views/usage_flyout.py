@@ -256,7 +256,8 @@ class UsageFlyout(QWidget):
     # ----------------------------------------------------------------- helpers
 
     def _tr(self, key: str, default: str) -> str:
-        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
+        from netspeedtray.utils.helpers import tr
+        return tr(self._i18n, key, default)
 
     def _label(self, text: str, token: tuple, color: str,
                align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignLeading) -> QLabel:  # start-aligned; mirrors under RTL (#194)

@@ -116,10 +116,6 @@ class HardwareTab(QWidget):
         self._feed.payload_ready.connect(self._list.set_payload)
         self._feed.unavailable.connect(self._list.set_unavailable)
 
-    def _period_label(self, period_key: str) -> str:
-        default = period_key.replace("TIMELINE_", "").replace("_", " ").title()
-        return str(getattr(self._i18n, period_key, default))
-
     def _on_period(self, value: int) -> None:
         self._period_key = constants.data.history_period.PERIOD_MAP.get(int(value), "TIMELINE_24_HOURS")
 

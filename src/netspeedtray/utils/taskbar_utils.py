@@ -26,8 +26,19 @@ from win32con import (
 )
 
 # Qt Imports
-from PyQt6.QtCore import QRect, QPoint
+from PyQt6.QtCore import QRect
 from PyQt6.QtGui import QScreen
+
+
+class _NativeMSG(ctypes.Structure):
+    """The Win32 MSG layout the app's native event filters share (one definition;
+    must not be rebuilt per call - see system_events / the widget's shutdown filter)."""
+    _fields_ = [
+        ("hwnd", wintypes.HWND), ("message", wintypes.UINT),
+        ("wParam", ctypes.c_size_t), ("lParam", ctypes.c_ssize_t),
+        ("time", wintypes.DWORD), ("pt_x", wintypes.LONG), ("pt_y", wintypes.LONG),
+    ]
+
 from PyQt6.QtWidgets import QApplication
 
 from netspeedtray import constants

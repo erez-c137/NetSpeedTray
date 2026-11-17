@@ -37,6 +37,7 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.core import connection_check as CC
 from netspeedtray.core import latency_probe as LP
 from netspeedtray.utils import styles as su
+from netspeedtray.utils.helpers import tr as _tr
 
 _VERDICT_KEYS = {
     LP.VERDICT_GOOD: ("LATENCY_GOOD", "Good"),
@@ -152,10 +153,6 @@ def stop_all_checks() -> None:
     reg = _registry
     if reg is not None:
         reg.stop_all()
-
-
-def _tr(i18n, key: str, default: str) -> str:
-    return str(getattr(i18n, key, default)) if i18n is not None else default
 
 
 class _HopCard(QFrame):

@@ -1,11 +1,8 @@
 {
     "//_1": "--- Units and Formatting ---",
     "SETTINGS_WINDOW_TITLE": "Paramètres",
-    "EXPORT_CSV_TITLE": "Exporter l'Historique",
-    "EXPORT_GRAPH_IMAGE_TITLE": "Enregistrer le Graphique (Image)",
     "SELECT_COLOR_TITLE": "Sélectionner une couleur",
     "ERROR_TITLE": "Erreur",
-    "WARNING_TITLE": "Avertissement",
     "SUCCESS_TITLE": "Succès",
     "ERROR_WINDOW_TITLE": "Erreur de l'Application",
     "LANGUAGE_RESTART_TITLE": "Redémarrage requis",
@@ -13,10 +10,6 @@
     "HARDWARE_HISTORY_OFF_MESSAGE": "L'historique matériel est désactivé.\nActivez la surveillance du CPU ou du GPU dans Paramètres → Matériel.",
     "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "L'historique matériel est désactivé.\nActivez « Enregistrer l'historique matériel » dans Paramètres → Avancé.",
     "SETTINGS_ERROR_MESSAGE": "Échec de l'application d'un ou plusieurs paramètres.",
-    "EXPORT_SUCCESS_MESSAGE": "Exportation réussie vers :\n{file_path}",
-    "NO_HISTORY_DATA_MESSAGE": "Aucune donnée d'historique disponible pour l'exportation.",
-    "EXPORT_ERROR_MESSAGE": "Échec de l'exportation des données :\n{error}",
-    "PERMISSION_DENIED_MESSAGE": "Permission refusée lors de l'exportation du journal.",
     "ERROR_UI_SETUP_FAILED": "Échec de la configuration de la boîte de dialogue des paramètres : {error}",
     "NO_APP_DATA_MESSAGE": "Aucune donnée d'utilisation par application disponible pour cette période.",
     "LANGUAGE_RESTART_MESSAGE": "Les changements de langue prendront effet après le redémarrage de l'application.",
@@ -258,11 +251,6 @@
     "SHORT_UNIT_LABELS_LABEL": "Étiquettes d'unités courtes (ex. Mo)",
     "DISPLAY_FORMAT_GROUP": "Format d'affichage",
     "INTERFACE_LAYOUT_GROUP": "Disposition de l'interface",
-    "CSV_FILE_FILTER": "Fichiers CSV (*.csv);;Tous les Fichiers (*.*)",
-    "PNG_FILE_FILTER": "Images PNG (*.png);;Tous les Fichiers (*.*)",
-    "CSV_HEADER_TIMESTAMP": "Horodatage",
-    "CSV_HEADER_UPLOAD_MBPS": "Envoi (Mbit/s)",
-    "CSV_HEADER_DOWNLOAD_MBPS": "Réception (Mbit/s)",
     "FONT_WEIGHT_THIN": "Fin",
     "FONT_WEIGHT_EXTRALIGHT": "Extra-Léger",
     "FONT_WEIGHT_LIGHT": "Léger",
@@ -645,5 +633,6 @@
     "BACKUP_HISTORY_ERR_IO": "Impossible d'écrire la copie. Vérifiez que vous pouvez enregistrer dans ce dossier et qu'il reste assez d'espace libre.",
     "BACKUP_HISTORY_ERR_BUSY": "Une sauvegarde vers ce fichier est déjà en cours.",
     "CONTEXT_MENU_ITEMS_LABEL": "Éléments du menu clic droit",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choisissez ce qu'affiche le menu clic droit du widget. {settings} et {exit} sont toujours affichés."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choisissez ce qu'affiche le menu clic droit du widget. {settings} et {exit} sont toujours affichés.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "Votre barre des tâches affiche une couleur d’accentuation : les couleurs difficiles à lire dessus sont donc dessinées dans une couleur de texte lisible."
 }

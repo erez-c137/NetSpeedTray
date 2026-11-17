@@ -1,5 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Question or general discussion
-    url: https://github.com/erez-c137/NetSpeedTray/discussions
-    about: Have a question or want to discuss usage? Open a discussion instead — issues are reserved for bugs and feature requests.
+  - name: Question or "how do I...?"
+    url: https://github.com/erez-c137/NetSpeedTray/discussions/categories/q-a
+    about: Ask in Q&A - issues are for bugs and concrete feature requests.
+  - name: An idea to talk through
+    url: https://github.com/erez-c137/NetSpeedTray/discussions/categories/ideas
+    about: Not sure it's a feature yet, or want to see if others want it too? Start in Ideas.
+  - name: Translation fix
+    url: https://github.com/erez-c137/NetSpeedTray/issues/364
+    about: Corrections to any language - post them in the translation thread (or open a pull request).

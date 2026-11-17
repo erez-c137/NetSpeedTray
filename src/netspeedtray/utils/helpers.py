@@ -384,6 +384,14 @@ def format_speed(
     else:
         formatted_val = f"{val:.{decimal_places}f}"
 
+    # Traffic that rounds to zero reads "below the smallest step" - "<0.1" (or "<1" / "<0.01") - instead of a
+    # "0.0" that looks like nothing is moving (#556). True zero still reads "0.0", and no extra digits are added
+    # (2.1.5 tried that and #303 read it as a broken Decimal places setting). Only the forced mega unit gets
+    # here: auto mode steps down to a smaller unit first, so its tier >= 1 values are always >= 1.
+    if current_speed > 0 and tier > 0 and round(val, decimal_places) == 0:
+        smallest_step = "1" if decimal_places == 0 else "0." + "0" * (decimal_places - 1) + "1"
+        formatted_val = network_consts.BELOW_STEP_PREFIX + smallest_step
+
     if fixed_width:
         # Use reference string to match logic in layout/renderer
         ref_val = get_reference_value_string(force_mega_unit, decimal_places, unit_type=unit_type)
@@ -804,3 +812,47 @@ def reveal_in_explorer(path: str) -> None:
         subprocess.Popen(f'"{explorer}" /select,"{target}"', cwd=neutral_cwd())
     except Exception as e:
         logging.getLogger("NetSpeedTray.helpers").debug("reveal_in_explorer failed: %s", e)
+
+
+def known_downloads_dir() -> "Optional[str]":
+    """Ask Windows where the user's Downloads folder actually is (FOLDERID_Downloads), or None.
+
+    Guessing `~/Downloads` is wrong for anyone who has **moved** their Downloads folder - right-click
+    -> Properties -> Location, which people do routinely to keep it off the system drive. The guess
+    then silently misses, and the caller falls back to dumping a folder in the user's home directory
+    instead, where they will not think to look. Windows knows the real path; ask it. (One
+    implementation for both update paths; callers keep their own thin module-level wrappers, which
+    the tests monkeypatch.)
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _GUID(ctypes.Structure):
+            _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                        ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+        guid = _GUID(0x374DE290, 0x123F, 0x4565,
+                     (ctypes.c_ubyte * 8)(0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B))
+        out = ctypes.c_wchar_p()
+        # 0 = current user, no default-path fallback, no forced creation.
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None,
+                                                      ctypes.byref(out)) != 0:
+            return None
+        try:
+            path = out.value
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(out)
+        return path if path and os.path.isdir(path) else None
+    except Exception:
+        return None
+
+
+def tr(i18n, key: str, default: str) -> str:
+    """One shared i18n lookup: the translated string for `key`, or `default` when the key is
+    missing or no i18n instance is available. The per-class ``_tr`` helpers across the UI
+    modules are thin delegates to this (their lowercase placeholder call shape is pinned by
+    test_i18n_keys' translation scan)."""
+    if i18n is None:
+        return default
+    return str(getattr(i18n, key, default))

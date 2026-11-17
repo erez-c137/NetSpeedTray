@@ -12,7 +12,7 @@ keys and the load/get wiring moved as-is.
 from typing import Dict, Any, Callable, Optional
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QGraphicsOpacityEffect
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
 from netspeedtray import constants
 from netspeedtray.constants.styles import styles as tokens
@@ -20,7 +20,7 @@ from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.helpers import format_percent
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, Win11ComboBox, SettingCard
 from netspeedtray.views.settings.pages._fluent import (
-    section_header, page_layout, as_int, LastValidHex, ThemedColorPair, swatch_style)
+    section_header, page_layout, as_int, LastValidHex, ThemedColorPair, swatch_style, AccentNote)
 
 
 class MiniGraphSection(QWidget):
@@ -92,6 +92,11 @@ class MiniGraphSection(QWidget):
             self._color_cards.append(card)
             layout.addWidget(card)
 
+        # The accent-taskbar note (#556), as on the Appearance page: shown only while the widget swaps
+        # one of the two graph colours above for a readable text colour (set_accent_notes).
+        self.accent_graph_note = AccentNote(self.i18n, ("graph_upload_color", "graph_download_color"))
+        layout.addWidget(self.accent_graph_note)
+
         # The hardware graphs reuse the two settings right above, so the note sits under them (it used
         # to hang under Display Mode, a page away from the controls it describes).
         layout.addWidget(self._note(self.i18n.HARDWARE_GRAPH_NOTE))
@@ -133,6 +138,11 @@ class MiniGraphSection(QWidget):
                                          control=self.graph_show_ceiling)
         scale_layout.addWidget(self._ceiling_card)
         layout.addWidget(self.graph_scale_container)
+
+    def set_accent_notes(self, swapped) -> None:
+        """Show the accent-taskbar note while a graph colour is swapped (color_scheme.accent_swapped)."""
+        if self.accent_graph_note.sync(swapped):
+            self.layout_changed.emit()
 
     @staticmethod
     def _note(text: str) -> QLabel:
@@ -234,11 +244,6 @@ class MiniGraphSection(QWidget):
 
     @staticmethod
     def _set_card_enabled(card: SettingCard, enabled: bool) -> None:
-        """The Win11 dependent-control look HardwarePage uses: setEnabled alone won't dim our fixed-color
-        toggle, hence the opacity effect."""
-        card.setEnabled(enabled)
-        eff = card.graphicsEffect()
-        if not isinstance(eff, QGraphicsOpacityEffect):
-            eff = QGraphicsOpacityEffect(card)
-            card.setGraphicsEffect(eff)
-        eff.setOpacity(1.0 if enabled else 0.4)
+        """The Win11 dependent-control look (shared helper - HardwarePage's docstring applies)."""
+        from netspeedtray.views.settings.pages._fluent import set_card_enabled
+        set_card_enabled(card, enabled)

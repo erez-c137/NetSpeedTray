@@ -58,6 +58,27 @@ class _CountingStop:
         self._set = False
 
 
+class _CountingWake:
+    """Stands in for the wake event the period wait blocks on; its waits are counted by ``stop``."""
+
+    def __init__(self, stop):
+        self.stop = stop
+        self._set = False
+
+    def wait(self, timeout=None):
+        self.stop.wait(timeout)
+        return self._set
+
+    def is_set(self):
+        return self._set
+
+    def set(self):
+        self._set = True
+
+    def clear(self):
+        self._set = False
+
+
 def _cheap_thread(monkeypatch, interval=1.0):
     """A real StatsMonitorThread whose poll does nothing expensive (no PDH/WMI/COM)."""
     thread = StatsMonitorThread(interval=interval, config={})
@@ -97,6 +118,7 @@ def _record_slices(monkeypatch, thread):
 
 def _run_inline(thread, stop):
     thread._stop_event = stop
+    thread._wake_event = _CountingWake(stop)
     thread.run()
     assert not stop.runaway, f"run() looped {stop.checks} times without waiting"
 
@@ -137,12 +159,15 @@ def test_the_error_backoff_is_still_one_wait(q_app, monkeypatch):
     assert stop.waits == [2.0, 4.0]
 
 
-def test_a_rate_change_applies_from_the_next_period(q_app, monkeypatch):
-    """set_interval does not cut the wait in progress short (as before): the NEXT wait uses it."""
+def test_a_rate_change_applies_to_the_wait_in_progress(q_app, monkeypatch):
+    """R3 (2.2.1 beta.1 readiness): set_interval wakes the wait in progress and the rest of the period
+    is re-measured at the new rate - 10 s -> 0.5 s used to apply only after the 10 s wait."""
     thread = _cheap_thread(monkeypatch, interval=1.0)
     sleeps = _record_slices(monkeypatch, thread)
     stop = _CountingStop(polls=3)
     real_wait = stop.wait
+    polls = []
+    thread.stats_ready.connect(lambda s: polls.append(len(stop.waits)))
 
     def wait(timeout=None):
         if not stop.waits:
@@ -152,7 +177,58 @@ def test_a_rate_change_applies_from_the_next_period(q_app, monkeypatch):
     stop.wait = wait
     _run_inline(thread, stop)
     assert sleeps == []
-    assert stop.waits == [1.0, 0.5, 0.5]
+    assert stop.waits[0] == 1.0
+    assert 0 <= stop.waits[1] <= 0.5                 # the rest of the period at the NEW rate ...
+    assert stop.waits[2] == 0.5                      # ... and full new periods after it
+    assert polls == [0, 2]                           # the woken wait did not poll early (or stop)
+
+
+def test_a_rate_change_never_reads_as_stop(q_app, monkeypatch):
+    thread = _cheap_thread(monkeypatch, interval=1.0)
+    _record_slices(monkeypatch, thread)
+    stop = _CountingStop(polls=4)
+    real_wait = stop.wait
+
+    def wait(timeout=None):
+        thread.set_interval(1.0 if thread.interval != 1.0 else 2.0)   # a change on every wait
+        return real_wait(timeout)
+
+    stop.wait = wait
+    _run_inline(thread, stop)
+    assert len(stop.waits) == 4 and thread._is_running is False   # stopped by stop only
+
+
+def test_a_live_rate_change_from_10s_applies_within_a_second(q_app, monkeypatch):
+    """The real thread: at a 10 s rate, choosing a short one polls again at once - and stop still ends
+    the loop promptly afterwards."""
+    thread = _cheap_thread(monkeypatch, interval=10.0)
+    polled = []
+    first = threading.Event()
+    second = threading.Event()
+    third = threading.Event()
+
+    def on_poll(_s):
+        polled.append(time.monotonic())
+        (first if len(polled) == 1 else second if len(polled) == 2 else third).set()
+
+    thread.stats_ready.connect(on_poll,
+                               type=__import__("PyQt6.QtCore", fromlist=["Qt"]).Qt.ConnectionType.DirectConnection)
+    thread.start()
+    try:
+        assert first.wait(5.0)
+        time.sleep(0.05)                             # into the 10 s wait
+        t0 = time.monotonic()
+        thread.set_interval(0.2)
+        assert second.wait(2.0), "the new rate waited out the old 10 s period"
+        assert third.wait(2.0)                       # and it keeps polling: not mistaken for stop
+        assert thread.isRunning()
+        t1 = time.monotonic()
+        thread.stop()
+        assert thread.isFinished()
+        assert time.monotonic() - t1 < constants.timeouts.MONITOR_THREAD_STOP_WAIT_MS / 1000.0
+        assert polled[1] - t0 < 2.0
+    finally:
+        _reap(thread)
 
 
 def test_stop_ends_a_long_wait_at_once(q_app, monkeypatch):

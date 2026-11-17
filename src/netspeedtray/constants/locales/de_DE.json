@@ -1,11 +1,8 @@
 {
     "//_1": "--- Units and Formatting ---",
     "SETTINGS_WINDOW_TITLE": "Einstellungen",
-    "EXPORT_CSV_TITLE": "Verlauf exportieren",
-    "EXPORT_GRAPH_IMAGE_TITLE": "Grafik speichern",
     "SELECT_COLOR_TITLE": "Farbe auswählen",
     "ERROR_TITLE": "Fehler",
-    "WARNING_TITLE": "Warnung",
     "SUCCESS_TITLE": "Erfolg",
     "ERROR_WINDOW_TITLE": "Anwendungsfehler",
     "LANGUAGE_RESTART_TITLE": "Neustart erforderlich",
@@ -13,10 +10,6 @@
     "HARDWARE_HISTORY_OFF_MESSAGE": "Der Hardware-Verlauf ist aus.\nAktiviere die CPU- oder GPU-Überwachung unter Einstellungen → Hardware.",
     "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "Der Hardware-Verlauf ist aus.\nAktiviere „Hardware-Verlauf aufzeichnen“ unter Einstellungen → Erweitert.",
     "SETTINGS_ERROR_MESSAGE": "Fehler beim Übernehmen einer oder mehrerer Einstellungen.",
-    "EXPORT_SUCCESS_MESSAGE": "Erfolgreich exportiert nach:\n{file_path}",
-    "NO_HISTORY_DATA_MESSAGE": "Keine Verlaufsdaten zum Exportieren verfügbar.",
-    "EXPORT_ERROR_MESSAGE": "Fehler beim Exportieren der Daten:\n{error}",
-    "PERMISSION_DENIED_MESSAGE": "Zugriff beim Exportieren des Protokolls verweigert.",
     "ERROR_UI_SETUP_FAILED": "Setup des Einstellungsdialogs fehlgeschlagen: {error}",
     "NO_APP_DATA_MESSAGE": "Keine App-Nutzungsdaten für diesen Zeitraum verfügbar.",
     "LANGUAGE_RESTART_MESSAGE": "Sprachänderungen werden nach dem Neustart der Anwendung wirksam.",
@@ -258,11 +251,6 @@
     "SHORT_UNIT_LABELS_LABEL": "Kurze Einheiten (z.B. Mb)",
     "DISPLAY_FORMAT_GROUP": "Anzeigeformat",
     "INTERFACE_LAYOUT_GROUP": "Schnittstellenlayout",
-    "CSV_FILE_FILTER": "CSV-Dateien (*.csv);;Alle Dateien (*.*)",
-    "PNG_FILE_FILTER": "PNG-Bilder (*.png);;Alle Dateien (*.*)",
-    "CSV_HEADER_TIMESTAMP": "Zeitstempel",
-    "CSV_HEADER_UPLOAD_MBPS": "Upload (Mbps)",
-    "CSV_HEADER_DOWNLOAD_MBPS": "Download (Mbps)",
     "FONT_WEIGHT_THIN": "Hauchdünn",
     "FONT_WEIGHT_EXTRALIGHT": "Extraleicht",
     "FONT_WEIGHT_LIGHT": "Leicht",
@@ -645,5 +633,6 @@
     "BACKUP_HISTORY_ERR_IO": "Die Kopie konnte nicht geschrieben werden. Prüfe, ob du in diesem Ordner speichern darfst und genügend freier Speicher vorhanden ist.",
     "BACKUP_HISTORY_ERR_BUSY": "Eine Sicherung in diese Datei läuft bereits.",
     "CONTEXT_MENU_ITEMS_LABEL": "Einträge im Rechtsklick-Menü",
-    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Wählen Sie, was das Rechtsklick-Menü des Widgets anzeigt. {settings} und {exit} werden immer angezeigt."
+    "CONTEXT_MENU_ITEMS_DESCRIPTION": "Wählen Sie, was das Rechtsklick-Menü des Widgets anzeigt. {settings} und {exit} werden immer angezeigt.",
+    "ACCENT_TASKBAR_COLORS_NOTE": "Deine Taskleiste zeigt eine Akzentfarbe. Farben, die darauf schwer lesbar sind, werden deshalb in einer gut lesbaren Textfarbe dargestellt."
 }
