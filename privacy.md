@@ -53,4 +53,4 @@ NetSpeedTray is fully open-source. You are encouraged to review the code on GitH
 
 ### Contact
 
-If you have any questions about this privacy policy, please open an issue on the [GitHub repository](https://github.com/erez-c137/NetSpeedTray/issues).
+If you have any questions about this privacy policy, ask in [Q&A in Discussions](https://github.com/erez-c137/NetSpeedTray/discussions/categories/q-a), or open an issue on the [GitHub repository](https://github.com/erez-c137/NetSpeedTray/issues).

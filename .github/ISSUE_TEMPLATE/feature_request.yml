@@ -8,6 +8,8 @@ body:
       value: |
         Thanks for the suggestion. A clear use case helps us decide what makes the cut for a release.
 
+        Still a rough idea, or want to see whether others want it too? [Ideas in Discussions](https://github.com/erez-c137/NetSpeedTray/discussions/categories/ideas) is a good first stop.
+
   - type: textarea
     id: problem
     attributes:
