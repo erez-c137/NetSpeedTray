@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
 import logging
 from typing import Optional
 
@@ -25,16 +24,17 @@ logger = logging.getLogger("NetSpeedTray.SecretStore")
 # but a background poll must not be able to pop one either).
 _CRYPTPROTECT_UI_FORBIDDEN = 0x1
 
-# Fingerprints (never the values) of saved blobs already reported as unreadable: the page re-reads the
-# blob on every show and the monitor thread on every settings change, and one WARNING is enough.
+# Saved blobs already reported as unreadable: the page re-reads the blob on every show and the monitor
+# thread on every settings change, and one WARNING is enough. Keyed by the stored value itself - the
+# DPAPI ciphertext already sitting in config.json, never the password - in memory only (it used to be
+# a SHA-256 of it, which code scanning reads as weak password hashing; a key needs no hashing).
 _warned_unreadable: set = set()
 
 
 def _warn_unreadable_once(stored: str, why: str) -> None:
-    fingerprint = hashlib.sha256(stored.encode("utf-8", "replace")).hexdigest()
-    if fingerprint in _warned_unreadable:
+    if stored in _warned_unreadable:
         return
-    _warned_unreadable.add(fingerprint)
+    _warned_unreadable.add(stored)
     logger.warning("The saved LibreHardwareMonitor password cannot be read for this Windows user (%s). "
                    "It is kept until a new one is entered in Settings > Hardware.", why)
 
