@@ -215,11 +215,11 @@ def test_force_mega_giga_promotion_binary(en):
 @pytest.mark.parametrize("decimal_places", [0, 1, 2])
 @pytest.mark.parametrize("mega_value,expected", [
     (0, ("0", "0.0", "0.00")),
-    (0.000992, ("0", "0.0", "0.00")),
-    (0.001, ("0", "0.0", "0.00")),
-    (0.004, ("0", "0.0", "0.00")),
-    (0.024, ("0", "0.0", "0.02")),
-    (0.064, ("0", "0.1", "0.06")),
+    (0.000992, ("<1", "<0.1", "<0.01")),
+    (0.001, ("<1", "<0.1", "<0.01")),
+    (0.004, ("<1", "<0.1", "<0.01")),
+    (0.024, ("<1", "<0.1", "0.02")),
+    (0.064, ("<1", "0.1", "0.06")),
     (1.234, ("1", "1.2", "1.23")),
 ])
 def test_force_mega_respects_selected_precision(en, unit_type, mega_bytes, label,
@@ -242,8 +242,8 @@ def test_auto_mode_untouched_at_low_traffic(en):
 
 
 @pytest.mark.parametrize("decimal_places,expected", [
-    (0, "0"),
-    (1, "0,0"),
+    (0, "<1"),
+    (1, "<0,1"),
     (2, "0,02"),
 ])
 def test_force_mega_precision_respects_locale_separator(de, decimal_places, expected):
@@ -268,7 +268,7 @@ def test_fixed_width_pads_rounded_and_promoted_values(en):
     # fixed_width rjust against the UNCHANGED reference string keeps behaving.
     ref = get_reference_value_string(True, 1, "bits_decimal")        # "8888.8" (6 chars)
     val, _ = format_speed(500, en, force_mega_unit=True, fixed_width=True, split_unit=True)
-    assert val == "0.0".rjust(len(ref))
+    assert val == "<0.1".rjust(len(ref))
     val2, _ = format_speed(1_250_000_000, en, force_mega_unit=True, fixed_width=True, split_unit=True)
     assert val2 == "10.0".rjust(len(ref))
 

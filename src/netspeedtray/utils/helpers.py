@@ -384,6 +384,14 @@ def format_speed(
     else:
         formatted_val = f"{val:.{decimal_places}f}"
 
+    # Traffic that rounds to zero reads "below the smallest step" - "<0.1" (or "<1" / "<0.01") - instead of a
+    # "0.0" that looks like nothing is moving (#556). True zero still reads "0.0", and no extra digits are added
+    # (2.1.5 tried that and #303 read it as a broken Decimal places setting). Only the forced mega unit gets
+    # here: auto mode steps down to a smaller unit first, so its tier >= 1 values are always >= 1.
+    if current_speed > 0 and tier > 0 and round(val, decimal_places) == 0:
+        smallest_step = "1" if decimal_places == 0 else "0." + "0" * (decimal_places - 1) + "1"
+        formatted_val = network_consts.BELOW_STEP_PREFIX + smallest_step
+
     if fixed_width:
         # Use reference string to match logic in layout/renderer
         ref_val = get_reference_value_string(force_mega_unit, decimal_places, unit_type=unit_type)
