@@ -43,11 +43,20 @@ class _Cyclic(QWidget):
 
 def test_without_the_handover_the_gc_destroys_a_window_on_a_worker_thread(q_app):
     """The hazard itself (control case)."""
-    _Cyclic.deleted_on = None
-    w = _Cyclic()
-    w.show()
-    del w
-    _gc_on_a_worker_thread()
+    # Automatic GC paused: an allocation on this thread between `del w` and the worker's collect could
+    # trigger a threshold collection HERE and destroy the cycle on MainThread (seen once on CI, -n auto).
+    # An explicit gc.collect() still runs while automatic collection is off.
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        _Cyclic.deleted_on = None
+        w = _Cyclic()
+        w.show()
+        del w
+        _gc_on_a_worker_thread()
+    finally:
+        if was_enabled:
+            gc.enable()
     assert _Cyclic.deleted_on == "nst-test-worker"
 
 

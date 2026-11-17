@@ -287,7 +287,10 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
                 continue
             _same(new, old, f"speed_history({start},{end},{iface},{resolution},{return_raw})")
             checked += len(old)
-    assert checked > 1000
+    # A floor that proves the windows compared real rows, not a row count: every row above was already
+    # compared one by one. Day resolution counts days, and its total depends on the wall-clock time -
+    # CI hit 939 at 00:01 UTC (run 43983774035, both day variants) against ~1,070 the rest of the day.
+    assert checked > 500
 
 
 # --- 2. get_hardware_history ------------------------------------------------------------------------
