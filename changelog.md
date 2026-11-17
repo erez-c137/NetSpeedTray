@@ -415,7 +415,7 @@ keeps running, and portable updates check every file they install.
   colors now skip the guard; brand colors and the speed/arrow/graph colors keep it. When the
   guard does swap one of your other colors, Settings now says so in a short note under those color
   rows, and the preview strip shows the accent shade the colors are judged against instead of a
-  neutral grey. ([#556], [#558], [#559]; thanks [@Buuuush])
+  neutral gray. ([#556], [#558], [#559]; thanks [@Buuuush])
 
 - **One failed GPU reading no longer wakes a sleeping NVIDIA GPU** on a hybrid (Optimus) laptop. When
   Windows' GPU-usage counter failed to read for a single update, NetSpeedTray asked nvidia-smi anyway,
