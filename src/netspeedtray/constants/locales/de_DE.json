@@ -681,10 +681,11 @@
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Monitor öffnen",
     "WHATS_NEW_TITLE": "Aktualisiert auf NetSpeedTray {version}",
     "WHATS_NEW_2_2_2": "Öffne es über Start für ein Schnellfenster. Hinweise führen jetzt direkt zur passenden Einstellung, und in den Einstellungen findest du dich leichter zurecht.",
-    "SUPPORT_PROMPT_TITLE": "Gefällt Ihnen NetSpeedTray?",
-    "SUPPORT_PROMPT_BODY": "Es ist kostenlos und bleibt es auch.",
-    "SUPPORT_PROMPT_RATE_BUTTON": "Im Microsoft Store bewerten",
-    "SUPPORT_PROMPT_STAR_BUTTON": "Auf GitHub einen Stern geben",
-    "SUPPORT_PROMPT_SUPPORT_BUTTON": "Unterstützen",
-    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "Nein, danke"
+    "SUPPORT_PROMPT_TITLE": "Ein Monat mit NetSpeedTray",
+    "SUPPORT_PROMPT_BODY": "Es ist kostenlos und bleibt es auch. Wenn es sich seinen Platz in Ihrer Taskleiste verdient hat, hilft eine Bewertung oder ein Stern anderen, es zu finden.",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "Es ist kostenlos und bleibt es auch. Wenn es sich seinen Platz in Ihrer Taskleiste verdient hat, hilft ein Stern anderen, es zu finden.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Im Store bewerten",
+    "SUPPORT_PROMPT_STAR_BUTTON": "Stern auf GitHub",
+    "SUPPORT_PROMPT_SUPPORT_LINK": "Projekt unterstützen",
+    "SUPPORT_PROMPT_DISMISS": "Schließen"
 }

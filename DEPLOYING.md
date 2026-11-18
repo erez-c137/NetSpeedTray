@@ -152,14 +152,19 @@ state is two settings in `NetSpeedTray_Config.json`: `first_run_tip_shown` and `
 
 **The one-time "rate / star / support" card (2.2.2):** about a month (30 days) after a user first runs
 2.2.2 or newer - counted from that run, never from older history - the next time they open the Monitor,
-one inline card at the top of the Monitor asks once: "Enjoying NetSpeedTray? It's free and always will
-be." with **Rate it on the Microsoft Store**, **Star it on GitHub**, **Support it** (the app's Support
-dialog) and **No thanks**. It never appears at launch (not in the app's first 2 minutes, nor in the 2
-minutes after sign-in), over a fullscreen app, with a modal dialog up, or while another NetSpeedTray
-card is showing. Any button - or 3 seconds on screen - ends it for good; nothing in the app changes
-whichever button is pressed, nothing is recorded about the choice, and nothing is sent anywhere (a link
-opens only on a click). The state is `first_seen_at` (UTC) and `support_prompt_shown` in the config;
-Settings > Reset all keeps both. The same `DisableTips` policy below turns it off.
+one inline card at the top of the Monitor says once: "A month with NetSpeedTray - It's free and always
+will be. If it's earned its spot on your taskbar, a star helps others find it." with **Star on
+GitHub**, a **Support the project** link (the app's Support dialog) and a close button. A Microsoft
+Store install also gets **Rate it in the Store** (the Store only accepts ratings from people who have
+the app in their Store library; Setup records a Store install when the Store runs it with `/STORE`, as
+`InstalledFrom` = `Store` under `HKLM\SOFTWARE\NetSpeedTray` - active once the Store submission passes
+that switch). It never appears at launch (not in the app's first 2 minutes, nor in the 2 minutes after
+sign-in), over a fullscreen app, with a modal dialog or Settings open, or while another NetSpeedTray
+card is showing. Any action - or about 4.5 seconds on screen while the Monitor is the active window -
+ends it for good; nothing in the app changes whichever was chosen, nothing is recorded about the
+choice, and nothing is sent anywhere (a link opens only on a click). The state is `first_seen_at`
+(UTC) and `support_prompt_shown` in the config; Settings > Reset all keeps both. A PC clock set before
+November 2026 never starts or advances the wait. The same `DisableTips` policy below turns it off.
 
 - **Turning all three off for everyone:** set the policy value
   `HKLM\SOFTWARE\Policies\NetSpeedTray DisableTips` (a DWORD; any nonzero value turns them off; the same

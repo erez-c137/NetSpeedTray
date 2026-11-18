@@ -161,7 +161,8 @@ class MonitorWindow(QWidget):
         self._support_prompt = None
         try:
             from netspeedtray.views.monitor.support_card import SupportPrompt
-            self._support_prompt = SupportPrompt(self, self._main_widget, self.i18n)
+            self._support_prompt = SupportPrompt(self, self._main_widget, self.i18n,
+                                                 focus_target=self._tab_bar.current_button)
             self._support_prompt.attach(root, root.indexOf(self._stack))
         except Exception as e:
             self.logger.error("Support card not attached: %s", e, exc_info=True)

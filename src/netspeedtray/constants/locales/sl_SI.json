@@ -681,10 +681,11 @@
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Odpri Monitor",
     "WHATS_NEW_TITLE": "Posodobljeno na NetSpeedTray {version}",
     "WHATS_NEW_2_2_2": "Odprite ga iz menija Start za hitro ploščo. Obvestila zdaj vodijo naravnost do prave nastavitve, v nastavitvah pa se lažje znajdete.",
-    "SUPPORT_PROMPT_TITLE": "Vam je NetSpeedTray všeč?",
-    "SUPPORT_PROMPT_BODY": "Je brezplačen in vedno bo.",
-    "SUPPORT_PROMPT_RATE_BUTTON": "Ocenite ga v trgovini Microsoft Store",
-    "SUPPORT_PROMPT_STAR_BUTTON": "Dajte mu zvezdico na GitHubu",
-    "SUPPORT_PROMPT_SUPPORT_BUTTON": "Podprite ga",
-    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "Ne, hvala"
+    "SUPPORT_PROMPT_TITLE": "Mesec z NetSpeedTray",
+    "SUPPORT_PROMPT_BODY": "Je brezplačen in vedno bo. Če si je prislužil mesto v opravilni vrstici, ocena ali zvezdica pomaga drugim, da ga najdejo.",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "Je brezplačen in vedno bo. Če si je prislužil mesto v opravilni vrstici, zvezdica pomaga drugim, da ga najdejo.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Ocenite v Store",
+    "SUPPORT_PROMPT_STAR_BUTTON": "Zvezdica na GitHubu",
+    "SUPPORT_PROMPT_SUPPORT_LINK": "Podprite projekt",
+    "SUPPORT_PROMPT_DISMISS": "Opusti"
 }

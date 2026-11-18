@@ -681,10 +681,11 @@
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Открыть монитор",
     "WHATS_NEW_TITLE": "NetSpeedTray обновлён до {version}",
     "WHATS_NEW_2_2_2": "Откройте его из меню «Пуск», чтобы увидеть быструю панель. Уведомления теперь ведут прямо к нужной настройке, а в настройках проще ориентироваться.",
-    "SUPPORT_PROMPT_TITLE": "Нравится NetSpeedTray?",
-    "SUPPORT_PROMPT_BODY": "Он бесплатный и всегда таким останется.",
-    "SUPPORT_PROMPT_RATE_BUTTON": "Оценить в Microsoft Store",
-    "SUPPORT_PROMPT_STAR_BUTTON": "Поставить звезду на GitHub",
-    "SUPPORT_PROMPT_SUPPORT_BUTTON": "Поддержать",
-    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "Нет, спасибо"
+    "SUPPORT_PROMPT_TITLE": "Месяц с NetSpeedTray",
+    "SUPPORT_PROMPT_BODY": "Он бесплатный и всегда таким останется. Если он заслужил место на вашей панели задач, оценка или звезда помогут другим его найти.",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "Он бесплатный и всегда таким останется. Если он заслужил место на вашей панели задач, звезда поможет другим его найти.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Оценить в Store",
+    "SUPPORT_PROMPT_STAR_BUTTON": "Звезда на GitHub",
+    "SUPPORT_PROMPT_SUPPORT_LINK": "Поддержать проект",
+    "SUPPORT_PROMPT_DISMISS": "Закрыть"
 }

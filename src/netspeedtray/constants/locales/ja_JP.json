@@ -681,10 +681,11 @@
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "モニターを開く",
     "WHATS_NEW_TITLE": "NetSpeedTray {version} に更新されました",
     "WHATS_NEW_2_2_2": "スタートから開くとクイック パネルが表示されます。通知から該当する設定へ直接移動でき、設定画面もわかりやすくなりました。",
-    "SUPPORT_PROMPT_TITLE": "NetSpeedTray を気に入っていただけましたか？",
-    "SUPPORT_PROMPT_BODY": "無料です。これからもずっと無料です。",
-    "SUPPORT_PROMPT_RATE_BUTTON": "Microsoft Store で評価する",
-    "SUPPORT_PROMPT_STAR_BUTTON": "GitHub でスターをつける",
-    "SUPPORT_PROMPT_SUPPORT_BUTTON": "支援する",
-    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "いいえ、結構です"
+    "SUPPORT_PROMPT_TITLE": "NetSpeedTray と過ごした 1 か月",
+    "SUPPORT_PROMPT_BODY": "無料です。これからもずっと無料です。タスク バーに置く価値があると感じたら、評価やスターがほかの人の目に留まる助けになります。",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "無料です。これからもずっと無料です。タスク バーに置く価値があると感じたら、スターがほかの人の目に留まる助けになります。",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Store で評価する",
+    "SUPPORT_PROMPT_STAR_BUTTON": "GitHub でスター",
+    "SUPPORT_PROMPT_SUPPORT_LINK": "プロジェクトを支援",
+    "SUPPORT_PROMPT_DISMISS": "閉じる"
 }

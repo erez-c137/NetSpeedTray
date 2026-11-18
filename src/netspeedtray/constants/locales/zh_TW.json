@@ -681,10 +681,11 @@
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "開啟監控中心",
     "WHATS_NEW_TITLE": "已更新至 NetSpeedTray {version}",
     "WHATS_NEW_2_2_2": "從「開始」開啟即可顯示快速面板。通知現在可直接前往對應的設定，設定也更容易瀏覽。",
-    "SUPPORT_PROMPT_TITLE": "喜歡 NetSpeedTray 嗎？",
-    "SUPPORT_PROMPT_BODY": "它是免費的，而且永遠免費。",
-    "SUPPORT_PROMPT_RATE_BUTTON": "在 Microsoft Store 評分",
+    "SUPPORT_PROMPT_TITLE": "與 NetSpeedTray 相伴一個月",
+    "SUPPORT_PROMPT_BODY": "它是免費的，而且永遠免費。如果它值得在你的工作列上占有一席之地，一個評分或一顆星能幫助更多人找到它。",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "它是免費的，而且永遠免費。如果它值得在你的工作列上占有一席之地，一顆星能幫助更多人找到它。",
+    "SUPPORT_PROMPT_RATE_BUTTON": "在 Store 評分",
     "SUPPORT_PROMPT_STAR_BUTTON": "在 GitHub 上加星",
-    "SUPPORT_PROMPT_SUPPORT_BUTTON": "支持一下",
-    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "不用了，謝謝"
+    "SUPPORT_PROMPT_SUPPORT_LINK": "支持這個專案",
+    "SUPPORT_PROMPT_DISMISS": "關閉"
 }

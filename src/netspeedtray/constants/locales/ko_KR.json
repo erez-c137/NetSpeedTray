@@ -681,10 +681,11 @@
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "모니터 열기",
     "WHATS_NEW_TITLE": "NetSpeedTray {version}(으)로 업데이트됨",
     "WHATS_NEW_2_2_2": "시작 메뉴에서 열면 빠른 패널이 표시됩니다. 이제 알림에서 해당 설정으로 바로 이동할 수 있으며, 설정도 더 쉽게 살펴볼 수 있습니다.",
-    "SUPPORT_PROMPT_TITLE": "NetSpeedTray가 마음에 드시나요?",
-    "SUPPORT_PROMPT_BODY": "무료이며 앞으로도 계속 무료입니다.",
-    "SUPPORT_PROMPT_RATE_BUTTON": "Microsoft Store에서 평가하기",
-    "SUPPORT_PROMPT_STAR_BUTTON": "GitHub에서 스타 누르기",
-    "SUPPORT_PROMPT_SUPPORT_BUTTON": "후원하기",
-    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "괜찮습니다"
+    "SUPPORT_PROMPT_TITLE": "NetSpeedTray와 함께한 한 달",
+    "SUPPORT_PROMPT_BODY": "무료이며 앞으로도 계속 무료입니다. 작업 표시줄에 둘 만하다고 느끼셨다면, 평점이나 스타가 다른 사람들이 찾는 데 도움이 됩니다.",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "무료이며 앞으로도 계속 무료입니다. 작업 표시줄에 둘 만하다고 느끼셨다면, 스타가 다른 사람들이 찾는 데 도움이 됩니다.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Store에서 평가하기",
+    "SUPPORT_PROMPT_STAR_BUTTON": "GitHub에서 스타",
+    "SUPPORT_PROMPT_SUPPORT_LINK": "프로젝트 후원",
+    "SUPPORT_PROMPT_DISMISS": "닫기"
 }
