@@ -522,8 +522,12 @@ def test_flyout_high_contrast_uses_system_colors(qtbot, monkeypatch):
     f = Flyout("T", "M", action_text="Go", secondary_text="Got it", auto_dismiss_ms=0, focusable=True)
     qtbot.addWidget(f)
     assert f._colors["card_bg"] == "#000000" and f._colors["card_stroke"] == "#FFFF00"
-    # Every button is plain ButtonText-on-Window; the keyboard ring is Highlight.
-    assert "#1AEBFF" in f._action_btn.styleSheet() and "background-color: #000000" in f._action_btn.styleSheet()
+    # The primary is filled with Highlight (as the internet confirm's, combined review U7), its ring the
+    # window text; the secondary is plain text-on-Window with a Highlight ring.
+    assert "background-color: #1AEBFF" in f._action_btn.styleSheet()
+    assert "border-color: #FFFF00" in f._action_btn.styleSheet()
+    sec = f._secondary_btn.styleSheet()
+    assert "background-color: #000000" in sec and "border: 2px solid #1AEBFF" in sec
 
 
 def test_flyout_buttons_mirror_right_to_left(qtbot):

@@ -205,9 +205,10 @@ class Flyout(QWidget):
             if not two:
                 row.addStretch(1)
             if action_text:
-                # Under a contrast theme every button is a plain ButtonText-on-Window button with a
-                # Highlight focus ring (an accent fill would hide a Highlight ring).
-                accent = action_style == "accent" and not c.get("high_contrast")
+                # Under a contrast theme the primary is filled with Highlight, as the internet confirm's
+                # (combined review U7); its focus ring is then the window text (a Highlight ring would
+                # vanish on it). Every other button keeps the Highlight ring.
+                accent = action_style == "accent"
                 act = self._make_button(action_text, accent=accent, fill=two)
                 act.clicked.connect(self._on_action)
                 row.addWidget(act, 1 if two else 0)
@@ -256,7 +257,7 @@ class Flyout(QWidget):
         if accent:
             normal = (f"background-color: {c['accent']}; color: {c['accent_text']};"
                       f" border: 2px solid transparent; padding: 5px 12px 6px;")
-            focus = f"border-color: {c['focus']};"
+            focus = f"border-color: {c['text_primary'] if c.get('high_contrast') else c['focus']};"
         else:
             # A 1 px stroke at rest; the 2 px ring takes the extra pixel from the padding, not the text.
             normal = (f"background-color: {c['subtle_fill']}; color: {c['text_primary']};"

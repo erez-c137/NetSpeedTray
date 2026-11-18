@@ -215,18 +215,19 @@ def offer_for(main_widget, config: Dict[str, Any]) -> Optional[InternetOffer]:
 
 
 def confirm_colors() -> dict:
-    """{"bg", "stroke", "text", "sub", "accent", "accent_text", "focus", "hc"}. High Contrast: the
-    theme's own colours (window, window text, highlight), never the app's tokens."""
+    """{"bg", "stroke", "text", "sub", "fill", "accent", "accent_text", "focus", "hc"}. High Contrast:
+    the theme's own colours (window, window text, highlight), never the app's tokens. The focus ring
+    is the text colour, Highlight in High Contrast (combined review U3)."""
     from netspeedtray.utils.taskbar_appearance import read_high_contrast_link_colors
     hc = read_high_contrast_link_colors()
     if hc:
         return {"bg": hc["background"], "stroke": hc["text"], "text": hc["text"], "sub": hc["text"],
-                "accent": hc["focus"], "accent_text": hc["background"], "focus": hc["link"], "hc": True}
-    from netspeedtray.utils.components import notice_link_colors
+                "fill": hc["background"], "accent": hc["focus"], "accent_text": hc["background"],
+                "focus": hc["focus"], "hc": True}
     c = su.semantic_colors()
     return {"bg": c["card_bg"], "stroke": c["card_stroke"], "text": c["text_primary"],
-            "sub": c["text_secondary"], "accent": None, "accent_text": None,
-            "focus": notice_link_colors(c["card_bg"])["focus"], "hc": False}
+            "sub": c["text_secondary"], "fill": c["subtle_fill"], "accent": None, "accent_text": None,
+            "focus": c["text_primary"], "hc": False}
 
 
 class _ConfirmButton(QPushButton):
@@ -380,17 +381,27 @@ class InternetCheckConfirm(QFrame):
         r = tokens.RADIUS_CONTROL
         pad = f"padding: 0px {tokens.SPACE_M}px; min-height: {tokens.INTERNET_CONFIRM_BUTTON_HEIGHT - 2 * ring}px;"
         if c["hc"]:
-            # Both buttons the same box (2 px border) so they are the same height.
+            # Both buttons the same box (2 px border) so they are the same height. The primary is
+            # filled with Highlight, as the first-run tip's (combined review U7); its focus ring is the
+            # window text, since a Highlight ring would vanish on a Highlight fill.
             on_btn = (f"QPushButton#internetConfirmOn {{ background: {c['accent']}; color: {c['accent_text']};"
                       f" border: {ring}px solid {c['accent']}; border-radius: {r}px; {pad} }}")
             off_btn = (f"QPushButton#internetConfirmNotNow {{ background: {c['bg']}; color: {c['text']};"
                        f" border: {ring}px solid {c['text']}; border-radius: {r}px; {pad} }}")
+            focus = (f" QPushButton#internetConfirmOn:focus {{ border: {ring}px solid {c['text']}; }}"
+                     f" QPushButton#internetConfirmNotNow:focus {{ border: {ring}px solid {c['focus']}; }}")
         else:
-            # The app's Fluent buttons: one accent (Turn on) and one standard.
+            # One accent (Turn on) and the Fluent standard button the first-run tip uses too (subtle
+            # fill, 1 px card stroke - combined review U7); the 2 px ring takes its extra pixel from the
+            # padding, never the text.
             on_btn = su.button_style(accent=True).replace("QPushButton", "QPushButton#internetConfirmOn")
-            off_btn = su.button_style(accent=False).replace("QPushButton", "QPushButton#internetConfirmNotNow")
-        focus = (f" QPushButton#internetConfirmOn:focus, QPushButton#internetConfirmNotNow:focus"
-                 f" {{ border: {ring}px solid {c['focus']}; }}")
+            off_btn = (f"QPushButton#internetConfirmNotNow {{ background: {c['fill']}; color: {c['text']};"
+                       f" border: 1px solid {c['stroke']}; border-radius: {r}px;"
+                       f" padding: 1px {tokens.SPACE_M + 1}px;"
+                       f" min-height: {tokens.INTERNET_CONFIRM_BUTTON_HEIGHT - 2 * ring}px; }}")
+            focus = (f" QPushButton#internetConfirmOn:focus {{ border: {ring}px solid {c['focus']}; }}"
+                     f" QPushButton#internetConfirmNotNow:focus {{ border: {ring}px solid {c['focus']};"
+                     f" padding: 0px {tokens.SPACE_M}px; }}")
         boxed = self._framed and not self._done
         frame = (f"QFrame#internetConfirm {{ background-color: {c['bg']}; border: 1px solid {c['stroke']};"
                  f" border-radius: {tokens.RADIUS_CARD}px; }}" if boxed

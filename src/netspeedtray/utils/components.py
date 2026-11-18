@@ -1442,7 +1442,9 @@ def notice_link_colors(surface: Optional[str] = None) -> dict:
     paints its own background then), and the link is always underlined - colour alone must not carry
     "this is clickable". Otherwise the app's tokens: secondary text, and the Windows accent nudged
     until it reads at MIN_TEXT_CONTRAST on ``surface`` - the colour the notice really sits on (the
-    default blue is 4.45:1 on the Check connection sheet's #f3f3f3, under AA)."""
+    default blue is 4.45:1 on the Check connection sheet's #f3f3f3, under AA). The keyboard focus ring
+    is the primary text colour, as on every 2.2.2 surface (Fluent; combined review U3) - Highlight in
+    High Contrast."""
     from netspeedtray.utils.taskbar_appearance import read_high_contrast_link_colors
     hc = read_high_contrast_link_colors()
     if hc:
@@ -1451,8 +1453,8 @@ def notice_link_colors(surface: Optional[str] = None) -> dict:
     c = semantic_colors()
     surface = surface or default_notice_surface()
     link = readable_on(c["accent"], surface)
-    return {"text": readable_on(c["text_secondary"], surface), "link": link, "focus": link,
-            "background": None, "underline": False}
+    return {"text": readable_on(c["text_secondary"], surface), "link": link,
+            "focus": readable_on(c["text_primary"], surface), "background": None, "underline": False}
 
 
 def readable_on(color_hex: str, surface_hex: str, minimum: Optional[float] = None) -> str:
