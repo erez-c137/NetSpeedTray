@@ -10,6 +10,7 @@ import winreg
 from typing import Optional
 
 from netspeedtray import constants
+from netspeedtray.core.shutdown_channel import AUTOSTART_FLAG
 
 # Where Windows keeps Program Compatibility flags ("Run this program as an administrator" etc.),
 # as one value per exe path, in both hives.
@@ -175,10 +176,13 @@ class StartupManager:
             # Here we try to reconstruct the command used to launch.
             # Using absolute path to src/monitor.py
             script_path = os.path.abspath(sys.argv[0])
-            exe_path = f'"{python_exe}" "{script_path}"'
+            exe_path = f'"{python_exe}" "{script_path}" {AUTOSTART_FLAG}'
             return exe_path # Already quoted the parts
 
-        return f'"{exe_path}"'
+        # --autostart (2.2.2 combined review C2): a second launch from the Run key is an autostart, not
+        # the user asking for the "running" panel - Explorer starts both it and a double-clicked exe.
+        # A value without it (2.2.1 and earlier) reads as a mismatch and is rewritten at the next launch.
+        return f'"{exe_path}" {AUTOSTART_FLAG}'
 
     def _check_startup_registry(self, check_for_correctness: bool = True) -> bool:
         """

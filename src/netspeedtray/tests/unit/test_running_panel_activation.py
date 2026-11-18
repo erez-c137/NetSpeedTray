@@ -5,8 +5,11 @@ panel (step 2), after the existing widget recovery (step 1). This file pins who 
 - the SECOND process decides and says so in the activate message's wParam (shutdown_channel):
   an updater relaunch (``--relaunch``) -> ACTIVATE_WPARAM_RELAUNCH; a launch from a shortcut to
   NetSpeedTray that is not in exactly the user's / all-users Startup folder (Start menu, taskbar pin,
-  desktop) -> ACTIVATE_WPARAM_USER, even right after sign-in; otherwise the #373 sign-in rule ->
-  ACTIVATE_WPARAM_SIGN_IN_DUPLICATE or USER;
+  desktop) -> ACTIVATE_WPARAM_USER, even right after sign-in; a Startup-folder shortcut or the Run
+  key's start (``--autostart``) -> ACTIVATE_WPARAM_SIGN_IN_DUPLICATE whenever it happens; otherwise
+  the #373 sign-in rule -> SIGN_IN_DUPLICATE; after it, USER only with positive evidence (Explorer
+  started this process: a double-clicked exe) and ACTIVATE_WPARAM_BACKGROUND (step 1 only) for
+  everything else (a scheduled task, a script, a launcher) - combined review C2;
 - before posting a USER request it calls AllowSetForegroundWindow(<running pid>), or Windows keeps
   the panel behind the window the user was in, and sends the launch monitor in lParam;
 - the running widget does step 1 for every kind and opens the panel only for wParam USER.
@@ -40,6 +43,7 @@ def _quiet_desktop(monkeypatch):
     monkeypatch.setattr(sc, "_startup_monitor_center", lambda: None)
     monkeypatch.setattr(sc, "_link_target", lambda link: NST_EXE)
     monkeypatch.setattr(sc, "_startup_folders", lambda: [USER_STARTUP, COMMON_STARTUP])
+    monkeypatch.setattr(sc, "_launched_by_explorer", lambda: True)
 
 
 @pytest.fixture
@@ -121,6 +125,54 @@ def test_the_shortcut_must_start_netspeedtray(monkeypatch, wire, target, user):
     assert wire[-1] == ("post", 0x20, want)
 
 
+# --- combined review C2: the panel only on positive evidence ---------------------------------------
+
+def test_a_startup_folder_shortcut_long_after_sign_in_is_still_an_autostart(monkeypatch, wire):
+    """A Startup-folder .lnk is an autostart whenever it runs (a slow disk, 3 minutes in) - no panel."""
+    monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 180.0)
+    monkeypatch.setattr(sc, "_startup_link_name", lambda: USER_STARTUP + r"\NetSpeedTray.lnk")
+    assert sc.request_activate(argv=[]) is True
+    assert wire == [("post", 0x20, APP.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE)]
+
+
+def test_a_run_key_start_long_after_sign_in_is_an_autostart(monkeypatch, wire):
+    """The Run key's start (Explorer starts it, so its parent is explorer.exe as for a double-click) is
+    told apart by its own --autostart argument: no panel, whenever it runs."""
+    monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 180.0)
+    assert sc.request_activate(argv=[sc.AUTOSTART_FLAG]) is True
+    assert wire == [("post", 0x20, APP.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE)]
+
+
+def test_a_scheduled_task_like_start_brings_the_widget_back_without_the_panel(monkeypatch, wire):
+    """No shortcut and not started by Explorer (Task Scheduler, a script, a launcher): no evidence the
+    user asked for a window - step 1 only."""
+    monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 180.0)
+    monkeypatch.setattr(sc, "_launched_by_explorer", lambda: False)
+    assert sc.request_activate(argv=[]) is True
+    assert wire == [("post", 0x20, APP.ACTIVATE_WPARAM_BACKGROUND)]
+
+
+def test_a_start_menu_shortcut_opens_the_panel_whatever_the_parent(monkeypatch, wire):
+    monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 180.0)
+    monkeypatch.setattr(sc, "_launched_by_explorer", lambda: False)
+    monkeypatch.setattr(sc, "_startup_link_name", lambda: (
+        r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\NetSpeedTray.lnk"))
+    assert sc.request_activate(argv=[]) is True
+    assert wire == [("allow", 200), ("post", 0x20, APP.ACTIVATE_WPARAM_USER)]
+
+
+def test_the_real_parent_check_runs_without_error():
+    assert sc._launched_by_explorer() in (True, False)
+
+
+def test_the_run_key_value_carries_the_autostart_flag(monkeypatch):
+    from netspeedtray.core import startup_manager as sm
+    monkeypatch.setattr(sm.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sm.sys, "executable", NST_EXE)
+    value = sm.StartupManager._get_executable_path(sm.StartupManager.__new__(sm.StartupManager))
+    assert value == f'"{NST_EXE}" {sc.AUTOSTART_FLAG}'
+
+
 def test_unreadable_startup_folders_never_make_a_user_launch(monkeypatch, wire):
     monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 15.0)
     monkeypatch.setattr(sc, "_startup_link_name", lambda: r"C:\Somewhere\NetSpeedTray.lnk")
@@ -169,6 +221,8 @@ def test_wparam_values_are_distinct_and_the_old_ones_unchanged():
     assert APP.ACTIVATE_WPARAM_USER == 0
     assert APP.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE == 1
     assert APP.ACTIVATE_WPARAM_RELAUNCH not in (0, 1)
+    assert len({APP.ACTIVATE_WPARAM_USER, APP.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE,
+                APP.ACTIVATE_WPARAM_RELAUNCH, APP.ACTIVATE_WPARAM_BACKGROUND}) == 4
 
 
 def test_allow_foreground_calls_user32_with_the_pid(monkeypatch):
@@ -256,6 +310,7 @@ def _receiver(quitting=False):
     (APP.ACTIVATE_WPARAM_USER, False, True),
     (APP.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE, True, False),
     (APP.ACTIVATE_WPARAM_RELAUNCH, False, False),
+    (3, False, False),   # ACTIVATE_WPARAM_BACKGROUND (C2): no evidence the user asked
     (7, False, False),   # a value this build doesn't know: step 1 only
 ])
 def test_activate_request_routing(wparam, step1_dup, panel):

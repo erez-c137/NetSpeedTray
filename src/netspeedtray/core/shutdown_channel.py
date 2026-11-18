@@ -48,6 +48,10 @@ TIMEOUT_FLAG = "--timeout"
 # Added by the updater's relaunch (update_applier.relaunch): this start is not the user asking for a
 # window. Ignored by a first instance (and by builds before 2.2.2, which ignore unknown arguments).
 RELAUNCH_FLAG = "--relaunch"
+# Written into the Run-key value (core/startup_manager, 2.2.2 combined review C2): the Run key's start
+# is an autostart whenever it runs. Explorer starts Run-key entries, so without it the start looks
+# exactly like a double-clicked exe. Ignored by a first instance and by builds that don't know it.
+AUTOSTART_FLAG = "--autostart"
 
 _MSGFLT_ALLOW = 1
 _SYNCHRONIZE = 0x00100000
@@ -300,40 +304,78 @@ def _is_this_app(target: str) -> bool:
 APP_EXE_NAME = "NetSpeedTray.exe"
 
 
-def launched_from_user_shortcut() -> bool:
-    """True when this process was started from a shortcut to NetSpeedTray OUTSIDE the Startup folders -
-    the Start menu, a taskbar pin, the desktop: the user asked, whenever that was (the #373 sign-in rule
-    must never swallow it). A shortcut in exactly this user's or the all-users Startup folder is an
-    autostart, not a request. False on any doubt - the Startup folders unreadable, a target that can't
-    be read or is another program (a launcher's shortcut) - and the sign-in rule then decides."""
+_LINK_USER, _LINK_STARTUP = "user", "startup"
+
+
+def _shortcut_kind() -> Optional[str]:
+    """How the shortcut this process was started from counts: _LINK_USER for a shortcut to NetSpeedTray
+    OUTSIDE the Startup folders (the Start menu, a taskbar pin, the desktop: the user asked, whenever
+    that was), _LINK_STARTUP for one in exactly this user's or the all-users Startup folder (an
+    autostart, whenever it runs). None on any doubt - no shortcut, the Startup folders unreadable, a
+    target that can't be read or is another program (a launcher's shortcut)."""
     try:
         link = _startup_link_name()
         if not link or not link.lower().endswith(".lnk"):
-            return False
+            return None
         startup = {os.path.normcase(os.path.normpath(f)) for f in _startup_folders() if f}
         if not startup:
-            return False
+            return None
         folder = os.path.normcase(os.path.normpath(os.path.dirname(link)))
         if folder in startup:
-            return False
+            return _LINK_STARTUP
         target = _link_target(link)
-        return bool(target) and _is_this_app(target)
+        return _LINK_USER if target and _is_this_app(target) else None
     except Exception as e:
         logger.debug("Could not read how this process was started: %s", e)
+        return None
+
+
+def launched_from_user_shortcut() -> bool:
+    """True when this process was started from a shortcut to NetSpeedTray outside the Startup folders
+    (``_shortcut_kind``)."""
+    return _shortcut_kind() == _LINK_USER
+
+
+def _launched_by_explorer() -> bool:
+    """This process's parent is explorer.exe - a double-clicked exe (or the Run key, which carries
+    AUTOSTART_FLAG). False on any doubt, including a parent pid reused by a newer process."""
+    try:
+        import psutil
+        me = psutil.Process()
+        parent = me.parent()
+        if parent is None or parent.create_time() > me.create_time():
+            return False
+        return parent.name().lower() == "explorer.exe"
+    except Exception as e:
+        logger.debug("Could not read the parent process: %s", e)
         return False
 
 
 def activation_kind(argv: Optional[Sequence[str]] = None) -> int:
-    """The wParam a second launch sends (constants.app.ACTIVATE_WPARAM_*): the updater's relaunch, an
-    explicit launch from a shortcut, a duplicate autostart at sign-in (#373), or a plain user launch."""
+    """The wParam a second launch sends (constants.app.ACTIVATE_WPARAM_*). The "running" panel opens
+    only on positive evidence that the user asked (combined review C2):
+
+    - the updater's relaunch (RELAUNCH_FLAG) -> RELAUNCH;
+    - the Run key's start (AUTOSTART_FLAG) or a Startup-folder shortcut -> SIGN_IN_DUPLICATE, at any
+      time after sign-in (an autostart on a slow disk can run minutes in);
+    - a shortcut to NetSpeedTray outside the Startup folders -> USER, even right after sign-in;
+    - within SIGN_IN_DUPLICATE_WINDOW_S of sign-in -> SIGN_IN_DUPLICATE (#373);
+    - started by Explorer (a double-clicked exe) -> USER;
+    - anything else (Task Scheduler, a script, a launcher) -> BACKGROUND: the widget comes back, no
+      window opens."""
     args = list(sys.argv[1:] if argv is None else argv)
     if RELAUNCH_FLAG in args:
         return constants.app.ACTIVATE_WPARAM_RELAUNCH
-    if launched_from_user_shortcut():
-        return constants.app.ACTIVATE_WPARAM_USER
-    if is_sign_in_duplicate():
+    if AUTOSTART_FLAG in args:
         return constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE
-    return constants.app.ACTIVATE_WPARAM_USER
+    link = _shortcut_kind()
+    if link == _LINK_USER:
+        return constants.app.ACTIVATE_WPARAM_USER
+    if link == _LINK_STARTUP or is_sign_in_duplicate():
+        return constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE
+    if _launched_by_explorer():
+        return constants.app.ACTIVATE_WPARAM_USER
+    return constants.app.ACTIVATE_WPARAM_BACKGROUND
 
 
 def _wait_for_exit(pid: int, hwnd: int, timeout: float) -> bool:
@@ -546,10 +588,10 @@ def request_activate(argv: Optional[Sequence[str]] = None) -> bool:
     asked anyway - it can only become visible.
 
     The wParam says who is asking (``activation_kind``): ACTIVATE_WPARAM_RELAUNCH for the updater's
-    relaunch (``--relaunch`` in ``argv``, default sys.argv); ACTIVATE_WPARAM_USER for a launch from a
-    shortcut outside the Startup folders (D3: the user asked, even right after sign-in);
-    ACTIVATE_WPARAM_SIGN_IN_DUPLICATE when this process starts within SIGN_IN_DUPLICATE_WINDOW_S of the
-    session's sign-in (#373, ``is_sign_in_duplicate``); else ACTIVATE_WPARAM_USER. A USER request opens
+    relaunch (``--relaunch`` in ``argv``, default sys.argv); SIGN_IN_DUPLICATE for an autostart (the
+    Run key's ``--autostart``, a Startup-folder shortcut) or any start within SIGN_IN_DUPLICATE_WINDOW_S
+    of sign-in (#373); USER for a shortcut outside the Startup folders (even right after sign-in) or an
+    exe Explorer started; else BACKGROUND (``activation_kind``). A USER request opens
     the "running" panel, so the running process is first allowed to take the foreground
     (``_allow_foreground``) - a failure there only costs focus, never the post.
 
@@ -568,8 +610,9 @@ def request_activate(argv: Optional[Sequence[str]] = None) -> bool:
         logger.info("Second launch: no running widget of this user on this desktop to bring back.")
         return False
     wparam = activation_kind(argv)
-    why = {constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE: " (a duplicate start at sign-in)",
-           constants.app.ACTIVATE_WPARAM_RELAUNCH: " (the updater's relaunch)"}.get(wparam, "")
+    why = {constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE: " (an autostart)",
+           constants.app.ACTIVATE_WPARAM_RELAUNCH: " (the updater's relaunch)",
+           constants.app.ACTIVATE_WPARAM_BACKGROUND: " (not the user: no window)"}.get(wparam, "")
     # lParam: the centre of the monitor the shell launched us on (a Start menu or a pin on a secondary
     # taskbar), so the panel opens there; 0 = no hint. Only a user request opens a window.
     lparam = 0

@@ -60,9 +60,13 @@ class AppConstants:
     # back. ACTIVATE_WPARAM_RELAUNCH = the second process was started by the updater (``--relaunch``)
     # while the old instance still ran: the widget comes back as for the user (what every earlier build
     # did with wParam 0), but no window opens. Receivers before 2.2.2 read any value but 1 as 0.
+    # ACTIVATE_WPARAM_BACKGROUND (combined review C2) = nothing says the user asked (no shortcut, not
+    # started by Explorer - a scheduled task, a script): the widget comes back, no window opens.
+    # SIGN_IN_DUPLICATE now also covers an autostart (Run key, Startup folder) at any time after sign-in.
     ACTIVATE_WPARAM_USER: Final[int] = 0
     ACTIVATE_WPARAM_SIGN_IN_DUPLICATE: Final[int] = 1
     ACTIVATE_WPARAM_RELAUNCH: Final[int] = 2
+    ACTIVATE_WPARAM_BACKGROUND: Final[int] = 3
     # Sign-in startup items can run well after the desktop appears on a slow disk (Windows also delays
     # Run-key apps by ~10 s); 2 minutes covers that. Measured from WTSINFO.LogonTime to its CurrentTime
     # (one wall-clock reading pair from the same query - nothing in our process to drift across sleep).

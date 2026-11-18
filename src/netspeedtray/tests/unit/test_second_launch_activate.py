@@ -37,6 +37,8 @@ def _fake_desktop(monkeypatch, windows, own_pid=999):
     monkeypatch.setattr(sc, "_has_target_prop", lambda hwnd: props[hwnd])
     monkeypatch.setattr(sc, "_window_pid", lambda hwnd: pids[hwnd])
     monkeypatch.setattr(sc.os, "getpid", lambda: own_pid)
+    # A double-clicked exe (combined review C2: the panel needs positive evidence the user asked).
+    monkeypatch.setattr(sc, "_launched_by_explorer", lambda: True)
 
 
 def test_activate_message_is_its_own_registered_atom():
