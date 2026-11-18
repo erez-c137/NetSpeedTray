@@ -149,6 +149,14 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - `WHATS_NEW_TITLE` - the title of the one-time card after an update ("Updated to NetSpeedTray {version}"). **Keep `{version}`.** Its buttons are your `WELCOME_2_0_WHATS_NEW_BUTTON` and `WELCOME_2_0_GOT_IT_BUTTON` - nothing new.
 > - `WHATS_NEW_2_2_2` - that card's text for 2.2.2: "Open it from Start for a quick panel. Notices now link straight to the setting they mean, and Settings is easier to find your way around." Keep it short (a test caps it at 1.5x the English length); "Start" is Windows' Start menu - use its name in your language. Each future release gets its own `WHATS_NEW_x_y_z` key.
 
+> 🆕 **Pending native review for 2.2.2 (the one-time "rate / star / support" card, see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. All 16 translated locales. The card shows **once, ever**, at the top of the Monitor, a month after the user started 2.2.2 - a friendly ask, never a nag. Keep it warm and short; the four buttons share one row on a wide Monitor (two rows when narrow).
+> - `SUPPORT_PROMPT_TITLE` - the card's title: "Enjoying NetSpeedTray?" A light, friendly question.
+> - `SUPPORT_PROMPT_BODY` - one line beside it: "It's free and always will be." A promise: free, now and later (no paid version is coming).
+> - `SUPPORT_PROMPT_RATE_BUTTON` - "Rate it on the Microsoft Store" (opens the Store's review page). Use the Store's own name in your language if Windows translates it (most don't).
+> - `SUPPORT_PROMPT_STAR_BUTTON` - "Star it on GitHub" (opens the project page; a GitHub "star"). Your `SUPPORT_STAR_GITHUB` wording is fine here.
+> - `SUPPORT_PROMPT_SUPPORT_BUTTON` - "Support it" (opens the app's own Support dialog). Short.
+> - `SUPPORT_PROMPT_NO_THANKS_BUTTON` - "No thanks": a polite, equal answer - not "Never", not "Later". Your `INTERNET_CONFIRM_NO_THANKS` wording is fine. **Hebrew:** plural imperatives ("דרגו", "תנו", "תמכו") like `WHATS_NEW_2_2_2`'s "פתחו" - owner review, please.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

@@ -680,5 +680,11 @@
     "FIRST_RUN_TIP_BODY": "Mutasson a sebességekre a részletekért.\nDupla kattintással megnyílik a Monitor.\nJobb kattintás: menü és Beállítások.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Monitor megnyitása",
     "WHATS_NEW_TITLE": "Frissítve: NetSpeedTray {version}",
-    "WHATS_NEW_2_2_2": "Nyissa meg a Start menüből egy gyorspanelért. Az értesítések most közvetlenül a megfelelő beállításhoz visznek, és a Beállításokban is könnyebb eligazodni."
+    "WHATS_NEW_2_2_2": "Nyissa meg a Start menüből egy gyorspanelért. Az értesítések most közvetlenül a megfelelő beállításhoz visznek, és a Beállításokban is könnyebb eligazodni.",
+    "SUPPORT_PROMPT_TITLE": "Tetszik a NetSpeedTray?",
+    "SUPPORT_PROMPT_BODY": "Ingyenes, és mindig az is marad.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Értékelje a Microsoft Store-ban",
+    "SUPPORT_PROMPT_STAR_BUTTON": "Adjon csillagot a GitHubon",
+    "SUPPORT_PROMPT_SUPPORT_BUTTON": "Támogassa",
+    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "Köszönöm, nem"
 }

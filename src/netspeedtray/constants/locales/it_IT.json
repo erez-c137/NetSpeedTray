@@ -680,5 +680,11 @@
     "FIRST_RUN_TIP_BODY": "Posiziona il puntatore sulle velocità per i dettagli.\nDoppio clic per aprire il Monitor.\nClic destro per il menu e le Impostazioni.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Apri il Monitor",
     "WHATS_NEW_TITLE": "Aggiornato a NetSpeedTray {version}",
-    "WHATS_NEW_2_2_2": "Aprilo da Start per un pannello rapido. Gli avvisi ora portano direttamente all'impostazione giusta e nelle Impostazioni è più facile orientarsi."
+    "WHATS_NEW_2_2_2": "Aprilo da Start per un pannello rapido. Gli avvisi ora portano direttamente all'impostazione giusta e nelle Impostazioni è più facile orientarsi.",
+    "SUPPORT_PROMPT_TITLE": "Ti piace NetSpeedTray?",
+    "SUPPORT_PROMPT_BODY": "È gratuito e lo sarà sempre.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Valutalo su Microsoft Store",
+    "SUPPORT_PROMPT_STAR_BUTTON": "Dagli una stella su GitHub",
+    "SUPPORT_PROMPT_SUPPORT_BUTTON": "Sostienilo",
+    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "No, grazie"
 }

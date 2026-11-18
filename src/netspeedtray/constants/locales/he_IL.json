@@ -680,5 +680,11 @@
     "FIRST_RUN_TIP_BODY": "ריחוף מעל המהירויות מציג פרטים.\nלחיצה כפולה פותחת את המוניטור.\nלחיצה ימנית פותחת תפריט והגדרות.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "פתח מוניטור",
     "WHATS_NEW_TITLE": "עודכן ל-NetSpeedTray {version}",
-    "WHATS_NEW_2_2_2": "פתחו אותו מתפריט התחל לקבלת חלונית מהירה. ההודעות מובילות עכשיו ישירות להגדרה הרלוונטית, וקל יותר להתמצא בהגדרות."
+    "WHATS_NEW_2_2_2": "פתחו אותו מתפריט התחל לקבלת חלונית מהירה. ההודעות מובילות עכשיו ישירות להגדרה הרלוונטית, וקל יותר להתמצא בהגדרות.",
+    "SUPPORT_PROMPT_TITLE": "נהנים מ-NetSpeedTray?",
+    "SUPPORT_PROMPT_BODY": "הוא חינמי ותמיד יהיה.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "דרגו אותו ב-Microsoft Store",
+    "SUPPORT_PROMPT_STAR_BUTTON": "תנו לו כוכב ב-GitHub",
+    "SUPPORT_PROMPT_SUPPORT_BUTTON": "תמכו בו",
+    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "לא, תודה"
 }

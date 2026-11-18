@@ -839,6 +839,11 @@ class NetworkSpeedWidget(QWidget):
         welcome dialog; everyone else goes to the one-time notices (2.2.2): a brand-new install's
         first-run tip (D1), or the first launch of a newer final release's "what's new" (D2) -
         views/widget/startup_notices.py, decided by core/startup_notices.py. Never both in one launch."""
+        try:   # 2.2.2 D8: start the "rate / star / support" clock on the first 2.2.2+ run (once)
+            from netspeedtray.views.monitor.support_card import ensure_first_seen
+            ensure_first_seen(self)
+        except Exception as e:
+            self.logger.error(f"Error recording first_seen_at: {e}", exc_info=True)
         if self.config.get("first_run_ever", True) or self.config.get("first_run_v2_seen", False):
             try:
                 from netspeedtray.views.widget.startup_notices import StartupNotices

@@ -131,7 +131,7 @@ Turning the app off in Task Manager's Startup tab also stops it.
   and the release page opens.
 - **Pinning a version:** turn the check off as above and deploy the version you want.
 
-## First-run tip and "what's new"
+## First-run tip, "what's new" and the one-time support card
 
 Since 2.2.2 the app shows, at most once each, a small card beside the widget:
 
@@ -150,18 +150,31 @@ already up steps aside for a fullscreen app (even with **Keep visible in fullscr
 and comes back after. Nothing is sent anywhere; the release page opens only if the user clicks. The
 state is two settings in `NetSpeedTray_Config.json`: `first_run_tip_shown` and `last_seen_version`.
 
-- **Turning both off for everyone:** set the policy value
+**The one-time "rate / star / support" card (2.2.2):** about a month (30 days) after a user first runs
+2.2.2 or newer - counted from that run, never from older history - the next time they open the Monitor,
+one inline card at the top of the Monitor asks once: "Enjoying NetSpeedTray? It's free and always will
+be." with **Rate it on the Microsoft Store**, **Star it on GitHub**, **Support it** (the app's Support
+dialog) and **No thanks**. It never appears at launch (not in the app's first 2 minutes, nor in the 2
+minutes after sign-in), over a fullscreen app, with a modal dialog up, or while another NetSpeedTray
+card is showing. Any button - or 3 seconds on screen - ends it for good; nothing in the app changes
+whichever button is pressed, nothing is recorded about the choice, and nothing is sent anywhere (a link
+opens only on a click). The state is `first_seen_at` (UTC) and `support_prompt_shown` in the config;
+Settings > Reset all keeps both. The same `DisableTips` policy below turns it off.
+
+- **Turning all three off for everyone:** set the policy value
   `HKLM\SOFTWARE\Policies\NetSpeedTray DisableTips` (a DWORD; any nonzero value turns them off; the same
   value under `HKCU\SOFTWARE\Policies\NetSpeedTray` is honored too, OR-ed, like `DisableUpdateCheck`).
-  The app then never shows either card, and still records the version, so lifting the policy later
-  never brings back a stale one. A Store or silent install is not "managed" by itself: set the policy.
+  The app then never shows any of the three cards, and still records the version, so lifting the
+  policy later never brings back a stale tip or "what's new". (The rate / star / support card is not
+  used up by the policy: lifted, it can still show once, on a later Monitor open.) A Store or silent
+  install is not "managed" by itself: set the policy.
 
   ```
   reg add "HKLM\SOFTWARE\Policies\NetSpeedTray" /v DisableTips /t REG_DWORD /d 1 /f
   ```
 - **Per user, without a policy:** pre-seed the config with `"first_run_ever": false,
   "first_run_v2_seen": true, "first_run_tip_shown": true` and `"last_seen_version": "<the version you
-  deploy>"` before the first launch.
+  deploy>"` before the first launch, plus `"support_prompt_shown": true` for the rate / star / support card.
 
 ## Network activity
 

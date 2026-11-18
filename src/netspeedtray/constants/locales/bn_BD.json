@@ -680,5 +680,11 @@
     "FIRST_RUN_TIP_BODY": "বিস্তারিত দেখতে গতির উপর পয়েন্টার রাখুন।\nমনিটর খুলতে ডাবল-ক্লিক করুন।\nমেনু ও সেটিংসের জন্য রাইট-ক্লিক করুন।",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "মনিটর খুলুন",
     "WHATS_NEW_TITLE": "NetSpeedTray {version}-এ আপডেট হয়েছে",
-    "WHATS_NEW_2_2_2": "একটি দ্রুত প্যানেলের জন্য স্টার্ট থেকে এটি খুলুন। বিজ্ঞপ্তিগুলো এখন সরাসরি সংশ্লিষ্ট সেটিংয়ে নিয়ে যায়, এবং সেটিংসে পথ খুঁজে পাওয়া আরও সহজ।"
+    "WHATS_NEW_2_2_2": "একটি দ্রুত প্যানেলের জন্য স্টার্ট থেকে এটি খুলুন। বিজ্ঞপ্তিগুলো এখন সরাসরি সংশ্লিষ্ট সেটিংয়ে নিয়ে যায়, এবং সেটিংসে পথ খুঁজে পাওয়া আরও সহজ।",
+    "SUPPORT_PROMPT_TITLE": "NetSpeedTray ভালো লাগছে?",
+    "SUPPORT_PROMPT_BODY": "এটি বিনামূল্যে, এবং সবসময় বিনামূল্যেই থাকবে।",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Microsoft Store-এ রেটিং দিন",
+    "SUPPORT_PROMPT_STAR_BUTTON": "GitHub-এ স্টার দিন",
+    "SUPPORT_PROMPT_SUPPORT_BUTTON": "সমর্থন করুন",
+    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "না, ধন্যবাদ"
 }

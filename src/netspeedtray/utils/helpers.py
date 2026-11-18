@@ -767,9 +767,10 @@ def neutral_cwd() -> Optional[str]:
     return None
 
 
-def open_external(target: str) -> None:
+def open_external(target: str) -> bool:
     """Open a URL or folder with its default handler, in ``neutral_cwd()`` rather than the app's
-    folder. Never raises.
+    folder. Never raises. True when the handler was started (False: it failed and was logged - a
+    caller with a second choice, like the Store link's web page, can try that).
 
     On Windows this is ``os.startfile(target, cwd=...)`` and nothing else. There is deliberately no
     ``webbrowser.open`` fallback there: its Windows default IS ``os.startfile`` (no cwd), so it
@@ -786,12 +787,14 @@ def open_external(target: str) -> None:
                 os.startfile(target)                   # type: ignore[attr-defined]
         except Exception as e:
             log.warning("Could not open %r: %s", target, e)
-        return
+            return False
+        return True
     try:
         import webbrowser
-        webbrowser.open(target)
+        return bool(webbrowser.open(target))
     except Exception as e:
         log.debug("webbrowser.open(%r) failed: %s", target, e)
+        return False
 
 
 def reveal_in_explorer(path: str) -> None:

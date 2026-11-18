@@ -680,5 +680,11 @@
     "FIRST_RUN_TIP_BODY": "Für Details mit der Maus auf die Werte zeigen.\nDoppelklick öffnet den Monitor.\nRechtsklick für das Menü und die Einstellungen.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Monitor öffnen",
     "WHATS_NEW_TITLE": "Aktualisiert auf NetSpeedTray {version}",
-    "WHATS_NEW_2_2_2": "Öffne es über Start für ein Schnellfenster. Hinweise führen jetzt direkt zur passenden Einstellung, und in den Einstellungen findest du dich leichter zurecht."
+    "WHATS_NEW_2_2_2": "Öffne es über Start für ein Schnellfenster. Hinweise führen jetzt direkt zur passenden Einstellung, und in den Einstellungen findest du dich leichter zurecht.",
+    "SUPPORT_PROMPT_TITLE": "Gefällt Ihnen NetSpeedTray?",
+    "SUPPORT_PROMPT_BODY": "Es ist kostenlos und bleibt es auch.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Im Microsoft Store bewerten",
+    "SUPPORT_PROMPT_STAR_BUTTON": "Auf GitHub einen Stern geben",
+    "SUPPORT_PROMPT_SUPPORT_BUTTON": "Unterstützen",
+    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "Nein, danke"
 }

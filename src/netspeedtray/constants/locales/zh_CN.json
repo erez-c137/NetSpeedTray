@@ -681,5 +681,11 @@
     "FIRST_RUN_TIP_BODY": "指向速度可查看详情。\n双击打开监控面板。\n右键打开菜单和设置。",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "打开监控面板",
     "WHATS_NEW_TITLE": "已更新到 NetSpeedTray {version}",
-    "WHATS_NEW_2_2_2": "从“开始”菜单打开可显示快捷面板。通知现在可直接跳转到对应设置，设置也更容易浏览。"
+    "WHATS_NEW_2_2_2": "从“开始”菜单打开可显示快捷面板。通知现在可直接跳转到对应设置，设置也更容易浏览。",
+    "SUPPORT_PROMPT_TITLE": "喜欢 NetSpeedTray 吗？",
+    "SUPPORT_PROMPT_BODY": "它是免费的，并将永远免费。",
+    "SUPPORT_PROMPT_RATE_BUTTON": "在 Microsoft Store 中评分",
+    "SUPPORT_PROMPT_STAR_BUTTON": "在 GitHub 上点个 Star",
+    "SUPPORT_PROMPT_SUPPORT_BUTTON": "支持一下",
+    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "不用了"
 }

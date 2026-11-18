@@ -455,6 +455,11 @@ class ConfigConstants:
         # 2.2.2 D2: the highest version that has run here (None = 2.2.1 or older, or a fresh config).
         # A final release newer than it shows the one-time "what's new" once; see core/startup_notices.
         "last_seen_version": None,
+        # 2.2.2 D8: when this install first ran 2.2.2 or newer (UTC, "YYYY-MM-DDTHH:MM:SSZ"; None until
+        # then - upgraders count from their first 2.2.2 run, never from history), and whether the
+        # one-time "rate / star / support" card is done. See core/support_prompt.
+        "first_seen_at": None,
+        "support_prompt_shown": False,
         "tooltip_hint_shown_count": 0,     # gesture-hint tooltip fades after a few sessions
         "pin_hint_shown_count": 0,         # "Click the widget to keep this open" footer: first few hover cards
         "internet_offer_declines": 0,      # "Not now"s on the "Also watch the internet" offer (D5)
@@ -637,6 +642,9 @@ class ConfigConstants:
         "first_run_tip_shown": {"type": bool, "default": False},
         # A version string like __version__ ("2.2.2", "2.2.2-beta.1"); same charset as update_snooze's.
         "last_seen_version": {"type": (str, type(None)), "default": None, "regex": r"[0-9A-Za-z.+\-]{1,64}"},
+        "first_seen_at": {"type": (str, type(None)), "default": None,
+                          "regex": r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"},
+        "support_prompt_shown": {"type": bool, "default": False},
         "tooltip_hint_shown_count": {"type": int, "default": 0, "min": 0},
         "pin_hint_shown_count": {"type": int, "default": 0, "min": 0},
         "internet_offer_declines": {"type": int, "default": 0, "min": 0},

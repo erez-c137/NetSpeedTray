@@ -680,5 +680,11 @@
     "FIRST_RUN_TIP_BODY": "指向速度可查看詳細資訊。\n按兩下可開啟監控中心。\n按滑鼠右鍵可開啟選單和設定。",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "開啟監控中心",
     "WHATS_NEW_TITLE": "已更新至 NetSpeedTray {version}",
-    "WHATS_NEW_2_2_2": "從「開始」開啟即可顯示快速面板。通知現在可直接前往對應的設定，設定也更容易瀏覽。"
+    "WHATS_NEW_2_2_2": "從「開始」開啟即可顯示快速面板。通知現在可直接前往對應的設定，設定也更容易瀏覽。",
+    "SUPPORT_PROMPT_TITLE": "喜歡 NetSpeedTray 嗎？",
+    "SUPPORT_PROMPT_BODY": "它是免費的，而且永遠免費。",
+    "SUPPORT_PROMPT_RATE_BUTTON": "在 Microsoft Store 評分",
+    "SUPPORT_PROMPT_STAR_BUTTON": "在 GitHub 上加星",
+    "SUPPORT_PROMPT_SUPPORT_BUTTON": "支持一下",
+    "SUPPORT_PROMPT_NO_THANKS_BUTTON": "不用了，謝謝"
 }
