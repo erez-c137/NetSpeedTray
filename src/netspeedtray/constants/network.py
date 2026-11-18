@@ -212,7 +212,14 @@ class LatencyConstants:
     # A minute-rollup row counts as a drop from this many estimated lost cycles (avg x samples, >= 12 s
     # of the minute): a rollup cannot tell if its cycles were consecutive, and from 4 the raw 2-in-a-row
     # rule more likely than not would have counted it too. Hour rows never count (see loss_history).
+    # The estimate sums lost FRACTIONS (a half-lost cycle counts 0.5), so the bar is slightly stricter
+    # than "4 whole cycles".
     OUTAGE_MIN_ROLLUP_CYCLES: Final[int] = 4
+    # The Overview's drop count is red while its last drop is at most this old; older is amber.
+    OUTAGE_RECENT_SEC: Final[int] = 24 * 3600
+    # The "last" drop's date (not today) when the locale's short-date pattern can't be read: a Qt
+    # date format, day and month only - always rendered with Western digits.
+    OUTAGE_LAST_DATE_FALLBACK_FORMAT: Final[str] = "M/d"
     # The router's and the internet anchor's rows of one cycle are written a moment apart: a drop on
     # one hop that starts within this many seconds after the other hop's drop (past that row's own
     # span) ended is the same outage. Runs of ONE hop are never joined this way.

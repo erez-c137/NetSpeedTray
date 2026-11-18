@@ -661,3 +661,37 @@ def test_red_means_a_recent_drop(q_app):
     assert colors["slow"] in ov._context_right_text(mw)
     ov._latency_events = {"count": 0, "last_start": None}
     assert colors["good"] in ov._context_right_text(mw)
+
+
+@pytest.mark.parametrize("lang, want", [("en_US", "10/11 16:48"), ("de_DE", "11.10 16:48"),
+                                        ("bn_BD", None), ("he_IL", None), ("ja_JP", None)])
+def test_the_last_drops_date_keeps_western_digits_in_every_language(lang, want):
+    """A clock or value stays in Western digits in every language (helpers.fixed_digits); the locale
+    only gives the day/month order - Bengali once read "১১/১০ 16:48"."""
+    import re as _re
+    from netspeedtray.views.monitor.overview.tab import drop_time_label
+    got = drop_time_label(datetime(2026, 10, 11, 16, 48), datetime(2026, 11, 18, 10, 0), lang)
+    assert _re.fullmatch(r"[0-9./\- ]+ 16:48", got), got
+    assert "11" in got and "10" in got and "2026" not in got
+    if want:
+        assert got == want
+
+
+def test_red_until_exactly_24_hours_then_amber():
+    from netspeedtray import constants
+    from netspeedtray.views.monitor.overview.tab import drop_color
+    colors = constants.network.latency.VERDICT_COLORS
+    now = datetime(2026, 11, 18, 10, 0)
+    assert drop_color(now - timedelta(hours=24), now) == colors["slow"]
+    assert drop_color(now - timedelta(hours=24, seconds=1), now) == colors["ok"]
+    assert drop_color(None, now) == colors["ok"]
+
+
+def test_across_local_midnight_a_recent_drop_is_dated_and_still_red():
+    """23:50 yesterday, seen at 00:10: 20 minutes old - red, and dated (it was not today)."""
+    from netspeedtray import constants
+    from netspeedtray.views.monitor.overview.tab import drop_color, drop_time_label
+    last, now = datetime(2026, 11, 17, 23, 50), datetime(2026, 11, 18, 0, 10)
+    assert drop_color(last, now) == constants.network.latency.VERDICT_COLORS["slow"]
+    assert drop_time_label(last, now, "en_US") == "11/17 23:50"
+    assert drop_time_label(datetime(2026, 11, 18, 0, 5), now, "en_US") == "00:05"

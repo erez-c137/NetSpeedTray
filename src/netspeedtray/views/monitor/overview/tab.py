@@ -20,6 +20,7 @@ dropped.
 from __future__ import annotations
 
 import logging
+import re
 from collections import deque
 from functools import partial
 from typing import Any, Deque, Dict, Optional
@@ -90,20 +91,32 @@ def _resolve_window(ws, key: str, now: datetime, session_start: Optional[datetim
 
 def drop_time_label(last: datetime, now: datetime, language: Optional[str]) -> str:
     """The "last" drop's time: HH:MM today, else the locale's numeric short date without the year
-    plus HH:MM ("10/11 16:48", "11.10 16:48") - an old drop must not read as this morning's."""
+    plus HH:MM ("10/11 16:48", "11.10 16:48") - an old drop must not read as this morning's. The
+    locale gives the day/month ORDER only: digits stay Western in every language, as every clock
+    and value does (helpers.fixed_digits) - formatted under QLocale "C", never "১১/১০"."""
     hm = last.strftime("%H:%M")
     if last.date() == now.date():
         return hm
+    fallback = constants.network.latency.OUTAGE_LAST_DATE_FALLBACK_FORMAT
     try:
-        import re
         from PyQt6.QtCore import QDate, QLocale
-        loc = QLocale(str(language or "en_US"))
-        fmt = loc.dateFormat(QLocale.FormatType.ShortFormat)
-        fmt = re.sub(r"^y+[^dMy]*|[^dMy]*y+", "", fmt).strip() or "M/d"
-        day = loc.toString(QDate(last.year, last.month, last.day), fmt)
+        fmt = QLocale(str(language or "en_US")).dateFormat(QLocale.FormatType.ShortFormat)
+        fmt = re.sub(r"^y+[^dMy]*|[^dMy]*y+", "", fmt).strip() or fallback
+        if "MMM" in fmt:   # a month NAME would be in C (English) - keep it numeric
+            fmt = fmt.replace("MMMM", "M").replace("MMM", "M")
+        day = QLocale.c().toString(QDate(last.year, last.month, last.day), fmt)
     except Exception:
         day = f"{last.month}/{last.day}"
     return f"{day} {hm}"
+
+
+def drop_color(last: Optional[datetime], now: datetime) -> str:
+    """The drop count's colour: red while the last drop is at most OUTAGE_RECENT_SEC old (24 h,
+    elapsed time - not "today"), amber when older or unknown. Red means recent, not "many"."""
+    lat = constants.network.latency
+    if last is not None and (now - last) <= timedelta(seconds=lat.OUTAGE_RECENT_SEC):
+        return lat.VERDICT_COLORS["slow"]
+    return lat.VERDICT_COLORS["ok"]
 
 
 def _boot_time() -> Optional[datetime]:
@@ -812,9 +825,9 @@ class OverviewTab(QWidget):
         last = ev.get("last_start")
         now = datetime.now()
         # Red means RECENT (the last drop within 24 h); an older one is a caution, whatever the count.
-        recent = hasattr(last, "strftime") and (now - last) <= timedelta(hours=24)
-        color = colors["slow"] if recent else colors["ok"]
-        lt = drop_time_label(last, now, getattr(self._i18n, "language", None)) if hasattr(last, "strftime") else ""
+        dated = hasattr(last, "strftime")
+        color = drop_color(last if dated else None, now)
+        lt = drop_time_label(last, now, getattr(self._i18n, "language", None)) if dated else ""
         drops = self._tr("CONN_HEALTH_DROPS", "drops")
         out = f"<span style='color:{color};'>{label}: {count} {drops}</span>"
         if lt:

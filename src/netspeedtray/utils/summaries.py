@@ -290,8 +290,8 @@ def outage_summary(timeout_rows: Sequence, *more_series: Sequence, max_gap: Opti
     (``_loss_runs``) - for the Monitor 2 raw (``OUTAGE_MIN_CYCLES``: a single lost 3 s cycle is a
     blip, not an outage) and 4 per minute row (``OUTAGE_MIN_ROLLUP_CYCLES``: >= 12 s of the minute
     lost - where two consecutive raw cycles more likely than not were among them; a minute row
-    cannot say). So a rollup's verdict can differ from the raw tier's for the same event. Runs below it are dropped BEFORE hops are merged, so they never
-    count, add downtime, or bridge two drops; an outage seen on both hops counts when either hop's
+    cannot say). So a rollup's verdict can differ from the raw tier's for the same event. Runs below
+    the bar are dropped BEFORE hops are merged, so they never count, add downtime, or bridge two drops; an outage seen on both hops counts when either hop's
     run reaches the bar (the same lost cycle on both hops is one cycle, not two). 0 (the default)
     keeps every run, as before."""
     def bad(v):
