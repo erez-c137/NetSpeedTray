@@ -135,6 +135,21 @@ class WidgetPage(QWidget):
                                      description=self.i18n.HIDE_WHEN_APPS_COVER_DESC,
                                      control=self.hide_when_apps_cover))
 
+        # Left-anchor pin (the reworked PR #554): anchor the widget to the FIRST shell thing on the
+        # LEFT of a top/bottom taskbar - the Widgets/weather button's right edge when one is there,
+        # else the bar's left edge - and keep it a fixed gap off it. Dragging still works (it saves
+        # the offset FROM the anchor; Reset position clears it). Side bars are out of scope: the
+        # placement ignores the pin there, so the card greys out while the widget's taskbar sits on
+        # the left or right edge (_sync_pin_card, re-checked on load and on show).
+        self.pin_left_edge = Win11Toggle(label_text="")
+        self.pin_left_edge.toggled.connect(self.on_change)
+        self._pin_card = SettingCard(
+            getattr(self.i18n, "PIN_LEFT_EDGE_LABEL",
+                    "Anchor the widget to the left end of the taskbar"),
+            control=self.pin_left_edge)
+        layout.addWidget(self._pin_card)
+        self._sync_pin_card()
+
         # NOTE: there is intentionally no tray-offset slider. Free Move (drag the widget anywhere) is the
         # reposition escape hatch; the auto-position uses sensible default offsets. tray_offset_x/y remain
         # in config for the position engine (position_manager) but aren't surfaced as fiddly px sliders.
@@ -279,6 +294,26 @@ class WidgetPage(QWidget):
             note.setVisible(show)
             self.layout_changed.emit()
 
+    def _sync_pin_card(self) -> None:
+        """Grey the left-anchor pin out on a SIDE taskbar: the placement ignores the pin there
+        (out of scope), so the switch must not pretend it does anything. Reads the same taskbar
+        the widget docks to (preferred monitor honoured, like _sync_monitor_note); re-checked on
+        every load and each time the page shows. A horizontal bar - or a moment where the taskbar
+        can't be read - leaves the card enabled."""
+        side = False
+        try:
+            from netspeedtray.utils.taskbar_utils import get_taskbar_info
+            info = get_taskbar_info(
+                preferred_screen_name=getattr(self, "_saved_monitor", None))
+            edge = info.get_edge_position() if info is not None else None
+            side = edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT)
+        except Exception:
+            side = False
+        card = getattr(self, "_pin_card", None)
+        if card is not None:
+            MiniGraphSection._set_card_enabled(card, not side)
+        self._pin_side_greyed = side
+
     def showEvent(self, event):  # type: ignore[override]
         """Refresh the monitor dropdown whenever the page becomes visible.
 
@@ -289,6 +324,10 @@ class WidgetPage(QWidget):
         super().showEvent(event)
         if hasattr(self, "preferred_monitor_combo"):
             self._populate_monitor_combo()
+        # A live re-check of the pin's grey-out: the taskbar may have moved edges since the last
+        # load (the nice-to-have in the rework spec).
+        if hasattr(self, "pin_left_edge"):
+            self._sync_pin_card()
 
     # --- behavior ---------------------------------------------------------------
     def set_display_mode_note(self, kind: Optional[str]) -> None:
@@ -379,6 +418,10 @@ class WidgetPage(QWidget):
             config.get("keep_visible_fullscreen", constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN))
         self.hide_when_apps_cover.setChecked(
             config.get("hide_when_apps_cover", constants.config.defaults.DEFAULT_HIDE_WHEN_APPS_COVER))
+        # Left-anchor pin (the reworked PR): the saved choice stays under a greyed-out card (a side
+        # bar ignores it until the bar moves back to top/bottom).
+        self.pin_left_edge.setChecked(bool(config.get("pin_left_edge", False)))
+        self._sync_pin_card()
 
         self.mini_graph_section.load_settings(config)
 
@@ -397,5 +440,6 @@ class WidgetPage(QWidget):
             "free_float": self.free_float.isChecked(),
             "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
             "hide_when_apps_cover": self.hide_when_apps_cover.isChecked(),
+            "pin_left_edge": self.pin_left_edge.isChecked(),
             **self.mini_graph_section.get_settings(),
         }

@@ -198,6 +198,11 @@ class ConfigConstants:
     DEFAULT_START_WITH_WINDOWS: Final[bool] = True
     DEFAULT_TRAY_OFFSET_X: Final[int] = 0
     DEFAULT_TRAY_OFFSET_Y: Final[int] = 3
+    # The left-anchor pin's drag offset (`left_anchor_drag_dx`): how far RIGHT of the left anchor
+    # (the Widgets/weather button's right edge, or the bar's left edge) the user dragged the
+    # widget, in logical px. Never negative - the widget cannot be dragged onto the shell button
+    # it is anchored off. Reset position clears it back to 0.
+    DEFAULT_LEFT_ANCHOR_DRAG_DX: Final[int] = 0
     # Pre-1.3.0 tray_offset_x defaults (10 up to 1.2.0, then 1, then 3; 0 since 1.3.0). Every
     # config those versions saved carries one of them although the user never moved the widget, so
     # Reset position (shown only once the widget was moved) treats them as the default too (rc.2 W6).
@@ -327,6 +332,11 @@ class ConfigConstants:
         "power_display_enabled": False,    # opt-in: the hover card's battery rows (live draw / projected)
         "show_hover_tips": True,           # the hover card's right-click/double-click gesture hint
         "pause_in_menu": False,            # opt-in: surface Pause/Resume in the right-click menu
+        "pin_left_edge": False,            # opt-in: anchor the widget to the left end of a top/bottom taskbar (Widget page)
+        # The pin's drag offset: how far right of the left anchor the user dragged the widget
+        # (logical px, >= 0 - measured from the anchor, never from tray_offset_x). Cleared by
+        # Reset position, like the tray drag offsets.
+        "left_anchor_drag_dx": DEFAULT_LEFT_ANCHOR_DRAG_DX,
         "context_menu_hidden_items": list(DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS),  # ids from CONTEXT_MENU_HIDEABLE_ITEMS
         "dark_mode": DEFAULT_DARK_MODE,
         "history_period": data.history_period.DEFAULT_PERIOD,
@@ -511,6 +521,8 @@ class ConfigConstants:
         "power_display_enabled": {"type": bool, "default": False},
         "show_hover_tips": {"type": bool, "default": True},
         "pause_in_menu": {"type": bool, "default": False},
+        "pin_left_edge": {"type": bool, "default": False},
+        "left_anchor_drag_dx": {"type": int, "default": DEFAULT_LEFT_ANCHOR_DRAG_DX, "min": 0, "max": 10000},
         # "item_choices": unknown ids (incl. "settings"/"exit", which always show) are dropped one by
         # one and duplicates collapsed - a bad entry never costs the user the rest of the list. The default
         # is its own list (as in DEFAULT_CONFIG), never the shared constant.

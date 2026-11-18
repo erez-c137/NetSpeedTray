@@ -2494,7 +2494,8 @@ class NetworkSpeedWidget(QWidget):
 
     def reset_to_default_position(self) -> None:
         """Right-click > Reset position: back to the automatic spot by the tray (or the side bar's
-        chosen gap) - clears the free-move spot AND the docked drag offsets, then re-places."""
+        chosen gap; for a left-anchored widget, back to its anchor) - clears the free-move spot AND
+        the docked drag offsets (including `left_anchor_drag_dx`), then re-places."""
         self.logger.info("Resetting widget position to default.")
         self._hide_usage_hover_card()
         defaults = constants.config.defaults
@@ -2502,7 +2503,8 @@ class NetworkSpeedWidget(QWidget):
         # Persist exactly what reset_to_default cleared in the (shared) config dict.
         self.update_config({'position_x': None, 'position_y': None,
                             'tray_offset_x': defaults.DEFAULT_TRAY_OFFSET_X,
-                            'tray_offset_y': defaults.DEFAULT_TRAY_OFFSET_Y})
+                            'tray_offset_y': defaults.DEFAULT_TRAY_OFFSET_Y,
+                            'left_anchor_drag_dx': defaults.DEFAULT_LEFT_ANCHOR_DRAG_DX})
 
     def show_from_second_launch(self, sign_in_duplicate: bool = False) -> None:
         """
@@ -2584,7 +2586,8 @@ class NetworkSpeedWidget(QWidget):
 
     def has_custom_position(self) -> bool:
         """Whether the widget sits where the user put it (a drag, or a saved free-move spot) - the
-        tray menu offers Reset position only then."""
+        tray menu offers Reset position only then. A left-anchored widget's drag counts too: it
+        saves `left_anchor_drag_dx`, which Reset position clears."""
         defaults = constants.config.defaults
         cfg = self.config or {}
         offset_x = cfg.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X)
@@ -2592,7 +2595,9 @@ class NetworkSpeedWidget(QWidget):
         default_x = offset_x == defaults.DEFAULT_TRAY_OFFSET_X or offset_x in defaults.LEGACY_DEFAULT_TRAY_OFFSETS_X
         return (cfg.get('position_x') is not None or cfg.get('position_y') is not None
                 or not default_x
-                or cfg.get('tray_offset_y', defaults.DEFAULT_TRAY_OFFSET_Y) != defaults.DEFAULT_TRAY_OFFSET_Y)
+                or cfg.get('tray_offset_y', defaults.DEFAULT_TRAY_OFFSET_Y) != defaults.DEFAULT_TRAY_OFFSET_Y
+                or cfg.get('left_anchor_drag_dx', defaults.DEFAULT_LEFT_ANCHOR_DRAG_DX)
+                != defaults.DEFAULT_LEFT_ANCHOR_DRAG_DX)
 
     def _maybe_show_side_no_room_notice(self) -> None:
         """One-time heads-up (ever): a side taskbar's app buttons leave no free spot, so the widget sits

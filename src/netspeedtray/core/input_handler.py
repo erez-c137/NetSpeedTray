@@ -92,6 +92,11 @@ class InputHandler(QObject):
         if not self._drag_start_pos:
             return
 
+        # Left-anchor pin (`pin_left_edge`): the widget CAN be dragged while pinned - the drag
+        # slides it along the bar FROM its anchor (PositionManager.constrain_drag keeps it right
+        # of anchor + LEFT_ANCHOR_GAP_PX), and the drop saves `left_anchor_drag_dx`
+        # (_save_dragged_position), not tray_offset_x. Reset position clears the offset again.
+
         # Check for minimum drag distance to prevent accidental moves (Fix for sticky Free Move)
         if (event.globalPosition().toPoint() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
             return
@@ -287,6 +292,10 @@ class InputHandler(QObject):
         """
         Saves the final position based on the current mode:
         - Floating (Free Move, or #188 free-float on a taskbar-less display): absolute X/Y.
+        - Docked with the left-anchor pin on (and applying): `left_anchor_drag_dx`, the offset
+          FROM the left anchor (clamped >= 0) - never tray_offset_x, so the anchored x stays
+          derived from the shell layout (the Widgets/weather button's right edge, or the bar's
+          left edge) and only the user's distance from it is stored.
         - Docked: the offset relative to the tray/edge.
         """
         try:
@@ -303,14 +312,25 @@ class InputHandler(QObject):
                 # We need to know WHICH offset to update (x or y) based on taskbar orientation
                 from netspeedtray.utils.taskbar_utils import get_taskbar_info
                 from netspeedtray import constants
-                
+
                 # Resolve against the PREFERRED taskbar (a secondary drag must not measure its offset
                 # against the primary taskbar's geometry) (#186).
                 tb_info = get_taskbar_info(preferred_screen_name=config.get("preferred_monitor"))
                 edge = tb_info.get_edge_position()
                 dpi_scale = tb_info.dpi_scale if tb_info.dpi_scale > 0 else 1.0
-                
-                if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
+
+                spot_fn = getattr(self.position_manager, "left_anchor_spot_x", None)
+                anchor_spot = (spot_fn(tb_info) if config.get("pin_left_edge", False)
+                               and callable(spot_fn) else None)
+                if anchor_spot is not None:
+                    # Left-anchor pin: measure the drop from the ANCHOR, not from the tray. A drop
+                    # left of the anchored spot snaps the offset to 0 (the drag constraint already
+                    # keeps the widget there; a lost drag can still land one short).
+                    new_dx = max(0, int(self.widget.pos().x()) - anchor_spot)
+                    updates["left_anchor_drag_dx"] = new_dx
+                    self.logger.debug(f"Saved left-anchor drag offset: {new_dx} (anchor spot={anchor_spot}, "
+                                      f"X={self.widget.pos().x()})")
+                elif edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
                     # Horizontal Taskbar: Variable is X offset from RIGHT side
                     # Offset = RightBoundary - WidgetRight
                     # Logic matches PositionCalculator: x = right_boundary - widget_width - offset

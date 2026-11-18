@@ -397,6 +397,7 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "הצג צריכת נתונים בעת ריחוף מעל היישומון",
+    "PIN_LEFT_EDGE_LABEL": "עיגון היישומון בקצה השמאלי של שורת המשימות",
     "SETTINGS_PREVIEW_LABEL": "תצוגה מקדימה",
     "HOVER_TIPS_LABEL": "הצג עצות ללחיצה ימנית / לחיצה כפולה",
     "ARROW_PRESET_OUTLINE_COMPACT": "מתאר קומפקטי",

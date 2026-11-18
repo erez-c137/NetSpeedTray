@@ -397,6 +397,7 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "Datagebruik tonen bij hoveren over de widget",
+    "PIN_LEFT_EDGE_LABEL": "Widget aan het linkeruiteinde van de taakbalk verankeren",
     "SETTINGS_PREVIEW_LABEL": "Voorbeeld",
     "HOVER_TIPS_LABEL": "Tips voor rechtsklik / dubbelklik tonen",
     "ARROW_PRESET_OUTLINE_COMPACT": "Compact omtrek",

@@ -76,6 +76,7 @@ class SettingsDialog(QDialog):
     # (General page shows the live state).
     RESET_ALL_KEEPS = (
         "config_version", "position_x", "position_y", "tray_offset_x", "tray_offset_y",
+        "left_anchor_drag_dx",
         "settings_window_pos", "graph_window_pos", "app_activity_window_pos", "monitor_window_pos",
         "first_run_ever", "first_run_v2_seen", "tooltip_hint_shown_count", "temp_onboarding_dismissed",
         "widgets_overlap_nudge_shown", "history_upgrade_notice_shown",

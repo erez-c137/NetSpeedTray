@@ -397,6 +397,7 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value} %",
     "HOVER_USAGE_CARD_LABEL": "Показывать расход данных при наведении на виджет",
+    "PIN_LEFT_EDGE_LABEL": "Закрепить виджет у левого края панели задач",
     "SETTINGS_PREVIEW_LABEL": "Предпросмотр",
     "HOVER_TIPS_LABEL": "Показывать подсказки по правому / двойному клику",
     "ARROW_PRESET_OUTLINE_COMPACT": "Контурные компактные",
