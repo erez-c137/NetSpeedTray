@@ -822,3 +822,41 @@ def test_a_gap_paints_no_pixels(q_app):
         assert inked(120) == 0 and inked(175) == 0, paint    # anywhere well inside it
         assert inked(50) > 3, (paint, inked(50))             # before: line + fill
         assert inked(250) > 3, (paint, inked(250))           # after
+
+
+def test_a_link_change_then_hide_still_ends_in_a_forced_read(q_app):
+    """Review of #596: the link changes, the Monitor is minimized inside the 11 s window (hideEvent
+    stops the single-shot before it fires), then restored - the restore's read must be a forced one."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QApplication
+    from netspeedtray.tests.unit.test_overview_tiles import _HeldWS
+    ws = _HeldWS()
+    host, ov = _hosted(ws, period=2)
+    forced = []
+    real = T._read_window
+
+    def spy(*a, **kw):
+        forced.append(kw.get("force"))
+        return real(*a, **kw)
+    T._read_window = spy
+    try:
+        host.show()
+        _settle(ov)
+        ov._main_widget.latency_link_lost = False
+        ov._render()
+        ov._main_widget.latency_link_lost = True
+        ov._render()
+        assert ov._link_timer.isActive()
+        host.setWindowState(Qt.WindowState.WindowMinimized)
+        QApplication.processEvents()
+        assert not ov._link_timer.isActive()
+        forced.clear()
+        host.setWindowState(Qt.WindowState.WindowNoState)
+        _settle(ov)
+        assert forced == [True], forced
+        assert not ov._force_reload
+    finally:
+        T._read_window = real
+        ov.teardown()
+        host.close()
+        host.deleteLater()

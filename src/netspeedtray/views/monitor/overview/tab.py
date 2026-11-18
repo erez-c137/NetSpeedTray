@@ -753,6 +753,9 @@ class OverviewTab(QWidget):
     def hideEvent(self, event) -> None:  # noqa: N802 (Qt override)
         self._timer.stop()
         self._hist_timer.stop()
+        if self._link_timer.isActive():
+            # A link change's re-read is still pending: the next show's read must be that forced one.
+            self._force_reload = True
         self._link_timer.stop()
         self._busiest.stop()
         # A read still in flight lands while hidden: drop it (showEvent reloads anyway).
