@@ -487,7 +487,7 @@ def test_saves_through_save_config_keys_so_settings_previews_never_reach_disk(qt
     live = dict(baseline, font_size=20)                       # the user is previewing a bigger font
     written = []
     w = types.SimpleNamespace(config=live, logger=MagicMock())
-    w.settings_dialog = types.SimpleNamespace(original_config=baseline, config=dict(live),
+    w.settings_dialog = types.SimpleNamespace(original_config=baseline, config=dict(live), isVisible=lambda: True,
                                               unowned_app_state_keys=lambda: ("first_seen_at",))
     w.config_controller = types.SimpleNamespace(
         config_manager=types.SimpleNamespace(save=lambda cfg: written.append(dict(cfg))),

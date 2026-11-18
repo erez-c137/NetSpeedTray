@@ -527,7 +527,7 @@ def test_turn_on_never_saves_settings_unsaved_preview_edits():
     saved = _cfg(font_size=9)
     live = dict(saved, font_size=20)
     section = MagicMock()
-    dialog = SimpleNamespace(config=dict(live), original_config=dict(saved),
+    dialog = SimpleNamespace(config=dict(live), original_config=dict(saved), isVisible=lambda: True,
                              _built_pages={"interfaces": SimpleNamespace(connection=section)})
     fake, manager = _fake_widget(live, dialog)
     NetworkSpeedWidget.turn_on_internet_check(fake)
@@ -546,6 +546,9 @@ def test_turn_on_does_not_build_the_lazy_network_page():
     class Dialog:
         config, original_config, _built_pages = dict(cfg), dict(cfg), {}
 
+        def isVisible(self):
+            return True
+
         @property
         def interfaces_page(self):
             raise AssertionError("built the Network page")
@@ -559,7 +562,8 @@ def test_not_now_survives_settings_cancel_and_save():
     Settings' Cancel (original_config) nor its Save (config) brings the offer back."""
     saved = _cfg()
     live = dict(saved, font_size=20)
-    dialog = SimpleNamespace(config=dict(live), original_config=dict(saved), _built_pages={})
+    dialog = SimpleNamespace(config=dict(live), original_config=dict(saved), _built_pages={},
+                             isVisible=lambda: True)
     fake, manager = _fake_widget(live, dialog)
     offer = IO.InternetOffer(fake, live)
     offer.decline()

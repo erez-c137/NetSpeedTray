@@ -354,3 +354,44 @@ def test_the_panels_monitor_or_settings_row_answers_the_tip(qtbot, row, tip_stat
     assert n._live_card() is None and not n.owes_moment()
     n.try_show()
     assert not _tip_shown(n)                                 # never back over the Monitor / Settings
+
+
+# --- combined review C5: the dialog-baseline path only for a Settings dialog that is really open ------
+
+class _ClosedSettings:
+    """Settings after Save, kept alive (a pending backup) but no longer on screen: its snapshot is
+    from when it opened - the live config already holds what it saved."""
+    original_config = {"theme": "OLD", "first_seen_at": None}
+    config = {"theme": "OLD"}
+
+    def isVisible(self):
+        return False
+
+    def unowned_app_state_keys(self):
+        return {"first_seen_at", "support_prompt_shown"}
+
+
+def test_save_config_keys_ignores_a_settings_dialog_that_is_no_longer_open():
+    saved = []
+    w = types.SimpleNamespace(settings_dialog=_ClosedSettings(), logger=MagicMock(),
+                              config={"theme": "NEW-SAVED", "first_seen_at": "2026-11-01T00:00:00Z"})
+    w.config_controller = types.SimpleNamespace(
+        config_manager=types.SimpleNamespace(save=lambda cfg: saved.append(("file", dict(cfg)))),
+        update_config=lambda u, apply_and_repaint=True: saved.append(("update_config", dict(u))))
+    NetworkSpeedWidget.save_config_keys(w, {"support_prompt_shown": True})
+    assert saved == [("update_config", {"support_prompt_shown": True})]   # never the stale "OLD" theme
+
+
+def test_save_config_keys_ignores_a_deleted_settings_dialog(qtbot):
+    from PyQt6 import sip
+    from PyQt6.QtWidgets import QDialog
+    dlg = QDialog()
+    dlg.original_config = {"theme": "OLD"}
+    sip.delete(dlg)
+    saved = []
+    w = types.SimpleNamespace(settings_dialog=dlg, logger=MagicMock(), config={"theme": "NEW"})
+    w.config_controller = types.SimpleNamespace(
+        config_manager=types.SimpleNamespace(save=lambda cfg: saved.append(("file", dict(cfg)))),
+        update_config=lambda u, apply_and_repaint=True: saved.append(("update_config", dict(u))))
+    NetworkSpeedWidget.save_config_keys(w, {"support_prompt_shown": True})
+    assert saved == [("update_config", {"support_prompt_shown": True})]

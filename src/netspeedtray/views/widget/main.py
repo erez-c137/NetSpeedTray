@@ -2962,7 +2962,22 @@ class NetworkSpeedWidget(QWidget):
         keys instead (never those edits); and both of the dialog's snapshots take the keys, so neither
         its Cancel nor its Save undoes them."""
         dialog = getattr(self, "settings_dialog", None)
-        baseline = getattr(dialog, "original_config", None) if dialog is not None else None
+        # Combined review C5: only a dialog that is really open (alive and visible). One that was saved
+        # or cancelled but is still referenced holds a stale snapshot - the live config is the truth.
+        open_now = False
+        if dialog is not None:
+            try:
+                from PyQt6 import sip
+                alive = not sip.isdeleted(dialog)
+            except TypeError:
+                alive = True            # not a Qt object (a test stand-in)
+            except Exception:
+                alive = False
+            try:
+                open_now = alive and bool(dialog.isVisible())
+            except Exception:
+                open_now = False
+        baseline = getattr(dialog, "original_config", None) if open_now else None
         if not isinstance(baseline, dict):
             self.config_controller.update_config(dict(updates), apply_and_repaint=False)
             return
