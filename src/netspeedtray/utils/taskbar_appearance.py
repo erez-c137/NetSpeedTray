@@ -38,6 +38,9 @@ _SPI_GETHIGHCONTRAST = 0x0042
 _HCF_HIGHCONTRASTON = 0x00000001
 _COLOR_WINDOW = 5
 _COLOR_WINDOWTEXT = 8
+_COLOR_HIGHLIGHT = 13
+_COLOR_HIGHLIGHTTEXT = 14   # integration 2.2.2: #592's Flyout HC colours (moved up beside #590's)
+_COLOR_HOTLIGHT = 26     # the system hyperlink colour (High Contrast themes set it per theme)
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,43 @@ def read_high_contrast() -> tuple:
     except Exception as e:   # pragma: no cover - defensive; a failed read is "not on"
         logger.debug("High Contrast read failed: %s", e)
         return False, None, None
+
+
+def read_high_contrast_link_colors() -> Optional[dict]:
+    """While High Contrast is on, the theme's own colours for a link-style control:
+    ``{"text", "background", "link", "focus"}`` as #RRGGBB (COLOR_WINDOWTEXT, COLOR_WINDOW,
+    COLOR_HOTLIGHT, COLOR_HIGHLIGHT). None when High Contrast is off or unreadable - the caller then
+    uses the app's own Light/Dark tokens (utils/components.NoticeLink)."""
+    on, text, back = read_high_contrast()
+    if not on:
+        return None
+    try:
+        get = ctypes.windll.user32.GetSysColor
+        get.restype = ctypes.c_uint32
+        return {"text": text, "background": back,
+                "link": _colorref_hex(get(_COLOR_HOTLIGHT)),
+                "focus": _colorref_hex(get(_COLOR_HIGHLIGHT))}
+    except Exception as e:   # pragma: no cover - defensive
+        logger.debug("High Contrast link colours unreadable: %s", e)
+        return {"text": text, "background": back, "link": text, "focus": text}
+
+
+def read_high_contrast_ui_colors() -> Optional[dict]:
+    """The contrast theme's own colours for a small window of ours (the Flyout card), or None when
+    High Contrast is off / unreadable: ``text`` (COLOR_WINDOWTEXT), ``background`` (COLOR_WINDOW),
+    ``highlight`` / ``highlight_text`` (COLOR_HIGHLIGHT / COLOR_HIGHLIGHTTEXT, a primary button)."""
+    on, text, background = read_high_contrast()
+    if not on or not text or not background:
+        return None
+    try:
+        get = ctypes.windll.user32.GetSysColor
+        get.restype = ctypes.c_uint32
+        return {"text": text, "background": background,
+                "highlight": _colorref_hex(get(_COLOR_HIGHLIGHT)),
+                "highlight_text": _colorref_hex(get(_COLOR_HIGHLIGHTTEXT))}
+    except Exception as e:   # pragma: no cover - defensive
+        logger.debug("High Contrast colours unreadable: %s", e)
+        return {"text": text, "background": background, "highlight": text, "highlight_text": background}
 
 
 def _read_dword(path: str, name: str) -> Optional[int]:

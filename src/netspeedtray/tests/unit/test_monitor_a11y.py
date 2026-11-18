@@ -42,9 +42,14 @@ def test_network_hero_is_focusable_and_named(q_app):
 def test_usage_cap_hint_is_keyboard_accessible(q_app):
     from netspeedtray.views.monitor.overview.tiles import UsageTile
     u = UsageTile(I18nStrings("en_US"))
-    flags = u._cap_hint.textInteractionFlags()
-    assert flags & Qt.TextInteractionFlag.LinksAccessibleByKeyboard
-    assert u._cap_hint.accessibleName()
+    # a NoticeLink since 2.2.2 D4: a real button that Tab reaches and Enter / Space fire
+    btn = u._cap_hint.button()
+    assert btn.focusPolicy() & Qt.FocusPolicy.TabFocus
+    assert btn.accessibleName() == I18nStrings("en_US").USAGE_SET_LIMIT_HINT
+    fired = []
+    u.set_cap_requested.connect(lambda: fired.append(1))
+    _press(btn, Qt.Key.Key_Enter)
+    assert fired == [1]
 
 
 def test_tab_bar_buttons_keyboard_reachable_and_named(q_app):

@@ -78,8 +78,9 @@ class WidgetPage(QWidget):
             layout.addWidget(SettingCard(getattr(self.i18n, f"ORDER_POSITION_{i+1}"), control=combo))
             self.pos_combos.append(combo)
 
-        # --- Behavior (was on the General page) ---
-        layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
+        # --- Placement and visibility (was "Behavior", 2.2.2 D7): which taskbar, dragging, floating, and
+        # when the widget steps out of the way (full screen, the app buttons). ---
+        layout.addWidget(section_header(self.i18n.PLACEMENT_GROUP_TITLE))
         # Preferred Monitor (#72) - pin the widget to a specific display (default = primary). It picks
         # the taskbar the widget docks to, and "Float on a display without a taskbar" below only acts on
         # it, so it lives here with the other placement controls (moved from General, 2.2 IA pass).

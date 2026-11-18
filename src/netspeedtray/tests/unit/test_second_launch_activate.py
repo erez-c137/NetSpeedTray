@@ -25,6 +25,9 @@ def _signed_in_long_ago(monkeypatch):
     """The sign-in verdict reads the REAL session: a test run within minutes of signing in would flip
     wParam. Pin it to "long ago" (tests of the verdict itself override this)."""
     monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 10_000.0)
+    # 2.2.2 D3: however pytest itself was started, no shortcut and no launch-monitor hint here.
+    monkeypatch.setattr(sc, "_startup_link_name", lambda: None)
+    monkeypatch.setattr(sc, "_startup_monitor_center", lambda: None)
 
 
 def _fake_desktop(monkeypatch, windows, own_pid=999):
@@ -34,6 +37,8 @@ def _fake_desktop(monkeypatch, windows, own_pid=999):
     monkeypatch.setattr(sc, "_has_target_prop", lambda hwnd: props[hwnd])
     monkeypatch.setattr(sc, "_window_pid", lambda hwnd: pids[hwnd])
     monkeypatch.setattr(sc.os, "getpid", lambda: own_pid)
+    # A double-clicked exe (combined review C2: the panel needs positive evidence the user asked).
+    monkeypatch.setattr(sc, "_launched_by_explorer", lambda: True)
 
 
 def test_activate_message_is_its_own_registered_atom():
@@ -227,12 +232,16 @@ def test_widget_routes_the_activate_message(monkeypatch):
     monkeypatch.setattr("netspeedtray.views.widget.main.QTimer.singleShot",
                         lambda _ms, fn: scheduled.append(fn))
     fake = types.SimpleNamespace(logger=MagicMock(), fully_exit_application=MagicMock(),
-                                 show_from_second_launch=MagicMock())
+                                 show_from_second_launch=MagicMock(), show_running_panel=MagicMock(),
+                                 _app_is_quitting=MagicMock(return_value=False))
+    # 2.2.2 D3: the message goes through handle_activate_request (step 1 = this, step 2 = the panel).
+    fake.handle_activate_request = lambda w, l=0: NetworkSpeedWidget.handle_activate_request(fake, w, l)
     _ref, addr = _msg(sc.activate_message_id())
     assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", addr) == (True, 0)
     assert len(scheduled) == 1
     scheduled[0]()
-    fake.show_from_second_launch.assert_called_once_with(sign_in_duplicate=False)
+    # wParam 0 (the user) opens the panel: no stand-down flyout beside it (C4).
+    fake.show_from_second_launch.assert_called_once_with(sign_in_duplicate=False, explain_yield=False)
     fake.fully_exit_application.assert_not_called()
     # wParam 1: the second process's sign-in verdict; anything else is a plain activate.
     for wparam, expected in ((1, True), (7, False)):
@@ -242,7 +251,7 @@ def test_widget_routes_the_activate_message(monkeypatch):
         ref.wParam = wparam
         assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", addr) == (True, 0)
         scheduled[0]()
-        fake.show_from_second_launch.assert_called_once_with(sign_in_duplicate=expected)
+        fake.show_from_second_launch.assert_called_once_with(sign_in_duplicate=expected, explain_yield=True)
 
 
 def _show_fake(*, visible, off_screen, buried=True, fullscreen=False, keep_visible=False):

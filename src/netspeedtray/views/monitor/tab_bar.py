@@ -112,6 +112,14 @@ class FlatTabBar(QWidget):
             self._buttons[self._order[index]].setChecked(True)
             self.tab_selected.emit(index)
 
+    def current_button(self) -> Optional[QToolButton]:
+        """The checked (active) tab's button - where the keyboard goes when an inline card above the
+        pages closes (2.2.2 D8)."""
+        for btn in self._buttons.values():
+            if btn.isChecked():
+                return btn
+        return None
+
     def set_tab_visible(self, tab_id: str, visible: bool) -> None:
         """Show/hide a tab button (e.g. Hardware, only when hardware monitoring is enabled)."""
         btn = self._buttons.get(tab_id)

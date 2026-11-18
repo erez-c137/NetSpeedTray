@@ -39,7 +39,16 @@ class LhmConstants:
     STATUS_AUTH_REQUIRED: Final[str] = "auth_required"  # 401 and no credentials configured
     STATUS_AUTH_FAILED: Final[str] = "auth_failed"  # 401 although credentials were sent
     STATUS_OTHER: Final[str] = "other"              # answered, but not with LHM's data.json
+    # Nothing answered, but LibreHardwareMonitor.exe IS running (and no WMI source reads): its web
+    # server is off - the one step current LHM needs that "install LHM" does not cover (2.2.2 D6).
+    # Derived by StatsMonitorThread.lhm_status, never set by the HTTP client itself.
+    STATUS_SERVER_OFF: Final[str] = "server_off"
     STATUS_REFRESH_MS: Final[int] = 1000
+
+    # LibreHardwareMonitor's process image name(s), casefolded (2.2.2 D6). Checked only after an HTTP
+    # attempt found nothing listening - once per FAILURE_BACKOFF_SEC window, the probe's own cadence -
+    # by name through psutil: no admin rights, no network, a few milliseconds.
+    PROCESS_NAMES: Final[tuple] = ("librehardwaremonitor.exe",)
 
     # Connecting to a listening loopback port takes well under a millisecond; this only bounds the
     # dropped-SYN case (nothing listening, on machines whose loopback does not reset). That attempt
@@ -72,6 +81,10 @@ class LhmConstants:
     # "5 polls" was 4 s at the 1 s rate but 2 s at 0.5 s (#456). 4 s keeps the 1 s behavior (the
     # fifth poll); a late tick only moves it to the next poll.
     NOT_DETECTED_GRACE_SEC: Final[float] = 4.0
+    # How long a "LibreHardwareMonitor is running" answer stays good (2.2.2 D6 review M3). It is renewed
+    # every FAILURE_BACKOFF_SEC while temperatures / power are polled; when polling stops (they were
+    # turned off), the "web server is off" notice must not stay up on an old answer.
+    PROCESS_RESULT_TTL_SEC: Final[float] = 2 * FAILURE_BACKOFF_SEC
 
     def __init__(self) -> None:
         self.validate()
@@ -95,8 +108,12 @@ class LhmConstants:
             raise ValueError("CACHE_SEC must be positive and under one poll interval.")
         if self.FAILURE_BACKOFF_SEC <= 0:
             raise ValueError("FAILURE_BACKOFF_SEC must be positive.")
+        if not self.PROCESS_NAMES or any(n != n.casefold() for n in self.PROCESS_NAMES):
+            raise ValueError("PROCESS_NAMES must be non-empty and casefolded.")
         if self.WMI_PROBE_BACKOFF_SEC <= 0:
             raise ValueError("WMI_PROBE_BACKOFF_SEC must be positive.")
+        if self.PROCESS_RESULT_TTL_SEC <= self.FAILURE_BACKOFF_SEC:
+            raise ValueError("PROCESS_RESULT_TTL_SEC must outlast one FAILURE_BACKOFF_SEC window.")
         if self.NOT_DETECTED_GRACE_SEC <= 0:
             raise ValueError("NOT_DETECTED_GRACE_SEC must be positive.")
 

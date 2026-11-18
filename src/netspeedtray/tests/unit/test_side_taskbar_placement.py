@@ -584,7 +584,7 @@ def test_reset_menu_item_shows_once_moved_and_triggers_the_reset():
     m = TrayIconManager(w, I18nStrings("en_US"))
     m._load_and_set_icon = lambda: None
     m.initialize()
-    assert m.reset_position_action.text() == "Reset P&osition"
+    assert m.reset_position_action.text() == "Reset p&osition"
     m._refresh_dynamic_items()
     assert not m.reset_position_action.isVisible() and not m.pause_separator.isVisible()
     w.moved = True

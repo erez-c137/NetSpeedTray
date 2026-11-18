@@ -211,6 +211,27 @@ def widget_qt_scale(widget: Any) -> Optional[float]:
         return None
 
 
+def _startup_notices_yield(widget: Any, card) -> None:
+    """Another card of ours just showed: the first-run tip / "what's new" steps aside until it
+    closes - theirs win (2.2.2 D1/D2 review M3). A module function: stand-in widgets need nothing."""
+    notices = getattr(widget, "_startup_notices", None)
+    if notices is not None:
+        try:
+            notices.yield_to(card)
+        except Exception as e:
+            logging.getLogger("NetSpeedTray.NetworkSpeedWidget").debug("one-time notice could not yield: %s", e)
+
+
+def _startup_tip_gesture(widget: Any) -> None:
+    """The user did what the first-run tip teaches (hover card, double-click, right-click menu)."""
+    notices = getattr(widget, "_startup_notices", None)
+    if notices is not None:
+        try:
+            notices.on_gesture()
+        except Exception as e:
+            logging.getLogger("NetSpeedTray.NetworkSpeedWidget").debug("one-time notice gesture hook failed: %s", e)
+
+
 def _fullscreen_latch(widget: Any) -> FullscreenLatch:
     """The widget's fullscreen latch (#503), created on first use (a stand-in ``self`` in the tests
     gets its own the same way)."""
@@ -254,6 +275,21 @@ def _judge_fullscreen(widget: Any, taskbar_info: Any, hwnd_hint: int) -> bool:
         widget._fs_recheck_pending = True
         QTimer.singleShot(latch.confirm_ms, Qt.TimerType.PreciseTimer, widget._fullscreen_recheck)
     return covered
+
+
+def _deliver_update_reply(widget, kind: str, *args) -> bool:
+    """Hand a manual update check's result to whoever asked inline (check_for_updates' ``reply_to``,
+    the "running" panel - D3) - read-and-clear. False when nobody did, or they could not show it (the
+    caller then shows its usual message box / dialog)."""
+    sink = getattr(widget, "_update_reply_sink", None)
+    widget._update_reply_sink = None
+    if sink is None:
+        return False
+    try:
+        return bool(sink(kind, *args))
+    except Exception as e:
+        logging.getLogger("NetSpeedTray.Widget").debug("Inline update reply not shown: %s", e)
+        return False
 
 
 class NetworkSpeedWidget(QWidget):
@@ -317,6 +353,7 @@ class NetworkSpeedWidget(QWidget):
         self._manual_update_check: bool = False       # the result in flight answers the menu item
         self._update_auto_source: Optional[str] = None  # "startup"/"periodic"/"resume" while one is out
         self._pending_update_offer: Optional[tuple] = None  # a flyout offer waiting out fullscreen etc.
+        self._startup_notices = None  # the first-run tip / one-time "what's new" (2.2.2 D1/D2)
         self._update_flyout = None
         self.app_icon: QIcon
         # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
@@ -630,6 +667,9 @@ class NetworkSpeedWidget(QWidget):
         # Never leave an always-on-top card (pinned or not) over a game/video - even when the widget
         # itself stays (keep_visible_fullscreen / free-float).
         self.dismiss_hover_card()
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_fullscreen()   # the first-run tip / "what's new" steps aside, comes back after
         if self.config.get("keep_visible_fullscreen", False):
             return
         if self.position_manager and self.position_manager.is_free_float_active():
@@ -795,18 +835,22 @@ class NetworkSpeedWidget(QWidget):
         QTimer.singleShot(1200, self._maybe_show_welcome)
 
     def _maybe_show_welcome(self) -> None:
-        """First-run onboarding. An upgrader gets the one-time 2.0 welcome dialog; a brand-new install
-        gets no pop-up (the hover card's gesture hint is its onboarding)."""
-        # Brand-new install: no interrupting pop-up until there's a real guided tour (the old 'unfold'
-        # flyout only opened the Monitor and was removed in 2.2). We still advance the first-run flags
-        # so nothing pops later and the upgrade dialog stays correctly suppressed.
-        if self.config.get("first_run_ever", True):
-            self.config["first_run_ever"] = False
-            self.config["first_run_v2_seen"] = True  # a new 2.0 user has no "before"
-            self.update_config({"first_run_ever": False, "first_run_v2_seen": True})
-            return
-
-        if self.config.get("first_run_v2_seen", False):
+        """First-run onboarding, once the widget has settled. A 1.x upgrader gets the one-time 2.0
+        welcome dialog; everyone else goes to the one-time notices (2.2.2): a brand-new install's
+        first-run tip (D1), or the first launch of a newer final release's "what's new" (D2) -
+        views/widget/startup_notices.py, decided by core/startup_notices.py. Never both in one launch."""
+        try:   # 2.2.2 D8: start the "rate / star / support" clock on the first 2.2.2+ run (once)
+            from netspeedtray.views.monitor.support_card import ensure_first_seen
+            ensure_first_seen(self)
+        except Exception as e:
+            self.logger.error(f"Error recording first_seen_at: {e}", exc_info=True)
+        if self.config.get("first_run_ever", True) or self.config.get("first_run_v2_seen", False):
+            try:
+                from netspeedtray.views.widget.startup_notices import StartupNotices
+                self._startup_notices = StartupNotices(self)
+                self._startup_notices.start()
+            except Exception as e:
+                self.logger.error(f"Error starting the one-time notices: {e}", exc_info=True)
             return
         try:
             from netspeedtray.views.welcome_dialog import WelcomeDialog
@@ -819,9 +863,13 @@ class NetworkSpeedWidget(QWidget):
                 )
         except Exception as e:
             self.logger.error(f"Error showing welcome dialog: {e}", exc_info=True)
-        # Mark seen (even if the dialog errored) so it appears at most once.
+        # Mark seen (even if the dialog errored) so it appears at most once - and record this version,
+        # so the next launch does not follow it with this release's "what's new" (D2).
+        from netspeedtray.core.startup_notices import later_version
+        seen = later_version(self.config.get("last_seen_version"), constants.app.VERSION)
         self.config["first_run_v2_seen"] = True
-        self.update_config({"first_run_v2_seen": True})
+        self.config["last_seen_version"] = seen
+        self.update_config({"first_run_v2_seen": True, "last_seen_version": seen})
 
     def _on_latency(self, sample) -> None:
         """A LatencySample arrived (main thread, queued from the probe thread). Update the live
@@ -1041,6 +1089,7 @@ class NetworkSpeedWidget(QWidget):
             self._usage_alert_flyout = Flyout(title, message, auto_dismiss_ms=auto_dismiss_ms)
             geo = self.frameGeometry()
             self._usage_alert_flyout.show_at(QPoint(geo.left(), geo.top()))
+            _startup_notices_yield(self, self._usage_alert_flyout)
         except Exception as e:
             self.logger.error(f"Error showing usage alert: {e}", exc_info=True)
 
@@ -1663,7 +1712,10 @@ class NetworkSpeedWidget(QWidget):
             show_data = bool(self.config.get("show_usage_on_hover", True))
             show_tips = bool(self.config.get("show_hover_tips", True))
             show_power = bool(self.config.get("power_display_enabled", False))
-            hint = self._hover_hint_text() if show_tips else None
+            notices = getattr(self, "_startup_notices", None)
+            tip_up = notices is not None and notices.tip_visible()
+            # While the first-run tip is up, the hover card does not repeat its gesture hint.
+            hint = self._hover_hint_text() if show_tips and not tip_up else None
             today, month = self._hover_usage_totals() if show_data else (None, None)
             cap = self._hover_cap_info() if show_data else None
             power = self._hover_power_summary() if show_power else None
@@ -1700,6 +1752,7 @@ class NetworkSpeedWidget(QWidget):
             # no frame in between, instead of a visible blink.
             old, self._hover_card = self._hover_card, card
             card.show_for(self.frameGeometry(), avail, edge=self._hover_card_edge(), screen=screen)
+            _startup_tip_gesture(self)   # the user found the hover card: the tip has done its job
             if pinned:
                 card.set_pinned(True)    # opened by a click/tap: takes clicks (not pass-through)
                 self._retire_pin_hint()
@@ -2133,6 +2186,7 @@ class NetworkSpeedWidget(QWidget):
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         """Delegates double-click events to the InputHandler."""
+        _startup_tip_gesture(self)
         if self.input_handler:
             self.input_handler.handle_double_click(event)
 
@@ -2175,6 +2229,9 @@ class NetworkSpeedWidget(QWidget):
     def moveEvent(self, event) -> None:
         super().moveEvent(event)
         self._reanchor_hover_card()
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_widget_moved()
 
     def showEvent(self, event: QShowEvent) -> None:
         self.logger.debug(f"Widget showEvent triggered. New visibility: {self.isVisible()}")
@@ -2189,6 +2246,9 @@ class NetworkSpeedWidget(QWidget):
                 handler.check_shell_theme()
             except Exception as e:
                 self.logger.debug("theme re-check on show failed: %s", e)
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_widget_shown()   # a deferred first-run tip / "what's new" gets its moment
 
     def event(self, event: QEvent) -> bool:
         # Qt sends WinIdChange whenever the native window is created or recreated (a window-flag
@@ -2240,6 +2300,9 @@ class NetworkSpeedWidget(QWidget):
             self._hide_usage_hover_card()
         except Exception:
             pass
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_widget_hidden()   # ...nor a first-run tip / "what's new" card (it comes back)
         super().hideEvent(event)
 
 
@@ -2379,9 +2442,11 @@ class NetworkSpeedWidget(QWidget):
                     return True, 0
                 if _WM_NST_ACTIVATE and msg.message == _WM_NST_ACTIVATE:
                     # A second launch (#234): deferred out of the native dispatch like the shutdown.
-                    # wParam: the second process's own verdict - a duplicate start at sign-in (#373).
-                    duplicate = int(msg.wParam or 0) == constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE
-                    QTimer.singleShot(0, lambda: self.show_from_second_launch(sign_in_duplicate=duplicate))
+                    # wParam: the second process's own verdict - the user, a duplicate start at
+                    # sign-in (#373) or the updater's relaunch (handle_activate_request).
+                    wparam = int(msg.wParam or 0)
+                    lparam = int(msg.lParam or 0)   # the launch monitor's centre (D3), 0 = none
+                    QTimer.singleShot(0, lambda: self.handle_activate_request(wparam, lparam))
                     return True, 0
                 if msg.message == _WM_QUERYENDSESSION or (msg.message == _WM_ENDSESSION and msg.wParam):
                     # Logoff / shutdown / restart. The normal quit path (closeEvent -> cleanup) never
@@ -2504,7 +2569,86 @@ class NetworkSpeedWidget(QWidget):
                             'tray_offset_x': defaults.DEFAULT_TRAY_OFFSET_X,
                             'tray_offset_y': defaults.DEFAULT_TRAY_OFFSET_Y})
 
-    def show_from_second_launch(self, sign_in_duplicate: bool = False) -> None:
+    def handle_activate_request(self, wparam: int, lparam: int = 0) -> None:
+        """
+        Another launch of this user's app asked for it (the activate message; ``wparam`` is the second
+        process's verdict - shutdown_channel.activation_kind). Step 1, always: bring the widget back
+        (show_from_second_launch - its #373 sign-in rule included). Step 2 (2.2.2 D3), only for
+        ACTIVATE_WPARAM_USER and never while the app is quitting: the "NetSpeedTray is running" panel,
+        in front and focused (the second process allowed this one to take the foreground first), on
+        the monitor ``lparam`` names (shutdown_channel.pack_point; 0 = none). A duplicate autostart at
+        sign-in, the updater's relaunch and any value this build doesn't know get step 1 only. Under a
+        fullscreen app the widget waits as always, but the panel still opens: launching the app is an
+        explicit request for a window.
+        """
+        app = constants.app
+        # Combined review C4: a launch that opens the panel shows ONE surface - the yield's stand-down
+        # flyout is skipped (and its once-ever notice stays owed); the panel is what the user asked for.
+        opens_panel = wparam == app.ACTIVATE_WPARAM_USER and not self._app_is_quitting()
+        try:
+            self.show_from_second_launch(sign_in_duplicate=(wparam == app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE),
+                                         explain_yield=not opens_panel)
+        except Exception as e:
+            self.logger.error("Second launch: bringing the widget back failed: %s", e, exc_info=True)
+        if not opens_panel or self._app_is_quitting():
+            return
+        self.show_running_panel(lparam)
+
+    def show_running_panel(self, lparam: int = 0) -> None:
+        """Open the "NetSpeedTray is running" panel (D3) - or bring the open one to the front: one at a
+        time. Released when it closes (WA_DeleteOnClose); the next launch builds a fresh one.
+
+        An app-modal dialog of ours already up (Welcome, the update dialog, Check connection...) owns
+        input: a panel opened beside it would take no clicks or keys, so that dialog comes to the front
+        instead and no panel opens."""
+        try:
+            from PyQt6 import sip
+            from netspeedtray.views import running_panel
+            modal = QApplication.activeModalWidget()
+            if modal is not None:
+                self.logger.info("Second launch: a dialog is open - bringing it forward, no panel.")
+                running_panel.bring_to_front(modal)
+                return
+            panel = getattr(self, "_running_panel", None)
+            if panel is not None and sip.isdeleted(panel):
+                panel = self._running_panel = None
+            if panel is None:
+                panel = running_panel.RunningPanel(self, self.i18n, version=constants.app.VERSION)
+                running_panel.keep_until_destroyed(self, "_running_panel", panel)
+                panel.place_on_screen(running_panel.screen_for_new_window(lparam, self))
+            running_panel.bring_to_front(panel)
+            self.logger.info("Second launch: the 'running' panel is open.")
+            # Integration 2.2.2 (#591 x #592): a first-run tip / "what's new" up or waiting steps
+            # aside for the panel and returns after it closes (StartupNotices.yield_to_window).
+            notices = getattr(self, "_startup_notices", None)
+            if notices is not None:
+                try:
+                    notices.yield_to_window(panel)
+                except Exception as e:
+                    self.logger.debug("one-time notice could not yield to the panel: %s", e)
+        except Exception as e:
+            self.logger.error("Opening the 'running' panel failed: %s", e, exc_info=True)
+
+    def close_running_panel(self) -> None:
+        """Close the panel if it is open (quit's first cleanup step)."""
+        panel = getattr(self, "_running_panel", None)
+        self._running_panel = None
+        if panel is None:
+            return
+        from PyQt6 import sip
+        if not sip.isdeleted(panel):
+            panel.close()
+
+    def open_connection_check(self) -> None:
+        """The Check connection sheet (the Monitor's Overview/Network headers open the same one), here
+        for the "running" panel - parentless, so it is a window of its own."""
+        try:
+            from netspeedtray.views.monitor.connection_check import open_connection_check
+            open_connection_check(self, self.config, self.i18n)
+        except Exception as e:
+            self.logger.error("Opening the connection check failed: %s", e, exc_info=True)
+
+    def show_from_second_launch(self, sign_in_duplicate: bool = False, explain_yield: bool = True) -> None:
         """
         The app was launched again while running (#234, rc.2 W14; the second process posts
         ACTIVATE_MESSAGE_NAME and exits). Bring the widget back however it was lost: hidden -> shown;
@@ -2524,6 +2668,8 @@ class NetworkSpeedWidget(QWidget):
         aside (no flash, no notice). Only the FIRST such activation of this instance is taken as the
         duplicate: any later one, even flagged, is the user starting it again within the sign-in window
         and stands down as usual. A user's launch right after Setup's Finish-page launch is NOT one.
+        ``explain_yield`` False (a launch that opens the "running" panel, combined review C4): the
+        stand-down happens, its flyout does not.
         """
         try:
             pm = getattr(self, "position_manager", None)
@@ -2568,7 +2714,7 @@ class NetworkSpeedWidget(QWidget):
             if pm.is_buried_behind_taskbar():
                 pm.reseat_above_taskbar()
             QTimer.singleShot(0, self._execute_refresh)
-            if was_yielded:
+            if was_yielded and explain_yield:
                 # Last: only when the yield had hidden it (never over a fullscreen app - returned above).
                 self._explain_app_yield_stand_down()
         except Exception as e:
@@ -2728,6 +2874,7 @@ class NetworkSpeedWidget(QWidget):
                 self._notice_flyout.action_clicked.connect(on_action)
             geo = self.frameGeometry()
             self._notice_flyout.show_at(QPoint(geo.left(), geo.top()))
+            _startup_notices_yield(self, self._notice_flyout)
             return True
         except Exception as e:
             self.logger.error("Error showing a notice: %s", e, exc_info=True)
@@ -2794,15 +2941,92 @@ class NetworkSpeedWidget(QWidget):
         self.config_controller.handle_settings_changed(updated_config, save_to_disk)
 
 
-    def open_data_usage_settings(self) -> None:
-        """Open Settings straight on the Network page, where the data-cap 'Data usage' section lives -
-        the Monitor's 'Set a monthly limit' hint's door (was dropping the user on General)."""
+    def open_settings(self, page, anchor_key: Optional[str] = None) -> None:
+        """The settings router (2.2.2 D4): open Settings on ``page`` - a page id ("general", "widget",
+        "appearance", "hardware", "network" / "interfaces", "advanced") or a sidebar index - and, with
+        ``anchor_key``, scroll to, briefly outline and focus that control (each page's
+        ``anchor_widgets``). Every NoticeLink that sends the user to Settings comes through here. It
+        never changes a setting: the user flips the switch it lands on."""
         try:
             self.show_settings()
-            if self.settings_dialog is not None:
-                self.settings_dialog.navigate_to_page(self.settings_dialog.PAGE_NETWORK)
+            dialog = self.settings_dialog
+            if dialog is not None:
+                dialog.open_page(page, anchor_key)
         except Exception as e:
-            self.logger.error("Error opening data-usage settings: %s", e, exc_info=True)
+            self.logger.error("Error opening settings at %r / %r: %s", page, anchor_key, e, exc_info=True)
+
+    def save_config_keys(self, updates: Dict[str, Any]) -> None:
+        """Save a few keys the Monitor changes on its own (2.2.2 D5: the internet check's Turn on, the
+        offer's Not now) - applied to the live config at once. While a Settings dialog is open the live
+        config also holds its unsaved PREVIEW edits, so the file gets the dialog's baseline plus these
+        keys instead (never those edits); and both of the dialog's snapshots take the keys, so neither
+        its Cancel nor its Save undoes them."""
+        dialog = getattr(self, "settings_dialog", None)
+        # Combined review C5: only a dialog that is really open (alive and visible). One that was saved
+        # or cancelled but is still referenced holds a stale snapshot - the live config is the truth.
+        open_now = False
+        if dialog is not None:
+            try:
+                from PyQt6 import sip
+                alive = not sip.isdeleted(dialog)
+            except TypeError:
+                alive = True            # not a Qt object (a test stand-in)
+            except Exception:
+                alive = False
+            try:
+                open_now = alive and bool(dialog.isVisible())
+            except Exception:
+                open_now = False
+        baseline = getattr(dialog, "original_config", None) if open_now else None
+        if not isinstance(baseline, dict):
+            self.config_controller.update_config(dict(updates), apply_and_repaint=False)
+            return
+        self.config.update(updates)
+        for snapshot in (getattr(dialog, "config", None), baseline):
+            if isinstance(snapshot, dict):
+                snapshot.update(updates)
+        # Integration 2.2.2 (#597 x #592): Settings no longer sends the app state it doesn't own back
+        # (RESET_ALL_KEEPS minus its pages' keys - SettingsDialog._for_widget), so for THOSE keys the
+        # live config is the truth, not the snapshot from when the dialog opened: a tip shown, an
+        # update snoozed or the widget dragged meanwhile. The baseline stays the truth only for the
+        # user's settings (the preview must never reach the file).
+        live_state: Dict[str, Any] = {}
+        keys_of = getattr(dialog, "unowned_app_state_keys", None)
+        if callable(keys_of):
+            try:
+                live_state = {k: self.config[k] for k in keys_of() if k in self.config}
+            except Exception as e:
+                self.logger.debug("Settings' app-state keys unreadable; saving its baseline: %s", e)
+        try:
+            self.config_controller.config_manager.save({**baseline, **live_state, **updates})
+        except Exception as e:
+            self.logger.error("Could not save %s: %s", sorted(updates), e, exc_info=True)
+
+    def turn_on_internet_check(self) -> None:
+        """The "Also check your internet?" confirm's Turn on (2.2.2 D5) - only ever called from that
+        click. Saves ``latency_public_enabled`` (save_config_keys: never Settings' unsaved edits), makes
+        sure the probe is running (it reads the shared config before every cycle, so the internet ping
+        starts within one 3 s cycle), and shows the switch On in an open Settings dialog - only if its
+        Network page was built: the page is lazy, and a built-later page loads the updated snapshot.
+        Reversible in Settings > Network."""
+        self.save_config_keys({"latency_public_enabled": True})
+        self.apply_latency_probe()
+        dialog = getattr(self, "settings_dialog", None)
+        if dialog is None:
+            return
+        try:
+            built = getattr(dialog, "_built_pages", None)
+            page = built.get("interfaces") if isinstance(built, dict) else None
+            section = getattr(page, "connection", None) if page is not None else None
+            if section is not None and hasattr(section, "set_public_enabled"):
+                section.set_public_enabled(True)
+        except Exception as e:
+            self.logger.debug("Open Settings not synced to the internet check: %s", e)
+
+    def open_data_usage_settings(self) -> None:
+        """Open Settings straight on the Network page's 'Data usage' section - the Monitor's 'Set a
+        monthly limit' hint's door (was dropping the user on General)."""
+        self.open_settings("network", "data_cap")
 
     def show_settings(self) -> None:
         """Build and show the Settings dialog (non-modal, top-level), or bring the open one forward.
@@ -2947,13 +3171,20 @@ class NetworkSpeedWidget(QWidget):
         QTimer.singleShot(constants.timeouts.GRAPH_CLOSE_REFRESH_DELAY_MS, self._execute_refresh)
 
 
-    def check_for_updates(self) -> None:
-        """Manually trigger an update check (from menu)."""
+    def check_for_updates(self, reply_to=None) -> None:
+        """Manually trigger an update check (from menu). ``reply_to`` (the "running" panel, D3) takes the
+        result inline instead of the message boxes: called once with ("up_to_date",), ("failed", error)
+        or ("available", version, offer) and returning True when it showed it - a panel closed
+        meanwhile returns False (or raises), and the usual manual reply is shown instead."""
         from netspeedtray.core.update_checker import update_check_disabled_by_policy
         if update_check_disabled_by_policy():
             # The menu item is hidden under the policy (U1); a stale menu opened just before the
             # policy landed must not arm the manual replies for a check that will never run.
+            if reply_to is not None:
+                reply_to("none")
             return
+        if not self.update_checker and reply_to is not None:
+            reply_to("failed", "")
         if self.update_checker:
             # update_available / up_to_date / check_failed are all wired ONCE at construction
             # (persistent, see _setup_timers). Do NOT connect anything here: a second
@@ -2963,6 +3194,7 @@ class NetworkSpeedWidget(QWidget):
             # check popped a surprise "up to date" / "failed" box (#508 review). The flag below
             # is what makes this result a manual one.
             self._manual_update_check = True
+            self._update_reply_sink = reply_to
             self.update_checker.check_now()
 
     def _take_update_check_context(self) -> Tuple[bool, Optional[str]]:
@@ -2975,13 +3207,15 @@ class NetworkSpeedWidget(QWidget):
 
     def _on_update_check_up_to_date(self) -> None:
         manual, _source = self._take_update_check_context()
-        if manual:
+        if manual and not _deliver_update_reply(self, "up_to_date"):
             self._on_up_to_date_manual()
 
     def _on_update_check_failed(self, error: str = "") -> None:
         manual, _source = self._take_update_check_context()
-        if manual:
+        if manual and not _deliver_update_reply(self, "failed", error):
             self._on_check_failed_manual(error)
+
+
 
     def _schedule_resume_update_check(self) -> None:
         """Wake from sleep: check for updates once the network is likely back (coalesced)."""
@@ -3059,15 +3293,17 @@ class NetworkSpeedWidget(QWidget):
         5 s startup check, the periodic tick, after a resume: a non-modal flyout that opens the
         dialog only when clicked). One persistent handler for all; see check_for_updates."""
         manual, _source = self._take_update_check_context()
-        if getattr(self, "_update_dialog_open", False):
-            self.logger.info("Update %s found while an update prompt is open; not stacking another.",
-                             latest_version)
-            return
-        if self._app_is_quitting():
+        if getattr(self, "_update_dialog_open", False) or self._app_is_quitting():
+            if manual:
+                _deliver_update_reply(self, "none")   # an inline asker goes back to its idle state
+            if getattr(self, "_update_dialog_open", False):
+                self.logger.info("Update %s found while an update prompt is open; not stacking another.",
+                                 latest_version)
             return
         offer = (latest_version, release_url, body, installer_url, portable_url)
         if manual:
-            self._show_update_dialog(*offer)
+            if not _deliver_update_reply(self, "available", latest_version, offer):
+                self._show_update_dialog(*offer)
             return
         if self._update_recently_dismissed(latest_version):
             self.logger.info("Update %s was answered 'Not now' recently; not re-offering yet.",
@@ -3136,6 +3372,7 @@ class NetworkSpeedWidget(QWidget):
             self._update_flyout = flyout
             geo = self.frameGeometry()
             flyout.show_at(QPoint(geo.left(), geo.top()))
+            _startup_notices_yield(self, flyout)
             self.logger.info("Update %s offered (flyout).", latest)
         except Exception as e:
             self.logger.error("Error offering the update: %s", e, exc_info=True)
@@ -3239,27 +3476,97 @@ class NetworkSpeedWidget(QWidget):
 
     def _on_lhm_not_detected(self) -> None:
         """
-        Temps/power are enabled but no sensor source was found. Show the actionable
-        onboarding explainer (one click to LHM, clear that the app never runs as admin),
-        unless the user has permanently dismissed it.
+        Temps/power are enabled but no sensor source was found: the two-step temperature setup
+        (install LibreHardwareMonitor, turn on its web server; clear that the app never runs as admin).
+        With LHM already running but its web server off (D6), it opens at step 2. Its "Get
+        LibreHardwareMonitor" link opens the browser itself.
+
+        Combined review C11: shown on its own at most ONCE ever - showing it uses it up
+        (``temp_onboarding_dismissed``), however it is closed, so no "Don't remind me again" box -
+        and only through the startup cards' gates (``_temp_setup_blocked_reason``: the sign-in rush, a
+        fullscreen app / modal dialog / nobody at the screen, Settings open, another card or the
+        "running" panel up, and one one-time moment per session). Blocked, it retries every
+        STARTUP_NOTICE_RETRY_MS this session (another moment taken: next launch). After that only
+        Settings > Hardware's link opens it.
         """
         try:
             if self.config.get("temp_onboarding_dismissed", False):
                 return
-            from netspeedtray.views.temp_onboarding_dialog import (
-                TempOnboardingDialog, LHM_RELEASES_URL,
-            )
-            # The port the user configured for LHM (Settings > Hardware), as the hint names it.
+            quitting = getattr(self, "_app_is_quitting", None)
+            if callable(quitting) and quitting():
+                return
+            # It may have waited behind the gates: still wanted, and still no sensor? Else dropped
+            # for this session, its one showing NOT used up (C11 follow-up).
+            if not NetworkSpeedWidget._temp_setup_still_needed(self):
+                self.logger.info("Temperature setup dropped: temperatures are off or a sensor reads now.")
+                return
+            reason = NetworkSpeedWidget._temp_setup_blocked_reason(self)
+            if reason:
+                self.logger.info("Temperature setup owed, not now: %s.", reason)
+                from netspeedtray.views.widget.startup_notices import moment_taken
+                if moment_taken(self) is None:
+                    QTimer.singleShot(constants.app.STARTUP_NOTICE_RETRY_MS, self._on_lhm_not_detected)
+                return
+            from netspeedtray.views.temp_onboarding_dialog import TempOnboardingDialog
+            from netspeedtray.views.widget.startup_notices import MOMENT_TEMP_SETUP, take_moment
+            # The port the user configured for LHM (Settings > Hardware), as step 2 names it.
             lhm_port = getattr(self.monitor_thread, "lhm_port", constants.lhm.HTTP_PORT)
-            dlg = TempOnboardingDialog(self.i18n, self, lhm_port=lhm_port)
-            dlg.exec()
-            if dlg.dismissed_forever():
-                self.update_config({"temp_onboarding_dismissed": True})
-            if dlg.action == TempOnboardingDialog.ACTION_GET_LHM:
-                from netspeedtray.utils.helpers import open_external
-                open_external(LHM_RELEASES_URL)
+            server_off = getattr(self.monitor_thread, "lhm_status", None) == constants.lhm.STATUS_SERVER_OFF
+            mt = self.monitor_thread
+            dlg = TempOnboardingDialog(self.i18n, self, lhm_port=lhm_port, focus_step=2 if server_off else 1,
+                                       show_remind=False,
+                                       status_provider=lambda: getattr(mt, "lhm_status", None))
+            # Used up the moment it shows (a crash or a quit while it is open never brings it back).
+            self.update_config({"temp_onboarding_dismissed": True})
+            take_moment(self, MOMENT_TEMP_SETUP)
+            self.logger.info("Temperature setup shown (once, ever).")
+            try:
+                dlg.exec()
+            finally:
+                dlg.deleteLater()   # C10: parented to the widget - never kept until quit
         except Exception as e:
             self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
+
+    def _temp_setup_still_needed(self) -> bool:
+        """What made the monitor thread ask (StatsMonitorThread._update_lhm_notice) still holds:
+        temperatures or power are on, for a CPU / GPU the user monitors, and LibreHardwareMonitor is
+        not connected (``monitor_thread.lhm_status``)."""
+        from netspeedtray.core.monitor_thread import hardware_collection_gates
+        cfg = getattr(self, "config", None) or {}
+        if not (cfg.get("show_hardware_temps", False) or cfg.get("show_hardware_power", False)):
+            return False
+        try:
+            cpu, gpu = hardware_collection_gates(cfg, False)
+        except Exception:
+            cpu = gpu = True
+        if not (cpu or gpu):
+            return False
+        status = getattr(getattr(self, "monitor_thread", None), "lhm_status", None)
+        return status != constants.lhm.STATUS_OK
+
+    def _temp_setup_blocked_reason(self) -> Optional[str]:
+        """Why the automatic temperature setup may not show now (the startup cards' gates), or None.
+        Tolerant of a stand-in widget: an attribute it lacks blocks nothing."""
+        from netspeedtray.views.widget import startup_notices as sn
+        since = sn._seconds_since_sign_in()
+        if since is not None and 0 <= since < constants.app.SIGN_IN_DUPLICATE_WINDOW_S:
+            return "the sign-in rush"
+        blocked = getattr(self, "_update_offer_blocked", None)
+        try:
+            if callable(blocked) and blocked():
+                return "fullscreen app, modal dialog, or nobody at the screen"
+        except Exception:
+            pass
+        for name, why in (("settings_dialog", "Settings is open"), ("_update_flyout", "another card is up"),
+                          ("_notice_flyout", "another card is up"), ("_usage_alert_flyout", "another card is up"),
+                          ("_running_panel", "the running panel is open")):
+            obj = getattr(self, name, None)
+            try:
+                if sn._alive(obj) and obj.isVisible():
+                    return why
+            except Exception:
+                continue
+        return sn.one_time_moment_blocked(self, sn.MOMENT_TEMP_SETUP)
 
     @staticmethod
     def _widgets_text_within(rect, content, side: bool):
@@ -3636,6 +3943,11 @@ class NetworkSpeedWidget(QWidget):
             if watch is not None:
                 watch.stop()
 
+        def _running_panel() -> None:
+            # Integration (2.2.2): second - after the stall watch (#218 wants it disarmed first),
+            # before the mirrors (D3: the panel is never left open past quit).
+            NetworkSpeedWidget.close_running_panel(self)
+
         def _mirrors() -> None:
             # "Show on all taskbars" (#229): close every mirror while the data they paint still exists.
             mgr = getattr(self, "_mirrors", None)
@@ -3744,6 +4056,7 @@ class NetworkSpeedWidget(QWidget):
         #   busy database thread, and a logoff ends the process ~5 s in - the save must already be done.
         steps = (
             ("stall watch", _stall_watch),
+            ("running panel", _running_panel),   # D3: never left open past quit
             ("mirrors", _mirrors),
             ("hover card", _hover_card), ("event hooks", _event_hooks),
             ("position manager", _position_manager), ("state watcher", _state_watcher),

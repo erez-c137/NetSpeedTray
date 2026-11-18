@@ -43,7 +43,23 @@ class InterfacesPage(QWidget):
         layout = page_layout(self)
         c = style_utils.semantic_colors()
 
-        # --- Monitoring mode (radio group in a card) ---
+        # Order (2.2.2 D7): Data usage, Connection, Wi-Fi band and name, then the adapter list LAST - the
+        # most technical control (which adapters to count) used to open the page. Last also means the
+        # "Select specific" reveal grows at the bottom of the page and shifts nothing above it.
+
+        # Data-usage / data-cap section (the feature's in-settings home, 2.0 IA).
+        self.datacap = DataCapSettings(self.on_change, self.i18n)
+        layout.addWidget(self.datacap)
+
+        # Connection section - latency monitoring (gateway + opt-in public anchor) + advertised plan.
+        self.connection = ConnectionSettings(self.on_change, self.i18n)
+        layout.addWidget(self.connection)
+
+        # Wi-Fi band and name (v2.1 "Network identity") - the Wi-Fi indicator on the widget.
+        self.identity = NetworkIdentitySettings(self.on_change, self.i18n)
+        layout.addWidget(self.identity)
+
+        # --- Monitoring mode (radio group in a card) - which adapters are counted. Last on the page. ---
         layout.addWidget(section_header(self.i18n.MONITORING_MODE_LABEL))
         mode_card = QFrame()
         mode_card.setObjectName("modeCard")
@@ -61,7 +77,8 @@ class InterfacesPage(QWidget):
 
         # Subtitle under each option (muted, indented to align under the radio label) - the Win11
         # "option + helper text" pattern.
-        subtitle_style = (f"color: {c['text_secondary']}; font-size: 11px;"
+        # The caption face every card description uses (2.2.2 D7; it was a smaller 11 px).
+        subtitle_style = (f"color: {c['text_secondary']};"
                           f" margin-left: 24px; margin-bottom: 6px; background: transparent;")
         radio_subtitle_pairs = [
             (self.auto_interface_radio, self.i18n.MONITORING_MODE_AUTO_SUBTITLE),
@@ -80,6 +97,7 @@ class InterfacesPage(QWidget):
             radio.toggled.connect(self._on_mode_toggled)
             ml.addWidget(radio)
             subtitle = QLabel(subtitle_text)
+            subtitle.setFont(style_utils.font(tokens.TYPE_CAPTION))
             subtitle.setWordWrap(True)
             subtitle.setStyleSheet(subtitle_style)
             if radio in tooltips:
@@ -108,21 +126,6 @@ class InterfacesPage(QWidget):
         ml.addWidget(self.interface_scroll)
 
         layout.addWidget(mode_card)
-
-        # Order (2.2 IA pass): Data usage, Connection, Network identity. Data usage has its own tray
-        # entry and was last on the page below two open expanders; identity is the most cosmetic.
-
-        # Data-usage / data-cap section (the feature's in-settings home, 2.0 IA).
-        self.datacap = DataCapSettings(self.on_change, self.i18n)
-        layout.addWidget(self.datacap)
-
-        # Connection section - latency monitoring (gateway + opt-in public anchor) + advertised plan.
-        self.connection = ConnectionSettings(self.on_change, self.i18n)
-        layout.addWidget(self.connection)
-
-        # Network identity (v2.1) - the Wi-Fi band / network indicator on the widget.
-        self.identity = NetworkIdentitySettings(self.on_change, self.i18n)
-        layout.addWidget(self.identity)
 
         layout.addStretch()
 
@@ -224,6 +227,14 @@ class InterfacesPage(QWidget):
         self.primary_interface = primary_interface
         self._populate_interface_list()
         # Note: calling code needs to re-apply selection state (load_settings) after update if needed
+
+    def anchor_widgets(self, key: str) -> list:
+        """The control(s) a Settings deep link for ``key`` lands on (SettingsDialog.open_page, D4)."""
+        for section in (self.datacap, self.connection):
+            found = section.anchor_widgets(key)
+            if found:
+                return found
+        return []
 
     def load_settings(self, config: Dict[str, Any]):
         exclusions = list(config.get("excluded_interfaces", constants.network.interface.DEFAULT_EXCLUSIONS) or [])

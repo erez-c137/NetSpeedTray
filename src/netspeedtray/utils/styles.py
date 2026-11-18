@@ -300,6 +300,38 @@ def ui_html(text: str) -> str:
     return "<span style=\"white-space:pre-wrap;\">%s</span>" % _face_runs(text, escape=True)
 
 
+def ui_text_advance(qfont: QFont, text: str) -> int:
+    """The width of ``text`` as set_ui_text draws it in ``qfont``: each run the UI face lacks (the ↑ ↓
+    arrows in Nirmala UI) measured in the known face ui_html puts it in. A plain QFontMetrics of the UI
+    face would ask the face for those characters - and Qt would search every installed family."""
+    from PyQt6.QtGui import QFontMetricsF
+    from netspeedtray.utils.font_runs import family_covers
+    text = str(text)
+    if not needs_ui_html(text):
+        return QFontMetricsF(qfont).horizontalAdvance(text).__ceil__()
+    base = ui_family()
+    width, run, run_face = 0.0, "", None
+
+    def advance(face, chunk) -> float:
+        f = QFont(qfont)
+        if face is not None:
+            f.setFamily(face)
+        return QFontMetricsF(f).horizontalAdvance(chunk)
+
+    for ch in text:
+        face = None
+        if not ch.isspace() and not family_covers(base, ch):
+            face = next((f for f in (style_constants.FONT_FAMILY_VARIABLE, style_constants.FONT_FALLBACK)
+                         if f != base and family_covers(f, ch)), None)
+        if face != run_face and not ch.isspace():
+            width += advance(run_face, run) if run else 0.0
+            run, run_face = "", face
+        run += ch
+    if run:
+        width += advance(run_face, run)
+    return int(width + 0.999)
+
+
 def rich_plain_text(markup: str) -> str:
     """The words of rich text (a label's accessible name when ui_rich added anchor letters)."""
     from PyQt6.QtGui import QTextDocumentFragment
@@ -694,6 +726,41 @@ def symbol_face(text: str) -> Optional[str]:
     return None
 
 
+# Right-to-left text (2.2.2 D6 review): an English menu path inside Hebrew ("Options → Remote Web Server
+# → Run") is a run of Latin words joined by arrows. Left to the bidi algorithm it is split at the
+# spaces and reordered word by word, and a line that starts with a Latin word ("LibreHardwareMonitor
+# ...") is laid out left to right. So in an RTL UI each such path is joined with non-breaking spaces
+# (it wraps as one unit - Latin words with neutral arrows between them then resolve left to right as one
+# run) and framed by U+200E LRM marks, so the punctuation after it stays with it; the text starts with
+# U+200F RLM so its paragraph direction is right to left whatever its first word is. Not the bidi
+# isolates (U+2066 / U+2069): Segoe UI has no glyph for those, and one missing glyph makes Qt walk its
+# fallback chain - loading every installed font family (test_font_files_per_language). Not LRE/PDF
+# embedding either: Qt's rich text dropped it and the path's last word jumped (offscreen render, D6).
+_RLM, _LRI, _PDI, _NBSP = "\u200f", "\u200e", "\u200e", "\u00a0"
+_LATIN_WORDS = r"[A-Za-z][A-Za-z0-9]*(?:[ /]+[A-Za-z][A-Za-z0-9]*)*"
+_MENU_PATH_RE = None
+
+
+def bidi_isolate(text: str, rtl: Optional[bool] = None) -> str:
+    """``text`` for a right-to-left UI: RLM first, each English "A → B → C" menu path LRE/PDF-embedded
+    left to right with non-breaking spaces. Unchanged in a left-to-right UI (``rtl`` None: the app's direction) and
+    for text that already starts with RLM."""
+    global _MENU_PATH_RE
+    text = str(text)
+    if not (rtl if rtl is not None else _is_rtl()) or not text or text.startswith(_RLM):
+        return text
+    if _MENU_PATH_RE is None:
+        import re
+        _MENU_PATH_RE = re.compile(_LATIN_WORDS + r"(?: → " + _LATIN_WORDS + r")+")
+    out = _MENU_PATH_RE.sub(lambda m: _LRI + m.group(0).replace(" ", _NBSP) + _PDI, text)
+    return _RLM + out
+
+
+def bidi_plain(text: str) -> str:
+    """``text`` without the marks bidi_isolate adds (an accessible name, a test)."""
+    return (str(text).replace(_RLM, "").replace(_LRI, "").replace(_PDI, "").replace(_NBSP, " "))
+
+
 def ui_label(text: str, parent=None):
     """A QLabel showing ``text`` through set_ui_text."""
     from PyQt6.QtWidgets import QLabel
@@ -706,9 +773,24 @@ def set_ui_text(label, text: str) -> None:
     """``label.setText(text)``, as rich text (``ui_html``) only when the UI face lacks a character of it;
     otherwise plain text exactly as before."""
     text = str(text)
-    if needs_ui_html(text):
+    shown = bidi_isolate(text)   # right-to-left UI only (2.2.2 D6)
+    if shown != text:
+        # Right to left: as a rich-text block with dir="rtl" (the RLM is then not needed) - a plain-text
+        # QLabel measures its wrapped height wrongly for text that starts with a direction mark, and
+        # clipped every wrapped line after the first.
+        body = shown[len(_RLM):] if shown.startswith(_RLM) else shown
+        if needs_ui_html(body):
+            inner = ui_html(body)
+        else:
+            import html as _html
+            inner = "<span style=\"white-space:pre-wrap;\">%s</span>" % _html.escape(body, quote=False)
         label.setTextFormat(Qt.TextFormat.RichText)
-        label.setText(ui_html(text))
+        label.setText('<div dir="rtl">%s</div>' % inner)
+        label.setAccessibleName(text)   # the words, without the direction marks
+        label.setProperty("nst_ui_html", True)
+    elif needs_ui_html(shown):
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setText(ui_html(shown))
         label.setAccessibleName(text)   # the words, without the run markup's anchor letter
         label.setProperty("nst_ui_html", True)
     else:
@@ -716,7 +798,7 @@ def set_ui_text(label, text: str) -> None:
             label.setAccessibleName("")   # back to the label's own text
             label.setProperty("nst_ui_html", False)
         label.setTextFormat(Qt.TextFormat.PlainText)
-        label.setText(text)
+        label.setText(shown)
 
 
 def apply_ui_language(app, language: Optional[str]) -> None:

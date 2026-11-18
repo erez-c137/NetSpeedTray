@@ -1,5 +1,5 @@
 """
-Units and Interface Layout Page.
+Units and "Speed text layout" (was "Interface Layout" until 2.2.2 D7), embedded in the Appearance page.
 """
 from typing import Dict, Any, Callable
 
@@ -50,8 +50,8 @@ class UnitsPage(QWidget):
         self.decimal_places.valueChanged.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.DECIMAL_PLACES_LABEL, control=self.decimal_places))
 
-        # --- Interface Layout ---
-        layout.addWidget(section_header(self._tr("INTERFACE_LAYOUT_GROUP", "Interface Layout")))
+        # --- Speed text layout (INTERFACE_LAYOUT_GROUP; "Interface layout" until 2.2.2 D7) ---
+        layout.addWidget(section_header(self._tr("INTERFACE_LAYOUT_GROUP", "Speed text layout")))
 
         # NOTE: the old "Text Alignment" (left/center/right) control was removed in 2.0 - it was wired
         # into config but never consulted by any drawText call (the widget is right-anchored to the tray

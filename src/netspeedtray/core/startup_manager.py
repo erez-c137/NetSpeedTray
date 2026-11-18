@@ -10,6 +10,7 @@ import winreg
 from typing import Optional
 
 from netspeedtray import constants
+from netspeedtray.core.shutdown_channel import AUTOSTART_FLAG
 
 # Where Windows keeps Program Compatibility flags ("Run this program as an administrator" etc.),
 # as one value per exe path, in both hives.
@@ -57,6 +58,29 @@ def _clear_startup_approved(app_name: str) -> None:
             winreg.DeleteValue(key, app_name)
     except OSError:
         pass
+
+
+def _exe_exists(path: str) -> bool:
+    """Seam (tests): the exe a Run value names is still on disk."""
+    try:
+        return bool(path) and os.path.isfile(os.path.expandvars(path))
+    except Exception:
+        return False
+
+
+def run_value_exe(value: str) -> str:
+    """The exe (or, in dev mode, the interpreter) a Run value starts: the quoted first token, else
+    everything before the first " --" argument."""
+    v = str(value or "").strip()
+    if v.startswith('"'):
+        end = v.find('"', 1)
+        return v[1:end] if end > 0 else v[1:]
+    cut = v.find(" --")
+    return (v[:cut] if cut >= 0 else v).strip()
+
+
+def _norm(text: str) -> str:
+    return " ".join(str(text or "").lower().replace('"', "").split())
 
 
 def is_process_elevated() -> bool:
@@ -128,13 +152,24 @@ class StartupManager:
 
         # The Run value only: a Task Manager disable is the user's choice, and this runs on every
         # launch - it must never silently undo it (it warns below instead).
-        is_actually_enabled = self._check_startup_registry()
-        self.logger.debug(f"Syncing startup task. Config says: {should_be_enabled}, Registry says: {is_actually_enabled}")
+        # Combined review C2 follow-up: the value belongs to whichever copy wrote it. A value for
+        # ANOTHER exe that still exists (an installed copy while a portable one runs, or the other way
+        # round) is never rewritten or removed here - only Settings' explicit toggle takes it over.
+        state = self._run_value_state()
+        self.logger.debug("Syncing startup task. Config says: %s, Run value: %s", should_be_enabled, state)
 
-        if should_be_enabled and not is_actually_enabled:
-            self.logger.debug("Re-enabling startup task to match configuration.")
-            self._set_startup_registry(True)
-        elif not should_be_enabled and is_actually_enabled:
+        if should_be_enabled:
+            if state == "other":
+                self.logger.warning(
+                    "Start with Windows: the Run value starts another NetSpeedTray that still exists "
+                    "(%s) - left as it is. Turn Start with Windows off and on in Settings to use this copy.",
+                    run_value_exe(self._read_run_value() or ""))
+            elif state != "exact":
+                # missing, this exe in an older format (no --autostart, other quoting), or an exe
+                # that is gone (the app moved)
+                self.logger.debug("Writing the Run value to match the configuration (%s).", state)
+                self._set_startup_registry(True)
+        elif state in ("exact", "this_exe"):
             self.logger.debug("Disabling startup task to match configuration.")
             self._set_startup_registry(False)
 
@@ -175,10 +210,42 @@ class StartupManager:
             # Here we try to reconstruct the command used to launch.
             # Using absolute path to src/monitor.py
             script_path = os.path.abspath(sys.argv[0])
-            exe_path = f'"{python_exe}" "{script_path}"'
+            exe_path = f'"{python_exe}" "{script_path}" {AUTOSTART_FLAG}'
             return exe_path # Already quoted the parts
 
-        return f'"{exe_path}"'
+        # --autostart (2.2.2 combined review C2): a second launch from the Run key is an autostart, not
+        # the user asking for the "running" panel - Explorer starts both it and a double-clicked exe.
+        # A value without it (2.2.1 and earlier) reads as a mismatch and is rewritten at the next launch.
+        return f'"{exe_path}" {AUTOSTART_FLAG}'
+
+    def _read_run_value(self) -> Optional[str]:
+        """Our Run value, or None when there is none (or it can't be read)."""
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+            try:
+                value, _ = winreg.QueryValueEx(key, constants.app.APP_NAME)
+                return str(value)
+            except FileNotFoundError:
+                return None
+            finally:
+                winreg.CloseKey(key)
+        except Exception as e:
+            self.logger.debug("Run value unreadable: %s", e)
+            return None
+
+    def _run_value_state(self) -> str:
+        """"missing"; "exact" (this exe, current format); "this_exe" (this exe, an older format or
+        other quoting); "other" (another exe that still exists); "gone" (an exe no longer on disk)."""
+        value = self._read_run_value()
+        if value is None:
+            return "missing"
+        expected = self._get_executable_path()
+        if _norm(value) == _norm(expected):
+            return "exact"
+        if _norm(run_value_exe(value)) == _norm(run_value_exe(expected)):
+            return "this_exe"
+        return "other" if _exe_exists(run_value_exe(value)) else "gone"
 
     def _check_startup_registry(self, check_for_correctness: bool = True) -> bool:
         """
@@ -233,6 +300,10 @@ class StartupManager:
             )
             if enable:
                 exe_path = self._get_executable_path()
+                old = self._read_run_value()   # its own read handle (this one is KEY_SET_VALUE only)
+                if old and _norm(run_value_exe(old)) != _norm(run_value_exe(exe_path)):
+                    self.logger.info("Start with Windows: this copy takes over the Run value from %s.",
+                                     run_value_exe(old))
                 self.logger.debug(f"Setting startup registry key for: {exe_path}")
                 winreg.SetValueEx(key, constants.app.APP_NAME, 0, winreg.REG_SZ, exe_path)
             else:

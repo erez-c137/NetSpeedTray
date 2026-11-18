@@ -153,7 +153,7 @@ def test_usage_card_link_emits(q_app, qt_owned):
     t = qt_owned(UsageTile(I18nStrings("en_US")))
     got = []
     t.usage_history_requested.connect(lambda: got.append(1))
-    t._history_link.linkActivated.emit("#")
+    t._history_link.click()
     assert got == [1]
     t.set((1.0, 2.0), (3.0, 4.0), (5.0, 10.0, 50.0))            # cap set: hint hidden, link stays
     assert t._cap_hint.isHidden() and not t._history_link.isHidden()

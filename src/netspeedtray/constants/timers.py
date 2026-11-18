@@ -13,6 +13,10 @@ class TimerConstants:
     MAXIMUM_UPDATE_RATE_SECONDS: Final[float] = 10.0
     # The one-time "history upgraded" flyout reads three sentences - twice the data-cap alert's 15 s.
     HISTORY_UPGRADE_NOTICE_MS: Final[int] = 30000
+    # Settings' tint on the control a NoticeLink / deep link landed on (2.2.2 D4): kept until the user's
+    # first click, key or scroll, at most this long after the dialog first paints it, then faded out.
+    SETTINGS_ANCHOR_HIGHLIGHT_MS: Final[int] = 5000
+    SETTINGS_ANCHOR_FADE_MS: Final[int] = 300
 
     # Monitor Overview: how often the selected window's DB figures (sparklines, avg/peak, drops) are
     # re-read, by the window's length. A full read costs 0.1-0.4 s of reader-thread CPU on a big

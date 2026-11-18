@@ -33,6 +33,10 @@ class AppConstants:
     # in DEPLOYING.md - keep the two in sync.
     POLICY_REGISTRY_KEY: Final[str] = r"SOFTWARE\Policies\NetSpeedTray"
     POLICY_DISABLE_UPDATE_CHECK_VALUE: Final[str] = "DisableUpdateCheck"
+    # Same key (2.2.2 D1/D2): nonzero = no first-run tip and no one-time "what's new" after an update
+    # and no one-time "rate / star / support" card in the Monitor (D8) - for managed fleets. Only switches notices OFF;
+    # nothing else changes. Documented in DEPLOYING.md - keep the two in sync.
+    POLICY_DISABLE_TIPS_VALUE: Final[str] = "DisableTips"
     # Graceful-shutdown channel (core/shutdown_channel.py). The running app registers this window
     # message and quits through the same clean path as tray Exit when it arrives; the installer and
     # uninstaller post it from setup.iss's own [Code] before any taskkill (and `--shutdown` can, by
@@ -52,8 +56,17 @@ class AppConstants:
     # that this session signed in less than SIGN_IN_DUPLICATE_WINDOW_S ago, so it is a duplicate
     # autostart (the Run key plus a Startup-folder shortcut, say), not a request: the running widget
     # then leaves the #24 app-button yield alone. Receivers before rc.4 ignore wParam (a plain activate).
+    # 2.2.2 (D3): a USER request also opens the "NetSpeedTray is running" panel after the widget is
+    # back. ACTIVATE_WPARAM_RELAUNCH = the second process was started by the updater (``--relaunch``)
+    # while the old instance still ran: the widget comes back as for the user (what every earlier build
+    # did with wParam 0), but no window opens. Receivers before 2.2.2 read any value but 1 as 0.
+    # ACTIVATE_WPARAM_BACKGROUND (combined review C2) = nothing says the user asked (no shortcut, not
+    # started by Explorer - a scheduled task, a script): the widget comes back, no window opens.
+    # SIGN_IN_DUPLICATE now also covers an autostart (Run key, Startup folder) at any time after sign-in.
     ACTIVATE_WPARAM_USER: Final[int] = 0
     ACTIVATE_WPARAM_SIGN_IN_DUPLICATE: Final[int] = 1
+    ACTIVATE_WPARAM_RELAUNCH: Final[int] = 2
+    ACTIVATE_WPARAM_BACKGROUND: Final[int] = 3
     # Sign-in startup items can run well after the desktop appears on a slow disk (Windows also delays
     # Run-key apps by ~10 s); 2 minutes covers that. Measured from WTSINFO.LogonTime to its CurrentTime
     # (one wall-clock reading pair from the same query - nothing in our process to drift across sleep).
@@ -86,6 +99,37 @@ class AppConstants:
     UPDATE_OFFER_MAX_IDLE_S: Final[int] = 120
     # "Not now" in the update dialog snoozes that version's automatic offers this long (seconds).
     UPDATE_NOT_NOW_SNOOZE_S: Final[int] = 3 * 24 * 60 * 60
+    # First-run tip / one-time "what's new" (2.2.2 D1, D2; views/widget/startup_notices.py). Shown
+    # this long after the widget is really visible (never in the same instant it appears), and behind
+    # the update offer's gates plus a sign-in quiet period (the first SIGN_IN_DUPLICATE_WINDOW_S after
+    # the session signed in: the launch storm of every autostart app). A blocked attempt retries
+    # this often - the notice is deferred, never lost.
+    STARTUP_NOTICE_DELAY_MS: Final[int] = 5_000
+    STARTUP_NOTICE_RETRY_MS: Final[int] = 30_000
+    # The one-time "rate / star / support" card in the Monitor (2.2.2 D8; core/support_prompt.py):
+    # offered on the first Monitor open at least this many days after first_seen_at (the first run
+    # of 2.2.2+), never in the first SUPPORT_PROMPT_MIN_UPTIME_S of the app's run ("never on launch"),
+    # and counted as shown once it was on screen this long while the Monitor was the active,
+    # un-minimized window (or any button was pressed). A clock below the floor (the feature's own
+    # birth) is wrong: nothing is written or due then, so a clock set back never shortens the wait.
+    SUPPORT_PROMPT_AFTER_DAYS: Final[int] = 30
+    SUPPORT_PROMPT_MIN_UPTIME_S: Final[float] = 120.0
+    SUPPORT_PROMPT_SEEN_MS: Final[int] = 4_500
+    SUPPORT_PROMPT_COLLAPSE_MS: Final[int] = 150
+    SUPPORT_PROMPT_CLOCK_FLOOR: Final[str] = "2026-11-01T00:00:00Z"
+    # Where Setup records a Microsoft Store install (setup.iss, when run with /STORE - the Store
+    # payload's installerParameters). Only then is "Rate it in the Store" offered: the Store lets
+    # only users who have the app in their library rate it. Keep in sync with setup.iss.
+    INSTALL_SOURCE_REGISTRY_KEY: Final[str] = r"SOFTWARE\NetSpeedTray"
+    INSTALL_SOURCE_VALUE: Final[str] = "InstalledFrom"
+    INSTALL_SOURCE_STORE: Final[str] = "Store"
+    # The Store listing (a Win32 EXE listing; CLAUDE.md): the Store app's review page, and its web
+    # page for Windows without the Store app (LTSC, Server, a removed Store).
+    STORE_PRODUCT_ID: Final[str] = "XP9MHWQZJPLQM8"
+    STORE_REVIEW_URL_TEMPLATE: Final[str] = "ms-windows-store://review/?ProductId={product_id}"
+    STORE_WEB_URL_TEMPLATE: Final[str] = "https://apps.microsoft.com/detail/{product_id}"
+    # The GitHub release page of one exact version ("What's new" in the one-time notice).
+    RELEASE_TAG_URL_TEMPLATE: Final[str] = "https://github.com/{owner}/{repo}/releases/tag/v{version}"
     # How long after the event loop starts the crash log's fault handler stays on (netspeedtray/
     # crash_log.py): long enough to cover the widget's first show and stats ticks, short enough
     # that handled access violations later in the run are never logged as crashes.

@@ -233,11 +233,15 @@ class ConfigConstants:
     # show, so nobody can lock themselves out of the app. Pause/Resume keeps its own opt-in switch
     # (`pause_in_menu`). Default: nothing hidden, so the menu is unchanged for existing users.
     CONTEXT_MENU_ITEM_MONITOR: Final[str] = "monitor"
+    # 2.2.2 D7: the Check connection sheet, until then reachable only from inside the Monitor (and the
+    # Start-menu panel). Shown by default - one item more than 2.2.1's default menu.
+    CONTEXT_MENU_ITEM_CHECK_CONNECTION: Final[str] = "check_connection"
     CONTEXT_MENU_ITEM_RESET_POSITION: Final[str] = "reset_position"
     CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES: Final[str] = "check_for_updates"
     CONTEXT_MENU_ITEM_SUPPORT: Final[str] = "support"
     CONTEXT_MENU_HIDEABLE_ITEMS: Final[List[str]] = [
         CONTEXT_MENU_ITEM_MONITOR,
+        CONTEXT_MENU_ITEM_CHECK_CONNECTION,
         CONTEXT_MENU_ITEM_RESET_POSITION,
         CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES,
         CONTEXT_MENU_ITEM_SUPPORT,
@@ -407,7 +411,7 @@ class ConfigConstants:
         # mini graph, Monitor tiles) is unaffected. Latency has its own switch (latency_enabled).
         "record_hardware_history": True,
         # Latency: ping the default GATEWAY (LAN-only, never leaves the network) so the Monitor shows
-        # connection latency + loss history. The public anchor (true internet latency) is STRICTLY
+        # connection latency + loss history. The public anchor (latency to the internet) is STRICTLY
         # opt-in - pinging an external host is the one thing that "phones home" for a privacy-first app.
         "latency_enabled": True,
         "latency_public_enabled": False,
@@ -448,8 +452,21 @@ class ConfigConstants:
         "update_snooze": "",
         "first_run_v2_seen": False,
         "first_run_ever": True,
+        # 2.2.2 D1: the first-run tip (hover / double-click / right-click) has been shown. A fresh
+        # install keeps first_run_ever True until it shows (deferred past a hidden widget, a fullscreen
+        # app, the sign-in rush), then sets both.
+        "first_run_tip_shown": False,
+        # 2.2.2 D2: the highest version that has run here (None = 2.2.1 or older, or a fresh config).
+        # A final release newer than it shows the one-time "what's new" once; see core/startup_notices.
+        "last_seen_version": None,
+        # 2.2.2 D8: when this install first ran 2.2.2 or newer (UTC, "YYYY-MM-DDTHH:MM:SSZ"; None until
+        # then - upgraders count from their first 2.2.2 run, never from history), and whether the
+        # one-time "rate / star / support" card is done. See core/support_prompt.
+        "first_seen_at": None,
+        "support_prompt_shown": False,
         "tooltip_hint_shown_count": 0,     # gesture-hint tooltip fades after a few sessions
         "pin_hint_shown_count": 0,         # "Click the widget to keep this open" footer: first few hover cards
+        "internet_offer_declines": 0,      # "Not now"s on the "Also watch the internet" offer (D5)
         "history_upgrade_notice_shown": False,  # the one "history upgraded" flyout after v7 -> v8
         "temp_onboarding_dismissed": False,  # user opted out of the no-sensor temp explainer
         "preferred_monitor": None,
@@ -626,8 +643,15 @@ class ConfigConstants:
                           "regex": r"(|[0-9A-Za-z.+\-]{1,64}@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"},
         "first_run_v2_seen": {"type": bool, "default": False},
         "first_run_ever": {"type": bool, "default": True},
+        "first_run_tip_shown": {"type": bool, "default": False},
+        # A version string like __version__ ("2.2.2", "2.2.2-beta.1"); same charset as update_snooze's.
+        "last_seen_version": {"type": (str, type(None)), "default": None, "regex": r"[0-9A-Za-z.+\-]{1,64}"},
+        "first_seen_at": {"type": (str, type(None)), "default": None,
+                          "regex": r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"},
+        "support_prompt_shown": {"type": bool, "default": False},
         "tooltip_hint_shown_count": {"type": int, "default": 0, "min": 0},
         "pin_hint_shown_count": {"type": int, "default": 0, "min": 0},
+        "internet_offer_declines": {"type": int, "default": 0, "min": 0},
         "history_upgrade_notice_shown": {"type": bool, "default": False},
         "temp_onboarding_dismissed": {"type": bool, "default": False},
         # QScreen.name() identifier (e.g. "\\.\DISPLAY1"). None = use primary.
