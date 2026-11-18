@@ -191,7 +191,7 @@ class _HeldWS(_WS):
         self._note()
         return super().summarize_hardware(*a)
 
-    def get_earliest_data_timestamp(self):
+    def get_earliest_data_timestamp(self, flush=True):
         self._note()
         return datetime(2026, 1, 1)
 
@@ -234,7 +234,7 @@ def test_window_reads_run_off_the_gui_thread(q_app):
         assert ws.threads and gui not in ws.threads, "a history read ran on the GUI thread"
         # ...and the tiles get the same figures the synchronous reload produced.
         assert ov._series["down"] == [86400.0, 86400.0] and ov._series["cpu"] == [42.0]
-        assert ov._win_summ["cpu"].max == 42.0 and ov._latency_events is not None
+        assert ov._win_summ["down"].max == 3.0e6 and ov._latency_events is not None
         assert "avg" in ov._hero._sub.text() and "Reading" not in ov._hero._sub.text()
     finally:
         ov.teardown()

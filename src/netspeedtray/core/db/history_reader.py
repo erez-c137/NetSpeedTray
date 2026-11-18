@@ -352,6 +352,31 @@ def hardware_history_bin_seconds(start_ts: int, end_ts: int) -> int:
     return 1 if duration <= 6 * 3600 else (60 if duration <= 30 * 86400 else 3600)
 
 
+class LeanSummary(NamedTuple):
+    """A window's sample count, mean and peak - the only figures the Monitor Overview shows. The same
+    numbers as ``summarize_network``'s ``WindowSummary.count`` / ``avg`` / ``max``, aggregated in SQL
+    instead of fetching every sample to compute percentiles nobody on the Overview reads."""
+    count: int
+    avg: Optional[float]
+    max: Optional[float]
+
+
+EMPTY_LEAN_SUMMARY = LeanSummary(0, None, None)
+
+
+def overview_bin_seconds(start_ts: int, end_ts: int, bins: Optional[int] = None) -> int:
+    """Seconds per Overview sparkline point so ``bins`` points span the WHOLE window. Bins are aligned to
+    the epoch (``ts / bin``), so a reload a few seconds later draws the same shape; a bin over a minute
+    is a whole number of minutes, so its length - and the shape - only changes when the window grows
+    by a minute per point (All). At most ``bins + 2`` bins are touched."""
+    n = int(bins or constants.timers.OVERVIEW_SPARK_BINS)
+    span = max(1, int(end_ts) - int(start_ts))
+    b = max(1, -(-span // n))
+    if b > 60:
+        b = -(-b // 60) * 60
+    return b
+
+
 # network_hourly_profile: (ts, rate, weight) rows from every tier -> weighted mean rate per LOCAL clock
 # hour. SQLite's 'localtime' is the C runtime's, the same conversion datetime.fromtimestamp() makes.
 def _local_bin_sql(col: str, interval: int) -> str:
@@ -494,6 +519,17 @@ class _ReaderBase(HistoryReader):
             self.logger.info("%s stopped (reader interrupted for close/quit), returning empty", what)
         else:
             self.logger.error("%s: %s", what, e, exc_info=True)
+
+    def data_version(self) -> Optional[Tuple[int, int]]:
+        """This thread's read connection and its ``PRAGMA data_version`` - which changes whenever another
+        connection (the DB worker) commits - or None when unreadable. Equal tokens from two calls on
+        one thread mean nothing was written in between, so a read made at the first is still current.
+        The connection's identity is part of the token: a replaced connection restarts the counter."""
+        try:
+            conn = self._conn()
+            return id(conn), int(conn.execute("PRAGMA data_version").fetchone()[0])
+        except Exception:
+            return None
 
     _NO_BOUND = "9e18"   # past any epoch second: "no finer data inside the horizon" bounds nothing
 
@@ -1493,6 +1529,121 @@ class V8HistoryReader(_ReaderBase):
             return S.summarize_rollup(avgs, maxes, counts, "minute" if win <= 30 * 86400 else "hour", coverage)
 
         return self._snapshot_call(run, lambda: S.summarize_raw([]))
+
+    # --- the Monitor Overview's window read ----------------------------------------------------------
+
+    _OVERVIEW_HW = ("cpu", "gpu", "ram")
+
+    def overview_window(self, start_time: datetime, end_time: datetime, bin_seconds: int,
+                        want_series: bool = True):
+        """The Overview card figures for [start, end], all interfaces, in one read transaction:
+        ``(series, {"down": LeanSummary, "up": LeanSummary})``.
+
+        The summaries are ``summarize_network``'s count / avg / max - the same rows, weights and
+        precedence (``tests/unit/test_overview_lean_read.py`` diffs them) - aggregated in SQL, both
+        directions per statement, instead of fetching every sample into Python for the percentiles the
+        Overview never shows.
+
+        ``series`` (None unless ``want_series``) are the sparklines, ~``OVERVIEW_SPARK_BINS`` points
+        spread over the WHOLE window: ``bin_seconds`` integer bins (``overview_bin_seconds``), so a
+        24 h card draws 24 h - the old minute-resolution series was cut to its last 120 points (2 h)
+        by the tile. Network: each bin's peak of the all-interface rate, built as speed_history builds
+        it at minute resolution (per-interface peak per minute, summed across interfaces); hardware:
+        the mean of every stored value in the bin (the ``metrics`` ids resolved once, one ``hw_raw``
+        scan for all three - no per-row localtime, no per-metric subquery)."""
+        st, et = int(start_time.timestamp()), int(end_time.timestamp())
+        b = max(1, int(bin_seconds))
+        nb = self._tier_bounds(self._NET, "n")
+        hb = self._tier_bounds(self._HW, "h")
+
+        def run(cur):
+            summ = self._overview_net_summaries(cur, st, et, nb)
+            series = self._overview_series(cur, st, et, b, nb, hb) if want_series else None
+            return series, summ
+
+        def failed():
+            return ({k: [] for k in ("down", "up") + self._OVERVIEW_HW} if want_series else None,
+                    {"down": EMPTY_LEAN_SUMMARY, "up": EMPTY_LEAN_SUMMARY})
+
+        return self._snapshot_call(run, failed)
+
+    def _overview_net_summaries(self, cur, st: int, et: int, bounds) -> Dict[str, LeanSummary]:
+        """summarize_network(d, st, et).count / avg / max for both directions (no interface filter).
+        Mirrors its rules exactly: raw rows grouped per timestamp (rate summed across interfaces,
+        weighted by the measured seconds clipped to the window, FLAG_GAP rows excluded); rollup buckets
+        through _bucket_rate, weighted by their sample_count (0/NULL -> 1); a row whose rate is NULL is
+        not a sample. Raw only -> the plain mean of the raw rates and their count; any rollup bucket ->
+        the weighted mean over every sample and the total weight as the count."""
+        raw = cur.execute(
+            "SELECT COUNT(u), SUM(u), MAX(u), SUM(u * s), SUM(CASE WHEN u IS NOT NULL THEN s END), "
+            "COUNT(d), SUM(d), MAX(d), SUM(d * s), SUM(CASE WHEN d IS NOT NULL THEN s END) FROM ("
+            f"SELECT SUM({self._RAW_RATE.format(d='up')}) AS u, SUM({self._RAW_RATE.format(d='down')}) AS d, "
+            "MAX(0.0, MIN(COALESCE(MAX(n.dt_ms) / 1000.0, 0.0), n.ts - ?)) AS s "
+            f"FROM {S8.NET_RAW} n WHERE n.ts BETWEEN ? AND ? AND (n.flags & {S8.FLAG_GAP}) = 0"
+            f"{bounds[0][0]} GROUP BY n.ts)", (st, st, et) + bounds[0][1]).fetchone()
+        rolls = []
+        for k in (1, 2):
+            ru, w = self._bucket_rate("up", k)
+            rd, _w = self._bucket_rate("down", k)
+            rolls.append(cur.execute(
+                "SELECT COUNT(ru), SUM(ru * w), SUM(CASE WHEN ru IS NOT NULL THEN w END), "
+                "MAX(CASE WHEN ru IS NOT NULL THEN mu END), "
+                "COUNT(rd), SUM(rd * w), SUM(CASE WHEN rd IS NOT NULL THEN w END), "
+                "MAX(CASE WHEN rd IS NOT NULL THEN md END) FROM ("
+                f"SELECT {ru} AS ru, {rd} AS rd, COALESCE(NULLIF({w}, 0), 1) AS w, "
+                "MAX(n.up_max) AS mu, MAX(n.down_max) AS md "
+                f"FROM {self._NET[k]} n WHERE n.ts BETWEEN ? AND ?{bounds[k][0]} GROUP BY n.ts)",
+                (st, et) + bounds[k][1]).fetchone())
+        out: Dict[str, LeanSummary] = {}
+        for name, r0, q0 in (("up", 0, 0), ("down", 5, 4)):
+            r_n, r_sum, r_max, r_vw, r_w = raw[r0:r0 + 5]
+            buckets = sum(int(q[q0] or 0) for q in rolls)
+            if not buckets:
+                out[name] = (LeanSummary(int(r_n), float(r_sum) / r_n, float(r_max)) if r_n
+                             else EMPTY_LEAN_SUMMARY)
+                continue
+            vw = sum(float(q[q0 + 1] or 0.0) for q in rolls) + float(r_vw or 0.0)
+            total = sum(float(q[q0 + 2] or 0.0) for q in rolls) + float(r_w or 0.0)
+            peaks = [float(x) for x in [r_max] + [q[q0 + 3] for q in rolls] if x is not None]
+            out[name] = LeanSummary(int(total), vw / total if total > 0 else None,
+                                    max(peaks) if peaks else None)
+        return out
+
+    def _overview_series(self, cur, st: int, et: int, b: int, nb, hb) -> Dict[str, List[float]]:
+        g = min(b, 60)   # the source grain: speed_history's minute (or the bin, when shorter)
+        parts, params = [], []
+        for k, (u, d) in enumerate(((self._RAW_RATE.format(d="up"), self._RAW_RATE.format(d="down")),
+                                    ("n.up_max", "n.down_max"), ("n.up_max", "n.down_max"))):
+            parts.append(f"SELECT CAST(n.ts AS INTEGER) / {g} AS m, n.iface_id AS i, {u} AS u, {d} AS d "
+                         f"FROM {self._NET[k]} n WHERE n.ts BETWEEN ? AND ?{nb[k][0]}")
+            params += [st, et, *nb[k][1]]
+        net = cur.execute(
+            f"SELECT m * {g} / {b} AS bb, MAX(u), MAX(d) FROM ("
+            f"SELECT m, COALESCE(SUM(u), 0) AS u, COALESCE(SUM(d), 0) AS d FROM ("
+            f"SELECT m, i, MAX(u) AS u, MAX(d) AS d FROM ({' UNION ALL '.join(parts)}) GROUP BY m, i"
+            f") GROUP BY m) GROUP BY bb ORDER BY bb", params).fetchall()
+        series: Dict[str, List[float]] = {"down": [float(r[2] or 0.0) for r in net],
+                                          "up": [float(r[1] or 0.0) for r in net]}
+        names = self._OVERVIEW_HW
+        ids = {name: int(mid) for name, mid in cur.execute(
+            f"SELECT name, metric_id FROM {S8.METRICS} WHERE entity = '' AND name IN "
+            f"({', '.join('?' * len(names))})", names)}
+        for name in names:
+            series[name] = []
+        if ids:
+            lit = ", ".join(str(i) for i in sorted(ids.values()))   # ints from the DB: safe literals
+            hparts, hparams = [], []
+            for k, col in ((0, "h.value"), (1, "h.avg_value"), (2, "h.avg_value")):
+                hparts.append(f"SELECT h.metric_id AS mid, CAST(h.ts AS INTEGER) / {b} AS bb, {col} AS v "
+                              f"FROM {self._HW[k]} h WHERE h.metric_id IN ({lit}) "
+                              f"AND h.ts BETWEEN ? AND ?{hb[k][0]}")
+                hparams += [st, et, *hb[k][1]]
+            by_id = {mid: name for name, mid in ids.items()}
+            for mid, _bb, v in cur.execute(
+                    f"SELECT mid, bb, AVG(v) FROM ({' UNION ALL '.join(hparts)}) WHERE v IS NOT NULL "
+                    f"GROUP BY mid, bb ORDER BY mid, bb", hparams):
+                series[by_id[int(mid)]].append(float(v))
+        return series
 
     def network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,
                                interface_name: Optional[str] = None) -> Dict[int, float]:

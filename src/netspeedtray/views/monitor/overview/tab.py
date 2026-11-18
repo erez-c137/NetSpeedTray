@@ -20,7 +20,9 @@ dropped.
 from __future__ import annotations
 
 import logging
+import math
 import re
+import time
 from collections import deque
 from functools import partial
 from typing import Any, Deque, Dict, Optional
@@ -34,6 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from netspeedtray import constants
+from netspeedtray.core.db.history_reader import overview_bin_seconds
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, format_data_size, format_duration_short
@@ -63,21 +66,23 @@ _ACCENTS = {
 }
 
 _REFRESH_MS = 1000        # live current-value tick
-_HISTORY_MS = 6000        # DB window reload (sparklines + avg/peak) - on the reader thread, off the 1 Hz path
+# The DB window reload (sparklines + avg/peak) runs on the reader thread, off the 1 Hz path, at a
+# cadence set by the window's length (_reload_interval_ms; constants.timers.OVERVIEW_*).
 _NARROW_BP = 760          # below this content width: reflow to the compact layout (2×2 tiles, stacked cards)
 # latency_probe.latency_verdict code -> (i18n key, English fallback)
 _VERDICT_KEYS = {"good": ("LATENCY_GOOD", "Good"), "ok": ("LATENCY_OK", "OK"), "slow": ("LATENCY_SLOW", "Slow")}
 
 
-def _resolve_window(ws, key: str, now: datetime, session_start: Optional[datetime]):
+def _resolve_window(ws, key: str, now: datetime, session_start: Optional[datetime], earliest_fn=None):
     """(start, end, is_session) for period ``key`` at ``now``. All / System uptime need the earliest
     stored sample - a DB read (plus a batch flush), so the Overview's reloads resolve it on the
-    reader thread; Export and the Stats-detail sheet resolve it on demand."""
+    reader thread (through ``earliest_fn``: its cache, no flush); Export and the Stats-detail sheet
+    resolve it on demand."""
     hp = constants.data.history_period
     earliest = None
     if key in ("TIMELINE_ALL", "TIMELINE_SYSTEM_UPTIME") and ws is not None:
         try:
-            earliest = ws.get_earliest_data_timestamp()
+            earliest = earliest_fn() if earliest_fn is not None else ws.get_earliest_data_timestamp()
         except Exception:
             earliest = None
     # "System uptime" starts at the real boot (M3). It used to pass None here, which fell through to
@@ -162,31 +167,157 @@ def _cap_coverage(ws, cap_start: Optional[datetime]) -> Optional[float]:
     return min(1.0, running / float(cov.end_ts - cov.start_ts))
 
 
+def _reload_interval_ms(key: str, now: Optional[datetime] = None) -> int:
+    """How often the Overview re-reads window ``key`` from the DB: Session and short windows every
+    6 s, a day or two every 30 s, longer windows every 2 minutes (constants.timers.OVERVIEW_*). A
+    reload costs 0.4-1.1 s of CPU on a big database; one sparkline point of 24 h is ~13 minutes."""
+    t = constants.timers
+    if key == "TIMELINE_SESSION":
+        return t.OVERVIEW_SHORT_RELOAD_MS
+    if key == "TIMELINE_ALL":
+        span = math.inf
+    elif key == "TIMELINE_SYSTEM_UPTIME":
+        boot = _boot_time()
+        span = ((now or datetime.now()) - boot).total_seconds() if boot is not None else math.inf
+    else:
+        span = constants.data.history_period.CUTOFF_DAYS.get(key, 1) * 86400
+    if span <= t.OVERVIEW_SHORT_WINDOW_SECONDS:
+        return t.OVERVIEW_SHORT_RELOAD_MS
+    if span <= t.OVERVIEW_DAY_WINDOW_SECONDS:
+        return t.OVERVIEW_DAY_RELOAD_MS
+    return t.OVERVIEW_LONG_RELOAD_MS
+
+
+def _downsample(values, n: int, peak: bool) -> list:
+    """``values`` cut into at most ``n`` consecutive chunks, each its peak (``peak``) or mean - so a
+    sparkline spans every value it is given instead of the tile keeping only the last 120. For the
+    Session's in-memory series and the v7 read; the v8 read bins in SQL."""
+    vals = [float(v) for v in values if v is not None]
+    if len(vals) <= n:
+        return vals
+    size = -(-len(vals) // n)
+    out = []
+    for i in range(0, len(vals), size):
+        chunk = vals[i:i + size]
+        out.append(max(chunk) if peak else sum(chunk) / len(chunk))
+    return out
+
+
+class _ReadCache:
+    """The Overview's memory between reloads. Lives on, and is only touched by, the reader thread (one
+    load runs at a time); the GUI thread only bumps the ``epoch`` it passes with each request.
+
+    * The earliest stored sample (All / System uptime): read once per epoch, without the batch flush
+      ``get_earliest_data_timestamp`` does for Export - that flush was a DB write every reload.
+    * The last DB read and the ``data_version`` token it was made at: a reload that finds the token
+      unchanged (nothing was written since) reuses it, up to OVERVIEW_REUSE_MAX_AGE_MS old.
+
+    A new epoch (range change, Overview shown, history deleted) drops both."""
+
+    def __init__(self, clock=time.monotonic) -> None:
+        self._clock = clock
+        self.epoch: Optional[int] = None
+        self._reset()
+
+    def _reset(self) -> None:
+        self._sig = self._token = self._db = self._earliest = None
+        self._at = 0.0
+
+    def begin(self, epoch: int) -> None:
+        if epoch != self.epoch:
+            self.epoch = epoch
+            self._reset()
+
+    def earliest(self, ws) -> Optional[datetime]:
+        if self._earliest is None:   # an empty database stays unknown: ask again next time (cheap)
+            self._earliest = ws.get_earliest_data_timestamp(flush=False)
+        return self._earliest
+
+    def reuse(self, sig, token):
+        if token is None or self._db is None or sig != self._sig or token != self._token:
+            return None
+        if (self._clock() - self._at) * 1000.0 >= constants.timers.OVERVIEW_REUSE_MAX_AGE_MS:
+            return None
+        return self._db
+
+    def store(self, sig, token, db) -> None:
+        self._sig, self._token, self._db, self._at = sig, token, db, self._clock()
+
+
+def _data_version(ws):
+    fn = getattr(ws, "get_history_data_version", None)
+    if fn is None:
+        return None
+    try:
+        return fn()
+    except Exception:
+        return None
+
+
 def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
                  series: Optional[Dict[str, list]], poll: float, latency_enabled: bool,
-                 cap_start: Optional[datetime] = None, public_enabled: bool = False):
+                 cap_start: Optional[datetime] = None, public_enabled: bool = False,
+                 cache: Optional[_ReadCache] = None, epoch: int = 0):
     """The window's DB reads - (series, summaries, drop events, session volume, cap coverage). Runs
     on the reader thread. ``series`` is the Session window's, already copied from the in-memory deques on the GUI
     thread (they are appended there); None means read the sparklines from the DB. The session volume
-    (the strip's ↓/↑ totals, independent of the range) rides along so the 1 Hz render never reads."""
-    start, end, _is_session = _resolve_window(ws, key, now, session_start)
-    if series is None:
-        # wait_for_flush=False: never hold a refresh on the DB-worker drain for a last second that's
-        # invisible at multi-hour resolution.
-        net = ws.get_speed_history(start, end, None, resolution='auto', wait_for_flush=False)
-        series = {
-            "down": [r[2] for r in net], "up": [r[1] for r in net],
-            "cpu": [v for _, v in ws.get_hardware_history("cpu", start, end)],
-            "gpu": [v for _, v in ws.get_hardware_history("gpu", start, end)],
-            "ram": [v for _, v in ws.get_hardware_history("ram", start, end)],
+    (the strip's ↓/↑ totals, independent of the range) rides along so the 1 Hz render never reads.
+
+    Sparklines span the whole window (~OVERVIEW_SPARK_BINS points); ``summaries`` holds the
+    download / upload count, avg and peak - the hero's figures. With a ``cache`` (the tab's), a reload
+    whose database has not changed since the last one (same ``epoch`` and window) reuses that read."""
+    bins = constants.timers.OVERVIEW_SPARK_BINS
+    earliest_fn = None
+    if cache is not None:
+        cache.begin(epoch)
+        earliest_fn = partial(cache.earliest, ws)
+    start, end, _is_session = _resolve_window(ws, key, now, session_start, earliest_fn)
+    sig = (key, session_start, cap_start, poll, bool(latency_enabled), bool(public_enabled), series is None)
+    # The token is taken BEFORE the reads: a write landing during them changes it for the next reload.
+    token = _data_version(ws) if cache is not None else None
+    db = cache.reuse(sig, token) if cache is not None else None
+    if db is None:
+        db = _read_db(ws, start, end, session_start, series is None, poll, latency_enabled,
+                      cap_start, public_enabled)
+        if cache is not None:
+            cache.store(sig, token, db)
+    db_series, summ, events, volume, coverage = db
+    if series is not None:
+        db_series = {k: _downsample(v, bins, peak=k in ("down", "up")) for k, v in series.items()}
+    return db_series, summ, events, volume, coverage
+
+
+def _read_db(ws, start: datetime, end: datetime, session_start: Optional[datetime], want_series: bool,
+             poll: float, latency_enabled: bool, cap_start: Optional[datetime], public_enabled: bool):
+    """_read_window's database part: (series or None, summaries, drop events, session volume, cap
+    coverage)."""
+    bins = constants.timers.OVERVIEW_SPARK_BINS
+    lean_fn = getattr(ws, "get_overview_window", None)
+    lean = None
+    if lean_fn is not None:
+        lean = lean_fn(start, end, overview_bin_seconds(int(start.timestamp()), int(end.timestamp()), bins),
+                       want_series)
+    if lean is not None:
+        series, summ = lean
+    else:
+        # No lean read (a v7 file while the upgrade is deferred): the general-purpose reads.
+        series = None
+        if want_series:
+            # wait_for_flush=False: never hold a refresh on the DB-worker drain for a last second
+            # that's invisible at multi-hour resolution.
+            net = ws.get_speed_history(start, end, None, resolution='auto', wait_for_flush=False)
+            series = {
+                "down": _downsample([r[2] for r in net], bins, peak=True),
+                "up": _downsample([r[1] for r in net], bins, peak=True),
+            }
+            for stat in ("cpu", "gpu", "ram"):
+                series[stat] = _downsample([v for _, v in ws.get_hardware_history(stat, start, end)],
+                                           bins, peak=False)
+        # Only download / upload: the hardware tiles show live values, never a window avg/peak.
+        summ = {
+            "down": ws.summarize_network("download", start, end, None, poll),
+            "up": ws.summarize_network("upload", start, end, None, poll),
         }
-    summ = {
-        "down": ws.summarize_network("download", start, end, None, poll),
-        "up": ws.summarize_network("upload", start, end, None, poll),
-        "cpu": ws.summarize_hardware("cpu", start, end, poll),
-        "gpu": ws.summarize_hardware("gpu", start, end, poll),
-        "ram": ws.summarize_hardware("ram", start, end, poll),
-    }
     # Connection-drop events over the window (from the persisted loss series), so a latency blip you
     # missed live is still counted. ONE hop decides: the internet anchor when the internet ping is on
     # (if it answered, the connection was up - and a real router failure loses it too, so nothing
@@ -263,6 +394,19 @@ class OverviewTab(QWidget):
         self._load_busy = False
         self._load_dirty = False
         self._closed = False
+        # Reader-thread memory between reloads (earliest sample, last read + its data_version); keyed
+        # by _load_seq, so a range change, a hide/show or a history delete starts it afresh.
+        self._read_cache = _ReadCache()
+        # "Delete all history" (Settings) empties what the cards show: re-read at once, whatever the
+        # cadence, instead of showing the deleted figures for up to two minutes.
+        self._history_deleted_sig = None
+        try:
+            sig = getattr(getattr(main_widget, "widget_state", None), "history_deleted", None)
+            if sig is not None:
+                sig.connect(self._on_history_deleted)
+                self._history_deleted_sig = sig
+        except Exception:
+            pass
 
         # The tab itself holds ONLY a scroll area; all cards live in an inner content widget. When the
         # window is shorter than the content needs, it scrolls instead of squeezing widgets past their
@@ -388,9 +532,10 @@ class OverviewTab(QWidget):
         self._timer.setInterval(_REFRESH_MS)
         self._timer.timeout.connect(self._tick)
         # Separate, slower timer reloads the window's DB series + summaries (sparklines + avg/peak), so
-        # the 1 Hz current-value tick never touches the DB.
+        # the 1 Hz current-value tick never touches the DB. Its interval follows the selected window
+        # (_reload_interval_ms), re-set on every reload.
         self._hist_timer = QTimer(self)
-        self._hist_timer.setInterval(_HISTORY_MS)
+        self._hist_timer.setInterval(_reload_interval_ms(self._period_key()))
         self._hist_timer.timeout.connect(self._reload_window)
 
     # --------------------------------------------------------------- responsive layout
@@ -520,7 +665,22 @@ class OverviewTab(QWidget):
         self._closed = True
         self._load_seq += 1     # anything still in flight is now stale
         self._load_dirty = False
+        if self._history_deleted_sig is not None:
+            try:
+                self._history_deleted_sig.disconnect(self._on_history_deleted)
+            except (TypeError, RuntimeError):
+                pass
+            self._history_deleted_sig = None
         self._stop_reader()
+
+    def _on_history_deleted(self, _status: str = "") -> None:
+        """History was deleted (or the delete failed): what the cards show may be gone - re-read now.
+        Bumping the sequence drops a read already in flight (it saw the old rows) and the reader's
+        cache; a reload asked for while one runs reruns after it (_load_dirty)."""
+        if self._closed:
+            return
+        self._load_seq += 1
+        self._reload_window()
 
     # ----------------------------------------------------------------- reader thread
     def _ensure_reader(self) -> None:
@@ -589,6 +749,9 @@ class OverviewTab(QWidget):
         # only the period, the clock and the session start are taken here.
         key, now = self._period_key(), datetime.now()
         session_start = getattr(self._main_widget, "session_start_time", None)
+        interval = _reload_interval_ms(key, now)
+        if self._hist_timer.interval() != interval:
+            self._hist_timer.setInterval(interval)
         # Seconds per sample for coverage / volume math: the shared resolver, never a local `or 1.0`.
         poll = resolve_poll_interval_seconds(self._config.get("update_rate", 1.0))
         series = None
@@ -612,7 +775,8 @@ class OverviewTab(QWidget):
         self._load_requested.emit(self._load_seq, partial(
             _read_window, ws, key, now, session_start, series, poll,
             bool(self._config.get("latency_enabled", True)), self._cap_period_start(ws),
-            bool(self._config.get("latency_public_enabled", False))))
+            bool(self._config.get("latency_public_enabled", False)),
+            cache=self._read_cache, epoch=self._load_seq))
 
     def _cap_period_start(self, ws) -> Optional[datetime]:
         """The data cap's current period start (the odometer owns it), or None with no cap set."""
