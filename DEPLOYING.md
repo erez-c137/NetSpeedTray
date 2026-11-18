@@ -136,18 +136,22 @@ Turning the app off in Task Manager's Startup tab also stops it.
 Since 2.2.2 the app shows, at most once each, a small card beside the widget:
 
 - **First-run tip** - on a new install's first launch, pointing at the widget: point to it for
-  details, double-click for the Monitor, right-click for the menu and Settings. Buttons: **Open the
-  Monitor** / **Got it**. Doing any of those three also counts as an answer.
+  details, double-click for the Monitor (or the configured double-click action), right-click for the
+  menu and Settings. Buttons: **Open Monitor** / **Got it**. Doing any of those three - or opening the
+  Monitor or Settings from the "NetSpeedTray is running" panel - also counts as an answer, even before
+  the tip has shown (it then never shows).
 - **What's new** - on the first launch of a newer final release: one sentence, with **What's new**
   (opens that version's GitHub release page in the browser) and **Got it**. Prereleases never show it;
   a beta tester sees it once, on the final. Not on a downgrade, never on the same launch as the tip.
 
 Neither takes the keyboard from the app in front (unless a screen reader is running, so it can be
 read), times out or repeats. Each waits while the widget is hidden and (retried every 30 s) while a
-fullscreen app or a modal dialog is up, Settings is open, another NetSpeedTray notice is showing, the
-session is locked or idle for 2 minutes, or the session signed in less than 2 minutes ago. A card
-already up steps aside for a fullscreen app (even with **Keep visible in fullscreen**) or another notice,
-and comes back after. Nothing is sent anywhere; the release page opens only if the user clicks. The
+fullscreen app or a modal dialog is up, Settings is open, another NetSpeedTray notice or the hover card
+is showing, the "NetSpeedTray is running" panel (opened from Start) is open, the session is locked or
+idle for 2 minutes, or the session signed in less than 2 minutes ago. A card already up steps aside for
+a fullscreen app (even with **Keep visible in fullscreen**), a modal dialog, the running panel or another
+notice, and comes back after. One one-time moment per session: a session that already showed the
+support card or the temperature setup (below) leaves the tip / "what's new" for the next launch. Nothing is sent anywhere; the release page opens only if the user clicks. The
 state is two settings in `NetSpeedTray_Config.json`: `first_run_tip_shown` and `last_seen_version`.
 
 **The one-time "rate / star / support" card (2.2.2):** about a month (30 days) after a user first runs
@@ -159,8 +163,9 @@ Store install also gets **Rate it in the Store** (the Store only accepts ratings
 the app in their Store library; Setup records a Store install when the Store runs it with `/STORE`, as
 `InstalledFrom` = `Store` under `HKLM\SOFTWARE\NetSpeedTray` - active once the Store submission passes
 that switch). It never appears at launch (not in the app's first 2 minutes, nor in the 2 minutes after
-sign-in), over a fullscreen app, with a modal dialog or Settings open, or while another NetSpeedTray
-card is showing. Any action - or about 4.5 seconds on screen while the Monitor is the active window -
+sign-in), over a fullscreen app, with a modal dialog or Settings open, while another NetSpeedTray
+card or the running panel is showing (not a panel that is closing because its Monitor row was used),
+or in a session that showed - or still owes - the first-run tip, "what's new" or the temperature setup. Any action - or about 4.5 seconds on screen while the Monitor is the active window -
 ends it for good; nothing in the app changes whichever was chosen, nothing is recorded about the
 choice, and nothing is sent anywhere (a link opens only on a click). The state is `first_seen_at`
 (UTC) and `support_prompt_shown` in the config; Settings > Reset all keeps both. A PC clock set before
@@ -180,6 +185,17 @@ November 2026 never starts or advances the wait. The same `DisableTips` policy b
 - **Per user, without a policy:** pre-seed the config with `"first_run_ever": false,
   "first_run_v2_seen": true, "first_run_tip_shown": true` and `"last_seen_version": "<the version you
   deploy>"` before the first launch, plus `"support_prompt_shown": true` for the rate / star / support card.
+- **Not covered by `DisableTips`:** the Monitor's one-click offer to add the internet check ("Router"
+  only -> "Also check the internet?", 2.2.2) and the temperature setup dialog. The temperature setup
+  opens on its own at most once ever - when temperatures or power are turned on but no sensor reads -
+  behind the same gates as the cards above, and afterwards only from Settings > Hardware; pre-seed
+  `"temp_onboarding_dismissed": true` to skip it.
+
+**Launching NetSpeedTray while it runs (2.2.2):** the widget comes back; a launch the user made - a
+Start menu, taskbar or desktop shortcut, or an exe double-clicked in Explorer - also opens the small
+"NetSpeedTray is running" panel. An autostart (the Run key, which since 2.2.2 carries `--autostart`, or
+a Startup-folder shortcut), the updater's relaunch, and any other start (Task Scheduler, a script) never
+open it.
 
 ## Network activity
 
