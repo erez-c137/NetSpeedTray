@@ -633,5 +633,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "Varnostno kopiranje v to datoteko že poteka.",
     "CONTEXT_MENU_ITEMS_LABEL": "Elementi menija desnega klika",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Izberite, kaj prikaže meni desnega klika pripomočka. {settings} in {exit} sta vedno prikazana.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Opravilna vrstica prikazuje barvo poudarka, zato so barve, ki so na njej težko berljive, narisane v berljivi barvi besedila."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Opravilna vrstica prikazuje barvo poudarka, zato so barve, ki so na njej težko berljive, narisane v berljivi barvi besedila.",
+    "RUNNING_PANEL_VERSION": "Različica {version}",
+    "RUNNING_PANEL_RUNNING": "Teče v opravilni vrstici",
+    "RUNNING_PANEL_HINT": "Za podrobnosti pokažite na hitrosti v opravilni vrstici. Za več možnosti kliknite z desno tipko.",
+    "RUNNING_PANEL_CHECK_UPDATES": "Preveri posodobitve",
+    "RUNNING_PANEL_QUIT": "Zapri NetSpeedTray",
+    "RUNNING_PANEL_CHECKING": "Preverjanje…",
+    "RUNNING_PANEL_UP_TO_DATE": "Imate najnovejšo različico",
+    "RUNNING_PANEL_CHECK_FAILED": "Posodobitev ni bilo mogoče preveriti",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "Na voljo je {version}",
+    "RUNNING_PANEL_UPDATE_NOW": "Posodobi",
+    "RUNNING_PANEL_BETA": "Beta",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "Teče - skrito, dokler je odprta celozaslonska aplikacija",
+    "RUNNING_PANEL_HIDDEN_YIELD": "Teče - umaknjeno zaradi gumbov aplikacij v opravilni vrstici",
+    "RUNNING_PANEL_HIDDEN": "Teče - pripomoček je trenutno skrit",
+    "RUNNING_PANEL_PAUSED_LINE": "Hitrosti so zaustavljene.",
+    "RUNNING_PANEL_QUIT_TIP": "Zapre NetSpeedTray. Ob prijavi se znova zažene."
 }

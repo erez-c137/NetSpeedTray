@@ -633,5 +633,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "כבר מתבצע גיבוי לקובץ הזה.",
     "CONTEXT_MENU_ITEMS_LABEL": "פריטי תפריט הלחיצה הימנית",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "בחר מה יוצג בתפריט הלחיצה הימנית של הווידג'ט. {settings} ו{exit} מוצגים תמיד.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "שורת המשימות שלך מציגה צבע הדגשה, ולכן צבעים שקשה לקרוא עליה מצוירים בצבע טקסט קריא."
+    "ACCENT_TASKBAR_COLORS_NOTE": "שורת המשימות שלך מציגה צבע הדגשה, ולכן צבעים שקשה לקרוא עליה מצוירים בצבע טקסט קריא.",
+    "RUNNING_PANEL_VERSION": "גרסה {version}",
+    "RUNNING_PANEL_RUNNING": "פועל בשורת המשימות",
+    "RUNNING_PANEL_HINT": "הצבע על המהירויות בשורת המשימות לפרטים. לחיצה ימנית לאפשרויות נוספות.",
+    "RUNNING_PANEL_CHECK_UPDATES": "בדוק עדכונים",
+    "RUNNING_PANEL_QUIT": "יציאה מ-NetSpeedTray",
+    "RUNNING_PANEL_CHECKING": "בודק…",
+    "RUNNING_PANEL_UP_TO_DATE": "הגרסה שלך עדכנית",
+    "RUNNING_PANEL_CHECK_FAILED": "לא ניתן היה לבדוק עדכונים",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} זמינה",
+    "RUNNING_PANEL_UPDATE_NOW": "עדכן",
+    "RUNNING_PANEL_BETA": "בטא",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "פועל - מוסתר בזמן שאפליקציה במסך מלא פתוחה",
+    "RUNNING_PANEL_HIDDEN_YIELD": "פועל - זז הצידה בשביל לחצני האפליקציות בשורת המשימות",
+    "RUNNING_PANEL_HIDDEN": "פועל - הווידג'ט מוסתר כרגע",
+    "RUNNING_PANEL_PAUSED_LINE": "המהירויות מושהות.",
+    "RUNNING_PANEL_QUIT_TIP": "עוצר את NetSpeedTray. הוא יופעל שוב כשתתחבר."
 }

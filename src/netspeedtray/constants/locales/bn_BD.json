@@ -633,5 +633,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "এই ফাইলের একটি ব্যাকআপ ইতিপূর্বেই চালু আছে।",
     "CONTEXT_MENU_ITEMS_LABEL": "রাইট-ক্লিক মেনুর আইটেম",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "উইজেটের রাইট-ক্লিক মেনুতে কী দেখাবে তা বেছে নিন। {settings} এবং {exit} সবসময় দেখায়।",
-    "ACCENT_TASKBAR_COLORS_NOTE": "আপনার টাস্কবারে অ্যাকসেন্ট রং দেখানো হচ্ছে, তাই যে রংগুলো এর উপর পড়া কঠিন সেগুলো পড়ার উপযোগী লেখার রঙে আঁকা হয়।"
+    "ACCENT_TASKBAR_COLORS_NOTE": "আপনার টাস্কবারে অ্যাকসেন্ট রং দেখানো হচ্ছে, তাই যে রংগুলো এর উপর পড়া কঠিন সেগুলো পড়ার উপযোগী লেখার রঙে আঁকা হয়।",
+    "RUNNING_PANEL_VERSION": "সংস্করণ {version}",
+    "RUNNING_PANEL_RUNNING": "আপনার টাস্কবারে চলছে",
+    "RUNNING_PANEL_HINT": "বিস্তারিত দেখতে টাস্কবারের গতির উপর পয়েন্টার রাখুন। আরও বিকল্পের জন্য রাইট-ক্লিক করুন।",
+    "RUNNING_PANEL_CHECK_UPDATES": "আপডেট খুঁজুন",
+    "RUNNING_PANEL_QUIT": "NetSpeedTray বন্ধ করুন",
+    "RUNNING_PANEL_CHECKING": "পরীক্ষা করা হচ্ছে…",
+    "RUNNING_PANEL_UP_TO_DATE": "আপনি সর্বশেষ সংস্করণে আছেন",
+    "RUNNING_PANEL_CHECK_FAILED": "আপডেট পরীক্ষা করা যায়নি",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} পাওয়া যাচ্ছে",
+    "RUNNING_PANEL_UPDATE_NOW": "আপডেট",
+    "RUNNING_PANEL_BETA": "বিটা",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "চলছে - পূর্ণ-স্ক্রিন অ্যাপ খোলা থাকায় লুকানো",
+    "RUNNING_PANEL_HIDDEN_YIELD": "চলছে - টাস্কবারের অ্যাপ বোতামগুলির জন্য সরে গেছে",
+    "RUNNING_PANEL_HIDDEN": "চলছে - উইজেটটি এখন লুকানো",
+    "RUNNING_PANEL_PAUSED_LINE": "গতি স্থগিত আছে।",
+    "RUNNING_PANEL_QUIT_TIP": "NetSpeedTray বন্ধ করে। সাইন ইন করলে এটি আবার চালু হয়।"
 }

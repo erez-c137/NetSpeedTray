@@ -633,5 +633,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "È già in corso un backup su questo file.",
     "CONTEXT_MENU_ITEMS_LABEL": "Voci del menu del tasto destro",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Scegli cosa mostra il menu del tasto destro del widget. {settings} e {exit} sono sempre visibili.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "La barra delle applicazioni mostra un colore principale, quindi i colori difficili da leggere su di essa vengono disegnati con un colore del testo leggibile."
+    "ACCENT_TASKBAR_COLORS_NOTE": "La barra delle applicazioni mostra un colore principale, quindi i colori difficili da leggere su di essa vengono disegnati con un colore del testo leggibile.",
+    "RUNNING_PANEL_VERSION": "Versione {version}",
+    "RUNNING_PANEL_RUNNING": "In esecuzione sulla barra delle applicazioni",
+    "RUNNING_PANEL_HINT": "Punta le velocità sulla barra delle applicazioni per i dettagli. Clic destro per altre opzioni.",
+    "RUNNING_PANEL_CHECK_UPDATES": "Controlla aggiornamenti",
+    "RUNNING_PANEL_QUIT": "Esci da NetSpeedTray",
+    "RUNNING_PANEL_CHECKING": "Controllo in corso…",
+    "RUNNING_PANEL_UP_TO_DATE": "Sei aggiornato",
+    "RUNNING_PANEL_CHECK_FAILED": "Impossibile controllare gli aggiornamenti",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} è disponibile",
+    "RUNNING_PANEL_UPDATE_NOW": "Aggiorna",
+    "RUNNING_PANEL_BETA": "Beta",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "In esecuzione - nascosto mentre è aperta un'app a schermo intero",
+    "RUNNING_PANEL_HIDDEN_YIELD": "In esecuzione - spostato per i pulsanti delle app sulla barra",
+    "RUNNING_PANEL_HIDDEN": "In esecuzione - il widget è nascosto ora",
+    "RUNNING_PANEL_PAUSED_LINE": "Le velocità sono in pausa.",
+    "RUNNING_PANEL_QUIT_TIP": "Chiude NetSpeedTray. Si riavvia al prossimo accesso."
 }

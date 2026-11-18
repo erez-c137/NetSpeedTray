@@ -255,6 +255,21 @@ def _judge_fullscreen(widget: Any, taskbar_info: Any, hwnd_hint: int) -> bool:
     return covered
 
 
+def _deliver_update_reply(widget, kind: str, *args) -> bool:
+    """Hand a manual update check's result to whoever asked inline (check_for_updates' ``reply_to``,
+    the "running" panel - D3) - read-and-clear. False when nobody did, or they could not show it (the
+    caller then shows its usual message box / dialog)."""
+    sink = getattr(widget, "_update_reply_sink", None)
+    widget._update_reply_sink = None
+    if sink is None:
+        return False
+    try:
+        return bool(sink(kind, *args))
+    except Exception as e:
+        logging.getLogger("NetSpeedTray.Widget").debug("Inline update reply not shown: %s", e)
+        return False
+
+
 class NetworkSpeedWidget(QWidget):
     """Main widget for displaying network speeds near the Windows system tray."""
 
@@ -2364,9 +2379,11 @@ class NetworkSpeedWidget(QWidget):
                     return True, 0
                 if _WM_NST_ACTIVATE and msg.message == _WM_NST_ACTIVATE:
                     # A second launch (#234): deferred out of the native dispatch like the shutdown.
-                    # wParam: the second process's own verdict - a duplicate start at sign-in (#373).
-                    duplicate = int(msg.wParam or 0) == constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE
-                    QTimer.singleShot(0, lambda: self.show_from_second_launch(sign_in_duplicate=duplicate))
+                    # wParam: the second process's own verdict - the user, a duplicate start at
+                    # sign-in (#373) or the updater's relaunch (handle_activate_request).
+                    wparam = int(msg.wParam or 0)
+                    lparam = int(msg.lParam or 0)   # the launch monitor's centre (D3), 0 = none
+                    QTimer.singleShot(0, lambda: self.handle_activate_request(wparam, lparam))
                     return True, 0
                 if msg.message == _WM_QUERYENDSESSION or (msg.message == _WM_ENDSESSION and msg.wParam):
                     # Logoff / shutdown / restart. The normal quit path (closeEvent -> cleanup) never
@@ -2454,6 +2471,73 @@ class NetworkSpeedWidget(QWidget):
         self.update_config({'position_x': None, 'position_y': None,
                             'tray_offset_x': defaults.DEFAULT_TRAY_OFFSET_X,
                             'tray_offset_y': defaults.DEFAULT_TRAY_OFFSET_Y})
+
+    def handle_activate_request(self, wparam: int, lparam: int = 0) -> None:
+        """
+        Another launch of this user's app asked for it (the activate message; ``wparam`` is the second
+        process's verdict - shutdown_channel.activation_kind). Step 1, always: bring the widget back
+        (show_from_second_launch - its #373 sign-in rule included). Step 2 (2.2.2 D3), only for
+        ACTIVATE_WPARAM_USER and never while the app is quitting: the "NetSpeedTray is running" panel,
+        in front and focused (the second process allowed this one to take the foreground first), on
+        the monitor ``lparam`` names (shutdown_channel.pack_point; 0 = none). A duplicate autostart at
+        sign-in, the updater's relaunch and any value this build doesn't know get step 1 only. Under a
+        fullscreen app the widget waits as always, but the panel still opens: launching the app is an
+        explicit request for a window.
+        """
+        app = constants.app
+        try:
+            self.show_from_second_launch(sign_in_duplicate=(wparam == app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE))
+        except Exception as e:
+            self.logger.error("Second launch: bringing the widget back failed: %s", e, exc_info=True)
+        if wparam != app.ACTIVATE_WPARAM_USER or self._app_is_quitting():
+            return
+        self.show_running_panel(lparam)
+
+    def show_running_panel(self, lparam: int = 0) -> None:
+        """Open the "NetSpeedTray is running" panel (D3) - or bring the open one to the front: one at a
+        time. Released when it closes (WA_DeleteOnClose); the next launch builds a fresh one.
+
+        An app-modal dialog of ours already up (Welcome, the update dialog, Check connection...) owns
+        input: a panel opened beside it would take no clicks or keys, so that dialog comes to the front
+        instead and no panel opens."""
+        try:
+            from PyQt6 import sip
+            from netspeedtray.views import running_panel
+            modal = QApplication.activeModalWidget()
+            if modal is not None:
+                self.logger.info("Second launch: a dialog is open - bringing it forward, no panel.")
+                running_panel.bring_to_front(modal)
+                return
+            panel = getattr(self, "_running_panel", None)
+            if panel is not None and sip.isdeleted(panel):
+                panel = self._running_panel = None
+            if panel is None:
+                panel = running_panel.RunningPanel(self, self.i18n, version=constants.app.VERSION)
+                running_panel.keep_until_destroyed(self, "_running_panel", panel)
+                panel.place_on_screen(running_panel.screen_for_new_window(lparam, self))
+            running_panel.bring_to_front(panel)
+            self.logger.info("Second launch: the 'running' panel is open.")
+        except Exception as e:
+            self.logger.error("Opening the 'running' panel failed: %s", e, exc_info=True)
+
+    def close_running_panel(self) -> None:
+        """Close the panel if it is open (quit's first cleanup step)."""
+        panel = getattr(self, "_running_panel", None)
+        self._running_panel = None
+        if panel is None:
+            return
+        from PyQt6 import sip
+        if not sip.isdeleted(panel):
+            panel.close()
+
+    def open_connection_check(self) -> None:
+        """The Check connection sheet (the Monitor's Overview/Network headers open the same one), here
+        for the "running" panel - parentless, so it is a window of its own."""
+        try:
+            from netspeedtray.views.monitor.connection_check import open_connection_check
+            open_connection_check(self, self.config, self.i18n)
+        except Exception as e:
+            self.logger.error("Opening the connection check failed: %s", e, exc_info=True)
 
     def show_from_second_launch(self, sign_in_duplicate: bool = False) -> None:
         """
@@ -2898,13 +2982,20 @@ class NetworkSpeedWidget(QWidget):
         QTimer.singleShot(constants.timeouts.GRAPH_CLOSE_REFRESH_DELAY_MS, self._execute_refresh)
 
 
-    def check_for_updates(self) -> None:
-        """Manually trigger an update check (from menu)."""
+    def check_for_updates(self, reply_to=None) -> None:
+        """Manually trigger an update check (from menu). ``reply_to`` (the "running" panel, D3) takes the
+        result inline instead of the message boxes: called once with ("up_to_date",), ("failed", error)
+        or ("available", version, offer) and returning True when it showed it - a panel closed
+        meanwhile returns False (or raises), and the usual manual reply is shown instead."""
         from netspeedtray.core.update_checker import update_check_disabled_by_policy
         if update_check_disabled_by_policy():
             # The menu item is hidden under the policy (U1); a stale menu opened just before the
             # policy landed must not arm the manual replies for a check that will never run.
+            if reply_to is not None:
+                reply_to("none")
             return
+        if not self.update_checker and reply_to is not None:
+            reply_to("failed", "")
         if self.update_checker:
             # update_available / up_to_date / check_failed are all wired ONCE at construction
             # (persistent, see _setup_timers). Do NOT connect anything here: a second
@@ -2914,6 +3005,7 @@ class NetworkSpeedWidget(QWidget):
             # check popped a surprise "up to date" / "failed" box (#508 review). The flag below
             # is what makes this result a manual one.
             self._manual_update_check = True
+            self._update_reply_sink = reply_to
             self.update_checker.check_now()
 
     def _take_update_check_context(self) -> Tuple[bool, Optional[str]]:
@@ -2926,13 +3018,15 @@ class NetworkSpeedWidget(QWidget):
 
     def _on_update_check_up_to_date(self) -> None:
         manual, _source = self._take_update_check_context()
-        if manual:
+        if manual and not _deliver_update_reply(self, "up_to_date"):
             self._on_up_to_date_manual()
 
     def _on_update_check_failed(self, error: str = "") -> None:
         manual, _source = self._take_update_check_context()
-        if manual:
+        if manual and not _deliver_update_reply(self, "failed", error):
             self._on_check_failed_manual(error)
+
+
 
     def _schedule_resume_update_check(self) -> None:
         """Wake from sleep: check for updates once the network is likely back (coalesced)."""
@@ -3010,15 +3104,17 @@ class NetworkSpeedWidget(QWidget):
         5 s startup check, the periodic tick, after a resume: a non-modal flyout that opens the
         dialog only when clicked). One persistent handler for all; see check_for_updates."""
         manual, _source = self._take_update_check_context()
-        if getattr(self, "_update_dialog_open", False):
-            self.logger.info("Update %s found while an update prompt is open; not stacking another.",
-                             latest_version)
-            return
-        if self._app_is_quitting():
+        if getattr(self, "_update_dialog_open", False) or self._app_is_quitting():
+            if manual:
+                _deliver_update_reply(self, "none")   # an inline asker goes back to its idle state
+            if getattr(self, "_update_dialog_open", False):
+                self.logger.info("Update %s found while an update prompt is open; not stacking another.",
+                                 latest_version)
             return
         offer = (latest_version, release_url, body, installer_url, portable_url)
         if manual:
-            self._show_update_dialog(*offer)
+            if not _deliver_update_reply(self, "available", latest_version, offer):
+                self._show_update_dialog(*offer)
             return
         if self._update_recently_dismissed(latest_version):
             self.logger.info("Update %s was answered 'Not now' recently; not re-offering yet.",
@@ -3572,6 +3668,9 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug("Performing widget cleanup...")
         failed: List[str] = []
 
+        def _running_panel() -> None:
+            NetworkSpeedWidget.close_running_panel(self)
+
         def _mirrors() -> None:
             # "Show on all taskbars" (#229): close every mirror while the data they paint still exists.
             mgr = getattr(self, "_mirrors", None)
@@ -3679,6 +3778,7 @@ class NetworkSpeedWidget(QWidget):
         # * "config save" before "history flush": the DB step can wait DB_SHUTDOWN_WAIT_MS (15 s) for a
         #   busy database thread, and a logoff ends the process ~5 s in - the save must already be done.
         steps = (
+            ("running panel", _running_panel),   # D3: never left open past quit
             ("mirrors", _mirrors),
             ("hover card", _hover_card), ("event hooks", _event_hooks),
             ("position manager", _position_manager), ("state watcher", _state_watcher),

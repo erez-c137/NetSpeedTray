@@ -633,5 +633,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "Резервная копия в этот файл уже создаётся.",
     "CONTEXT_MENU_ITEMS_LABEL": "Пункты контекстного меню",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Выберите, что показывает контекстное меню виджета. «{settings}» и «{exit}» отображаются всегда.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "На панели задач отображается цвет элементов, поэтому цвета, которые на ней трудно прочитать, рисуются читаемым цветом текста."
+    "ACCENT_TASKBAR_COLORS_NOTE": "На панели задач отображается цвет элементов, поэтому цвета, которые на ней трудно прочитать, рисуются читаемым цветом текста.",
+    "RUNNING_PANEL_VERSION": "Версия {version}",
+    "RUNNING_PANEL_RUNNING": "Работает на панели задач",
+    "RUNNING_PANEL_HINT": "Наведите на скорости на панели задач, чтобы увидеть подробности. Правый щелчок - другие параметры.",
+    "RUNNING_PANEL_CHECK_UPDATES": "Проверить обновления",
+    "RUNNING_PANEL_QUIT": "Выйти из NetSpeedTray",
+    "RUNNING_PANEL_CHECKING": "Проверка…",
+    "RUNNING_PANEL_UP_TO_DATE": "У вас последняя версия",
+    "RUNNING_PANEL_CHECK_FAILED": "Не удалось проверить обновления",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "Доступна версия {version}",
+    "RUNNING_PANEL_UPDATE_NOW": "Обновить",
+    "RUNNING_PANEL_BETA": "Бета",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "Работает - скрыт, пока открыто полноэкранное приложение",
+    "RUNNING_PANEL_HIDDEN_YIELD": "Работает - уступил место кнопкам приложений на панели задач",
+    "RUNNING_PANEL_HIDDEN": "Работает - виджет сейчас скрыт",
+    "RUNNING_PANEL_PAUSED_LINE": "Обновление скоростей приостановлено.",
+    "RUNNING_PANEL_QUIT_TIP": "Закрывает NetSpeedTray. Он снова запустится при входе в систему."
 }

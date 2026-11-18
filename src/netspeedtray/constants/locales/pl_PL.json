@@ -633,5 +633,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "Kopia zapasowa do tego pliku jest już tworzona.",
     "CONTEXT_MENU_ITEMS_LABEL": "Pozycje menu prawego przycisku",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Wybierz, co pokazuje menu prawego przycisku widżetu. {settings} i {exit} są zawsze widoczne.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Pasek zadań wyświetla kolor akcentu, więc kolory trudne do odczytania na nim są rysowane w czytelnym kolorze tekstu."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Pasek zadań wyświetla kolor akcentu, więc kolory trudne do odczytania na nim są rysowane w czytelnym kolorze tekstu.",
+    "RUNNING_PANEL_VERSION": "Wersja {version}",
+    "RUNNING_PANEL_RUNNING": "Działa na pasku zadań",
+    "RUNNING_PANEL_HINT": "Wskaż prędkości na pasku zadań, aby zobaczyć szczegóły. Kliknij prawym przyciskiem, aby zobaczyć więcej opcji.",
+    "RUNNING_PANEL_CHECK_UPDATES": "Sprawdź aktualizacje",
+    "RUNNING_PANEL_QUIT": "Zamknij NetSpeedTray",
+    "RUNNING_PANEL_CHECKING": "Sprawdzanie…",
+    "RUNNING_PANEL_UP_TO_DATE": "Masz najnowszą wersję",
+    "RUNNING_PANEL_CHECK_FAILED": "Nie udało się sprawdzić aktualizacji",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "Dostępna jest wersja {version}",
+    "RUNNING_PANEL_UPDATE_NOW": "Aktualizuj",
+    "RUNNING_PANEL_BETA": "Beta",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "Działa - ukryty, gdy otwarta jest aplikacja pełnoekranowa",
+    "RUNNING_PANEL_HIDDEN_YIELD": "Działa - ustąpił miejsca przyciskom aplikacji na pasku zadań",
+    "RUNNING_PANEL_HIDDEN": "Działa - widżet jest teraz ukryty",
+    "RUNNING_PANEL_PAUSED_LINE": "Prędkości są wstrzymane.",
+    "RUNNING_PANEL_QUIT_TIP": "Zamyka NetSpeedTray. Uruchomi się ponownie po zalogowaniu."
 }

@@ -633,5 +633,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "Bu dosyaya zaten bir yedekleme yapılıyor.",
     "CONTEXT_MENU_ITEMS_LABEL": "Sağ tıklama menüsü öğeleri",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Widget'ın sağ tıklama menüsünde nelerin görüneceğini seçin. {settings} ve {exit} her zaman görünür.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Görev çubuğunuz bir vurgu rengi gösteriyor; bu yüzden üzerinde okunması zor renkler okunaklı bir metin rengiyle çizilir."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Görev çubuğunuz bir vurgu rengi gösteriyor; bu yüzden üzerinde okunması zor renkler okunaklı bir metin rengiyle çizilir.",
+    "RUNNING_PANEL_VERSION": "Sürüm {version}",
+    "RUNNING_PANEL_RUNNING": "Görev çubuğunuzda çalışıyor",
+    "RUNNING_PANEL_HINT": "Ayrıntılar için görev çubuğundaki hızların üzerine gelin. Daha fazla seçenek için sağ tıklayın.",
+    "RUNNING_PANEL_CHECK_UPDATES": "Güncelleştirmeleri denetle",
+    "RUNNING_PANEL_QUIT": "NetSpeedTray'den çık",
+    "RUNNING_PANEL_CHECKING": "Denetleniyor…",
+    "RUNNING_PANEL_UP_TO_DATE": "Güncelsiniz",
+    "RUNNING_PANEL_CHECK_FAILED": "Güncelleştirmeler denetlenemedi",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} kullanılabilir",
+    "RUNNING_PANEL_UPDATE_NOW": "Güncelleştir",
+    "RUNNING_PANEL_BETA": "Beta",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "Çalışıyor - tam ekran bir uygulama açıkken gizli",
+    "RUNNING_PANEL_HIDDEN_YIELD": "Çalışıyor - görev çubuğundaki uygulama düğmelerine yer açtı",
+    "RUNNING_PANEL_HIDDEN": "Çalışıyor - pencere öğesi şu anda gizli",
+    "RUNNING_PANEL_PAUSED_LINE": "Hızlar duraklatıldı.",
+    "RUNNING_PANEL_QUIT_TIP": "NetSpeedTray'i kapatır. Oturum açtığınızda yeniden başlar."
 }
