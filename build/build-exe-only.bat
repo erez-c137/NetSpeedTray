@@ -103,6 +103,12 @@ set "start_time=%TIME%"
 mkdir "%OUTPUT_DIR%" 2>nul
 move "%DIST_DIR%\NetSpeedTray.exe" "%OUTPUT_DIR%\NetSpeedTray-v%VERSION%.exe" > NUL
 if errorlevel 1 (echo ERROR: Failed to move executable & exit /b 1)
+:: The spec writes the GPLv3 text and the third-party notices next to the exe; they travel with it.
+for %%f in (LICENSE.txt THIRD-PARTY-NOTICES.txt) do (
+    if not exist "%DIST_DIR%\%%f" (echo ERROR: %%f missing after compilation & exit /b 1)
+    move "%DIST_DIR%\%%f" "%OUTPUT_DIR%\%%f" > NUL
+    if errorlevel 1 (echo ERROR: Failed to move %%f & exit /b 1)
+)
 set "end_time=%TIME%"
 call :log_elapsed "Moving executable" "%start_time%" "%end_time%"
 
