@@ -68,6 +68,11 @@ try {
         Write-Host "  unins000.exe signature (expected unsigned): $((Get-AuthenticodeSignature $uninstaller).Status)"
     }
     if (Test-Path (Join-Path $appDir "portable.marker")) { throw "The installed copy contains portable.marker" }
+    # GPLv3 s.4: every copy carries the licence; the bundled libraries' notices travel with it.
+    foreach ($doc in @("LICENSE.txt", "THIRD-PARTY-NOTICES.txt")) {
+        if (-not (Test-Path (Join-Path $appDir $doc))) { throw "The installed copy is missing $doc" }
+    }
+    Write-Host "  LICENSE.txt and THIRD-PARTY-NOTICES.txt installed."
     if ($sig.Status -ne "Valid") { throw "The INSTALLED exe is not validly signed: $($sig.Status) ($($sig.StatusMessage))" }
     if ($env:GITHUB_STEP_SUMMARY) {
         "## Installed exe`n`nProgram Files NetSpeedTray.exe $($ver.ProductVersion): **$($sig.Status)** ($($sig.SignerCertificate.Subject))`n" >> $env:GITHUB_STEP_SUMMARY
@@ -86,6 +91,9 @@ finally {
             # unins000.exe hands off to a temp copy of itself, so wait for the files to actually go.
             for ($i = 0; $i -lt 60 -and (Test-Path $exe); $i++) { Start-Sleep -Seconds 1 }
             if (Test-Path $exe) { Write-Warning "$exe still present after uninstall" } else { Write-Host "Uninstalled." }
+            foreach ($doc in @("LICENSE.txt", "THIRD-PARTY-NOTICES.txt")) {
+                if (Test-Path (Join-Path $appDir $doc)) { Write-Warning "$doc still present after uninstall" }
+            }
         }
         catch { Write-Warning "Uninstall failed: $($_.Exception.Message)" }
     }
