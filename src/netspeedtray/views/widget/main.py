@@ -3495,6 +3495,11 @@ class NetworkSpeedWidget(QWidget):
             quitting = getattr(self, "_app_is_quitting", None)
             if callable(quitting) and quitting():
                 return
+            # It may have waited behind the gates: still wanted, and still no sensor? Else dropped
+            # for this session, its one showing NOT used up (C11 follow-up).
+            if not NetworkSpeedWidget._temp_setup_still_needed(self):
+                self.logger.info("Temperature setup dropped: temperatures are off or a sensor reads now.")
+                return
             reason = NetworkSpeedWidget._temp_setup_blocked_reason(self)
             if reason:
                 self.logger.info("Temperature setup owed, not now: %s.", reason)
@@ -3521,6 +3526,23 @@ class NetworkSpeedWidget(QWidget):
                 dlg.deleteLater()   # C10: parented to the widget - never kept until quit
         except Exception as e:
             self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
+
+    def _temp_setup_still_needed(self) -> bool:
+        """What made the monitor thread ask (StatsMonitorThread._update_lhm_notice) still holds:
+        temperatures or power are on, for a CPU / GPU the user monitors, and LibreHardwareMonitor is
+        not connected (``monitor_thread.lhm_status``)."""
+        from netspeedtray.core.monitor_thread import hardware_collection_gates
+        cfg = getattr(self, "config", None) or {}
+        if not (cfg.get("show_hardware_temps", False) or cfg.get("show_hardware_power", False)):
+            return False
+        try:
+            cpu, gpu = hardware_collection_gates(cfg, False)
+        except Exception:
+            cpu = gpu = True
+        if not (cpu or gpu):
+            return False
+        status = getattr(getattr(self, "monitor_thread", None), "lhm_status", None)
+        return status != constants.lhm.STATUS_OK
 
     def _temp_setup_blocked_reason(self) -> Optional[str]:
         """Why the automatic temperature setup may not show now (the startup cards' gates), or None.

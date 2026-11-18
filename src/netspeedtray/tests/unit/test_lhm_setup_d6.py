@@ -623,7 +623,7 @@ def test_the_nudge_opens_at_step_two_when_the_web_server_is_off(q_app, monkeypat
     monkeypatch.setattr(sn, "_seconds_since_sign_in", lambda: 3600.0)   # not in the sign-in rush
     for status, step in ((L.STATUS_SERVER_OFF, 2), (L.STATUS_NOT_FOUND, 1)):
         mt = type("MT", (), {"lhm_port": 8085, "lhm_status": status})()
-        host = type("W", (), {"config": {}, "monitor_thread": mt, "i18n": EN,
+        host = type("W", (), {"config": dict(_WANTS_TEMPS), "monitor_thread": mt, "i18n": EN,
                               "logger": logging.getLogger("t"),
                               "update_config": lambda self, u: None})()
         NetworkSpeedWidget._on_lhm_not_detected(host)
@@ -727,10 +727,13 @@ class _FakeSetup:
         self.deleted = True
 
 
+_WANTS_TEMPS = {"show_hardware_temps": True, "monitor_cpu_enabled": True}
+
+
 def _nag_host(config=None, **attrs):
     import types
     mt = types.SimpleNamespace(lhm_port=8085, lhm_status=L.STATUS_NOT_FOUND)
-    host = types.SimpleNamespace(config={} if config is None else config, monitor_thread=mt, i18n=EN,
+    host = types.SimpleNamespace(config=dict(_WANTS_TEMPS) if config is None else config, monitor_thread=mt, i18n=EN,
                                  logger=logging.getLogger("t"), settings_dialog=None, _running_panel=None,
                                  _update_flyout=None, _notice_flyout=None, _usage_alert_flyout=None,
                                  _startup_notices=None, _update_offer_blocked=lambda: False,
@@ -808,3 +811,23 @@ def test_the_widgets_setup_dialog_is_deleted_after_it_closes(q_app, nag_world):
     finally:
         _FakeSetup.__init__ = orig
     assert made and made[0].deleted is True
+
+
+@pytest.mark.parametrize("why", ["temps_and_power_off", "cpu_and_gpu_off", "lhm_connected"])
+def test_a_deferred_setup_that_is_no_longer_needed_is_dropped_not_used_up(q_app, nag_world, why):
+    """C11 follow-up: between the notice and its moment (it may wait behind the gates) the user turned
+    temperatures off, or LibreHardwareMonitor started answering - the dialog is dropped, and its one
+    showing is NOT used up."""
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    host = _nag_host()
+    if why == "temps_and_power_off":
+        host.config.update(show_hardware_temps=False, show_hardware_power=False)
+    elif why == "cpu_and_gpu_off":
+        host.config.update(monitor_cpu_enabled=False, monitor_gpu_enabled=False)
+    else:
+        host.monitor_thread.lhm_status = L.STATUS_OK
+    NetworkSpeedWidget._on_lhm_not_detected(host)
+    assert _FakeSetup.made == []
+    assert host.config.get("temp_onboarding_dismissed", False) is False
+    from netspeedtray.views.widget import startup_notices as sn
+    assert sn.moment_taken(host) is None
