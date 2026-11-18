@@ -293,6 +293,7 @@ class RunningPanel(QDialog):
         self._fixed_width = 0
         self._offer = None
         self._update_state = "idle"
+        self.closing = False   # set the moment a row starts closing it (support_card.blocked_reason)
         self.on_closing: Optional[Callable[[], None]] = None
         self.setObjectName("RunningPanel")
         self.setModal(False)
@@ -458,10 +459,10 @@ class RunningPanel(QDialog):
         col.setSpacing(4 - 2 * _RING)   # 4 px between the visible rows
         self.monitor_button = _Control(self._tr("MONITOR_WINDOW_TITLE", "Monitor"), "Row", self,
                                        _GLYPH_MONITOR)
-        self.monitor_button.clicked.connect(lambda: self._run(lambda: mw.open_monitor_window()))
+        self.monitor_button.clicked.connect(lambda: self._run(lambda: mw.open_monitor_window(), answers_tip=True))
         self.settings_button = _Control(self._tr("SETTINGS_WINDOW_TITLE", "Settings"), "Row", self,
                                         _GLYPH_SETTINGS)
-        self.settings_button.clicked.connect(lambda: self._run(lambda: mw.show_settings()))
+        self.settings_button.clicked.connect(lambda: self._run(lambda: mw.show_settings(), answers_tip=True))
         self.check_connection_button = _Control(self._tr("CHECK_CONN_ACTION", "Check connection"), "Row",
                                                 self, _GLYPH_CONNECTION)
         self.check_connection_button.clicked.connect(lambda: self._run(lambda: mw.open_connection_check()))
@@ -532,13 +533,24 @@ class RunningPanel(QDialog):
         except Exception:
             return False
 
-    def _run(self, action: Callable[[], None]) -> None:
+    def _run(self, action: Callable[[], None], answers_tip: bool = False) -> None:
         """A navigation row: the widget's action first, then the panel closes - both on the next loop
         turns, in that order, so the window the action opens is up before the panel goes (no
         activation flash, nothing landing behind) and a modal one (Check connection) doesn't hold the
-        panel open behind it. Nothing at all once the app is quitting."""
+        panel open behind it. Nothing at all once the app is quitting. The panel counts as closing
+        from now on (``closing``). ``answers_tip``: the Monitor and Settings rows answer the first-run
+        tip (combined review C8) - it never comes back over the window they open."""
         if self._quitting():
             return
+        self.closing = True
+        if answers_tip:
+            notices = getattr(self._mw, "_startup_notices", None)
+            answer = getattr(notices, "answer_tip", None)
+            if callable(answer):
+                try:
+                    answer("the running panel's Monitor / Settings row")
+                except Exception as e:
+                    logger.debug("Could not answer the first-run tip: %s", e)
 
         def _go() -> None:
             try:
@@ -793,6 +805,7 @@ class RunningPanel(QDialog):
         """Closing (the X, Alt+F4, Esc, a row, quit): stop the clock and let the owner forget this panel
         at once, so a launch meanwhile builds a new one instead of re-raising a closing one."""
         self._status_timer.stop()
+        self.closing = True
         hook, self.on_closing = self.on_closing, None
         if hook is not None:
             try:

@@ -629,3 +629,51 @@ def test_every_locale_has_the_card_strings():
         assert "NetSpeedTray" in data["SUPPORT_PROMPT_TITLE"]
         for gone in ("SUPPORT_PROMPT_NO_THANKS_BUTTON", "SUPPORT_PROMPT_SUPPORT_BUTTON"):
             assert gone not in data
+
+
+# --- combined review round (C6, C7) ----------------------------------------------------------------
+
+def test_a_closing_running_panel_does_not_block_the_card(qtbot, world):
+    """C6: the panel's Monitor row runs the action first and closes the panel right after - the Monitor
+    it opens must not see that (still visible, closing) panel as 'another card of ours'."""
+    w = _main(_cfg(first_seen_at=_ago(60)))
+    panel = QWidget()
+    qtbot.addWidget(panel)
+    panel.show()
+    w._running_panel = panel
+    assert ui.blocked_reason(w) is not None                   # an open panel still blocks
+    panel.closing = True
+    assert ui.blocked_reason(w) is None
+
+
+def test_the_panels_rows_mark_it_closing_before_their_action_runs(qtbot):
+    from netspeedtray.views.running_panel import RunningPanel
+    seen = []
+    mw = types.SimpleNamespace(config={}, download_speed=1.0, upload_speed=1.0, is_paused=False,
+                               isVisible=lambda: True, latency_headline_hop=None, latency_headline_ms=None,
+                               latency_loss=None, latency_link_lost=False, _app_is_quitting=lambda: False)
+    panel = RunningPanel(mw, I18nStrings("en_US"), version="2.2.2")   # deletes itself on close
+    mw.open_monitor_window = lambda: seen.append(panel.closing)
+    panel.show()
+    assert panel.closing is False
+    panel.monitor_button.click()
+    qtbot.waitUntil(lambda: bool(seen), timeout=1000)
+    assert seen == [True]
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+
+def test_one_one_time_moment_per_session_for_the_card(qtbot, world):
+    """C7: never in a session that showed (or still owes) the first-run tip / what's new; once the card
+    shows, the session's moment is taken."""
+    from netspeedtray.views.widget import startup_notices as sn
+    w = _main(_cfg(first_seen_at=_ago(60)))
+    w._startup_notices = types.SimpleNamespace(_live_card=lambda: None, owes_moment=lambda: True)
+    assert ui.blocked_reason(w) == "the first-run tip or what's new is owed this session"
+    w._startup_notices = None
+    sn.take_moment(w, sn.MOMENT_TEMP_SETUP)
+    assert ui.blocked_reason(w) == "another one-time moment was shown this session"
+    w2 = _main(_cfg(first_seen_at=_ago(60)))
+    assert _attach(qtbot, w2, world)[3] is not None
+    assert sn.moment_taken(w2) == sn.MOMENT_SUPPORT

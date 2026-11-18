@@ -331,3 +331,26 @@ def test_d5_offer_link_is_a_d4_noticelink_that_asks_before_turning_anything_on(q
             ov._internet_tip.close_for_action()
         ov.teardown()
         ov.deleteLater()
+
+
+# --- combined review C8: the panel's Monitor / Settings row answers the first-run tip ---------------
+
+@pytest.mark.parametrize("row", ["monitor_button", "settings_button"])
+@pytest.mark.parametrize("tip_state", ["waiting", "shown"])
+def test_the_panels_monitor_or_settings_row_answers_the_tip(qtbot, row, tip_state):
+    w = _first_run_widget()
+    n = w._startup_notices
+    assert n.start() == logic.NOTICE_TIP
+    n._timer.stop()
+    if tip_state == "shown":
+        n.try_show()
+        assert _tip_shown(n)
+    NetworkSpeedWidget.show_running_panel(w)
+    getattr(w._running_panel, row).click()
+    qtbot.waitUntil(lambda: w._running_panel is None, timeout=1000)
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    QApplication.processEvents()
+    assert w.config["first_run_tip_shown"] is True
+    assert n._live_card() is None and not n.owes_moment()
+    n.try_show()
+    assert not _tip_shown(n)                                 # never back over the Monitor / Settings

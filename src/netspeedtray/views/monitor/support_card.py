@@ -6,7 +6,10 @@ core/support_prompt (pure); this owns the moment and the card.
   ``first_seen_at``. Never on launch: not in the app's first SUPPORT_PROMPT_MIN_UPTIME_S, nor in the
   sign-in rush. Never over a fullscreen app, never with a modal dialog up or Settings open, never while
   another card of ours (the first-run tip / "what's new", an update offer, a notice, a data-cap alert)
-  or the "running" panel is up. A blocked open is a "not this time": the card is owed to the next open.
+  or the "running" panel is up (not one that is closing - its own Monitor row opened this Monitor), and
+  never in a session that already had (or still owes) another one-time moment (the tip / "what's new",
+  the temperature setup's automatic showing). A blocked open is a "not this time": the card is owed to
+  the next open.
 - **The card:** inline, at the top of the Monitor under the tabs (so it is there whichever tab the
   Monitor reopens on), shaped like a WinUI InfoBar: a neutral star glyph, the title "A month with
   NetSpeedTray", one line ("It's free and always will be. ... a rating or a star helps others find
@@ -158,10 +161,17 @@ def blocked_reason(main_widget: Any) -> Optional[str]:
                 return "the first-run tip or what's new is up"
         except Exception:
             pass
-    for name in ("_update_flyout", "_notice_flyout", "_usage_alert_flyout", "_running_panel"):
+    for name in ("_update_flyout", "_notice_flyout", "_usage_alert_flyout"):
         if _alive_visible(getattr(w, name, None)):
             return "another card of ours is up"
-    return None
+    # C6: the "running" panel blocks only while the user is on it - a panel whose row opened this very
+    # Monitor is closing (it runs the action first and closes on the next loop turn).
+    panel = getattr(w, "_running_panel", None)
+    if _alive_visible(panel) and not getattr(panel, "closing", False):
+        return "another card of ours is up"
+    # C7: one one-time moment per session (the tip / what's new, the temperature setup, this card).
+    from netspeedtray.views.widget.startup_notices import MOMENT_SUPPORT, one_time_moment_blocked
+    return one_time_moment_blocked(w, MOMENT_SUPPORT)
 
 
 def should_offer(main_widget: Any, now: Optional[datetime] = None) -> bool:
@@ -432,6 +442,8 @@ class SupportPrompt:
             lay.addWidget(card)
             host_layout.insertWidget(index, wrap)
             self.card, self.host = card, wrap
+            from netspeedtray.views.widget.startup_notices import MOMENT_SUPPORT, take_moment
+            take_moment(self._w, MOMENT_SUPPORT)
             logger.info("Support card shown in the Monitor (once, ever).")
             return card
         except Exception as e:
