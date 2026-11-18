@@ -723,7 +723,7 @@ class OverviewTab(QWidget):
         self._busiest.start()   # start the per-app connection sampler (idles again on hide)
 
     def _watch_window(self) -> None:
-        """Watch the Monitor window for activation / restore (eventFilter)."""
+        """Watch the Monitor window for activation (eventFilter); a restore is showEvent's."""
         win = self.window()
         if win is self._filtered_window or win is None:
             return
@@ -736,11 +736,12 @@ class OverviewTab(QWidget):
         self._filtered_window = win
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
-        """Coming back to the Monitor (activated, or restored from minimized) re-asks at once when the
-        last request is older than OVERVIEW_ACTIVATE_RELOAD_MS - minimized, the reloads pause."""
+        """Coming back to the Monitor (activated) re-asks at once when the last request is older than
+        OVERVIEW_ACTIVATE_RELOAD_MS. A restore from minimized is showEvent's: Qt hands the window's
+        WindowStateChange to this filter BEFORE the restore's spontaneous show, so asking here too
+        cost a second read (#594 review)."""
         try:
-            if obj is self._filtered_window and event.type() in (QEvent.Type.WindowActivate,
-                                                                 QEvent.Type.WindowStateChange):
+            if obj is self._filtered_window and event.type() == QEvent.Type.WindowActivate:
                 if (self.isVisible() and not obj.isMinimized()
                         and (time.monotonic() - self._last_request_at) * 1000.0
                         >= constants.timers.OVERVIEW_ACTIVATE_RELOAD_MS):
@@ -855,7 +856,7 @@ class OverviewTab(QWidget):
         try:
             win = self.window()
             if win is not None and win is not self and win.isMinimized():
-                return      # paused while minimized; the restore re-asks (eventFilter)
+                return      # paused while minimized; the restore re-asks (showEvent)
         except RuntimeError:
             return
         ws = getattr(self._main_widget, "widget_state", None)

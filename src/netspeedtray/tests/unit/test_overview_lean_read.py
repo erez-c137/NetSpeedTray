@@ -674,3 +674,151 @@ def test_sparkline_breaks_at_gaps_and_paints(q_app):
         sp.grab()
         sp.set_series(series, soft_last=True)
         sp.grab()
+
+
+# --- follow-ups from the final review of #594 -------------------------------------------------------
+
+def _hosted(ws, period=2):
+    """The tab inside a real top-level window, shown for real (no isVisible patch), so Qt delivers
+    its own show / hide / window-state events."""
+    from PyQt6.QtWidgets import QVBoxLayout, QWidget
+    from netspeedtray.tests.unit.test_overview_tiles import _overview_on
+    ov = _overview_on(ws, period=period)
+    del ov.isVisible                      # _overview_on patches it; this test wants the real one
+    host = QWidget()
+    QVBoxLayout(host).addWidget(ov)
+    host.resize(900, 700)
+    return host, ov
+
+
+def _settle(ov):
+    from netspeedtray.tests.unit.test_overview_tiles import _spin
+    from PyQt6.QtWidgets import QApplication
+    _spin(lambda: ov._win_summ is not None and not ov._load_busy and not ov._load_dirty)
+    for _ in range(20):
+        QApplication.processEvents()
+
+
+def _count_requests(ov):
+    """Every read the tab asks the reader for, with the tab method that asked."""
+    import traceback
+    asked = []
+
+    def note(*_a):
+        names = [f.name for f in traceback.extract_stack()]
+        asked.append(next((n for n in reversed(names)
+                           if n in ("eventFilter", "showEvent", "_on_window_loaded", "<lambda>")), "?"))
+    ov._load_requested.connect(note)
+    return asked
+
+
+def test_restoring_the_minimized_monitor_asks_for_one_read(q_app):
+    """Final review of #594: Qt delivers WindowStateChange to the window's event filter BEFORE the
+    restore's spontaneous show (QWidget::event sends it while handling that state change). The filter
+    asked for a read (the 6 s staleness check passed), then showEvent asked again: coalesced, but rerun
+    after the first landed - a second session-volume + token read. showEvent alone handles a restore."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QApplication
+    from netspeedtray.tests.unit.test_overview_tiles import _HeldWS
+    ws = _HeldWS()
+    host, ov = _hosted(ws)
+    try:
+        host.show()
+        _settle(ov)
+        asked = _count_requests(ov)
+        host.setWindowState(Qt.WindowState.WindowMinimized)
+        QApplication.processEvents()
+        assert not ov._hist_timer.isActive()           # minimized: the 6 s asks pause (hideEvent)
+        assert asked == []
+        ov._last_request_at -= 60                      # stale, so the old filter path would fire
+        host.setWindowState(Qt.WindowState.WindowNoState)
+        _settle(ov)
+        assert asked == ["showEvent"], asked
+        assert ov._hist_timer.isActive()
+    finally:
+        ov.teardown()
+        host.close()
+        host.deleteLater()
+
+
+def test_hiding_the_overview_stops_every_timer(q_app):
+    """Final review of #594: nothing pinned that hideEvent stops the 11 s link timer and the history
+    timer - leaving Overview (or minimizing) with either running would read the DB while unseen."""
+    from netspeedtray.tests.unit.test_overview_tiles import _HeldWS
+    host, ov = _hosted(_HeldWS())
+    try:
+        host.show()
+        _settle(ov)
+        ov._link_timer.start()
+        assert ov._timer.isActive() and ov._hist_timer.isActive() and ov._link_timer.isActive()
+        host.hide()
+        assert not ov._timer.isActive()
+        assert not ov._hist_timer.isActive()
+        assert not ov._link_timer.isActive()
+    finally:
+        ov.teardown()
+        host.close()
+        host.deleteLater()
+
+
+def test_a_link_change_ends_in_a_forced_reread(q_app):
+    """End to end through the tab (the history reader mocked): a latency_link_lost change arms the
+    single-shot, and its timeout re-reads the window although the window's cadence (24 h: 30 s) would
+    reuse the last read."""
+    from netspeedtray.tests.unit.test_overview_tiles import _HeldWS, _spin
+    ws = _HeldWS()
+    host, ov = _hosted(ws, period=2)
+    try:
+        host.show()
+        _settle(ov)
+        calls = ws.speed_calls
+        assert calls >= 1
+        ov._reload_window()                            # an ordinary ask is reused: cadence not due
+        _settle(ov)
+        assert ws.speed_calls == calls
+        ov._link_timer.setInterval(30)                 # 11 s in the app; the wiring is what is tested
+        ov._main_widget.latency_link_lost = False
+        ov._render()
+        ov._main_widget.latency_link_lost = True
+        ov._render()
+        assert ov._link_timer.isActive()
+        _spin(lambda: ws.speed_calls == calls + 1)
+        _settle(ov)
+        assert ws.speed_calls == calls + 1
+        assert not ov._force_reload                    # consumed by that read
+    finally:
+        ov.teardown()
+        host.close()
+        host.deleteLater()
+
+
+def test_a_gap_paints_no_pixels(q_app):
+    """Final review of #594: the paint test above only proves None doesn't crash - drawing None as 0
+    would pass it. Render a series with a gap in the middle: a column inside the gap is empty, columns
+    on both sides are not (line + fill)."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QImage
+    from netspeedtray.views.monitor.overview.tiles import Sparkline
+    w, h = 294, 60                          # pad 2 + 29 steps of 10 px
+    series = [5.0 + (i % 3) for i in range(30)]
+    for i in range(10, 20):
+        series[i] = None                    # bins 10-19 measured nothing: x 102..192 must stay empty
+    for paint in ("single", "dual"):
+        sp = Sparkline("#42B883")
+        sp.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        sp.resize(w, h)
+        if paint == "single":
+            sp.set_series(series)
+        else:
+            sp.set_dual(series, [v / 2 if v is not None else None for v in series], "#4287F5")
+        img = QImage(w, h, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        sp.render(img)
+
+        def inked(x):
+            return sum(1 for y in range(h) if img.pixelColor(x, y).alpha() > 0)
+
+        assert inked(147) == 0, (paint, inked(147))          # mid-gap
+        assert inked(120) == 0 and inked(175) == 0, paint    # anywhere well inside it
+        assert inked(50) > 3, (paint, inked(50))             # before: line + fill
+        assert inked(250) > 3, (paint, inked(250))           # after
