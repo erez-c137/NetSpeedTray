@@ -85,6 +85,15 @@ class UIStyleConstants:
     RADIUS_CONTROL: Final[int] = 4
     CONTENT_MAX_WIDTH: Final[int] = 640
 
+    # --- NoticeLink + deep-link outline (2.2.2 D4, utils/components) -------
+    FOCUS_RING_WIDTH: Final[int] = 2              # the app's focus ring / the deep-link outline, px
+    NOTICE_LINK_PAD_V: Final[int] = 1             # the link button's padding inside its focus ring
+    NOTICE_LINK_PAD_H: Final[int] = 4
+    MIN_TEXT_CONTRAST: Final[float] = 4.5         # WCAG AA for body text
+    CONTRAST_BLEND_STEPS: Final[int] = 20         # readable_on: lightness steps toward white / black
+    NOTICE_OVERLAY_MIN_WIDTH: Final[int] = 120    # the Hardware graph's history-off notice, px
+    NOTICE_OVERLAY_MAX_WIDTH: Final[int] = 460
+
     def __init__(self) -> None:
         """
         This class is intended for holding constants and should not be instantiated

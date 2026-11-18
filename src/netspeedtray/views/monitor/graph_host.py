@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from PyQt6.QtCore import QEvent, QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
@@ -153,18 +153,21 @@ class HistoryOffNotice(QObject):
     """The Hardware chart's "history is off" note as a real NoticeLink over the canvas (2.2.2 D4).
 
     It used to be text drawn into the chart ("Turn on CPU or GPU monitoring in Settings → Hardware");
-    now the renderer only reports WHICH note applies (GraphRenderer.history_off_notice) and this puts a
-    notice with a "Turn on in Settings" button centred on the canvas: "monitor" lands on the Hardware
-    page's CPU + GPU switches, "record" on Advanced's Record hardware history. Qt-only (no matplotlib)."""
+    now the renderer only reports WHICH note applies - GraphRenderer.history_off_notice, a
+    (reason, role) pair - and this puts a notice with a "Turn on in Settings" button centred on the
+    canvas, landing on the switch that fills THIS view:
+      - ("monitor", None): the combined views - CPU, GPU and RAM monitoring (Hardware page);
+      - ("monitor", "cpu" / "gpu"): the toggle layout's single-stat view - that one switch;
+      - ("record", any): Advanced > Record hardware history.
+    Qt-only (no matplotlib)."""
 
-    _TEXT = {
-        "monitor": ("HW_HISTORY_MONITOR_OFF_NOTICE", "Hardware history needs CPU or GPU monitoring."),
-        "record": ("HW_HISTORY_RECORD_OFF_NOTICE", "Hardware history isn't being recorded."),
+    _MONITOR_TEXT = {
+        None: ("HW_HISTORY_MONITOR_OFF_NOTICE", "Hardware history needs CPU, GPU or RAM monitoring."),
+        "cpu": ("HW_HISTORY_CPU_OFF_NOTICE", "CPU history needs CPU monitoring."),
+        "gpu": ("HW_HISTORY_GPU_OFF_NOTICE", "GPU history needs GPU monitoring."),
     }
-    TARGETS = {
-        "monitor": ("hardware", "hardware_monitoring"),
-        "record": ("advanced", "record_hardware_history"),
-    }
+    _MONITOR_ANCHOR = {None: "hardware_monitoring", "cpu": "monitor_cpu_enabled", "gpu": "monitor_gpu_enabled"}
+    _RECORD_TEXT = ("HW_HISTORY_RECORD_OFF_NOTICE", "Hardware history isn't being recorded.")
 
     def __init__(self, i18n, open_settings, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -172,61 +175,119 @@ class HistoryOffNotice(QObject):
         self._open_settings = open_settings   # (page, anchor_key) -> None; the widget's router
         self._widget = None
         self._canvas: Optional[QWidget] = None
-        self._kind: Optional[str] = None
+        self._kind: Optional[Tuple[str, Optional[str]]] = None
+
+    @classmethod
+    def normalize(cls, notice) -> Optional[Tuple[str, Optional[str]]]:
+        """``history_off_notice`` as (reason, role), or None when there is no note to show."""
+        if isinstance(notice, str):
+            notice = (notice, None)
+        if not isinstance(notice, tuple) or len(notice) != 2:
+            return None
+        reason, role = notice
+        if reason == "record":
+            return reason, role
+        if reason == "monitor":
+            return reason, role if role in cls._MONITOR_TEXT else None
+        return None
+
+    @classmethod
+    def target(cls, kind) -> Optional[Tuple[str, str]]:
+        """(page, anchor_key) the note's button opens Settings at."""
+        kind = cls.normalize(kind)
+        if kind is None:
+            return None
+        if kind[0] == "record":
+            return "advanced", "record_hardware_history"
+        return "hardware", cls._MONITOR_ANCHOR[kind[1]]
 
     @property
-    def kind(self) -> Optional[str]:
+    def kind(self) -> Optional[Tuple[str, Optional[str]]]:
         return self._kind
 
     @property
     def widget(self):
         return self._widget
 
-    def _alive(self, obj) -> bool:
+    @staticmethod
+    def _alive(obj) -> bool:
         from PyQt6 import sip
         return obj is not None and not sip.isdeleted(obj)
 
-    def sync(self, canvas: Optional[QWidget], kind: Optional[str]) -> None:
-        """Show the note for ``kind`` ("monitor" / "record") over ``canvas``, or hide it (None)."""
-        if kind not in self._TEXT or not self._alive(canvas):
+    def _detach(self) -> None:
+        if self._alive(self._canvas):
+            self._canvas.removeEventFilter(self)
+        self._canvas = None
+
+    def sync(self, canvas: Optional[QWidget], notice) -> None:
+        """Show the note for ``notice`` over ``canvas``, or hide it (None). The text and the action are
+        re-applied only when the note changes - this runs after every render, live updates included."""
+        kind = self.normalize(notice)
+        if kind is None or not self._alive(canvas):
             self._kind = None
             if self._alive(self._widget):
                 self._widget.hide()
+            self._detach()
             return
         from netspeedtray.utils.components import NoticeLink
-        from netspeedtray.utils.helpers import tr
         from netspeedtray.constants.styles import styles as tokens
-        if not self._alive(self._widget):
+        created = not self._alive(self._widget)
+        if created:
             self._widget = NoticeLink("", "", None, stacked=True, centered=True,
-                                      font_token=tokens.TYPE_BODY, parent=canvas)
+                                      font_token=tokens.TYPE_BODY, surface=_graph_surface, parent=canvas)
             self._canvas = None
-        if self._canvas is not canvas:
-            if self._alive(self._canvas):
-                self._canvas.removeEventFilter(self)
+        moved = self._canvas is not canvas
+        if moved:
+            self._detach()
             if self._widget.parentWidget() is not canvas:
                 self._widget.setParent(canvas)
             canvas.installEventFilter(self)
             self._canvas = canvas
+            # A child created now would sit at the END of the window's Tab chain; put the button right
+            # after the chart, where it is on screen.
+            self._order_after(canvas)
+        if created or moved or kind != self._kind:
+            self._apply(kind)
         self._kind = kind
-        key, default = self._TEXT[kind]
+        if self._widget.isHidden():
+            self._place()
+            self._widget.show()
+            self._widget.raise_()
+
+    def _order_after(self, canvas: QWidget) -> None:
+        """Tab order: the button right after the chart - after the canvas when it takes focus, else
+        after the last Tab stop before it (the embedded matplotlib canvas takes none, and Qt ignores
+        setTabOrder from a widget that isn't a Tab stop)."""
+        button = self._widget.button()
+        tab = Qt.FocusPolicy.TabFocus.value
+        anchor = canvas
+        while anchor is not None and not (anchor.focusPolicy().value & tab):
+            anchor = anchor.previousInFocusChain()   # the chain is a ring: it comes back round
+            if anchor is canvas or anchor is button:
+                return   # no Tab stop before the chart: the natural order is the only one
+        if anchor is not None:
+            QWidget.setTabOrder(anchor, button)
+
+    def _apply(self, kind) -> None:
+        from netspeedtray.utils.helpers import tr
+        key, default = self._RECORD_TEXT if kind[0] == "record" else self._MONITOR_TEXT[kind[1]]
         self._widget.set_text(tr(self._i18n, key, default))
         self._widget.set_action_text(tr(self._i18n, "NOTICE_TURN_ON_IN_SETTINGS", "Turn on in Settings"))
-        page, anchor = self.TARGETS[kind]
+        page, anchor = self.target(kind)
         router = self._open_settings
         self._widget.set_on_click(lambda: router(page, anchor) if router is not None else None)
         self._place()
-        self._widget.show()
-        self._widget.raise_()
 
     def _place(self) -> None:
         w, canvas = self._widget, self._canvas
         if not (self._alive(w) and self._alive(canvas)):
             return
         from netspeedtray.constants.styles import styles as tokens
-        width = max(120, min(canvas.width() - 2 * tokens.SPACE_L, 460))
+        width = max(tokens.NOTICE_OVERLAY_MIN_WIDTH,
+                    min(canvas.width() - 2 * tokens.SPACE_L, tokens.NOTICE_OVERLAY_MAX_WIDTH))
+        w.setFixedWidth(width)
         height = w.heightForWidth(width) if w.hasHeightForWidth() else -1
         if height <= 0:
-            w.setFixedWidth(width)
             height = w.sizeHint().height()
         w.setFixedSize(width, height)
         w.move((canvas.width() - width) // 2, max(0, (canvas.height() - height) // 2))
@@ -235,6 +296,12 @@ class HistoryOffNotice(QObject):
         if obj is self._canvas and event.type() == QEvent.Type.Resize and self._kind is not None:
             self._place()
         return False
+
+
+def _graph_surface() -> str:
+    """The chart background the history-off notice sits on (contrast is measured against it)."""
+    from netspeedtray.constants.styles import styles as tokens
+    return tokens.GRAPH_BG_DARK if su.is_dark_mode() else tokens.GRAPH_BG_LIGHT
 
 
 class GraphHost(QObject):
@@ -315,7 +382,6 @@ class GraphHost(QObject):
         # default), so reading it rendered a dark graph inside a light Monitor on a light-mode PC.
         self.renderer.apply_theme(su.is_dark_mode())
         # "Hardware history is off" is a notice with a Settings button over the canvas, not chart text.
-        self.renderer.notice_overlay = True
         self._history_notice = HistoryOffNotice(self.i18n, self._route_settings, parent=self)
 
         # Worker on its own QThread.

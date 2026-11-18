@@ -113,6 +113,8 @@ class SettingsDialog(QDialog):
         self.startup_enabled_initial_state = is_startup_enabled
 
         self._ui_setup_done = False
+        # The last deep link's landing: (anchor_key, outlined widgets) - open_page (D4).
+        self._last_anchor: tuple = (None, [])
         self._closing_via_save = False   # Save's accept() is under way (closeEvent must not revert)
         
         # Timer for throttling live setting updates
@@ -689,22 +691,36 @@ class SettingsDialog(QDialog):
         self._focus_anchor(targets[0], controls[0])
         self._scroll_to_anchor(scroll, targets[0])
         # Once more after the layout settles: a page built just now (or an expander just opened) has no
-        # final geometry until the event loop has run.
-        QTimer.singleShot(0, lambda s=scroll, t=targets[0]: self._scroll_to_anchor(s, t))
+        # final geometry until the event loop has run. The timer is the dialog's child, so a dialog
+        # closed (and destroyed) first takes it along.
+        settle = QTimer(self)
+        settle.setSingleShot(True)
+        settle.timeout.connect(lambda s=scroll, t=targets[0]: self._scroll_to_anchor(s, t))
+        settle.timeout.connect(settle.deleteLater)
+        settle.start(0)
         return True
 
     @staticmethod
     def _anchor_target(control: QWidget) -> QWidget:
-        """What to outline for ``control``: its setting card (or expander) - or, when it sits in the
-        body of a collapsed expander whose header is an on/off switch, that expander's header."""
+        """What to outline for ``control``: its setting card, or the header of an expander anchor.
+
+        Collapsed expanders on the way - ``control`` itself included - are opened, so the control is on
+        screen. Except one whose header is the feature's own on/off switch: its body shows only while
+        the feature is ON, so opening it would change a setting. Then the outermost such header is the
+        landing spot, and nothing is opened."""
         from netspeedtray.utils.components import SettingExpander
-        node = control.parentWidget()
+        chain = []
+        node = control
         while node is not None:
-            if isinstance(node, SettingExpander) and not node.isExpanded():
-                if node.hasHeaderToggle():
-                    return node.header()
-                node.setExpanded(True)
+            if isinstance(node, SettingExpander):
+                chain.append(node)
             node = node.parentWidget()
+        switched_off = [e for e in chain if e.hasHeaderToggle() and not e.isExpanded()]
+        if switched_off:
+            return switched_off[-1].header()
+        for expander in chain:
+            if not expander.isExpanded():
+                expander.setExpanded(True)
         node = control
         while node is not None:
             if node.objectName() in ("settingCard", "expanderHeader"):
@@ -717,12 +733,19 @@ class SettingsDialog(QDialog):
     @staticmethod
     def _focus_anchor(target: QWidget, control: QWidget) -> None:
         """Keyboard focus on the control (a screen reader announces the setting it landed on); the
-        target's first Tab stop when the control itself is hidden or takes no focus."""
+        target's first Tab stop when the control itself is hidden, disabled or takes no focus; and when
+        the whole card is disabled (a grayed switch), its nearest enabled container - the page - so focus
+        leaves the sidebar and the next Tab goes into the page, at the card."""
         tab = Qt.FocusPolicy.TabFocus.value
         for w in [control] + control.findChildren(QWidget) + [target] + target.findChildren(QWidget):
             if (w.focusPolicy().value & tab) and w.isVisibleTo(w.window()) and w.isEnabled():
                 w.setFocus(Qt.FocusReason.OtherFocusReason)
                 return
+        node = target
+        while node is not None and not node.isEnabled():
+            node = node.parentWidget()
+        if node is not None:
+            node.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _scroll_to_anchor(self, scroll: QScrollArea, target: QWidget) -> None:
         try:

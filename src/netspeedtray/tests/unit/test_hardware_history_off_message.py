@@ -3,6 +3,9 @@ The Monitor's Hardware graph with nothing recorded. Since 2.2, hardware history 
 the CPU/GPU stats the user monitors, and both are off by default - so at 24h/7d the graph used to say
 "Collecting data for current session..." forever. With monitoring off, a ranged view now says where to
 turn recording on; the live SESSION view (fed by the Monitor's forced collection) keeps "Collecting".
+Since 2.2.2 (D4) that note is a NoticeLink with a Settings button the Monitor puts over the canvas
+(graph_host.HistoryOffNotice, tested in test_notice_link.py): the renderer draws nothing for it and
+reports which note applies in ``history_off_notice`` = (reason, role).
 
 Goes through the real GraphRenderer code paths onto a bare matplotlib Figure (no Qt canvas).
 """
@@ -17,7 +20,6 @@ from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.views.graph.renderer import GraphRenderer
 
 I18N = I18nStrings("en_US")
-OFF = I18N.HARDWARE_HISTORY_OFF_MESSAGE
 COLLECTING = I18N.COLLECTING_DATA_MESSAGE
 
 
@@ -45,7 +47,6 @@ def _texts(fig):
 MON_OFF = {"cpu": "monitor", "gpu": "monitor"}    # 2.2 defaults
 REC_OFF = {"cpu": "record", "gpu": "record"}      # monitoring on, Record hardware history off
 RECORDING = {"cpu": None, "gpu": None}
-RECORD_OFF = I18N.HARDWARE_HISTORY_RECORD_OFF_MESSAGE
 
 
 def _render(r, stat, period, history_off):
@@ -53,31 +54,34 @@ def _render(r, stat, period, history_off):
     data = {"cpu": [], "gpu": [], "ram": []} if stat.startswith("hw") else []
     r.render(data, end - timedelta(hours=24), end, period, stat_type=stat,
              hw_styles={"history_off": history_off})
+    return r.history_off_notice
+
+
+def _role(stat):
+    """The role a single-stat view reports (its own stat); None for the combined views."""
+    return stat if stat in ("cpu", "gpu") else None
 
 
 @pytest.mark.parametrize("stat", ["hwcombined", "hwseparate", "cpu", "gpu"])
 def test_ranged_view_with_monitoring_off_says_how_to_turn_it_on(renderer, stat):
-    _render(renderer, stat, "TIMELINE_24_HOURS", history_off=MON_OFF)
-    texts = _texts(renderer.figure)
-    assert OFF in texts
-    assert COLLECTING not in texts
+    assert _render(renderer, stat, "TIMELINE_24_HOURS", history_off=MON_OFF) == ("monitor", _role(stat))
+    assert _texts(renderer.figure) == []          # the notice is the host's, not chart text
 
 
 @pytest.mark.parametrize("stat", ["hwcombined", "hwseparate", "cpu", "gpu"])
 def test_record_switch_off_points_to_advanced(renderer, stat):
-    _render(renderer, stat, "TIMELINE_24_HOURS", history_off=REC_OFF)
-    texts = _texts(renderer.figure)
-    assert RECORD_OFF in texts and OFF not in texts and COLLECTING not in texts
+    assert _render(renderer, stat, "TIMELINE_24_HOURS", history_off=REC_OFF) == ("record", _role(stat))
+    assert COLLECTING not in _texts(renderer.figure)
 
 
 def test_toggle_layout_gpu_view_with_only_cpu_recorded(renderer):
     """CPU on, GPU off: the GPU-only toggle view will never fill; the CPU one is collecting."""
     mixed = {"cpu": None, "gpu": "monitor"}
-    _render(renderer, "gpu", "TIMELINE_24_HOURS", history_off=mixed)
-    assert OFF in _texts(renderer.figure)
-    _render(renderer, "cpu", "TIMELINE_24_HOURS", history_off=mixed)
+    assert _render(renderer, "gpu", "TIMELINE_24_HOURS", history_off=mixed) == ("monitor", "gpu")
+    assert _render(renderer, "cpu", "TIMELINE_24_HOURS", history_off=mixed) is None
     assert COLLECTING in _texts(renderer.figure)
-    _render(renderer, "hwcombined", "TIMELINE_24_HOURS", history_off=mixed)   # CPU will fill it
+    # CPU will fill it
+    assert _render(renderer, "hwcombined", "TIMELINE_24_HOURS", history_off=mixed) is None
     assert COLLECTING in _texts(renderer.figure)
 
 
@@ -85,11 +89,10 @@ def test_toggle_layout_gpu_view_with_only_cpu_recorded(renderer):
 def test_ram_only_recording_is_collecting_not_off(renderer, stat):
     """2.2.1: RAM is recorded without CPU/GPU monitoring - its graph will fill, so an empty range is
     "collecting", not "history is off"; with RAM off as well it is off."""
-    _render(renderer, stat, "TIMELINE_24_HOURS", history_off={**MON_OFF, "ram": None})
-    texts = _texts(renderer.figure)
-    assert COLLECTING in texts and OFF not in texts
-    _render(renderer, stat, "TIMELINE_24_HOURS", history_off={**MON_OFF, "ram": "monitor"})
-    assert OFF in _texts(renderer.figure)
+    assert _render(renderer, stat, "TIMELINE_24_HOURS", history_off={**MON_OFF, "ram": None}) is None
+    assert COLLECTING in _texts(renderer.figure)
+    assert _render(renderer, stat, "TIMELINE_24_HOURS",
+                   history_off={**MON_OFF, "ram": "monitor"}) == ("monitor", None)
 
 
 NO_HISTORY = I18N.NET_GRAPH_NO_HISTORY_YET
@@ -150,18 +153,16 @@ def test_no_traffic_note_never_blames_the_apps_pause(monkeypatch, lang):
 def test_cpu_monitored_but_not_recorded_points_to_the_record_switch(renderer, stat):
     """RC M6: CPU on + Record off (GPU off) said "turn on CPU or GPU monitoring" - but CPU IS on, and
     turning GPU on would record nothing either. The record switch is the reason."""
-    _render(renderer, stat, "TIMELINE_24_HOURS", history_off={"cpu": "record", "gpu": "monitor"})
-    texts = _texts(renderer.figure)
-    assert RECORD_OFF in texts and OFF not in texts
+    assert _render(renderer, stat, "TIMELINE_24_HOURS",
+                   history_off={"cpu": "record", "gpu": "monitor"}) == ("record", None)
 
 
 @pytest.mark.parametrize("stat", ["hwcombined", "hwseparate"])
 def test_monitoring_on_or_session_view_still_says_collecting(renderer, stat):
-    _render(renderer, stat, "TIMELINE_24_HOURS", history_off=RECORDING)
+    assert _render(renderer, stat, "TIMELINE_24_HOURS", history_off=RECORDING) is None
     assert COLLECTING in _texts(renderer.figure)
-    _render(renderer, stat, "TIMELINE_SESSION", history_off=MON_OFF)
-    texts = _texts(renderer.figure)
-    assert COLLECTING in texts and OFF not in texts
+    assert _render(renderer, stat, "TIMELINE_SESSION", history_off=MON_OFF) is None
+    assert COLLECTING in _texts(renderer.figure)
 
 
 def test_hebrew_messages_are_shaped_for_matplotlib(monkeypatch):
@@ -170,9 +171,7 @@ def test_hebrew_messages_are_shaped_for_matplotlib(monkeypatch):
     monkeypatch.setattr(GraphRenderer, "_init_matplotlib", _bare_init)
     he = I18nStrings("he_IL")
     r = GraphRenderer(MagicMock(), he)
-    for history_off, key in ((MON_OFF, "HARDWARE_HISTORY_OFF_MESSAGE"),
-                             (REC_OFF, "HARDWARE_HISTORY_RECORD_OFF_MESSAGE"),
-                             (RECORDING, "COLLECTING_DATA_MESSAGE")):
+    for history_off, key in ((RECORDING, "COLLECTING_DATA_MESSAGE"),):
         _render(r, "hwcombined", "TIMELINE_24_HOURS", history_off)
         shaped = shape_rtl(getattr(he, key), "he_IL")
         # reshaped on matplotlib < 3.11; 3.11+ does its own bidi and gets the logical text

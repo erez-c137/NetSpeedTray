@@ -266,6 +266,14 @@ class Win11Toggle(QWidget):
         self.toggled.emit(self._is_checked)
 
 
+    def keyPressEvent(self, event) -> None:
+        """Enter / Return on the focused switch flips it, like Space. The inner QCheckBox ignores Enter,
+        so it bubbled up to Settings, which pressed its default Save button: a Settings deep link (D4)
+        puts focus on a switch, and Enter there saved and closed the dialog with nothing turned on."""
+        if self.isEnabled() and _enter_activates(self.checkbox, event):
+            return
+        super().keyPressEvent(event)
+
     def isChecked(self) -> bool: return self._is_checked
 
 
@@ -1372,43 +1380,64 @@ class ArrowStylePicker(QWidget):
 
 # --- NoticeLink: a moment-of-need prompt with a real action (2.2.2 D4) --------------------------------
 
-def notice_link_colors() -> dict:
+def default_notice_surface() -> str:
+    """The surface a NoticeLink sits on when its host names none: a setting card."""
+    return tokens.CARD_BG_DARK if is_dark_mode() else tokens.CARD_BG_LIGHT
+
+
+def notice_link_colors(surface: Optional[str] = None) -> dict:
     """The colours a NoticeLink paints with: ``{"text", "link", "focus", "background", "underline"}``.
 
     High Contrast wins: the theme's own window text / hyperlink / highlight colours on its own window
     colour (the app's Light/Dark surfaces are not what a High Contrast user picked, so the notice
     paints its own background then), and the link is always underlined - colour alone must not carry
     "this is clickable". Otherwise the app's tokens: secondary text, and the Windows accent nudged
-    until it reads at 4.5:1 on the card surface (a dark accent on the dark theme is unreadable as is)."""
+    until it reads at MIN_TEXT_CONTRAST on ``surface`` - the colour the notice really sits on (the
+    default blue is 4.45:1 on the Check connection sheet's #f3f3f3, under AA)."""
     from netspeedtray.utils.taskbar_appearance import read_high_contrast_link_colors
     hc = read_high_contrast_link_colors()
     if hc:
         return {"text": hc["text"], "link": hc["link"], "focus": hc["focus"],
                 "background": hc["background"], "underline": True}
     c = semantic_colors()
-    surface = tokens.CARD_BG_DARK if is_dark_mode() else tokens.CARD_BG_LIGHT
+    surface = surface or default_notice_surface()
     link = readable_on(c["accent"], surface)
-    return {"text": c["text_secondary"], "link": link, "focus": link, "background": None,
-            "underline": False}
+    return {"text": readable_on(c["text_secondary"], surface), "link": link, "focus": link,
+            "background": None, "underline": False}
 
 
-def readable_on(color_hex: str, surface_hex: str, minimum: float = 4.5) -> str:
+def readable_on(color_hex: str, surface_hex: str, minimum: Optional[float] = None) -> str:
     """``color_hex``, lightened (on a dark surface) or darkened (on a light one) in small steps until
     it reaches ``minimum`` contrast against ``surface_hex`` - the hue is kept, only the lightness moves."""
     from netspeedtray.utils.color_scheme import contrast_ratio
+    if minimum is None:
+        minimum = tokens.MIN_TEXT_CONTRAST
     color = QColor(color_hex)
-    if not color.isValid():
-        return color_hex
     surface = QColor(surface_hex)
+    if not color.isValid() or not surface.isValid():
+        return color_hex
     target = QColor(255, 255, 255) if surface.lightness() < 128 else QColor(0, 0, 0)
-    for step in range(0, 21):
-        t = step / 20.0
+    steps = tokens.CONTRAST_BLEND_STEPS
+    for step in range(0, steps + 1):
+        t = step / steps
         mixed = QColor(round(color.red() + (target.red() - color.red()) * t),
                        round(color.green() + (target.green() - color.green()) * t),
                        round(color.blue() + (target.blue() - color.blue()) * t))
         if contrast_ratio(mixed.name(), surface.name()) >= minimum:
             return mixed.name()
     return target.name()
+
+
+def _enter_activates(button: QAbstractButton, event) -> bool:
+    """Enter / Return on a focused button-like control: activate it once per press and accept the event,
+    auto-repeats too. Passed up, an ignored Enter reaches the dialog, which presses its default button -
+    holding Enter on an expander header used to save and close Settings (#432 review). True if handled."""
+    if event.key() not in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        return False
+    if not event.isAutoRepeat():
+        button.click()
+    event.accept()
+    return True
 
 
 class _NoticeLinkButton(QPushButton):
@@ -1427,18 +1456,12 @@ class _NoticeLinkButton(QPushButton):
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
 
     def keyPressEvent(self, event) -> None:
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            # One activation per press; auto-repeats are swallowed too - passed up, an ignored Enter
-            # reaches the dialog, which presses its default button (#432 review, as _ExpanderHeader).
-            if not event.isAutoRepeat():
-                self.click()
-            event.accept()
-            return
-        super().keyPressEvent(event)
+        if not _enter_activates(self, event):
+            super().keyPressEvent(event)
 
 
 class NoticeLink(QFrame):
-    """A short notice with one link-style action: "Hardware history needs CPU or GPU monitoring.
+    """A short notice with one link-style action: "Hardware history needs CPU, GPU or RAM monitoring.
     Turn on in Settings ->". The pattern for every moment-of-need prompt that used to only SAY where to
     go (2.2.2 D4); the data-cap tile's "Set a monthly limit" link is the original.
 
@@ -1449,9 +1472,10 @@ class NoticeLink(QFrame):
 
     Accessibility: the action's accessible name is its text (without the arrow), its description the
     notice text, so a screen reader landing on the button hears both. Keyboard: Tab reaches the button,
-    Enter and Space activate it. Theme: Light/Dark tokens, Windows High Contrast colours when that is
-    on (``refresh_theme`` re-reads them). RTL: the box layout mirrors with the layout direction and the
-    arrow flips.
+    Enter and Space activate it. Theme: Light/Dark tokens, contrast-checked against ``surface`` (a hex
+    or a callable returning one - the colour the host paints behind the notice; default a setting
+    card), and Windows High Contrast colours while that is on; re-read on every palette / style /
+    theme change. RTL: the box layout mirrors with the layout direction and the arrow flips.
 
     ``stacked`` puts the action under the text instead of after it; ``centered`` centres both (an
     empty-state overlay on a chart). ``text`` may be empty: the action alone.
@@ -1461,12 +1485,14 @@ class NoticeLink(QFrame):
 
     def __init__(self, text: str, action_text: str, on_click: Optional[Callable[[], None]] = None,
                  *, stacked: bool = False, centered: bool = False, font_token: tuple = tokens.TYPE_CAPTION,
-                 parent: Optional[QWidget] = None) -> None:
+                 surface=None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("noticeLink")
         self._on_click = on_click
         self._action_text = str(action_text or "")
+        self._surface = surface
         self._colors: dict = {}
+        self._theming = False   # refresh_theme's own setStyleSheet sends a StyleChange - not a theme change
 
         direction = QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight
         lay = QBoxLayout(direction, self)
@@ -1541,35 +1567,69 @@ class NoticeLink(QFrame):
 
     def _sync_action_text(self) -> None:
         arrow = "←" if self.isRightToLeft() else "→"   # points the reading way
-        shown = f"{self._action_text} {arrow}" if self._action_text else ""
+        # Decorative, so only where the UI face has it: Nirmala UI (Bengali) lacks the arrows, and a
+        # button can't take styles.ui_html's per-run face - Qt would search its fallback chain for the
+        # glyph, which loads every installed font family (test_font_files_per_language).
+        from netspeedtray.utils.font_runs import family_covers
+        from netspeedtray.utils.styles import ui_family
+        try:
+            with_arrow = family_covers(ui_family(), arrow)
+        except Exception:
+            with_arrow = False
+        shown = self._action_text
+        if shown and with_arrow:
+            shown = f"{shown} {arrow}"
         self._button.setText(shown)
         apply_text_face(self._button, shown)
         self._button.setAccessibleName(self._action_text)
 
+    # Palette / style changes, and QEvent::ThemeChange (210 - a Windows light/dark or High Contrast
+    # switch; PyQt6's QEvent.Type has no name for it), by value.
+    _THEME_EVENTS = frozenset((QEvent.Type.PaletteChange.value, QEvent.Type.StyleChange.value,
+                               QEvent.Type.ApplicationPaletteChange.value, 210))
+
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
-        if event.type() == QEvent.Type.LayoutDirectionChange:
+        kind = event.type()
+        if kind == QEvent.Type.LayoutDirectionChange:
             self._sync_action_text()
+        elif kind.value in self._THEME_EVENTS and not self._theming:
+            self.refresh_theme()
 
     # -- theme ----------------------------------------------------------------------------------------
+    def _surface_hex(self) -> Optional[str]:
+        s = self._surface
+        try:
+            return s() if callable(s) else s
+        except Exception:
+            return None
+
     def refresh_theme(self) -> None:
         """(Re)apply the colours: Light/Dark tokens, or High Contrast's own (see notice_link_colors)."""
-        c = notice_link_colors()
+        c = notice_link_colors(self._surface_hex())
+        if c == self._colors:
+            return
         self._colors = c
         under = "underline" if c["underline"] else "none"
         bg = c["background"]
+        ring = tokens.FOCUS_RING_WIDTH
         frame_bg = (f"QFrame#noticeLink {{ background-color: {bg}; border-radius: {tokens.RADIUS_CONTROL}px; }}"
                     if bg else "QFrame#noticeLink { background: transparent; }")
-        self.setStyleSheet(
-            frame_bg
-            + f" QLabel#noticeLinkText {{ color: {c['text']}; background: transparent; }}"
-            + f" QPushButton#noticeLinkAction {{ color: {c['link']}; background: transparent;"
-              f" border: 2px solid transparent; border-radius: {tokens.RADIUS_CONTROL}px;"
-              f" padding: 1px 4px; text-decoration: {under}; }}"
-            + " QPushButton#noticeLinkAction:hover { text-decoration: underline; }"
-            + f" QPushButton#noticeLinkAction:focus {{ border: 2px solid {c['focus']}; }}"
-            + " QPushButton#noticeLinkAction:pressed { text-decoration: underline; }"
-        )
+        self._theming = True
+        try:
+            self.setStyleSheet(
+                frame_bg
+                + f" QLabel#noticeLinkText {{ color: {c['text']}; background: transparent; }}"
+                + f" QPushButton#noticeLinkAction {{ color: {c['link']}; background: transparent;"
+                  f" border: {ring}px solid transparent; border-radius: {tokens.RADIUS_CONTROL}px;"
+                  f" padding: {tokens.NOTICE_LINK_PAD_V}px {tokens.NOTICE_LINK_PAD_H}px;"
+                  f" text-decoration: {under}; }}"
+                + " QPushButton#noticeLinkAction:hover { text-decoration: underline; }"
+                + f" QPushButton#noticeLinkAction:focus {{ border: {ring}px solid {c['focus']}; }}"
+                + " QPushButton#noticeLinkAction:pressed { text-decoration: underline; }"
+            )
+        finally:
+            self._theming = False
         if bg:
             self._layout.setContentsMargins(tokens.SPACE_S, tokens.SPACE_XS, tokens.SPACE_S, tokens.SPACE_XS)
         else:
@@ -1600,13 +1660,15 @@ class _AnchorHighlight(QWidget):
 
     def paintEvent(self, event) -> None:
         from PyQt6.QtGui import QPen
+        ring = tokens.FOCUS_RING_WIDTH
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         pen = QPen(self._color)
-        pen.setWidth(2)
+        pen.setWidth(ring)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), tokens.RADIUS_CARD, tokens.RADIUS_CARD)
+        half = ring // 2
+        p.drawRoundedRect(self.rect().adjusted(half, half, -half, -half), tokens.RADIUS_CARD, tokens.RADIUS_CARD)
 
 
 def flash_highlight(target: QWidget, duration_ms: Optional[int] = None) -> Optional[QWidget]:

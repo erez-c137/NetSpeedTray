@@ -61,10 +61,9 @@ class GraphRenderer(QObject):
         self.ax_gpu = None
         self.ax_ram = None
         self.axes = []
-        # D4: True when the host draws the "hardware history is off" notice itself (a Qt overlay with a
-        # Settings button, graph_host.HistoryOffNotice); the render then only reports which one
-        # (history_off_notice: None / "monitor" / "record") instead of drawing the text into the chart.
-        self.notice_overlay = False
+        # D4: "hardware history is off" is a Qt notice with a Settings button the host puts over the
+        # canvas (graph_host.HistoryOffNotice); a render only reports which one: None, or
+        # (reason, role) - see _draw_hw_empty_message.
         self.history_off_notice = None
         
         # State
@@ -898,27 +897,22 @@ class GraphRenderer(QObject):
 
     def _draw_hw_empty_message(self, ax, period_key, hw_styles=None, roles=("cpu", "gpu", "ram")) -> None:
         """The centered note on an empty hardware graph. A fresh session is still collecting; but a
-        ranged view whose ``roles`` are all unrecorded will never fill, so it says where to turn
-        recording on (Hardware for monitoring, Advanced for the record switch) instead of "Collecting
-        data" forever. ``hw_styles["history_off"]`` is graph_host.hardware_history_off_reasons().
-        RAM counts only when the reasons name it (2.2.1: recorded on its own switch)."""
+        ranged view whose ``roles`` are all unrecorded will never fill. That note is not drawn here: the
+        host puts a notice with a Settings button over the canvas (D4, graph_host.HistoryOffNotice), so
+        this only reports which one in ``history_off_notice`` = (reason, role):
+          - reason "record": a role IS monitored but not recorded - the record switch is the reason (M6);
+            turning on the other monitor - what the old "monitor"-first order said - would record nothing;
+          - reason "monitor": monitoring is off for every role the view shows;
+          - role: the one stat of a single-stat view ("cpu" / "gpu"), None for the combined views.
+        ``hw_styles["history_off"]`` is graph_host.hardware_history_off_reasons(). RAM counts only when
+        the reasons name it (2.2.1: recorded on its own switch)."""
         off = (hw_styles or {}).get("history_off") or {}
         reasons = [off.get(r) for r in roles if r != "ram" or r in off]
-        if period_key == "TIMELINE_SESSION" or not reasons or None in reasons:
-            text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
-        elif getattr(self, "notice_overlay", False):
-            # The host draws a real notice with a Settings button over the canvas instead (D4,
-            # graph_host.HistoryOffNotice): say which one, draw nothing here.
-            self.history_off_notice = "record" if "record" in reasons else "monitor"
+        if not (period_key == "TIMELINE_SESSION" or not reasons or None in reasons):
+            reason = "record" if "record" in reasons else "monitor"
+            self.history_off_notice = (reason, roles[0] if len(roles) == 1 else None)
             return
-        elif "record" in reasons:
-            # A role IS monitored but not recorded: the record switch is the reason (M6). Turning on
-            # the other monitor - what the old "monitor"-first order said - would record nothing either.
-            text = getattr(self.i18n, "HARDWARE_HISTORY_RECORD_OFF_MESSAGE",
-                           "Hardware history is off.\nTurn on Record hardware history in Settings → Advanced.")
-        else:
-            text = getattr(self.i18n, "HARDWARE_HISTORY_OFF_MESSAGE",
-                           "Hardware history is off.\nTurn on CPU or GPU monitoring in Settings → Hardware.")
+        text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
         ax.text(0.5, 0.5, self._lbl(text), transform=ax.transAxes, ha="center", va="center",
                 multialignment="center", color=self._current_text_color, alpha=0.55, fontsize=10)
 
