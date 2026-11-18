@@ -111,9 +111,9 @@ def _gw(rows):
 # --- averaging ------------------------------------------------------------------------------------
 
 @BOTH
-def test_a_one_cycle_drop_is_counted_in_a_24h_window(make, which):
+def test_a_two_cycle_drop_is_counted_in_a_24h_window(make, which):
     t0 = BASE - 20 * 3600
-    r = make(which, **_gw(_cycles(t0, 60, drops=[(t0 + 600, t0 + 603)])))
+    r = make(which, **_gw(_cycles(t0, 60, drops=[(t0 + 600, t0 + 606)])))
     assert _events(r, public=False)["count"] == 1
 
 
@@ -134,38 +134,38 @@ def test_graphs_still_read_bin_averages_and_loss_rows_are_unbinned(make, which):
 
 @BOTH
 def test_minute_tier_reads_max_and_estimates_the_lost_time(make, which):
-    """Rolled-up history: a minute row of avg 0.05 / max 1.0 / 20 samples is a drop of ~one cycle."""
+    """Rolled-up history: a minute row of avg 0.1 / max 1.0 / 20 samples is a drop of ~two cycles."""
     t0 = BASE - 50 * 3600   # below the raw watermark -> answered by hw_minute
-    mins = [(t0 + i * 60, GW, 0.05 if i == 30 else 0.0, 1.0 if i == 30 else 0.0, 20) for i in range(120)]
+    mins = [(t0 + i * 60, GW, 0.1 if i == 30 else 0.0, 1.0 if i == 30 else 0.0, 20) for i in range(120)]
     r = make(which, hw_minute=mins)
     ev = _events(r, public=False, key="TIMELINE_WEEK")
     assert ev["count"] == 1
-    assert ev["total_down_seconds"] == pytest.approx(3.0)
+    assert ev["total_down_seconds"] == pytest.approx(6.0)
 
 
 # --- per-bin peaks must not chain short drops into a long outage (review MAJOR 2) -----------------
 
 @BOTH
 def test_a_short_drop_every_minute_is_not_one_half_hour_outage_in_the_raw_tier(make, which):
-    """One 3 s drop in each of 30 consecutive minutes: 30 drops, seconds down - never "1 drop,
+    """One 6 s drop in each of 30 consecutive minutes: 30 drops, 3 minutes down - never "1 drop,
     29 min down" (60 s peak bins chained them)."""
     t0 = BASE - 20 * 3600
-    r = make(which, **_gw(_cycles(t0, 30, drops=[(t0 + i * 60 + 30, t0 + i * 60 + 33) for i in range(30)])))
+    r = make(which, **_gw(_cycles(t0, 30, drops=[(t0 + i * 60 + 30, t0 + i * 60 + 36) for i in range(30)])))
     ev = _sheet(r, NOW - timedelta(hours=24), NOW)
     assert ev["count"] == 30
-    assert ev["total_down_seconds"] < 120
+    assert ev["total_down_seconds"] == pytest.approx(180.0)
 
 
 @BOTH
 def test_coalesced_minute_bins_claim_only_their_estimated_downtime(make, which):
     """Rolled up, the same pattern is one run of 30 bad minutes (the tier cannot tell the cycles
-    apart) - but its downtime is the lost cycles (30 x 3 s), not 29 minutes."""
+    apart) - but its downtime is the lost cycles (30 x 2 x 3 s), not 29 minutes."""
     t0 = BASE - 50 * 3600
-    mins = [(t0 + i * 60, GW, 0.05, 1.0, 20) for i in range(30)]
+    mins = [(t0 + i * 60, GW, 0.1, 1.0, 20) for i in range(30)]
     r = make(which, hw_minute=mins)
     ev = _sheet(r, NOW - timedelta(days=7), NOW)
     assert ev["count"] == 1
-    assert ev["total_down_seconds"] == pytest.approx(90.0)
+    assert ev["total_down_seconds"] == pytest.approx(180.0)
 
 
 def test_coalesced_bins_as_loss_rows_in_the_pure_function():
@@ -178,7 +178,7 @@ def test_coalesced_bins_as_loss_rows_in_the_pure_function():
 @BOTH
 def test_4h_and_24h_windows_agree_inside_the_raw_tier(make, which):
     t0 = BASE - 3 * 3600
-    drops = [(t0 + 300, t0 + 309), (t0 + 900, t0 + 903), (t0 + 960, t0 + 963), (t0 + 2000, t0 + 2060)]
+    drops = [(t0 + 300, t0 + 309), (t0 + 900, t0 + 906), (t0 + 960, t0 + 966), (t0 + 2000, t0 + 2060)]
     r = make(which, **_gw(_cycles(t0, 60, drops=drops)))
     four, day = _events(r, False, "TIMELINE_4_HOURS"), _events(r, False, "TIMELINE_24_HOURS")
     assert four["count"] == day["count"] == 4
@@ -322,15 +322,15 @@ def test_outage_summary_single_series_unchanged():
 @BOTH
 def test_stats_sheet_router_drops_count_a_short_drop_in_24h(make, which):
     t0 = BASE - 20 * 3600
-    r = make(which, **_gw(_cycles(t0, 60, drops=[(t0 + 600, t0 + 603)])))
+    r = make(which, **_gw(_cycles(t0, 60, drops=[(t0 + 600, t0 + 606)])))
     assert _sheet(r, NOW - timedelta(hours=24), NOW)["count"] == 1
 
 
 # --- native spans: rollups are never re-binned by window length (second review, MAJOR 1) ---------
 
 def _alternating_minutes(t0, n=60):
-    """A bad minute (one lost cycle), a clean minute, a bad minute ... - n minutes."""
-    return [(t0 + i * 60, GW, 0.05 if i % 2 == 0 else 0.0, 1.0 if i % 2 == 0 else 0.0, 20) for i in range(n)]
+    """A bad minute (two lost cycles), a clean minute, a bad minute ... - n minutes."""
+    return [(t0 + i * 60, GW, 0.1 if i % 2 == 0 else 0.0, 1.0 if i % 2 == 0 else 0.0, 20) for i in range(n)]
 
 
 @BOTH
@@ -341,7 +341,7 @@ def test_the_all_window_keeps_minute_rows_at_their_own_span(make, which):
     r = make(which, hw_minute=_alternating_minutes(t0))
     ev = _sheet(r, NOW - timedelta(days=90), NOW)
     assert ev["count"] == 30
-    assert ev["total_down_seconds"] == pytest.approx(30 * 3.0)
+    assert ev["total_down_seconds"] == pytest.approx(30 * 6.0)
 
 
 @BOTH
@@ -476,7 +476,7 @@ def test_a_neighbour_is_looked_up_only_inside_its_tiers_range(make):
     minute into the first raw cycle (v8 watermarks; the v7 file has none)."""
     wm = WM_RAW_DEFAULT
     mins = [(wm - 120, GW, 0.0, 0.0, 20), (wm - 60, GW, 1.0, 1.0, 20)]
-    raw = [(wm - 3, GW, 0.0), (wm, GW, 1.0), (wm + 3, GW, 0.0)]
+    raw = [(wm - 3, GW, 0.0), (wm, GW, 1.0), (wm + 3, GW, 1.0), (wm + 6, GW, 0.0)]
     r = make(1, hw_minute=mins, hw_raw=raw)
     assert _sheet(r, NOW - timedelta(days=7), NOW)["count"] == 1
 
@@ -492,16 +492,77 @@ def test_bad_rows_read_matches_the_full_read(tmp_path, seed):
             for stats in ([GW], [GW, ANCHOR]):
                 for r in (r7, r8):
                     ref = _full_read(r, stats, s, NOW)
-                    want = S.outage_summary(*(ref[x] for x in stats), max_gap=GAP, hop_join=JOIN,
-                                            raw_cycle=CYCLE)
-                    assert want["count"] > 0
                     got_rows = r.loss_history(stats, s, NOW)
-                    got = S.outage_summary(*(got_rows[x] for x in stats), max_gap=GAP, hop_join=JOIN,
-                                           raw_cycle=CYCLE)
-                    assert (got["count"], got["runs"]) == (want["count"], want["runs"]), (w, stats, r)
-                    assert got["total_down_seconds"] == pytest.approx(want["total_down_seconds"])
+                    for mc in (0, 2):   # every run, and the Monitor's 2-cycle bar
+                        kw = dict(max_gap=GAP, hop_join=JOIN, raw_cycle=CYCLE, min_cycles=mc)
+                        want = S.outage_summary(*(ref[x] for x in stats), **kw)
+                        assert want["count"] > 0
+                        got = S.outage_summary(*(got_rows[x] for x in stats), **kw)
+                        assert (got["count"], got["runs"]) == (want["count"], want["runs"]), (w, stats, r, mc)
+                        assert got["total_down_seconds"] == pytest.approx(want["total_down_seconds"])
                     if r is r8:   # v8 reads only bad rows + neighbours; v7 reads in full
                         assert sum(len(v) for v in got_rows.values()) < sum(len(v) for v in ref.values())
     finally:
         for c in conns:
             c.close()
+
+
+# --- a drop needs at least 2 lost cycles (OUTAGE_MIN_CYCLES, owner decision on #587) -------------
+
+def _raw_drop(which, make, bad_offsets):
+    """30 min of clean cycles from t0 with the cycles at ``bad_offsets`` (s) lost."""
+    t0 = BASE - 3 * 3600
+    rows = [(ts, GW, 1.0 if ts - t0 in bad_offsets else 0.0) for ts, _ in _cycles(t0, 30)]
+    return make(which, hw_raw=rows)
+
+
+@BOTH
+def test_one_lost_cycle_is_a_blip_two_in_a_row_are_a_drop(make, which):
+    one = _raw_drop(which, make, {600})
+    assert _events(one, public=False)["count"] == 0
+    assert _sheet(one, NOW - timedelta(hours=24), NOW)["count"] == 0
+    two = _raw_drop(which, make, {600, 603})
+    ev = _events(two, public=False)
+    assert ev["count"] == 1 and ev["total_down_seconds"] == pytest.approx(6.0)
+    assert _sheet(two, NOW - timedelta(hours=24), NOW)["count"] == 1
+
+
+@BOTH
+def test_two_blips_with_a_clean_cycle_between_are_no_drop(make, which):
+    r = _raw_drop(which, make, {600, 606})
+    ev = _events(r, public=False)
+    assert ev["count"] == 0 and ev["total_down_seconds"] == 0.0
+
+
+@BOTH
+@pytest.mark.parametrize("avg, drops", [(0.05, 0), (0.1, 1)], ids=["1-cycle", "2-cycles"])
+def test_a_minute_row_needs_two_estimated_lost_cycles(make, which, avg, drops):
+    t0 = BASE - 50 * 3600   # rolled up: avg x 20 samples = 1.0 / 2.0 lost cycles
+    mins = [(t0 - 60, GW, 0.0, 0.0, 20), (t0, GW, avg, 1.0, 20), (t0 + 60, GW, 0.0, 0.0, 20)]
+    r = make(which, hw_minute=mins)
+    assert _sheet(r, NOW - timedelta(days=7), NOW)["count"] == drops
+
+
+@BOTH
+@pytest.mark.parametrize("raw_bad, drops", [(1, 0), (2, 1)], ids=["1+1-cycles", "1+2-cycles"])
+def test_a_run_across_the_raw_minute_boundary(make, which, raw_bad, drops):
+    """The last rolled-up minute lost one cycle and the raw tier carries on: the stretches are
+    not added up across the boundary (a rollup cannot say its cycle was the minute's last), so
+    1 + 1 is no drop; 1 + 2 is one - with both parts' downtime."""
+    wm = WM_RAW_DEFAULT
+    mins = [(wm - 120, GW, 0.0, 0.0, 20), (wm - 60, GW, 0.05, 1.0, 20)]
+    raw = [(wm + 3 * i, GW, 1.0 if i < raw_bad else 0.0) for i in range(10)]
+    r = make(which, hw_minute=mins, **_gw([(t, v) for t, _, v in raw]))
+    ev = _events(r, public=False, key="TIMELINE_WEEK")
+    assert ev["count"] == drops
+    assert ev["total_down_seconds"] == pytest.approx(3.0 + 3.0 * raw_bad if drops else 0.0)
+
+
+def test_a_blip_on_the_other_hop_neither_counts_nor_bridges_two_drops():
+    gw = _ser([0, 1, 1, 0, 0, 0, 1, 1, 0])               # drops at 3-6 s and 18-21 s
+    anchor = _ser([0, 0, 0, 0, 1, 0, 0, 0, 0], off=1)     # one lost cycle at 13 s
+    o = S.outage_summary(gw, anchor, max_gap=GAP, hop_join=JOIN, raw_cycle=CYCLE, min_cycles=2)
+    assert o["count"] == 2 and o["total_down_seconds"] == 12.0
+    one_each = _ser([0, 1, 0, 0]), _ser([0, 1, 0, 0], off=1)   # the same blip on both hops
+    assert S.outage_summary(*one_each, max_gap=GAP, hop_join=JOIN, raw_cycle=CYCLE,
+                            min_cycles=2)["count"] == 0

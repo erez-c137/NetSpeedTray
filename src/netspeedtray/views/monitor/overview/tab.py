@@ -168,7 +168,7 @@ def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
         loss = ws.get_loss_history(stats, start, end)
         events = S.outage_summary(*(loss.get(st, []) for st in stats),
                                   max_gap=lat.OUTAGE_GAP_SLACK_SEC, hop_join=lat.OUTAGE_HOP_JOIN_SEC,
-                                  raw_cycle=lat.OUTAGE_CYCLE_SEC)
+                                  raw_cycle=lat.OUTAGE_CYCLE_SEC, min_cycles=lat.OUTAGE_MIN_CYCLES)
     volume = None
     if session_start is not None:
         try:
