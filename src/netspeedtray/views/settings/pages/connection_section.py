@@ -92,6 +92,16 @@ class ConnectionSettings(QWidget):
     def _sync_description(self) -> None:
         self._lat.set_description(self._latency_description(self._public.isChecked()))
 
+    def anchor_widgets(self, key: str) -> list:
+        """Deep-link targets (D4). The internet check sits in the latency section's body: with latency
+        off that body is hidden, and the dialog lands on the section's header switch instead."""
+        return {
+            "latency_enabled": [self._lat],
+            "latency_public_enabled": [self._public],
+            "latency_public_host": [self._host],
+            "plan_speed": [self._plan],
+        }.get(key, [])
+
     def load_settings(self, config: Dict[str, Any]) -> None:
         self._lat.setChecked(bool(config.get("latency_enabled", True)))
         self._public.setChecked(bool(config.get("latency_public_enabled", False)))

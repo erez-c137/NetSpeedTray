@@ -96,6 +96,14 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - Removed: `PAUSE_IN_MENU_LABEL` ("Add Pause/Resume to the right-click menu") - that switch is now the Pause / Resume row of the section above.
 > - No review needed: `NET_GRAPH_NO_TRAFFIC_TITLE` (the old first line, your translation kept as is), `HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP` (the old `RECORD_HARDWARE_HISTORY_INACTIVE_SUB` text, kept as is) and `HARDWARE_NEEDS_CPU_TOOLTIP` (back, with its 2.2.0 text).
 
+> 🆕 **Pending native review for 2.2.2 (one-click notices, see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. Places that used to only say "turn this on in Settings" now have a button that opens Settings on that exact switch.
+> - `NOTICE_TURN_ON_IN_SETTINGS` - the button ("Turn on in Settings"). It opens Settings and highlights the switch; it does not turn anything on by itself. Keep it short - it sits beside or under a sentence. Use your word for Settings from `SETTINGS_MENU_ITEM`.
+> - `HW_HISTORY_MONITOR_OFF_NOTICE` - the note in the middle of the Monitor's empty Hardware graph (the combined views) when CPU, GPU and RAM monitoring are all off: "Hardware monitoring is off." The button under it opens Settings > Hardware.
+> - `HW_HISTORY_CPU_OFF_NOTICE` / `HW_HISTORY_GPU_OFF_NOTICE` - the same note on the Hardware tab's single CPU or GPU view: "CPU monitoring is off." / "GPU monitoring is off." Use the CPU / GPU words of your `MONITOR_CPU_LABEL` / `MONITOR_GPU_LABEL`.
+> - `HW_HISTORY_RECORD_OFF_NOTICE` - the same spot when monitoring is on but Settings > Advanced > Record hardware history is off: "Hardware history recording is off." Follow your `RECORD_HARDWARE_HISTORY_LABEL`.
+> - `CHECK_CONN_ALWAYS_NOTICE` - under the Check connection sheet's "Also check the internet" tick: "Track internet latency all the time?" (the button is under it). It is about the internet check that runs in the background, not this one-off check.
+> - Removed: `CHECK_CONN_HINT` ("To measure the internet all the time, turn on ... in Settings.") and `HARDWARE_HISTORY_OFF_MESSAGE` / `HARDWARE_HISTORY_RECORD_OFF_MESSAGE` (the old text drawn into the graph) - replaced by the keys above.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

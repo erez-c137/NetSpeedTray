@@ -63,6 +63,10 @@ class DataCapSettings(QWidget):
         from netspeedtray.utils.helpers import tr
         return tr(self._i18n, key, default)
 
+    def anchor_widgets(self, key: str) -> list:
+        """Deep-link targets (D4): the section itself - its header is the on/off switch."""
+        return [self._expander] if key in ("data_cap", "data_cap_enabled") else []
+
     def load_settings(self, config: Dict[str, Any]) -> None:
         self._expander.setChecked(bool(config.get("data_cap_enabled", False)))
         self._cap.setValue(float(config.get("data_cap_gb", 0) or 0))
