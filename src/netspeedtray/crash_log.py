@@ -10,7 +10,9 @@ violation inside one, an exception in an import - therefore left no trace anywhe
   STARTUP only: ``startup_complete()`` turns it off once the widget is up, because on Windows it
   also reports access violations that the code raising them handles (see there);
 - installs a ``sys.excepthook`` / ``threading.excepthook`` that append any unhandled exception's
-  traceback there, until (and also after) logging takes over.
+  traceback there, until (and also after) logging takes over;
+- hosts the GUI-stall watchdog (``arm_stall_dump``, #218): a separate faulthandler feature
+  (``dump_traceback_later``) that writes the stacks of a GUI thread stuck for seconds, all run long.
 
 Each start appends one line, so a fault can be placed in time. The file is kept small: when it is
 over ``MAX_BYTES`` at start it is rotated to ``.1`` (one generation). The support bundle ships both,
@@ -34,6 +36,9 @@ CRASH_LOG_FILENAME = "NetSpeedTray_Crash.log"
 MAX_BYTES = 256 * 1024
 
 _file: Optional[TextIO] = None
+# The crash log's size when the stall watchdog was last armed (None: not armed / unknown).
+_stall_armed_size: Optional[int] = None
+_STALL_DUMP_MARK = b"Timeout ("
 _lock = threading.Lock()
 
 
@@ -103,6 +108,66 @@ def startup_complete() -> None:
             faulthandler.disable()
         _write("%s startup complete pid %d; fault handler off\n"
                % (time.strftime("%Y-%m-%d %H:%M:%S"), os.getpid()))
+    except Exception:
+        pass
+
+
+def note(text: str) -> None:
+    """Append one timestamped line (no-op when the crash log is not armed). Never raises."""
+    try:
+        _write("%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
+    except Exception:
+        pass
+
+
+def arm_stall_dump(timeout_s: float) -> bool:
+    """(Re)arm the GUI-stall watchdog (core/gui_stall_watch.py): unless called again or cancelled
+    within ``timeout_s``, faulthandler writes every thread's stack here, headed "Timeout (...)!".
+
+    This is ``faulthandler.dump_traceback_later`` - separate from the startup fault handler
+    (``enable``/``startup_complete`` never touch it, and it never reports access violations). Its C
+    watchdog thread blocks on a timed lock wait; it only wakes to be cancelled by the next re-arm or
+    to write a dump. Returns False (nothing armed) when the crash log is not open."""
+    global _stall_armed_size
+    fh = _file
+    if fh is None:
+        return False
+    try:
+        faulthandler.dump_traceback_later(timeout_s, repeat=False, file=fh)   # flushes fh first
+    except Exception:
+        _stall_armed_size = None
+        return False
+    try:
+        _stall_armed_size = os.fstat(fh.fileno()).st_size
+    except Exception:
+        _stall_armed_size = None
+    return True
+
+
+def stall_dump_written() -> bool:
+    """True when the crash log grew since the last ``arm_stall_dump`` AND the new bytes hold a
+    faulthandler "Timeout (" header - i.e. the watchdog really fired (an exception record appended
+    meanwhile does not count). Called only on a late tick; never raises."""
+    fh, start = _file, _stall_armed_size
+    if fh is None or start is None:
+        return False
+    try:
+        fh.flush()
+        if os.fstat(fh.fileno()).st_size <= start:
+            return False
+        with open(crash_log_path(), "rb") as rf:
+            rf.seek(start)
+            return _STALL_DUMP_MARK in rf.read(256 * 1024)
+    except Exception:
+        return False
+
+
+def cancel_stall_dump() -> None:
+    """Disarm the GUI-stall watchdog (quit, sleep). Safe when nothing is armed."""
+    global _stall_armed_size
+    _stall_armed_size = None
+    try:
+        faulthandler.cancel_dump_traceback_later()
     except Exception:
         pass
 

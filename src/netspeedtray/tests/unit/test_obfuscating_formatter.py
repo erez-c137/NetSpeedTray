@@ -365,3 +365,41 @@ def test_found_new_primary_interface_legacy_shape_is_pseudonymized(formatter):
     assert "ACME-HQ Office VPN" not in out
     assert "Found new primary interface: NIC-" in out
     assert "<REDACTED_IP>" in out, "the gateway operand must still hit the generic IP rule"
+
+
+
+# --- faulthandler's escaped spelling of non-ASCII paths (#218 / PR #598) -------
+
+class TestFaulthandlerEscapedPaths:
+    r"""faulthandler writes a non-ASCII path escaped (C:\Users\\u0141uk). The PATH rule must
+    catch it on its own: the user-name rule is switched off here, and a <= 3-character name is
+    never redacted as a bare word anyway. The escape is of the ORIGINAL case - normcase would turn
+    "Ł" (\u0141) into "ł" (\u0142), a different code point that IGNORECASE cannot bridge."""
+
+    @staticmethod
+    def _formatter(monkeypatch, name):
+        import netspeedtray.utils.config as cfg
+        monkeypatch.setattr(cfg.Path, "home", classmethod(lambda cls: Path("C:/Users") / name))
+        monkeypatch.setattr(cfg.ObfuscatingFormatter, "_setup_username", lambda self: None)
+        return ObfuscatingFormatter("%(message)s")
+
+    @pytest.mark.parametrize("name", ["\u0141uk", "\u00c9lodie", "\u0130lker", "\u05e9\u05dc\u05d5\u05dd",
+                                      "D\u00fcrer\U0001f600"])
+    @pytest.mark.parametrize("sep_form", ["plain", "mixed", "forward"])
+    def test_escaped_home_is_redacted_by_the_path_rule(self, monkeypatch, name, sep_form):
+        f = self._formatter(monkeypatch, name)
+        esc = ObfuscatingFormatter.faulthandler_escape(name)
+        line = {
+            # exactly what faulthandler writes: "\" separator, then the escape's own backslash
+            "plain": 'File "C:\\Users\\' + esc + '\\AppData\\Local\\x.py", line 3 in stuck',
+            "mixed": 'File "C:/Users/' + esc + '/AppData/x.py", line 3 in stuck',
+            "forward": 'File "C:\\Users/' + esc + '\\x.py", line 3 in stuck',
+        }[sep_form]
+        out = _format(f, line)
+        assert esc.lower() not in out.lower(), out
+        assert "<REDACTED_PATH>" in out and "line 3 in stuck" in out
+
+    def test_plain_spelling_still_redacted(self, monkeypatch):
+        f = self._formatter(monkeypatch, "\u0141uk")
+        out = _format(f, "opened C:\\Users\\\u0141uk\\x.txt")
+        assert "\u0141uk" not in out and "<REDACTED_PATH>" in out

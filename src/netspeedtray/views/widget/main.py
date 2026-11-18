@@ -75,6 +75,7 @@ _WM_ENDSESSION = 0x0016
 # the database thread. Windows ends a logging-off app ~5 s after asking; the config save (an atomic
 # file write, milliseconds) runs first, so this bounded wait is all that can use the budget.
 _SESSION_END_DB_WAIT_S = 2.0
+_PBT_APMSUSPEND = 0x0004
 _PBT_APMRESUMESUSPEND = 0x0007
 _PBT_APMRESUMEAUTOMATIC = 0x0012
 
@@ -305,6 +306,8 @@ class NetworkSpeedWidget(QWidget):
         self._dock_sig_seen: Optional[tuple] = None  # last taskbar dock_signature seen (#322)
         self._qt_scale_seen: Optional[float] = None  # Qt's device pixel ratio the size was measured at
         self.monitor_window = None  # unified Monitor (Overview / Network / Hardware), lazy
+        # GUI-thread stall logger (#218): rides on the safety-net tick, see _setup_timers.
+        self._stall_watch = None
         self.update_checker: Optional[UpdateChecker] = None
         # Automatic re-checks while running (periodic + after resume); see _run_automatic_update_check.
         self._update_recheck_timer: Optional[QTimer] = None
@@ -469,6 +472,18 @@ class NetworkSpeedWidget(QWidget):
 
         # This is the "Safety Net" timer. It runs to catch states missed by events.
         self._state_watcher_timer.setInterval(constants.timeouts.STATE_WATCHER_INTERVAL_MS)
+        # It is also the GUI-thread heartbeat for the stall logger (#218) - connected FIRST, so it
+        # measures the tick's lateness before this tick's refresh adds its own time. No timer or
+        # thread of its own (core/gui_stall_watch.py).
+        try:
+            from netspeedtray.core.gui_stall_watch import GuiStallWatch
+            self._stall_watch = GuiStallWatch(constants.timeouts.STATE_WATCHER_INTERVAL_MS,
+                                              context=self._gui_stall_context)
+            self._state_watcher_timer.timeout.connect(self._stall_watch.on_tick)
+            self._stall_watch.start()
+        except Exception as e:
+            self._stall_watch = None
+            self.logger.warning("GUI stall logger unavailable: %s", e)
         self._state_watcher_timer.timeout.connect(self._execute_refresh)
         self._state_watcher_timer.start()
         self.logger.debug(f"Safety net state watcher timer started ({constants.timeouts.STATE_WATCHER_INTERVAL_MS}ms).")
@@ -2380,10 +2395,18 @@ class NetworkSpeedWidget(QWidget):
                 if _WM_TASKBARCREATED and msg.message == _WM_TASKBARCREATED:
                     self.logger.info("TaskbarCreated received - re-docking to the new taskbar.")
                     self._recover_taskbar_restarted()
+                elif msg.message == _WM_POWERBROADCAST and msg.wParam == _PBT_APMSUSPEND:
+                    # Going to sleep: the night is not a GUI stall, and no watchdog stays armed (#218).
+                    watch = getattr(self, "_stall_watch", None)
+                    if watch is not None:
+                        watch.suspend()
                 elif msg.message == _WM_POWERBROADCAST and msg.wParam in (
                     _PBT_APMRESUMESUSPEND, _PBT_APMRESUMEAUTOMATIC
                 ):
                     self.logger.info("Resume from sleep detected - re-asserting widget.")
+                    watch = getattr(self, "_stall_watch", None)
+                    if watch is not None:
+                        watch.resume()
                     QTimer.singleShot(constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,
                                       lambda: self._on_environment_changed("resume"))
                     invalidate = getattr(self, "invalidate_latency_gateway", None)
@@ -2395,6 +2418,32 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.debug("nativeEvent power handling failed: %s", e)
         return False, 0
+
+    def _gui_stall_context(self) -> str:
+        """What was open when the GUI thread stalled (#218): our visible top-level windows by class
+        name (MonitorWindow with its tab, SettingsDialog, flyouts, menus) and a few states. Never
+        titles or text. Called only from a stall's log line, so its cost is off the steady state."""
+        parts: List[str] = []
+        app = QApplication.instance()
+        if app is not None:
+            for w in app.topLevelWidgets():
+                if w is self or not w.isVisible():
+                    continue
+                name = type(w).__name__
+                tab = getattr(w, "current_tab_id", None)
+                if callable(tab):
+                    try:
+                        name = "%s[%s]" % (name, tab())
+                    except Exception:
+                        pass
+                parts.append(name)
+        if self._is_context_menu_visible:
+            parts.append("context-menu")
+        if self._dragging:
+            parts.append("dragging")
+        if self.is_paused:
+            parts.append("paused")
+        return ", ".join(sorted(parts)) or "widget only"
 
     def _recover_if_buried(self) -> None:
         """
@@ -3535,6 +3584,14 @@ class NetworkSpeedWidget(QWidget):
         waits DB_SHUTDOWN_WAIT_MS; the database thread keeps draining best-effort until the process
         ends. Each step is guarded, so a failing one never skips the next."""
         self.logger.info("Windows session ending (%s): saving settings and the usage counter.", reason)
+        # Sign-out blocks the GUI thread on purpose (these saves, Windows' own end-session dance): not
+        # a stall to log or dump (#218). A cancelled logoff heals after GUI_STALL_SUSPEND_HOLD_SEC.
+        watch = getattr(self, "_stall_watch", None)
+        if watch is not None:
+            try:
+                watch.suspend()
+            except Exception:
+                pass
 
         def _odometer() -> None:
             if getattr(self, "widget_state", None):
@@ -3571,6 +3628,13 @@ class NetworkSpeedWidget(QWidget):
         self._cleanup_running = True
         self.logger.debug("Performing widget cleanup...")
         failed: List[str] = []
+
+        def _stall_watch() -> None:
+            # First: disarm the stall watchdog (#218) - the bounded waits below are expected, not
+            # stalls, and must not dump stacks into the crash log.
+            watch = getattr(self, "_stall_watch", None)
+            if watch is not None:
+                watch.stop()
 
         def _mirrors() -> None:
             # "Show on all taskbars" (#229): close every mirror while the data they paint still exists.
@@ -3679,6 +3743,7 @@ class NetworkSpeedWidget(QWidget):
         # * "config save" before "history flush": the DB step can wait DB_SHUTDOWN_WAIT_MS (15 s) for a
         #   busy database thread, and a logoff ends the process ~5 s in - the save must already be done.
         steps = (
+            ("stall watch", _stall_watch),
             ("mirrors", _mirrors),
             ("hover card", _hover_card), ("event hooks", _event_hooks),
             ("position manager", _position_manager), ("state watcher", _state_watcher),
