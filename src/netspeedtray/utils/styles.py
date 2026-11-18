@@ -300,6 +300,38 @@ def ui_html(text: str) -> str:
     return "<span style=\"white-space:pre-wrap;\">%s</span>" % _face_runs(text, escape=True)
 
 
+def ui_text_advance(qfont: QFont, text: str) -> int:
+    """The width of ``text`` as set_ui_text draws it in ``qfont``: each run the UI face lacks (the ↑ ↓
+    arrows in Nirmala UI) measured in the known face ui_html puts it in. A plain QFontMetrics of the UI
+    face would ask the face for those characters - and Qt would search every installed family."""
+    from PyQt6.QtGui import QFontMetricsF
+    from netspeedtray.utils.font_runs import family_covers
+    text = str(text)
+    if not needs_ui_html(text):
+        return QFontMetricsF(qfont).horizontalAdvance(text).__ceil__()
+    base = ui_family()
+    width, run, run_face = 0.0, "", None
+
+    def advance(face, chunk) -> float:
+        f = QFont(qfont)
+        if face is not None:
+            f.setFamily(face)
+        return QFontMetricsF(f).horizontalAdvance(chunk)
+
+    for ch in text:
+        face = None
+        if not ch.isspace() and not family_covers(base, ch):
+            face = next((f for f in (style_constants.FONT_FAMILY_VARIABLE, style_constants.FONT_FALLBACK)
+                         if f != base and family_covers(f, ch)), None)
+        if face != run_face and not ch.isspace():
+            width += advance(run_face, run) if run else 0.0
+            run, run_face = "", face
+        run += ch
+    if run:
+        width += advance(run_face, run)
+    return int(width + 0.999)
+
+
 def rich_plain_text(markup: str) -> str:
     """The words of rich text (a label's accessible name when ui_rich added anchor letters)."""
     from PyQt6.QtGui import QTextDocumentFragment

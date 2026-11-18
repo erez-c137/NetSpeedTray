@@ -31,7 +31,7 @@ import logging
 from typing import Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QEvent, QRectF, QSize, Qt, QTimer
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QPainter, QPen
+from PyQt6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen
 from PyQt6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton,
                              QVBoxLayout, QWidget)
 
@@ -67,8 +67,11 @@ _ROW_HEIGHT = 40                 # the visible row (Fluent navigation card)
 _RING = 3                        # reserved around every focusable control: 2 px ring + 1 px gap
 _ROW_ICON = 16
 _CHEVRON_PX = 12
-# LRI/PDI keep one speed ("88.6 Mbps") whole in an RTL line; a leading RLM makes that line RTL.
-_LRI, _PDI, _RLM = "⁦", "⁩", "‏"
+# LRM marks frame one speed ("88.6 Mbps") so it stays whole in an RTL line; a leading RLM makes that
+# line RTL. Not the bidi isolates (U+2066 / U+2069): Segoe UI has no glyph for them, and one missing
+# glyph makes Qt walk its fallback chain - every installed font family (utils/styles.bidi_isolate).
+_LRI = _PDI = "‎"
+_RLM = "‏"
 _DOWN, _UP = "↓", "↑"
 _KEYBOARD_PROP = "nst_keyboard"
 
@@ -438,12 +441,14 @@ class RunningPanel(QDialog):
     def _speeds_reference_width(self) -> int:
         """The widest the speeds line can get with the widget's unit settings, from stable reference
         values (CLAUDE.md: size from "888.8"-style strings, never from live values)."""
-        fm = QFontMetrics(su.font(tokens.TYPE_BODY))
+        # Measured the way set_ui_text draws it: the arrows the UI face lacks (Nirmala UI has no ↓ ↑)
+        # in the known face that has them - a plain QFontMetrics would make Qt search every family.
+        body = su.font(tokens.TYPE_BODY)
         widest = 0
         for exp in (3, 6, 9):
             mbps = 888.8 * (10 ** exp) / 1_000_000
             text = self._speeds_text(mbps, mbps, rtl=False)
-            widest = max(widest, fm.horizontalAdvance(text))
+            widest = max(widest, su.ui_text_advance(body, text))
         return widest + 4
 
     def _build_rows(self) -> QVBoxLayout:
