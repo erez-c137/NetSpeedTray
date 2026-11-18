@@ -816,11 +816,16 @@ class SettingCard(QFrame):
         self._reflow(event.size().width())
         super().resizeEvent(event)
 
-    def set_description(self, text: str) -> None:
-        """Swap the muted description (only for a card built with one)."""
+    def set_description(self, text: str, user_text: bool = False) -> None:
+        """Swap the muted description (only for a card built with one). ``user_text``: it holds text
+        the user typed (a host name in any script) - drawn in the one face that has all of it."""
         label = getattr(self, "_desc_label", None)
         if label is not None:
-            set_ui_text(label, text)   # e.g. LHM status "Options → ...": arrows not in every UI face
+            if user_text:
+                from netspeedtray.utils.styles import set_text_in_face
+                set_text_in_face(label, text)
+            else:
+                set_ui_text(label, text)   # e.g. LHM status "Options → ...": arrows not in every UI face
         for w in self._named:
             w.setAccessibleDescription(str(text or "").strip())
         if self._control is not None:

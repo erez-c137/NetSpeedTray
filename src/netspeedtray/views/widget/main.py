@@ -2808,6 +2808,47 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Error opening settings at %r / %r: %s", page, anchor_key, e, exc_info=True)
 
+    def save_config_keys(self, updates: Dict[str, Any]) -> None:
+        """Save a few keys the Monitor changes on its own (2.2.2 D5: the internet check's Turn on, the
+        offer's Not now) - applied to the live config at once. While a Settings dialog is open the live
+        config also holds its unsaved PREVIEW edits, so the file gets the dialog's baseline plus these
+        keys instead (never those edits); and both of the dialog's snapshots take the keys, so neither
+        its Cancel nor its Save undoes them."""
+        dialog = getattr(self, "settings_dialog", None)
+        baseline = getattr(dialog, "original_config", None) if dialog is not None else None
+        if not isinstance(baseline, dict):
+            self.config_controller.update_config(dict(updates), apply_and_repaint=False)
+            return
+        self.config.update(updates)
+        for snapshot in (getattr(dialog, "config", None), baseline):
+            if isinstance(snapshot, dict):
+                snapshot.update(updates)
+        try:
+            self.config_controller.config_manager.save({**baseline, **updates})
+        except Exception as e:
+            self.logger.error("Could not save %s: %s", sorted(updates), e, exc_info=True)
+
+    def turn_on_internet_check(self) -> None:
+        """The "Also check your internet?" confirm's Turn on (2.2.2 D5) - only ever called from that
+        click. Saves ``latency_public_enabled`` (save_config_keys: never Settings' unsaved edits), makes
+        sure the probe is running (it reads the shared config before every cycle, so the internet ping
+        starts within one 3 s cycle), and shows the switch On in an open Settings dialog - only if its
+        Network page was built: the page is lazy, and a built-later page loads the updated snapshot.
+        Reversible in Settings > Network."""
+        self.save_config_keys({"latency_public_enabled": True})
+        self.apply_latency_probe()
+        dialog = getattr(self, "settings_dialog", None)
+        if dialog is None:
+            return
+        try:
+            built = getattr(dialog, "_built_pages", None)
+            page = built.get("interfaces") if isinstance(built, dict) else None
+            section = getattr(page, "connection", None) if page is not None else None
+            if section is not None and hasattr(section, "set_public_enabled"):
+                section.set_public_enabled(True)
+        except Exception as e:
+            self.logger.debug("Open Settings not synced to the internet check: %s", e)
+
     def open_data_usage_settings(self) -> None:
         """Open Settings straight on the Network page's 'Data usage' section - the Monitor's 'Set a
         monthly limit' hint's door (was dropping the user on General)."""

@@ -98,6 +98,15 @@ class UIStyleConstants:
     NOTICE_LINK_CHEVRON_PX: Final[int] = 10       # the trailing Segoe Fluent Icons chevron
     CHEVRON_RIGHT_CODEPOINT: Final[int] = 0xE76C  # ChevronRight (LTR)
     CHEVRON_LEFT_CODEPOINT: Final[int] = 0xE76B   # ChevronLeft (RTL)
+    # --- "Also check your internet?" (2.2.2 D5, views/monitor/internet_offer) --
+    INTERNET_CONFIRM_BUTTON_HEIGHT: Final[int] = 32   # Fluent button height, in every theme (HC too)
+    INTERNET_TIP_WIDTH: Final[int] = 360              # the TeachingTip card's width
+    INTERNET_TIP_PAD_H: Final[int] = 16               # card padding, sides
+    INTERNET_TIP_PAD_V: Final[int] = 12               # card padding, top / bottom
+    INTERNET_TIP_MARGIN: Final[int] = 10              # transparent window margin (shadow room)
+    INTERNET_TIP_BEAK_H: Final[int] = 8               # the beak's depth
+    INTERNET_TIP_BEAK_W: Final[int] = 8               # half the beak's base
+    INTERNET_TIP_GAP: Final[int] = 2                  # beak tip to the link
     # Where a Settings deep link landed: an accent tint + a hairline accent stroke (not a focus ring).
     ANCHOR_HIGHLIGHT_FILL_ALPHA: Final[float] = 0.11
     ANCHOR_HIGHLIGHT_STROKE: Final[int] = 1
