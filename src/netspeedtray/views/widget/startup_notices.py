@@ -14,7 +14,13 @@ core/startup_notices.plan_startup_notice; this owns the timing and the card.
   when the widget hides, when a fullscreen app starts (even with "Keep visible in fullscreen"), and
   while another card (an update offer, a notice, a data-cap alert) is up: theirs win, the tip waits.
 - The tip counts as answered when the user does what it teaches: the hover card opens, a double-click,
-  the right-click menu.
+  the right-click menu - or opens the Monitor or Settings from the "running" panel. Also while it is
+  still waiting to show: it is used up then (saved), never shown afterwards (combined review C3/C8).
+- It never shows while the hover card is up, and a shown tip steps aside while an app-modal dialog of
+  ours is up and comes back after it (C9).
+- One one-time moment per session (C7): the tip / "what's new", the Monitor's support card (D8) and the
+  temperature setup's one automatic showing (D6) never share a session. A notice that finds another
+  moment already taken waits for the next launch (still owed).
 - Placed like the hover card (above a bottom bar, below a top one, beside a side bar), the tip with a
   tail pointing at the widget; follows the widget when it moves.
 - Focusable (a click lets the keyboard in: Tab / Enter / Esc) but shown without activating, so it
@@ -37,6 +43,42 @@ logger = logging.getLogger("NetSpeedTray.StartupNotices")
 
 REASON_HIDDEN = "widget hidden"
 
+# The session's one-time moment (combined review C7): which one-time surface showed this session, on
+# the widget (one per process). The first-run tip / "what's new" (here), the support card (D8,
+# views/monitor/support_card) and the temperature setup's automatic showing (D6) all check it.
+_MOMENT_ATTR = "_one_time_moment_this_session"
+MOMENT_SUPPORT = "support_card"
+MOMENT_TEMP_SETUP = "temperature_setup"
+
+
+def moment_taken(widget: Any) -> Optional[str]:
+    """Which one-time moment this session already showed, or None."""
+    value = getattr(widget, _MOMENT_ATTR, None)
+    return value if isinstance(value, str) else None
+
+
+def take_moment(widget: Any, what: str) -> None:
+    try:
+        setattr(widget, _MOMENT_ATTR, what)
+    except Exception:
+        pass
+
+
+def one_time_moment_blocked(widget: Any, what: str) -> Optional[str]:
+    """Why ``what`` (one of the session's one-time moments) may not show now because of ANOTHER one:
+    another moment already shown this session, or the first-run tip / "what's new" still owed or up."""
+    taken = moment_taken(widget)
+    if taken is not None and taken != what:
+        return "another one-time moment was shown this session"
+    notices = getattr(widget, "_startup_notices", None)
+    owes = getattr(notices, "owes_moment", None)
+    try:
+        if callable(owes) and owes():
+            return "the first-run tip or what's new is owed this session"
+    except Exception:
+        pass
+    return None
+
 
 def _seconds_since_sign_in() -> Optional[float]:
     try:
@@ -49,6 +91,16 @@ def _seconds_since_sign_in() -> Optional[float]:
 def _screen_reader_running() -> bool:
     from netspeedtray.views.flyout import screen_reader_running
     return screen_reader_running()
+
+
+def _modal_dialog_up(ignore=None) -> bool:
+    """An app-modal dialog of ours is up (other than ``ignore``)."""
+    try:
+        from PyQt6.QtWidgets import QApplication
+        modal = QApplication.activeModalWidget()
+        return modal is not None and modal is not ignore
+    except Exception:
+        return False
 
 
 def _alive(card) -> bool:
@@ -74,6 +126,14 @@ class StartupNotices(QObject):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.try_show)
+        # C9: an app-modal dialog of ours opening takes the focus window - the shown card steps aside.
+        try:
+            from PyQt6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is not None:
+                app.focusWindowChanged.connect(self._on_focus_window_changed)
+        except Exception as e:
+            logger.debug("Could not watch for modal dialogs: %s", e)
 
     # --- lifecycle ---------------------------------------------------------------------------
 
@@ -148,11 +208,41 @@ class StartupNotices(QObject):
 
     def on_gesture(self) -> None:
         """The user did what the tip teaches (the hover card opened, a double-click, the right-click
-        menu): the tip has done its job - close it, as answered."""
+        menu): the tip has done its job - close it, as answered. A tip still waiting to show is used up
+        too (combined review C3): saved as shown, never shown afterwards."""
+        self.answer_tip("the gesture it teaches")
+
+    def answer_tip(self, how: str = "the user") -> None:
+        """The first-run tip is answered (C3, C8: also the Monitor / Settings row of the "running"
+        panel) - closed if it is up or stepped aside, used up if it is still waiting."""
+        if self._pending == logic.NOTICE_TIP:
+            self._pending = None
+            self._timer.stop()
+            self._save(logic.shown_updates(logic.NOTICE_TIP, self._w.config, self._version))
+            logger.info("First-run tip answered before it showed (%s) - not shown.", how)
+            return
         card = self._live_card()
         if card is not None and self._flyout_notice == logic.NOTICE_TIP:
-            logger.info("First-run tip answered by the gesture it teaches.")
+            logger.info("First-run tip answered by %s.", how)
             card._dismiss()
+
+    def owes_moment(self) -> bool:
+        """The tip / "what's new" is still owed this session or on screen (stepped aside included)."""
+        return bool(self._pending) or self._live_card() is not None
+
+    def _on_focus_window_changed(self, *_args) -> None:
+        QTimer.singleShot(0, self.check_modal)
+
+    def check_modal(self) -> None:
+        """C9: a shown card steps aside while an app-modal dialog of ours is up, and is re-homed by the
+        retry once it is gone (blocked_reason)."""
+        card = self._live_card()
+        if card is None or not card.isVisible():
+            return
+        if _modal_dialog_up(card):
+            logger.debug("One-time notice steps aside for a modal dialog.")
+            card.hide()
+            self._timer.start(constants.app.STARTUP_NOTICE_RETRY_MS)
 
     def tip_visible(self) -> bool:
         card = self._live_card()
@@ -173,6 +263,8 @@ class StartupNotices(QObject):
             pass
         if w._update_offer_blocked():
             return "fullscreen app, modal dialog, or nobody at the screen"
+        if _modal_dialog_up():
+            return "a modal dialog is up"
         since = _seconds_since_sign_in()
         if since is not None and 0 <= since < constants.app.SIGN_IN_DUPLICATE_WINDOW_S:
             return "the sign-in rush"
@@ -184,6 +276,12 @@ class StartupNotices(QObject):
             pass
         if self._other_card_up():
             return "another notice is up"
+        hover = getattr(w, "_hover_card", None)          # C3: never beside (or over) the hover card
+        try:
+            if _alive(hover) and hover.isVisible():
+                return "the hover card is up"
+        except Exception:
+            pass
         # Integration 2.2.2 (#592 x #591): never beside D3's running panel - the user is using it.
         panel = getattr(w, "_running_panel", None)
         try:
@@ -232,11 +330,18 @@ class StartupNotices(QObject):
             if rehome:
                 self._show_card(self._live_card(), self._flyout_notice)
                 return
+            taken = moment_taken(w)
+            if taken is not None:
+                # C7: the session's one-time moment went to another surface - owed next launch.
+                logger.info("One-time notice waits for the next launch: %s showed this session.", taken)
+                self._pending = None
+                return
             card = self._build(notice)
             self._pending = None
             self._flyout, self._flyout_notice = card, notice
             card.dismissed.connect(self._on_card_closed)
             self._show_card(card, notice)
+            take_moment(w, notice)
             # Once ever: saved the moment it really showed (never before - a failed show keeps it owed).
             self._save(logic.shown_updates(notice, w.config, self._version))
             logger.info("One-time notice shown: %s.", notice)

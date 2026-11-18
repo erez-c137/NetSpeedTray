@@ -946,3 +946,101 @@ def test_tip_has_a_tail(qtbot, screen):
     w, n = _visible_tip()
     assert n._live_card().tail() is not None
     _close(n)
+
+
+# --- combined review round (C3, C7, C9) ------------------------------------------------------------
+
+def _waiting_tip(**kw):
+    w = _widget(dict(DEFAULTS), **kw)
+    n = ui.StartupNotices(w, version="2.2.2")
+    assert n.start() == TIP
+    return w, n
+
+
+def test_a_gesture_while_the_tip_waits_uses_it_up(qtbot, screen):
+    """C3: the user found the hover card (or double-clicked, or right-clicked) before the tip's moment:
+    it has nothing left to teach - saved as shown, never shown."""
+    w, n = _waiting_tip()
+    n.on_gesture()
+    assert w.config["first_run_tip_shown"] is True and w.config["first_run_ever"] is False
+    assert not n._timer.isActive()
+    n.try_show()
+    assert n._live_card() is None
+    assert ui.StartupNotices(w, version="2.2.2").start() is None
+
+
+def test_the_tip_never_shows_while_the_hover_card_is_up(qtbot, screen):
+    from PyQt6.QtWidgets import QWidget
+    w, n = _waiting_tip()
+    w._hover_card = QWidget()
+    qtbot.addWidget(w._hover_card)
+    w._hover_card.show()
+    assert n.blocked_reason() == "the hover card is up"
+    n._timer.stop()
+    n.try_show()
+    assert n._live_card() is None and w.config.get("first_run_tip_shown", False) is False   # still owed
+    w._hover_card.hide()
+    n.try_show()
+    assert _shown(n)
+    _close(n)
+
+
+def test_one_one_time_moment_per_session(qtbot, screen):
+    """C7: another one-time moment (the support card, the temperature setup) showed this session - the
+    tip waits for the next launch, still owed."""
+    w, n = _waiting_tip()
+    ui.take_moment(w, ui.MOMENT_SUPPORT)
+    n._timer.stop()
+    n.try_show()
+    assert n._live_card() is None and not n.owes_moment()
+    assert w.config.get("first_run_tip_shown", False) is False
+    w2 = _widget(dict(w.config))
+    assert ui.StartupNotices(w2, version="2.2.2").start() == TIP      # the next launch
+
+
+def test_a_shown_or_owed_notice_takes_the_session_moment(qtbot, screen):
+    w, n = _waiting_tip()
+    w._startup_notices = n
+    assert n.owes_moment() and ui.one_time_moment_blocked(w, ui.MOMENT_SUPPORT) is not None
+    n._timer.stop()
+    n.try_show()
+    assert ui.moment_taken(w) == TIP
+    _close(n)
+    assert not n.owes_moment()
+    assert ui.one_time_moment_blocked(w, ui.MOMENT_SUPPORT) == "another one-time moment was shown this session"
+
+
+def test_a_shown_tip_steps_aside_for_a_modal_dialog_and_comes_back(qtbot, screen):
+    """C9: an app-modal dialog of ours (Check connection, the update dialog) - the tip hides and is
+    re-homed by the retry once the dialog is gone."""
+    from PyQt6.QtWidgets import QApplication, QDialog
+    w, n = _visible_tip()
+    dlg = QDialog()
+    qtbot.addWidget(dlg)
+    dlg.setModal(True)
+    dlg.show()
+    qtbot.waitUntil(lambda: QApplication.activeModalWidget() is dlg, timeout=1000)
+    n.check_modal()
+    assert not _shown(n) and n._live_card() is not None
+    assert n._timer.isActive()
+    n._timer.stop()
+    n.try_show()
+    assert not _shown(n)                                       # still waits while it is up
+    dlg.close()
+    qtbot.waitUntil(lambda: QApplication.activeModalWidget() is None, timeout=1000)
+    n.try_show()
+    assert _shown(n)
+    _close(n)
+
+
+def test_a_modal_dialog_opening_reaches_the_check(qtbot, screen):
+    from PyQt6.QtWidgets import QApplication, QDialog
+    w, n = _visible_tip()
+    dlg = QDialog()
+    qtbot.addWidget(dlg)
+    dlg.setModal(True)
+    dlg.show()
+    dlg.activateWindow()
+    qtbot.waitUntil(lambda: not _shown(n), timeout=2000)
+    dlg.close()
+    _close(n)
