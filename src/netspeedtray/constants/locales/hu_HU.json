@@ -675,5 +675,10 @@
     "RUNNING_PANEL_HIDDEN_YIELD": "Fut - helyet adott a tálca alkalmazásgombjainak",
     "RUNNING_PANEL_HIDDEN": "Fut - a widget most rejtve van",
     "RUNNING_PANEL_PAUSED_LINE": "A sebességek szüneteltetve.",
-    "RUNNING_PANEL_QUIT_TIP": "Leállítja a NetSpeedTray-t. Bejelentkezéskor újraindul."
+    "RUNNING_PANEL_QUIT_TIP": "Leállítja a NetSpeedTray-t. Bejelentkezéskor újraindul.",
+    "FIRST_RUN_TIP_TITLE": "A NetSpeedTray fut",
+    "FIRST_RUN_TIP_BODY": "Mutasson a sebességekre a részletekért.\nDupla kattintással megnyílik a Monitor.\nJobb kattintás: menü és Beállítások.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Monitor megnyitása",
+    "WHATS_NEW_TITLE": "Frissítve: NetSpeedTray {version}",
+    "WHATS_NEW_2_2_2": "Nyissa meg a Start menüből egy gyorspanelért. Az értesítések most közvetlenül a megfelelő beállításhoz visznek, és a Beállításokban is könnyebb eligazodni."
 }

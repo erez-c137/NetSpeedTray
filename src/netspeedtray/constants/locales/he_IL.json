@@ -675,5 +675,10 @@
     "RUNNING_PANEL_HIDDEN_YIELD": "פועל - זז הצידה בשביל לחצני האפליקציות בשורת המשימות",
     "RUNNING_PANEL_HIDDEN": "פועל - הווידג'ט מוסתר כרגע",
     "RUNNING_PANEL_PAUSED_LINE": "המהירויות מושהות.",
-    "RUNNING_PANEL_QUIT_TIP": "עוצר את NetSpeedTray. הוא יופעל שוב כשתתחבר."
+    "RUNNING_PANEL_QUIT_TIP": "עוצר את NetSpeedTray. הוא יופעל שוב כשתתחבר.",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray פועל",
+    "FIRST_RUN_TIP_BODY": "ריחוף מעל המהירויות מציג פרטים.\nלחיצה כפולה פותחת את המוניטור.\nלחיצה ימנית פותחת תפריט והגדרות.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "פתח מוניטור",
+    "WHATS_NEW_TITLE": "עודכן ל-NetSpeedTray {version}",
+    "WHATS_NEW_2_2_2": "פתחו אותו מתפריט התחל לקבלת חלונית מהירה. ההודעות מובילות עכשיו ישירות להגדרה הרלוונטית, וקל יותר להתמצא בהגדרות."
 }

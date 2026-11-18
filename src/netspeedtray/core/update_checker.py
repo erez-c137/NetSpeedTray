@@ -22,23 +22,21 @@ CHECK_INTERVAL_HOURS = 24
 FUTURE_STAMP_TOLERANCE_MINUTES = 5
 
 
-_POLICY_TYPE_WARNED: set = set()   # (hive, registry type) pairs already logged
+_POLICY_TYPE_WARNED: set = set()   # (value name, hive, registry type) triples already logged
 
 
-def update_check_disabled_by_policy() -> bool:
-    """True when IT has turned update checks off: a nonzero REG_DWORD (or REG_QWORD)
-    ``DisableUpdateCheck`` under ``HKLM\\SOFTWARE\\Policies\\NetSpeedTray``, or the same under HKCU
-    (U1). The two hives are OR-ed: either one set disables, and neither can re-enable what the other
-    disabled. Read-only. A missing key, another value type (logged) or any read error means "no policy" - the
-    policy can only ever switch checks OFF, so failing open here never contacts anything the user
-    has not already allowed. Cheap enough to call on every check and every menu open, so a policy
-    pushed while the app runs applies without a restart."""
+def policy_value_set(value_name: str) -> bool:
+    """True when IT set the DWORD ``value_name`` nonzero under ``HKLM\\SOFTWARE\\Policies\\NetSpeedTray``
+    or the same under HKCU. The two hives are OR-ed: either one set turns the thing off, and neither
+    can re-enable what the other disabled. Read-only. A missing key, another value type (logged) or
+    any read error means "no policy" - every NetSpeedTray policy only ever switches something OFF,
+    so failing open never does anything the user has not already allowed. Cheap enough to call on
+    every check and every menu open, so a policy pushed while the app runs applies without a restart."""
     try:
         import winreg
     except ImportError:  # not Windows
         return False
     key_path = constants.app.POLICY_REGISTRY_KEY
-    value_name = constants.app.POLICY_DISABLE_UPDATE_CHECK_VALUE
     for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
         try:
             with winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ) as key:
@@ -46,11 +44,11 @@ def update_check_disabled_by_policy() -> bool:
         except OSError:
             continue   # no key / no value / no access: this hive sets nothing
         if value_type not in (winreg.REG_DWORD, winreg.REG_QWORD):
-            # Most likely a REG_SZ "1" from a hand-written script: say so (once per hive and type -
-            # this runs on every menu open), or IT never learns why the policy "does nothing".
-            if (hive, value_type) in _POLICY_TYPE_WARNED:
+            # Most likely a REG_SZ "1" from a hand-written script: say so (once per value, hive and
+            # type - this runs on every menu open), or IT never learns why the policy "does nothing".
+            if (value_name, hive, value_type) in _POLICY_TYPE_WARNED:
                 continue
-            _POLICY_TYPE_WARNED.add((hive, value_type))
+            _POLICY_TYPE_WARNED.add((value_name, hive, value_type))
             logger.warning("Ignoring the %s policy value under %s\\%s: it is registry type %s, not a "
                            "REG_DWORD.", value_name,
                            "HKLM" if hive == winreg.HKEY_LOCAL_MACHINE else "HKCU", key_path, value_type)
@@ -58,6 +56,13 @@ def update_check_disabled_by_policy() -> bool:
         if int(value) != 0:
             return True
     return False
+
+
+def update_check_disabled_by_policy() -> bool:
+    """True when IT has turned update checks off: a nonzero REG_DWORD (or REG_QWORD)
+    ``DisableUpdateCheck`` under ``HKLM\\SOFTWARE\\Policies\\NetSpeedTray``, or the same under HKCU
+    (U1). See policy_value_set."""
+    return policy_value_set(constants.app.POLICY_DISABLE_UPDATE_CHECK_VALUE)
 
 
 def automatic_update_checks_allowed(config: dict) -> bool:

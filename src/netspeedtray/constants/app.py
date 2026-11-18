@@ -33,6 +33,10 @@ class AppConstants:
     # in DEPLOYING.md - keep the two in sync.
     POLICY_REGISTRY_KEY: Final[str] = r"SOFTWARE\Policies\NetSpeedTray"
     POLICY_DISABLE_UPDATE_CHECK_VALUE: Final[str] = "DisableUpdateCheck"
+    # Same key (2.2.2 D1/D2): nonzero = no first-run tip and no one-time "what's new" after an update
+    # (and the planned 2.2.2 rate/support card, D8) - for managed fleets. Only switches notices OFF;
+    # nothing else changes. Documented in DEPLOYING.md - keep the two in sync.
+    POLICY_DISABLE_TIPS_VALUE: Final[str] = "DisableTips"
     # Graceful-shutdown channel (core/shutdown_channel.py). The running app registers this window
     # message and quits through the same clean path as tray Exit when it arrives; the installer and
     # uninstaller post it from setup.iss's own [Code] before any taskkill (and `--shutdown` can, by
@@ -91,6 +95,15 @@ class AppConstants:
     UPDATE_OFFER_MAX_IDLE_S: Final[int] = 120
     # "Not now" in the update dialog snoozes that version's automatic offers this long (seconds).
     UPDATE_NOT_NOW_SNOOZE_S: Final[int] = 3 * 24 * 60 * 60
+    # First-run tip / one-time "what's new" (2.2.2 D1, D2; views/widget/startup_notices.py). Shown
+    # this long after the widget is really visible (never in the same instant it appears), and behind
+    # the update offer's gates plus a sign-in quiet period (the first SIGN_IN_DUPLICATE_WINDOW_S after
+    # the session signed in: the launch storm of every autostart app). A blocked attempt retries
+    # this often - the notice is deferred, never lost.
+    STARTUP_NOTICE_DELAY_MS: Final[int] = 5_000
+    STARTUP_NOTICE_RETRY_MS: Final[int] = 30_000
+    # The GitHub release page of one exact version ("What's new" in the one-time notice).
+    RELEASE_TAG_URL_TEMPLATE: Final[str] = "https://github.com/{owner}/{repo}/releases/tag/v{version}"
     # How long after the event loop starts the crash log's fault handler stays on (netspeedtray/
     # crash_log.py): long enough to cover the widget's first show and stats ticks, short enough
     # that handled access violations later in the run are never logged as crashes.

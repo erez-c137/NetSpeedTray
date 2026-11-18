@@ -17,6 +17,7 @@ _DYNAMIC = (
     re.compile(r"^ORDER_POSITION_\d+$"),                # views/settings/pages/widget.py
     re.compile(r"^ARROW_PRESET_[A-Z_]+$"),               # utils/components.py (ArrowStylePicker)
     re.compile(r"^(HIGH|LOW)_SPEED_(THRESHOLD|COLOR)_TOOLTIP$"),   # views/settings/pages/colors.py
+    re.compile(r"^WHATS_NEW_\d+_\d+_\d+$"),           # core/startup_notices.whats_new_key (one per release)
 )
 
 # Unused today but kept on purpose - say why.

@@ -675,5 +675,10 @@
     "RUNNING_PANEL_HIDDEN_YIELD": "Çalışıyor - görev çubuğundaki uygulama düğmelerine yer açtı",
     "RUNNING_PANEL_HIDDEN": "Çalışıyor - pencere öğesi şu anda gizli",
     "RUNNING_PANEL_PAUSED_LINE": "Hızlar duraklatıldı.",
-    "RUNNING_PANEL_QUIT_TIP": "NetSpeedTray'i kapatır. Oturum açtığınızda yeniden başlar."
+    "RUNNING_PANEL_QUIT_TIP": "NetSpeedTray'i kapatır. Oturum açtığınızda yeniden başlar.",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray çalışıyor",
+    "FIRST_RUN_TIP_BODY": "Ayrıntılar için hızların üzerine gelin.\nİzleyiciyi açmak için çift tıklayın.\nMenü ve Ayarlar için sağ tıklayın.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "İzleyiciyi Aç",
+    "WHATS_NEW_TITLE": "NetSpeedTray {version} sürümüne güncellendi",
+    "WHATS_NEW_2_2_2": "Hızlı bir panel için Başlat'tan açın. Bildirimler artık doğrudan ilgili ayara götürüyor ve Ayarlar'da yolunuzu bulmak daha kolay."
 }

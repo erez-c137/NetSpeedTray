@@ -675,5 +675,10 @@
     "RUNNING_PANEL_HIDDEN_YIELD": "Teče - umaknjeno zaradi gumbov aplikacij v opravilni vrstici",
     "RUNNING_PANEL_HIDDEN": "Teče - pripomoček je trenutno skrit",
     "RUNNING_PANEL_PAUSED_LINE": "Hitrosti so zaustavljene.",
-    "RUNNING_PANEL_QUIT_TIP": "Zapre NetSpeedTray. Ob prijavi se znova zažene."
+    "RUNNING_PANEL_QUIT_TIP": "Zapre NetSpeedTray. Ob prijavi se znova zažene.",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray se izvaja",
+    "FIRST_RUN_TIP_BODY": "Za podrobnosti pokažite na hitrosti.\nZ dvoklikom odprete Monitor.\nDesni klik za meni in nastavitve.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Odpri Monitor",
+    "WHATS_NEW_TITLE": "Posodobljeno na NetSpeedTray {version}",
+    "WHATS_NEW_2_2_2": "Odprite ga iz menija Start za hitro ploščo. Obvestila zdaj vodijo naravnost do prave nastavitve, v nastavitvah pa se lažje znajdete."
 }

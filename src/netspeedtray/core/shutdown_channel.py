@@ -512,6 +512,16 @@ def _session_seconds_since_logon() -> Optional[float]:
         free(buf)
 
 
+def session_seconds_since_logon() -> Optional[float]:
+    """Seconds since this session signed in, or None when it can't be told - never raises. Used by
+    the one-time notices (2.2.2 D1/D2) to stay out of the sign-in rush."""
+    try:
+        return _session_seconds_since_logon()
+    except Exception as e:
+        logger.debug("Could not read the session's logon time: %s", e)
+        return None
+
+
 def is_sign_in_duplicate() -> bool:
     """A second launch's own verdict (#373): True when this session signed in less than
     SIGN_IN_DUPLICATE_WINDOW_S ago - a duplicate autostart, not the user asking for the widget. Any

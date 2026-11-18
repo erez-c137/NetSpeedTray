@@ -211,6 +211,27 @@ def widget_qt_scale(widget: Any) -> Optional[float]:
         return None
 
 
+def _startup_notices_yield(widget: Any, card) -> None:
+    """Another card of ours just showed: the first-run tip / "what's new" steps aside until it
+    closes - theirs win (2.2.2 D1/D2 review M3). A module function: stand-in widgets need nothing."""
+    notices = getattr(widget, "_startup_notices", None)
+    if notices is not None:
+        try:
+            notices.yield_to(card)
+        except Exception as e:
+            logging.getLogger("NetSpeedTray.NetworkSpeedWidget").debug("one-time notice could not yield: %s", e)
+
+
+def _startup_tip_gesture(widget: Any) -> None:
+    """The user did what the first-run tip teaches (hover card, double-click, right-click menu)."""
+    notices = getattr(widget, "_startup_notices", None)
+    if notices is not None:
+        try:
+            notices.on_gesture()
+        except Exception as e:
+            logging.getLogger("NetSpeedTray.NetworkSpeedWidget").debug("one-time notice gesture hook failed: %s", e)
+
+
 def _fullscreen_latch(widget: Any) -> FullscreenLatch:
     """The widget's fullscreen latch (#503), created on first use (a stand-in ``self`` in the tests
     gets its own the same way)."""
@@ -332,6 +353,7 @@ class NetworkSpeedWidget(QWidget):
         self._manual_update_check: bool = False       # the result in flight answers the menu item
         self._update_auto_source: Optional[str] = None  # "startup"/"periodic"/"resume" while one is out
         self._pending_update_offer: Optional[tuple] = None  # a flyout offer waiting out fullscreen etc.
+        self._startup_notices = None  # the first-run tip / one-time "what's new" (2.2.2 D1/D2)
         self._update_flyout = None
         self.app_icon: QIcon
         # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
@@ -645,6 +667,9 @@ class NetworkSpeedWidget(QWidget):
         # Never leave an always-on-top card (pinned or not) over a game/video - even when the widget
         # itself stays (keep_visible_fullscreen / free-float).
         self.dismiss_hover_card()
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_fullscreen()   # the first-run tip / "what's new" steps aside, comes back after
         if self.config.get("keep_visible_fullscreen", False):
             return
         if self.position_manager and self.position_manager.is_free_float_active():
@@ -810,18 +835,17 @@ class NetworkSpeedWidget(QWidget):
         QTimer.singleShot(1200, self._maybe_show_welcome)
 
     def _maybe_show_welcome(self) -> None:
-        """First-run onboarding. An upgrader gets the one-time 2.0 welcome dialog; a brand-new install
-        gets no pop-up (the hover card's gesture hint is its onboarding)."""
-        # Brand-new install: no interrupting pop-up until there's a real guided tour (the old 'unfold'
-        # flyout only opened the Monitor and was removed in 2.2). We still advance the first-run flags
-        # so nothing pops later and the upgrade dialog stays correctly suppressed.
-        if self.config.get("first_run_ever", True):
-            self.config["first_run_ever"] = False
-            self.config["first_run_v2_seen"] = True  # a new 2.0 user has no "before"
-            self.update_config({"first_run_ever": False, "first_run_v2_seen": True})
-            return
-
-        if self.config.get("first_run_v2_seen", False):
+        """First-run onboarding, once the widget has settled. A 1.x upgrader gets the one-time 2.0
+        welcome dialog; everyone else goes to the one-time notices (2.2.2): a brand-new install's
+        first-run tip (D1), or the first launch of a newer final release's "what's new" (D2) -
+        views/widget/startup_notices.py, decided by core/startup_notices.py. Never both in one launch."""
+        if self.config.get("first_run_ever", True) or self.config.get("first_run_v2_seen", False):
+            try:
+                from netspeedtray.views.widget.startup_notices import StartupNotices
+                self._startup_notices = StartupNotices(self)
+                self._startup_notices.start()
+            except Exception as e:
+                self.logger.error(f"Error starting the one-time notices: {e}", exc_info=True)
             return
         try:
             from netspeedtray.views.welcome_dialog import WelcomeDialog
@@ -834,9 +858,13 @@ class NetworkSpeedWidget(QWidget):
                 )
         except Exception as e:
             self.logger.error(f"Error showing welcome dialog: {e}", exc_info=True)
-        # Mark seen (even if the dialog errored) so it appears at most once.
+        # Mark seen (even if the dialog errored) so it appears at most once - and record this version,
+        # so the next launch does not follow it with this release's "what's new" (D2).
+        from netspeedtray.core.startup_notices import later_version
+        seen = later_version(self.config.get("last_seen_version"), constants.app.VERSION)
         self.config["first_run_v2_seen"] = True
-        self.update_config({"first_run_v2_seen": True})
+        self.config["last_seen_version"] = seen
+        self.update_config({"first_run_v2_seen": True, "last_seen_version": seen})
 
     def _on_latency(self, sample) -> None:
         """A LatencySample arrived (main thread, queued from the probe thread). Update the live
@@ -1056,6 +1084,7 @@ class NetworkSpeedWidget(QWidget):
             self._usage_alert_flyout = Flyout(title, message, auto_dismiss_ms=auto_dismiss_ms)
             geo = self.frameGeometry()
             self._usage_alert_flyout.show_at(QPoint(geo.left(), geo.top()))
+            _startup_notices_yield(self, self._usage_alert_flyout)
         except Exception as e:
             self.logger.error(f"Error showing usage alert: {e}", exc_info=True)
 
@@ -1678,7 +1707,10 @@ class NetworkSpeedWidget(QWidget):
             show_data = bool(self.config.get("show_usage_on_hover", True))
             show_tips = bool(self.config.get("show_hover_tips", True))
             show_power = bool(self.config.get("power_display_enabled", False))
-            hint = self._hover_hint_text() if show_tips else None
+            notices = getattr(self, "_startup_notices", None)
+            tip_up = notices is not None and notices.tip_visible()
+            # While the first-run tip is up, the hover card does not repeat its gesture hint.
+            hint = self._hover_hint_text() if show_tips and not tip_up else None
             today, month = self._hover_usage_totals() if show_data else (None, None)
             cap = self._hover_cap_info() if show_data else None
             power = self._hover_power_summary() if show_power else None
@@ -1715,6 +1747,7 @@ class NetworkSpeedWidget(QWidget):
             # no frame in between, instead of a visible blink.
             old, self._hover_card = self._hover_card, card
             card.show_for(self.frameGeometry(), avail, edge=self._hover_card_edge(), screen=screen)
+            _startup_tip_gesture(self)   # the user found the hover card: the tip has done its job
             if pinned:
                 card.set_pinned(True)    # opened by a click/tap: takes clicks (not pass-through)
                 self._retire_pin_hint()
@@ -2148,6 +2181,7 @@ class NetworkSpeedWidget(QWidget):
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         """Delegates double-click events to the InputHandler."""
+        _startup_tip_gesture(self)
         if self.input_handler:
             self.input_handler.handle_double_click(event)
 
@@ -2190,6 +2224,9 @@ class NetworkSpeedWidget(QWidget):
     def moveEvent(self, event) -> None:
         super().moveEvent(event)
         self._reanchor_hover_card()
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_widget_moved()
 
     def showEvent(self, event: QShowEvent) -> None:
         self.logger.debug(f"Widget showEvent triggered. New visibility: {self.isVisible()}")
@@ -2204,6 +2241,9 @@ class NetworkSpeedWidget(QWidget):
                 handler.check_shell_theme()
             except Exception as e:
                 self.logger.debug("theme re-check on show failed: %s", e)
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_widget_shown()   # a deferred first-run tip / "what's new" gets its moment
 
     def event(self, event: QEvent) -> bool:
         # Qt sends WinIdChange whenever the native window is created or recreated (a window-flag
@@ -2255,6 +2295,9 @@ class NetworkSpeedWidget(QWidget):
             self._hide_usage_hover_card()
         except Exception:
             pass
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_widget_hidden()   # ...nor a first-run tip / "what's new" card (it comes back)
         super().hideEvent(event)
 
 
@@ -2812,6 +2855,7 @@ class NetworkSpeedWidget(QWidget):
                 self._notice_flyout.action_clicked.connect(on_action)
             geo = self.frameGeometry()
             self._notice_flyout.show_at(QPoint(geo.left(), geo.top()))
+            _startup_notices_yield(self, self._notice_flyout)
             return True
         except Exception as e:
             self.logger.error("Error showing a notice: %s", e, exc_info=True)
@@ -3282,6 +3326,7 @@ class NetworkSpeedWidget(QWidget):
             self._update_flyout = flyout
             geo = self.frameGeometry()
             flyout.show_at(QPoint(geo.left(), geo.top()))
+            _startup_notices_yield(self, flyout)
             self.logger.info("Update %s offered (flyout).", latest)
         except Exception as e:
             self.logger.error("Error offering the update: %s", e, exc_info=True)

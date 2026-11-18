@@ -675,5 +675,10 @@
     "RUNNING_PANEL_HIDDEN_YIELD": "Actief - opzij voor de app-knoppen op de taakbalk",
     "RUNNING_PANEL_HIDDEN": "Actief - de widget is nu verborgen",
     "RUNNING_PANEL_PAUSED_LINE": "De snelheden zijn gepauzeerd.",
-    "RUNNING_PANEL_QUIT_TIP": "Sluit NetSpeedTray af. Het start opnieuw wanneer je je aanmeldt."
+    "RUNNING_PANEL_QUIT_TIP": "Sluit NetSpeedTray af. Het start opnieuw wanneer je je aanmeldt.",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray is actief",
+    "FIRST_RUN_TIP_BODY": "Wijs de snelheden aan voor details.\nDubbelklik om de Monitor te openen.\nRechtsklik voor het menu en Instellingen.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Monitor openen",
+    "WHATS_NEW_TITLE": "Bijgewerkt naar NetSpeedTray {version}",
+    "WHATS_NEW_2_2_2": "Open het vanuit Start voor een snel paneel. Meldingen leiden nu direct naar de juiste instelling, en je vindt makkelijker je weg in Instellingen."
 }

@@ -288,6 +288,12 @@ class TrayIconManager(QObject):
 
         try:
             self._dismiss_hover_card()   # before styling/positioning; aboutToShow repeats it
+            notices = getattr(self.widget, "_startup_notices", None)
+            if notices is not None:      # the right-click the first-run tip teaches: it is answered
+                try:
+                    notices.on_gesture()
+                except Exception:
+                    pass
             self._apply_menu_style()
             self._refresh_dynamic_items()
             menu_pos = self._calculate_menu_position(anchor)

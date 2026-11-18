@@ -675,5 +675,10 @@
     "RUNNING_PANEL_HIDDEN_YIELD": "Running - stepped aside for your taskbar's app buttons",
     "RUNNING_PANEL_HIDDEN": "Running - the widget is hidden right now",
     "RUNNING_PANEL_PAUSED_LINE": "Speeds are paused.",
-    "RUNNING_PANEL_QUIT_TIP": "Stops NetSpeedTray. It starts again when you sign in."
+    "RUNNING_PANEL_QUIT_TIP": "Stops NetSpeedTray. It starts again when you sign in.",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray is running",
+    "FIRST_RUN_TIP_BODY": "Point to the speeds for details.\nDouble-click to open the Monitor.\nRight-click for the menu and Settings.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Open the Monitor",
+    "WHATS_NEW_TITLE": "Updated to NetSpeedTray {version}",
+    "WHATS_NEW_2_2_2": "Open it from Start for a quick panel. Notices now link straight to the setting they mean, and Settings is easier to find your way around."
 }

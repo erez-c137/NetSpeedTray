@@ -675,5 +675,10 @@
     "RUNNING_PANEL_HIDDEN_YIELD": "Działa - ustąpił miejsca przyciskom aplikacji na pasku zadań",
     "RUNNING_PANEL_HIDDEN": "Działa - widżet jest teraz ukryty",
     "RUNNING_PANEL_PAUSED_LINE": "Prędkości są wstrzymane.",
-    "RUNNING_PANEL_QUIT_TIP": "Zamyka NetSpeedTray. Uruchomi się ponownie po zalogowaniu."
+    "RUNNING_PANEL_QUIT_TIP": "Zamyka NetSpeedTray. Uruchomi się ponownie po zalogowaniu.",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray działa",
+    "FIRST_RUN_TIP_BODY": "Wskaż prędkości, aby zobaczyć szczegóły.\nKliknij dwukrotnie, aby otworzyć Monitor.\nKliknij prawym przyciskiem, aby otworzyć menu i Ustawienia.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Otwórz Monitor",
+    "WHATS_NEW_TITLE": "Zaktualizowano do NetSpeedTray {version}",
+    "WHATS_NEW_2_2_2": "Otwórz go z menu Start, aby zobaczyć szybki panel. Powiadomienia prowadzą teraz prosto do właściwego ustawienia, a w Ustawieniach łatwiej się odnaleźć."
 }

@@ -676,5 +676,10 @@
     "RUNNING_PANEL_HIDDEN_YIELD": "正在运行 - 已为任务栏应用按钮让位",
     "RUNNING_PANEL_HIDDEN": "正在运行 - 小组件当前已隐藏",
     "RUNNING_PANEL_PAUSED_LINE": "速度已暂停。",
-    "RUNNING_PANEL_QUIT_TIP": "退出 NetSpeedTray。下次登录时会再次启动。"
+    "RUNNING_PANEL_QUIT_TIP": "退出 NetSpeedTray。下次登录时会再次启动。",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray 正在运行",
+    "FIRST_RUN_TIP_BODY": "指向速度可查看详情。\n双击打开监控面板。\n右键打开菜单和设置。",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "打开监控面板",
+    "WHATS_NEW_TITLE": "已更新到 NetSpeedTray {version}",
+    "WHATS_NEW_2_2_2": "从“开始”菜单打开可显示快捷面板。通知现在可直接跳转到对应设置，设置也更容易浏览。"
 }

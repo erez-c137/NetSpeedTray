@@ -39,6 +39,7 @@ _HCF_HIGHCONTRASTON = 0x00000001
 _COLOR_WINDOW = 5
 _COLOR_WINDOWTEXT = 8
 _COLOR_HIGHLIGHT = 13
+_COLOR_HIGHLIGHTTEXT = 14   # integration 2.2.2: #592's Flyout HC colours (moved up beside #590's)
 _COLOR_HOTLIGHT = 26     # the system hyperlink colour (High Contrast themes set it per theme)
 
 
@@ -102,6 +103,24 @@ def read_high_contrast_link_colors() -> Optional[dict]:
     except Exception as e:   # pragma: no cover - defensive
         logger.debug("High Contrast link colours unreadable: %s", e)
         return {"text": text, "background": back, "link": text, "focus": text}
+
+
+def read_high_contrast_ui_colors() -> Optional[dict]:
+    """The contrast theme's own colours for a small window of ours (the Flyout card), or None when
+    High Contrast is off / unreadable: ``text`` (COLOR_WINDOWTEXT), ``background`` (COLOR_WINDOW),
+    ``highlight`` / ``highlight_text`` (COLOR_HIGHLIGHT / COLOR_HIGHLIGHTTEXT, a primary button)."""
+    on, text, background = read_high_contrast()
+    if not on or not text or not background:
+        return None
+    try:
+        get = ctypes.windll.user32.GetSysColor
+        get.restype = ctypes.c_uint32
+        return {"text": text, "background": background,
+                "highlight": _colorref_hex(get(_COLOR_HIGHLIGHT)),
+                "highlight_text": _colorref_hex(get(_COLOR_HIGHLIGHTTEXT))}
+    except Exception as e:   # pragma: no cover - defensive
+        logger.debug("High Contrast colours unreadable: %s", e)
+        return {"text": text, "background": background, "highlight": text, "highlight_text": background}
 
 
 def _read_dword(path: str, name: str) -> Optional[int]:

@@ -675,5 +675,10 @@
     "RUNNING_PANEL_HIDDEN_YIELD": "実行中 - タスクバーのアプリボタンのために退避中",
     "RUNNING_PANEL_HIDDEN": "実行中 - ウィジェットは現在非表示です",
     "RUNNING_PANEL_PAUSED_LINE": "速度の更新は一時停止中です。",
-    "RUNNING_PANEL_QUIT_TIP": "NetSpeedTray を終了します。次回サインイン時に再び起動します。"
+    "RUNNING_PANEL_QUIT_TIP": "NetSpeedTray を終了します。次回サインイン時に再び起動します。",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray は実行中です",
+    "FIRST_RUN_TIP_BODY": "速度をポイントすると詳細を表示します。\nダブルクリックでモニターを開きます。\n右クリックでメニューと設定を開きます。",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "モニターを開く",
+    "WHATS_NEW_TITLE": "NetSpeedTray {version} に更新されました",
+    "WHATS_NEW_2_2_2": "スタートから開くとクイック パネルが表示されます。通知から該当する設定へ直接移動でき、設定画面もわかりやすくなりました。"
 }
