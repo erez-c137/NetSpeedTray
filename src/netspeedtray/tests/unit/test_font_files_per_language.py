@@ -248,6 +248,14 @@ sheet._state = "running"
 sheet._refresh()
 sheet.adjustSize()
 sheet.grab()
+# The internet check's confirm, opened (2.2.2 D5): the sheet's inline one and the Overview's tip, with
+# the configured server - its text ("1.1.1.1 (Cloudflare)", embedded LTR in an RTL UI) adds no face.
+from netspeedtray.views.monitor import internet_offer as _io
+_host = cfg.get("latency_public_host", "1.1.1.1")
+_inline = _io.InternetCheckConfirm(i18n, framed=True)
+_inline.set_host(_host); _inline.set_ends_offer(True); _inline.adjustSize(); _inline.grab()
+_tip = _io.InternetOfferTip(i18n)
+_tip.confirm.set_host(_host); _tip.adjustSize(); _tip.grab()
 if system_text:
     # The Monitor's other system text, drawn: the adapter menu + its button showing a picked adapter,
     # a process name in the Network and Hardware lists and the detail panel, an adapter driver's name in

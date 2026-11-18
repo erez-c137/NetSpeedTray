@@ -68,7 +68,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 📈 **Usage & data caps.** Usage by day, month and year, a settable monthly cap with a billing reset day, and 80% / 100% alerts - shown as a quiet flyout above the widget, no extra tray icon. Your history is exact bytes in a local SQLite file you can back up, query or wipe from Settings.
 
-🩺 **Network latency & packet loss.** A light probe of your own router shows a plain-word verdict - **Internet: Good / OK / Slow** - with the milliseconds as quiet subtext. It stays on your LAN; pinging a public host is up to you. **Check connection** tells you whether packet loss starts on your Wi-Fi or beyond it.
+🩺 **Network latency & packet loss.** A light probe of your own router shows a plain-word verdict - **Router: Good / OK / Slow** - with the milliseconds as quiet subtext, and says so: it stays on your LAN. One click (**Also check your internet**) adds a public host, and the verdict reads **Internet: ...** then. **Check connection** tells you whether packet loss starts on your Wi-Fi or beyond it.
 
 🎨 **Make it yours.** Layout modes, fonts, decimals, arrow styles, color thresholds, a mini graph (Trend or Detailed, your colors, or split upload/download), one color scheme that switches with Windows' light/dark mode, and a live preview in Settings that shows the exact effect before you commit.
 

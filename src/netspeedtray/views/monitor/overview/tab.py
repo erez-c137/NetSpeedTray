@@ -72,6 +72,13 @@ _REFRESH_MS = 1000        # live current-value tick
 # cadence set by the window's length (_reload_interval_ms; constants.timers.OVERVIEW_*).
 _NARROW_BP = 760          # below this content width: reflow to the compact layout (2×2 tiles, stacked cards)
 # latency_probe.latency_verdict code -> (i18n key, English fallback)
+def _plain_text(html: str) -> str:
+    """Rich text -> its words (an accessible name)."""
+    return re.sub(r"<[^>]+>", "", str(html or "")).replace("&nbsp;", " ").strip()
+
+
+# A window read made while latency monitoring was off: its (empty) drops are about no hop at all.
+HOP_OFF = "off"
 _VERDICT_KEYS = {"good": ("LATENCY_GOOD", "Good"), "ok": ("LATENCY_OK", "OK"), "slow": ("LATENCY_SLOW", "Slow")}
 
 
@@ -383,16 +390,23 @@ def _read_db(ws, start: datetime, end: datetime, want_series: bool, poll: float,
     # missed live is still counted. ONE hop decides: the internet anchor when the internet ping is on
     # (if it answered, the connection was up - and a real router failure loses it too, so nothing
     # true is lost), else the router. The Stats sheet's block for the same hop reads the same.
-    events: Dict[str, Any] = {}
+    # Every result names the hop it is about - the strip says "Router: ..." / "Internet: ..." (D5) and
+    # never shows a result read for another hop (the internet check just switched) - or HOP_OFF: read
+    # while latency was off, so it says nothing about either hop.
+    events: Dict[str, Any] = {"hop": HOP_OFF}
     if latency_enabled:
         from netspeedtray.utils import summaries as S   # lazy (only this reader uses it)
+        from netspeedtray.core.latency_probe import HOP_ANCHOR, HOP_GATEWAY
         lat = constants.network.latency
         stat = lat.STAT_ANCHOR_TIMEOUT if public_enabled else lat.STAT_GW_TIMEOUT
-        events = S.monitor_outages(ws.get_loss_history([stat], start, end).get(stat, []))
-        # Which hop these drops are about: the strip names it ("Router: ..." / "Internet: ...", D5),
-        # and a result read for the other hop (the internet check just switched) is never shown.
-        from netspeedtray.core.latency_probe import HOP_ANCHOR, HOP_GATEWAY
+        rows = ws.get_loss_history([stat], start, end).get(stat, [])
+        events = S.monitor_outages(rows)
         events["hop"] = HOP_ANCHOR if public_enabled else HOP_GATEWAY
+        # How much of the window this hop covers: "Internet: steady" right after Turn on must not
+        # speak for a month the internet ping never saw (D5 review).
+        events["rows"] = len(rows)
+        events["first"] = min((r.ts for r in rows if getattr(r, "ts", None) is not None), default=None)
+        events["window_start"] = start
     return series, summ, events, _cap_coverage(ws, cap_start), ok
 
 
@@ -542,38 +556,44 @@ class OverviewTab(QWidget):
         self._hero.check_connection_requested.connect(self._open_connection_check)
         root.addWidget(self._hero)
 
-        # --- Thin context strip: session uptime + totals (left), and on the right the one thing you
-        # can't read off the cards - true System power when the platform exposes it, otherwise the
-        # connection-health summary (drops/loss over the window) so a latency blip you missed live is
-        # still visible. (CPU/GPU power already live on the cards, so repeating it here was noise.) ---
-        strip = QHBoxLayout()
+        # --- Thin context strip: session uptime + totals (left), and on the right the window's
+        # connection health (drops over the window, named for the hop measured - D5) so a latency blip
+        # you missed live is still visible. True System power, when the platform exposes it, joins the
+        # left part then (the right slot when latency monitoring is off). The row's height is pinned:
+        # the offer link coming and going never moves the cards below. ---
+        strip_box = QWidget()
+        strip_box.setObjectName("overviewStrip")
+        strip = QHBoxLayout(strip_box)
         strip.setContentsMargins(4, 0, 4, 0)
         self._session_lbl = QLabel("")
         self._session_lbl.setFont(su.font(tokens.TYPE_CAPTION))
         self._session_lbl.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         self._context_r_lbl = QLabel("")
+        self._context_r_lbl.setObjectName("overviewHealth")
         self._context_r_lbl.setFont(su.font(tokens.TYPE_CAPTION))
         self._context_r_lbl.setTextFormat(Qt.TextFormat.RichText)
         self._context_r_lbl.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        # Tab-reachable: after Turn on / Not now focus lands here, so Narrator reads the new status.
+        self._context_r_lbl.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         strip.addWidget(self._session_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
         strip.addStretch(1)
         strip.addWidget(self._context_r_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
-        # D5: beside a router-only health line, the one-click offer of the internet check - its inline
-        # confirm opens under the strip (never a dialog). Nothing is turned on without its Turn on.
+        # D5: beside a router-only health line, the one-click offer of the internet check. Its confirm
+        # is a TeachingTip-style popup anchored to the link (InternetOfferTip, built on first open).
+        # Nothing is turned on without its Turn on.
         from netspeedtray.utils.components import NoticeLink
-        from netspeedtray.views.monitor.internet_offer import (
-            InternetCheckConfirm, configured_host, offer_for, wire_offer)
+        from netspeedtray.views.monitor.internet_offer import offer_for
         self._internet_offer = offer_for(main_widget, config)
-        self._internet_link = NoticeLink("", self._tr("INTERNET_WATCH_OFFER", "Also watch the internet"))
-        self._internet_link.setObjectName("internetWatchOffer")
+        self._internet_link = NoticeLink("", self._tr("INTERNET_CHECK_OFFER", "Also check your internet"),
+                                         self._open_internet_tip)
+        self._internet_link.setObjectName("internetCheckOffer")
         self._internet_link.setVisible(False)
         strip.addWidget(self._internet_link, 0, Qt.AlignmentFlag.AlignVCenter)
-        root.addLayout(strip)
-        self._internet_confirm = InternetCheckConfirm(i18n, configured_host(config))
-        self._internet_confirm.setVisible(False)
-        root.addWidget(self._internet_confirm)
-        wire_offer(self._internet_link, self._internet_confirm, self._internet_offer,
-                   on_changed=self._on_internet_offer_changed)
+        strip_box.setFixedHeight(max(tokens.NOTICE_LINK_MIN_HEIGHT + 2 * tokens.FOCUS_RING_WIDTH,
+                                     self._context_r_lbl.sizeHint().height()))
+        self._strip_box = strip_box
+        root.addWidget(strip_box)
+        self._internet_tip = None
         self._health_hop_reload = False   # one forced re-read when the drops were read for the other hop
         self._latency_events: Optional[Dict[str, Any]] = None   # outage_summary; None = not read yet
 
@@ -881,7 +901,7 @@ class OverviewTab(QWidget):
         ws = getattr(self._main_widget, "widget_state", None)
         if ws is None:
             if self._win_summ is None:      # nothing will ever load: no "Reading history…" forever
-                self._win_summ, self._latency_events = {}, {}
+                self._win_summ, self._latency_events = {}, {"hop": HOP_OFF}
             self._render()
             return
         if self._load_busy:
@@ -907,7 +927,7 @@ class OverviewTab(QWidget):
             except Exception as e:
                 self._log_reload_error(e)
                 if self._win_summ is None:  # no load follows: no "Reading history…" forever
-                    self._win_summ, self._latency_events = {}, {}
+                    self._win_summ, self._latency_events = {}, {"hop": HOP_OFF}
                 self._render()
                 return
         self._ensure_reader()
@@ -1120,41 +1140,64 @@ class OverviewTab(QWidget):
                         parts.append(note)
             except Exception:
                 pass
+        power = self._system_power_text(mw)
+        if power and self._config.get("latency_enabled", True):
+            parts.append(power)   # the right slot is the health line's: System power stays visible here
         return "    ·    ".join(parts)
 
     def _render_health_strip(self, mw) -> None:
-        """The strip's right slot (health line + its tooltip) and the internet offer beside it."""
+        """The strip's right slot (health line, its tooltip / accessible description) and the internet
+        offer beside it."""
         right, hop = self._context_right(mw)
         self._context_r_lbl.setText(right)
-        self._context_r_lbl.setToolTip(self._health_tooltip(hop) if right else "")
+        tip = self._health_tooltip(hop) if right else ""
+        self._context_r_lbl.setToolTip(tip)
+        self._context_r_lbl.setAccessibleName(_plain_text(right))
+        self._context_r_lbl.setAccessibleDescription(tip)
         self._sync_internet_offer(hop, bool(right))
 
+    def _system_power_text(self, mw) -> str:
+        sysp = getattr(mw, "system_power", None)
+        try:
+            if sysp is not None and float(sysp) >= 0.5:
+                return f"{self._tr('STAT_SYS_POWER_TRUE', 'System')} {float(sysp):.0f} W"
+        except (TypeError, ValueError):
+            pass
+        return ""
+
     def _context_right_text(self, mw) -> str:
-        """The strip's right slot shows the one thing the cards DON'T already say: true System power
-        when the platform exposes it (RAPL PSYS / battery discharge), otherwise the window's connection
-        health - drop count + last drop, so a latency blip you missed live is still on screen. (CPU/GPU
-        power is on the cards; repeating it here was redundant.)"""
+        """The strip's right slot: the window's connection health (drop count + last drop, named for
+        the hop measured), so a latency blip you missed live is still on screen. With latency
+        monitoring off (no health line) it shows true System power instead, when the platform exposes
+        it (RAPL PSYS / battery discharge); with it on, System power sits in the left part
+        (_session_text), never pushing the health line or its offer out (D5 review I)."""
         return self._context_right(mw)[0]
 
     def _context_right(self, mw):
         """(_context_right_text, the hop its health line is about - None when it shows something else)."""
-        sysp = getattr(mw, "system_power", None)
-        if sysp is not None and float(sysp) >= 0.5:
-            return f"{self._tr('STAT_SYS_POWER_TRUE', 'System')} {float(sysp):.0f} W", None
-        return self._connection_health(mw)
+        html, hop = self._connection_health(mw)
+        if html:
+            return html, hop
+        if not self._config.get("latency_enabled", True):
+            power = self._system_power_text(mw)
+            if power:
+                return power, None
+        return "", None
 
     def _connection_health_html(self, mw) -> str:
         return self._connection_health(mw)[0]
 
     def _connection_health(self, mw):
-        """Window connection-health: (html, hop) - drop count + last-drop time (green when clean,
-        amber/red when not), and the hop it measured. Empty when latency monitoring is off or no probe
-        has run yet.
+        """Window connection-health: (html, hop) - drop count + last-drop time, and the hop it measured.
+        Empty when latency monitoring is off or nothing is known yet.
 
         Named for what it measured (2.2.2 D5, "honesty beats green"): with the internet check off the
         drops are the ROUTER's ("Router: steady" - an ISP outage with Wi-Fi up is not seen, so it must
         not read "Connection: steady"); with it on, only internet-side drops count (#587), so
-        "Internet: ...". There is no combined verdict here, so the line never says "Connection"."""
+        "Internet: ...". There is no combined verdict here, so the line never says "Connection". The
+        hop's name is drawn in the primary text colour, only the verdict in its colour. The internet
+        line speaks only for what the internet ping covered: "checking…" until its first reply,
+        "steady since HH:MM" when it started inside the window."""
         if not self._config.get("latency_enabled", True):
             return "", None
         ev = self._latency_events
@@ -1163,25 +1206,36 @@ class OverviewTab(QWidget):
         from netspeedtray.core.latency_probe import HOP_ANCHOR, headline_hop
         hop = headline_hop(bool(self._config.get("latency_public_enabled", False)))
         if ev.get("hop", hop) != hop:
-            # The internet check was switched since this read: those drops are the other hop's. Say
-            # nothing until the re-read (asked for once) has this hop's.
+            # Read for the other hop (the internet check was just switched) or while latency was off:
+            # those drops are not this hop's. Say nothing until the re-read (asked for once) has them -
+            # except the internet's "checking…", which is true from the first moment.
             if not self._health_hop_reload:
                 self._health_hop_reload = True
                 QTimer.singleShot(0, self._reload_for_hop)   # bound: dropped if the tab is gone
+            if hop == HOP_ANCHOR and getattr(mw, "latency_anchor", None) is None:
+                return self._checking_html(hop), hop
             return "", None
         self._health_hop_reload = False
         count = int(ev.get("count", 0) or 0)
-        # Only claim "no drops" once the hop the line names has actually answered: the internet's
-        # "steady" needs the internet ping's own reply, never the router's.
         gw = getattr(mw, "latency_gw", None)
         anchor = getattr(mw, "latency_anchor", None)
-        if count == 0 and (anchor is None if hop == HOP_ANCHOR else (gw is None and anchor is None)):
-            return "", None
         label = self._latency_label(hop)
+        c = su.semantic_colors()
         colors = constants.network.latency.VERDICT_COLORS
+        name = f"<span style='color:{c['text_primary']};'>{label}:</span> "
         if count == 0:
-            return (f"<span style='color:{colors['good']};'>{label}: "
-                    f"{self._tr('CONN_HEALTH_STEADY', 'steady')}</span>"), hop
+            if hop == HOP_ANCHOR:
+                # The internet's "steady" needs the internet ping's own reply (never the router's) and
+                # rows of its own in this window.
+                if anchor is None or "rows" in ev and not ev.get("rows"):
+                    return self._checking_html(hop), hop
+            elif gw is None and anchor is None:
+                return "", None   # only claim "no drops" once there is latency history
+            word = self._tr("CONN_HEALTH_STEADY", "steady")
+            since = self._covered_since(ev, hop)
+            if since:
+                word = self._tr("CONN_HEALTH_STEADY_SINCE", "steady since {time}").format(time=since)
+            return name + f"<span style='color:{colors['good']};'>{word}</span>", hop
         last = ev.get("last_start")
         now = datetime.now()
         # Red means RECENT (the last drop within 24 h); an older one is a caution, whatever the count.
@@ -1189,55 +1243,136 @@ class OverviewTab(QWidget):
         color = drop_color(last if dated else None, now)
         lt = drop_time_label(last, now, getattr(self._i18n, "language", None)) if dated else ""
         drops = self._tr("CONN_HEALTH_DROPS", "drops")
-        out = f"<span style='color:{color};'>{label}: {count} {drops}</span>"
+        out = name + f"<span style='color:{color};'>{count} {drops}</span>"
         if lt:
-            sub = su.semantic_colors()["text_secondary"]
-            out += f"  <span style='color:{sub};'>· {self._tr('STATS_DETAIL_LAST', 'last')} {lt}</span>"
+            out += f"  <span style='color:{c['text_secondary']};'>· {self._tr('STATS_DETAIL_LAST', 'last')} {lt}</span>"
         return out, hop
 
+    def _checking_html(self, hop) -> str:
+        sub = su.semantic_colors()["text_secondary"]
+        return (f"<span style='color:{sub};'>{self._latency_label(hop)}: "
+                f"{self._tr('CONN_HEALTH_CHECKING', 'checking…')}</span>")
+
+    def _covered_since(self, ev, hop) -> str:
+        """The internet line's "since" time when its first row is well inside the window (it was turned
+        on part-way through) - empty when it covers the window, and always for the router."""
+        from netspeedtray.core.latency_probe import HOP_ANCHOR
+        first, start = ev.get("first"), ev.get("window_start")
+        if hop != HOP_ANCHOR or not hasattr(first, "strftime") or not hasattr(start, "strftime"):
+            return ""
+        if (first - start).total_seconds() <= constants.network.latency.HEALTH_PARTIAL_SLACK_SEC:
+            return ""
+        return drop_time_label(first, datetime.now(), getattr(self._i18n, "language", None))
+
     def _health_tooltip(self, hop) -> str:
-        """What a drop is, on the health line (D5): the hop that stopped answering, and for how long."""
+        """What the line measures and what a drop is (D5) - also its accessible description. While the
+        internet line is still "checking…", where to turn it off."""
         from netspeedtray.core.latency_probe import HOP_ANCHOR, HOP_GATEWAY
         lat = constants.network.latency
         seconds = f"{lat.OUTAGE_MIN_CYCLES * lat.OUTAGE_CYCLE_SEC:g}"
         if hop == HOP_ANCHOR:
-            return self._tr("CONN_HEALTH_INTERNET_TOOLTIP",
-                            "Counted when the internet test server stopped answering pings for at least "
-                            "{seconds} seconds. Older history is per-minute, so short blips there are "
-                            "estimated.").format(seconds=seconds)
+            text = self._tr("CONN_HEALTH_INTERNET_TOOLTIP",
+                            "Checks the path to the internet test server, past your router and your internet "
+                            "provider. A drop is counted when it doesn't answer for {seconds} seconds or more. "
+                            "Older history is per minute, so short drops there are estimated.").format(
+                seconds=seconds)
+            if self._context_r_lbl.text() and self._tr("CONN_HEALTH_CHECKING", "checking…") in self._context_r_lbl.text():
+                text = self._tr("INTERNET_CHECK_OFF_HINT", "Turn it off any time in Settings.")
+            return text
         if hop == HOP_GATEWAY:
             return self._tr("CONN_HEALTH_ROUTER_TOOLTIP",
-                            "Counted when the router stopped answering pings for at least {seconds} "
-                            "seconds. Older history is per-minute, so short blips there are "
-                            "estimated.").format(seconds=seconds)
+                            "Checks your router only, not your internet provider. A drop is counted when the "
+                            "router doesn't answer for {seconds} seconds or more. Older history is per minute, "
+                            "so short drops there are estimated.").format(seconds=seconds)
         return ""
 
     def _sync_internet_offer(self, hop, shown: bool) -> None:
-        """The "Also watch the internet" link sits beside a ROUTER health line only, while the offer
-        stands (internet check off, not declined). The confirm closes itself once it no longer applies
-        (turned on in Settings meanwhile), and its "is on" note gives way to the Internet line."""
-        from netspeedtray.core.latency_probe import HOP_ANCHOR, HOP_GATEWAY
+        """The "Also check your internet" link sits beside a ROUTER health line only, while the offer
+        stands (internet check off, not declined). An open tip closes once it no longer applies
+        (turned on in Settings meanwhile)."""
+        from netspeedtray.core.latency_probe import HOP_GATEWAY
         offer = self._internet_offer
         available = offer is not None and offer.available()
-        confirm = self._internet_confirm
-        if confirm.is_done():
-            public = bool(self._config.get("latency_public_enabled", False))
-            if not confirm.isHidden() and ((hop == HOP_ANCHOR and shown) or not public):
-                confirm.hide()
-        elif not confirm.isHidden() and not available:
-            confirm.hide()
-        self._internet_link.setVisible(bool(available and shown and hop == HOP_GATEWAY
-                                            and confirm.isHidden()))
+        tip = self._internet_tip
+        if tip is not None and tip.isVisible() and not available:
+            tip.close_for_action()
+        self._internet_link.setVisible(bool(available and shown and hop == HOP_GATEWAY))
+
+    # --- the internet offer's TeachingTip ------------------------------------------------------------
+    def _open_internet_tip(self) -> None:
+        offer = self._internet_offer
+        if offer is None or not offer.available():
+            return
+        keyboard = self._internet_link.button().hasFocus()   # the link takes Tab focus only
+        tip = self._internet_tip
+        if tip is None:
+            from netspeedtray.views.monitor.internet_offer import InternetOfferTip
+            tip = InternetOfferTip(self._i18n, self)
+            tip.confirm.turn_on_clicked.connect(self._internet_turn_on)
+            tip.confirm.not_now_clicked.connect(self._internet_not_now)
+            tip.dismissed.connect(self._internet_tip_dismissed)
+            self._internet_tip = tip
+        tip.confirm.set_host(offer.host())               # lazily: only an opened tip lays out its text
+        tip.confirm.set_ends_offer(offer.ends_offer())
+        tip.show_for(self._internet_link.button(), focus=keyboard)
+
+    def _internet_turn_on(self) -> None:
+        offer = self._internet_offer
+        if self._internet_tip is not None:
+            self._internet_tip.close_for_action()
+        if offer is None or not offer.turn_on():
+            self._focus_link_or_status()
+            return
+        # One forced re-read for the new hop: flagged first, so the render's own mismatch check does
+        # not ask for a second one.
+        self._health_hop_reload = True
+        self._reload_window(force=True)
+        self._refresh_strip()
+        self._focus_status()
+
+    def _internet_not_now(self) -> None:
+        if self._internet_tip is not None:
+            self._internet_tip.close_for_action()
+        if self._internet_offer is not None:
+            self._internet_offer.decline()
+        self._refresh_strip()
+        self._focus_link_or_status()
+
+    def _refresh_strip(self) -> None:
+        """Repaint the health line and the offer now (the rest follows on the next 1 Hz render)."""
+        try:
+            self._render_health_strip(self._main_widget)
+        except Exception as e:
+            self.logger.debug("Overview strip refresh skipped: %s", e)
+
+    def _internet_tip_dismissed(self) -> None:
+        """Esc / a click outside: closed, not declined - focus back on the link."""
+        self._focus_link_or_status()
+
+    def _focus_status(self) -> None:
+        """Focus the health line - Narrator reads its new text ("Internet: checking…"). Deferred: the
+        closing popup hands focus back to the window first."""
+        QTimer.singleShot(0, self._do_focus_status)
+
+    def _do_focus_status(self) -> None:
+        if not self._closed and not sip.isdeleted(self):
+            self.activateWindow()
+            self._context_r_lbl.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _focus_link_or_status(self) -> None:
+        QTimer.singleShot(0, self._do_focus_link_or_status)
+
+    def _do_focus_link_or_status(self) -> None:
+        if self._closed or sip.isdeleted(self):
+            return
+        if not self._internet_link.isHidden():
+            self.activateWindow()
+            self._internet_link.button().setFocus(Qt.FocusReason.OtherFocusReason)
+        else:
+            self._do_focus_status()
 
     def _reload_for_hop(self) -> None:
         self._reload_window(force=True)
-
-    def _on_internet_offer_changed(self) -> None:
-        """Turn on / Not now / the confirm opening: re-read the drops for the new hop at once (Turn on)
-        and repaint the strip."""
-        if bool(self._config.get("latency_public_enabled", False)):
-            self._reload_window(force=True)
-        self._render()
 
     def _export_window(self) -> None:
         """The header Export action - write the stats export (a single .zip) for the active timeline window."""

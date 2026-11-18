@@ -259,7 +259,7 @@ def icmp_ping_ms(ip: str, timeout_ms: int = 1000) -> Optional[float]:
             except OSError:
                 packed = socket.inet_aton(socket.gethostbyname(ip))    # resolve a hostname (e.g. cloudflare.com)
             dest = struct.unpack("<I", packed)[0]
-            data = b"netspeedtray"
+            data = constants.network.latency.ECHO_PAYLOAD
             reply_size = ctypes.sizeof(_ICMP_ECHO_REPLY) + len(data) + 8
             reply_buf = ctypes.create_string_buffer(reply_size)
             n = lib.IcmpSendEcho(handle, dest, data, len(data), None, reply_buf, reply_size, int(timeout_ms))

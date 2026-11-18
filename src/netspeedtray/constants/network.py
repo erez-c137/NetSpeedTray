@@ -194,6 +194,9 @@ class LatencyConstants:
     # Each cycle sends a burst of this many echoes per hop (gateway; and the anchor when opted in), so a
     # 40-cycle window holds 160 probes and resolves 0.6% loss steps. ~1.3 packets/s per hop at 3 s.
     BURST_SIZE: Final[int] = 4
+    # Every echo's payload: the same fixed 12 bytes on every computer, nothing that identifies anyone
+    # (privacy.md). The internet check's "about N MB a day" is computed from it (internet_offer).
+    ECHO_PAYLOAD: Final[bytes] = b"netspeedtray"
     # Gap between the echoes of one burst. Far below any ICMP rate limit seen on consumer routers.
     BURST_SPACING_MS: Final[int] = 100
     # Persisted per-cycle loss series: lost / sent of that cycle's burst (0, .25, .5, .75, 1; rows from
@@ -228,6 +231,9 @@ class LatencyConstants:
     # appearing after the user has said "Not now" this many times (one "Not now" already hides it for
     # the rest of the session). Settings > Network keeps the switch either way.
     INTERNET_OFFER_MAX_DECLINES: Final[int] = 2
+    # "Internet: steady" only for what the internet ping has covered: when its first row in the window
+    # is later than the window's start by more than this, the line says "steady since HH:MM".
+    HEALTH_PARTIAL_SLACK_SEC: Final[int] = 600
     # Who runs a well-known public test server, named beside its address in that offer ("1.1.1.1
     # (Cloudflare)") - the confirm says who sees the pings. Keys are lower-case host names and
     # canonical IP addresses (ipaddress' compressed form); any other host is shown on its own.

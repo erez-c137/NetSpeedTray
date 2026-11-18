@@ -430,7 +430,7 @@ ORDER BY ts / 3600;
 Each minute row is weighted by its `sample_count`, so a minute the app was only partly running
 counts for what it measured. The loss columns average per probe *cycle*, so they read the same across
 the 2.2 change from one ping per cycle (0/1 rows) to a burst of four (quarter steps).
-`internet_ms` and `internet_loss_pct` stay empty unless **Also measure true internet latency** is on.
+`internet_ms` and `internet_loss_pct` stay empty unless **Also check your internet** (Settings > Network) is on.
 Read the two loss columns together: router loss is your Wi-Fi or LAN; internet loss *above* router
 loss is beyond your router (ISP or path).
 

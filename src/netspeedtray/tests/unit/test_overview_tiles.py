@@ -423,9 +423,11 @@ def test_a_failed_session_copy_does_not_leave_the_placeholder_up(q_app):
 
 def test_context_right_prefers_true_system_power(q_app):
     from types import SimpleNamespace
-    ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
-    # The strip's right slot shows TRUE system power (PSYS/battery) when the platform exposes it -
-    # CPU/GPU power is on the cards now, so it's no longer repeated here.
+    # The strip shows TRUE system power (PSYS/battery) when the platform exposes it - CPU/GPU power is
+    # on the cards now, so it's no longer repeated here. 2.2.2 D5: the right slot is the connection
+    # health line's while latency monitoring is on (System power then joins the left part - see
+    # test_router_internet_d5); with latency off, System power keeps the right slot.
+    ov = OverviewTab(_MW(), _cfg(latency_enabled=False), I18nStrings("en_US"))
     mw = SimpleNamespace(system_power=95.0, latency_gw=10.0, latency_anchor=None)
     assert ov._context_right_text(mw) == "System 95 W"
 
