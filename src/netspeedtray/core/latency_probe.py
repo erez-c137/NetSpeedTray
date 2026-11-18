@@ -2,7 +2,7 @@
 LatencyProbe - a small background thread that measures network latency.
 
 Privacy-first design (owner decision): it pings the **default gateway** by default - a LAN probe that
-never leaves your network - and ONLY pings a public anchor (e.g. 1.1.1.1, for true internet latency)
+never leaves your network - and ONLY pings a public anchor (e.g. 1.1.1.1, for latency to the internet)
 when the user explicitly opts in. ICMP uses the Windows ICMP helper API (IcmpSendEcho) via ctypes, so
 it needs NO admin and spawns no subprocess. Each 3 s cycle sends a BURST of BURST_SIZE (4) echoes per
 hop, BURST_SPACING_MS (100 ms) apart, each with its own 1000 ms timeout (~1.3 packets/s of ~80 bytes per
@@ -259,7 +259,7 @@ def icmp_ping_ms(ip: str, timeout_ms: int = 1000) -> Optional[float]:
             except OSError:
                 packed = socket.inet_aton(socket.gethostbyname(ip))    # resolve a hostname (e.g. cloudflare.com)
             dest = struct.unpack("<I", packed)[0]
-            data = b"netspeedtray"
+            data = constants.network.latency.ECHO_PAYLOAD
             reply_size = ctypes.sizeof(_ICMP_ECHO_REPLY) + len(data) + 8
             reply_buf = ctypes.create_string_buffer(reply_size)
             n = lib.IcmpSendEcho(handle, dest, data, len(data), None, reply_buf, reply_size, int(timeout_ms))

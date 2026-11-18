@@ -407,7 +407,7 @@ class ConfigConstants:
         # mini graph, Monitor tiles) is unaffected. Latency has its own switch (latency_enabled).
         "record_hardware_history": True,
         # Latency: ping the default GATEWAY (LAN-only, never leaves the network) so the Monitor shows
-        # connection latency + loss history. The public anchor (true internet latency) is STRICTLY
+        # connection latency + loss history. The public anchor (latency to the internet) is STRICTLY
         # opt-in - pinging an external host is the one thing that "phones home" for a privacy-first app.
         "latency_enabled": True,
         "latency_public_enabled": False,
@@ -450,6 +450,7 @@ class ConfigConstants:
         "first_run_ever": True,
         "tooltip_hint_shown_count": 0,     # gesture-hint tooltip fades after a few sessions
         "pin_hint_shown_count": 0,         # "Click the widget to keep this open" footer: first few hover cards
+        "internet_offer_declines": 0,      # "Not now"s on the "Also watch the internet" offer (D5)
         "history_upgrade_notice_shown": False,  # the one "history upgraded" flyout after v7 -> v8
         "temp_onboarding_dismissed": False,  # user opted out of the no-sensor temp explainer
         "preferred_monitor": None,
@@ -628,6 +629,7 @@ class ConfigConstants:
         "first_run_ever": {"type": bool, "default": True},
         "tooltip_hint_shown_count": {"type": int, "default": 0, "min": 0},
         "pin_hint_shown_count": {"type": int, "default": 0, "min": 0},
+        "internet_offer_declines": {"type": int, "default": 0, "min": 0},
         "history_upgrade_notice_shown": {"type": bool, "default": False},
         "temp_onboarding_dismissed": {"type": bool, "default": False},
         # QScreen.name() identifier (e.g. "\\.\DISPLAY1"). None = use primary.

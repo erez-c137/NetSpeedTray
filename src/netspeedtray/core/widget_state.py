@@ -1132,6 +1132,13 @@ class WidgetState(QObject):
 
         return self.history_reader.hardware_history(stat_type, start_time, end_time)
 
+    def get_loss_history(self, stat_types, start_time: datetime, end_time: datetime) -> Dict[str, list]:
+        """{stat: [LossRow]} for the latency loss series (``HistoryReader.loss_history``) - the drop
+        counts' input: raw cycles unbinned, rollup bins as peak + estimated lost time."""
+        if not hasattr(self, 'db_worker') or not self.db_worker:
+            return {s: [] for s in stat_types}
+        return self.history_reader.loss_history(stat_types, start_time, end_time)
+
     # --- pro-stats: tier-aware honest window summaries (exact ≤24h raw, avg+max beyond) ----------
     # The SQL lives in core/db/history_reader.py (V7HistoryReader.summarize_*).
 
@@ -1152,6 +1159,24 @@ class WidgetState(QObject):
             return S.summarize_raw([])
         return self.history_reader.summarize_network(direction, start_time, end_time, interface_name,
                                                      poll_interval)
+
+    def get_overview_window(self, start_time: datetime, end_time: datetime, bin_seconds: int,
+                            want_series: bool = True):
+        """The Monitor Overview's lean window read (``V8HistoryReader.overview_window``):
+        ``(series or None, {"down": LeanSummary, "up": LeanSummary}, ok)`` - or None when the backend has no
+        lean read (v7, while an upgrade is deferred) or there is no database; the Overview then reads
+        through get_speed_history / summarize_network as before."""
+        if not getattr(self, 'db_worker', None):
+            return None
+        fn = getattr(self.history_reader, "overview_window", None)
+        return fn(start_time, end_time, bin_seconds, want_series) if fn is not None else None
+
+    def get_history_data_version(self):
+        """A token that changes whenever the database was written since the calling thread last read
+        it (``HistoryReader.data_version``), or None when unknown."""
+        if not getattr(self, 'db_worker', None):
+            return None
+        return self.history_reader.data_version()
 
     def get_network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,
                                    interface_name: Optional[str] = None) -> Dict[int, float]:
@@ -1325,11 +1350,14 @@ class WidgetState(QObject):
         return self.history_reader.distinct_interfaces()
 
 
-    def get_earliest_data_timestamp(self) -> Optional[datetime]:
+    def get_earliest_data_timestamp(self, flush: bool = True) -> Optional[datetime]:
         """
         Retrieves the earliest data timestamp from the database by querying all tiers.
+        ``flush=False`` skips queueing the pending batch first: the Overview resolves "All" on every
+        reload, and only the very first seconds of an empty database depend on the unflushed batch.
         """
-        self.flush_batch()
+        if flush:
+            self.flush_batch()
         # time.sleep(0.1)  # REMOVED: This was causing a 100ms freeze on the UI thread.
         return self.history_reader.earliest_timestamp()
 

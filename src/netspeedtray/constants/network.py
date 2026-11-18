@@ -194,12 +194,59 @@ class LatencyConstants:
     # Each cycle sends a burst of this many echoes per hop (gateway; and the anchor when opted in), so a
     # 40-cycle window holds 160 probes and resolves 0.6% loss steps. ~1.3 packets/s per hop at 3 s.
     BURST_SIZE: Final[int] = 4
+    # Every echo's payload: the same fixed 12 bytes on every computer, nothing that identifies anyone
+    # (privacy.md). The internet check's "about N MB a day" is computed from it (internet_offer).
+    ECHO_PAYLOAD: Final[bytes] = b"netspeedtray"
     # Gap between the echoes of one burst. Far below any ICMP rate limit seen on consumer routers.
     BURST_SPACING_MS: Final[int] = 100
     # Persisted per-cycle loss series: lost / sent of that cycle's burst (0, .25, .5, .75, 1; rows from
     # before 2.2 are 0/1 for a single echo). The rollups average either shape into a 0-1 rate.
     STAT_GW_TIMEOUT: Final[str] = "latency_gw_timeout"
     STAT_ANCHOR_TIMEOUT: Final[str] = "latency_anchor_timeout"
+    # Drops in a history window (Overview connection health, Stats sheet): two loss rows further
+    # apart than one bin plus this slack have nothing measured between them (app off, PC asleep), so
+    # they are never one outage. Covers the 3 s cadence stretched by a burst of timed-out echoes.
+    OUTAGE_GAP_SLACK_SEC: Final[int] = 30
+    # The probe's cadence (LatencyProbe._CADENCE_SEC): a rollup bin's lost time is its lost cycles x this.
+    OUTAGE_CYCLE_SEC: Final[float] = 3.0
+    # A drop needs at least this many lost raw cycles in a row. One lost 3 s cycle is a blip, not an
+    # outage. Drop count + downtime only (Overview, Stats sheet); loss %, graphs, exports unchanged.
+    OUTAGE_MIN_CYCLES: Final[int] = 2
+    # A minute-rollup row counts as a drop from this many estimated lost cycles (avg x samples, >= 12 s
+    # of the minute): a rollup cannot tell if its cycles were consecutive, and from 4 the raw 2-in-a-row
+    # rule more likely than not would have counted it too. Hour rows never count (see loss_history).
+    # The estimate sums lost FRACTIONS (a half-lost cycle counts 0.5), so the bar is slightly stricter
+    # than "4 whole cycles".
+    OUTAGE_MIN_ROLLUP_CYCLES: Final[int] = 4
+    # The Overview's drop count is red while its last drop is at most this old; older is amber.
+    OUTAGE_RECENT_SEC: Final[int] = 24 * 3600
+    # The "last" drop's date (not today) when the locale's short-date pattern can't be read: a Qt
+    # date format, day and month only - always rendered with Western digits.
+    OUTAGE_LAST_DATE_FALLBACK_FORMAT: Final[str] = "M/d"
+    # The router's and the internet anchor's rows of one cycle are written a moment apart: a drop on
+    # one hop that starts within this many seconds after the other hop's drop (past that row's own
+    # span) ended is the same outage. Runs of ONE hop are never joined this way.
+    OUTAGE_HOP_JOIN_SEC: Final[float] = 10.0
+    # "Also watch the internet" (2.2.2 D5): the inline offer to turn the internet check on stops
+    # appearing after the user has said "Not now" this many times (one "Not now" already hides it for
+    # the rest of the session). Settings > Network keeps the switch either way.
+    INTERNET_OFFER_MAX_DECLINES: Final[int] = 2
+    # "Internet: steady" only for what the internet ping has covered: when its first row in the window
+    # is later than the window's start by more than this, the line says "steady since HH:MM".
+    HEALTH_PARTIAL_SLACK_SEC: Final[int] = 600
+    # Who runs a well-known public test server, named beside its address in that offer ("1.1.1.1
+    # (Cloudflare)") - the confirm says who sees the pings. Keys are lower-case host names and
+    # canonical IP addresses (ipaddress' compressed form); any other host is shown on its own.
+    ANCHOR_PROVIDERS: Final[Dict[str, str]] = {
+        "1.1.1.1": "Cloudflare", "1.0.0.1": "Cloudflare",
+        "2606:4700:4700::1111": "Cloudflare", "2606:4700:4700::1001": "Cloudflare",
+        "one.one.one.one": "Cloudflare",
+        "8.8.8.8": "Google", "8.8.4.4": "Google",
+        "2001:4860:4860::8888": "Google", "2001:4860:4860::8844": "Google", "dns.google": "Google",
+        "9.9.9.9": "Quad9", "149.112.112.112": "Quad9", "2620:fe::fe": "Quad9", "2620:fe::9": "Quad9",
+        "dns.quad9.net": "Quad9",
+        "208.67.222.222": "OpenDNS", "208.67.220.220": "OpenDNS",
+    }
     # RTT series -> the loss series of the same hop (the exporter's loss_pct).
     LOSS_SERIES_FOR: Final[Dict[str, str]] = {
         "latency_gw": STAT_GW_TIMEOUT,

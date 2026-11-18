@@ -4,8 +4,8 @@
 Surfaces three already-built-but-dormant features:
   • latency_enabled - ping + loss to the default gateway, and connection-drop events over time (on by
     default; LAN-only, never leaves the network).
-  • latency_public_enabled / latency_public_host - the OPT-IN public anchor that measures true internet
-    latency by pinging an external server (off by default - it's the one thing that leaves the LAN).
+  • latency_public_enabled / latency_public_host - the OPT-IN public anchor that measures latency to the
+    internet by pinging an external server (off by default - it's the one thing that leaves the LAN).
   • plan_down_mbps / plan_up_mbps - your advertised plan speeds, which drive the Statistics sheet's
     "% of time below the plan" figure (0 = off).
 """
@@ -41,19 +41,26 @@ class ConnectionSettings(QWidget):
         self._public = Win11Toggle(initial_state=False)
         self._public.toggled.connect(lambda _v: self._sync_description())
         self._public.toggled.connect(lambda _v: self.on_change())
-        body.addWidget(SettingCard(
-            self._tr("CONN_PUBLIC_LABEL", "Also measure true internet latency"),
-            self._tr("CONN_PUBLIC_SUB",
-                     "Pings a public server - this leaves your local network, so it's off by default."),
-            control=self._public))
+        # Says exactly what leaves the PC, to whom, how often - the same body as the Monitor's "Also
+        # check your internet?" confirm (D5), for the server picked below (updated as it changes).
+        from netspeedtray.views.monitor import internet_offer as IO
+        self._io = IO
+        self._public_card = SettingCard(
+            self._tr("CONN_PUBLIC_LABEL", "Also check your internet"),
+            " ", control=self._public)   # the body is set by load_settings (_sync_public_body)
+        body.addWidget(self._public_card)
 
         self._host = Win11ComboBox()
         self._host.setEditable(True)
-        self._host.addItems(["1.1.1.1", "8.8.8.8", "9.9.9.9"])
-        self._host.setMinimumWidth(160)
+        # The well-known servers with who runs them ("1.1.1.1 (Cloudflare)"); the value saved is the
+        # address alone (get_settings: host_from_label).
+        self._host.addItems([IO.host_label(h) for h in ("1.1.1.1", "8.8.8.8", "9.9.9.9")])
+        self._host.setMinimumWidth(200)
         su.keep_combo_face(self._host)   # a typed host (an internationalized name) in its own face
+        self._host.currentTextChanged.connect(lambda _t: self._sync_public_body())
         self._host.currentTextChanged.connect(lambda _t: self.on_change())
         body.addWidget(SettingCard(self._tr("CONN_HOST_LABEL", "Internet test server"), control=self._host))
+        self._sync_public_body()
         root.addWidget(self._lat)
 
         # --- Advertised plan speed (drives the "% below plan" stat; 0 = off) ---
@@ -92,6 +99,22 @@ class ConnectionSettings(QWidget):
     def _sync_description(self) -> None:
         self._lat.set_description(self._latency_description(self._public.isChecked()))
 
+    def _current_host(self) -> str:
+        return self._io.host_from_label(self._host.currentText()) or "1.1.1.1"
+
+    def _sync_public_body(self) -> None:
+        self._public_card.set_description(self._io.confirm_body(self._i18n, self._current_host()), user_text=True)
+
+    def set_public_enabled(self, on: bool) -> None:
+        """Show the internet check's state when it changed outside this dialog (the Monitor's inline
+        "Also watch the internet" confirm, D5) - silently: this is not the user editing Settings."""
+        self._public.blockSignals(True)
+        try:
+            self._public.setChecked(bool(on))
+        finally:
+            self._public.blockSignals(False)
+        self._sync_description()
+
     def anchor_widgets(self, key: str) -> list:
         """Deep-link targets (D4). The internet check sits in the latency section's body: with latency
         off that body is hidden, and the dialog lands on the section's header switch instead."""
@@ -106,7 +129,8 @@ class ConnectionSettings(QWidget):
         self._lat.setChecked(bool(config.get("latency_enabled", True)))
         self._public.setChecked(bool(config.get("latency_public_enabled", False)))
         self._sync_description()   # setChecked does not emit when the state is unchanged
-        su.set_combo_text_in_face(self._host, str(config.get("latency_public_host", "1.1.1.1")))
+        su.set_combo_text_in_face(self._host, self._io.host_label(str(config.get("latency_public_host", "1.1.1.1"))))
+        self._sync_public_body()
         self._down.setValue(int(config.get("plan_down_mbps", 0) or 0))
         self._up.setValue(int(config.get("plan_up_mbps", 0) or 0))
 
@@ -114,7 +138,7 @@ class ConnectionSettings(QWidget):
         return {
             "latency_enabled": self._lat.isChecked(),
             "latency_public_enabled": self._public.isChecked(),
-            "latency_public_host": self._host.currentText().strip() or "1.1.1.1",
+            "latency_public_host": self._current_host(),
             "plan_down_mbps": int(self._down.value()),
             "plan_up_mbps": int(self._up.value()),
         }

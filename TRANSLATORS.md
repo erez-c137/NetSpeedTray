@@ -104,6 +104,19 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - `CHECK_CONN_ALWAYS_NOTICE` - under the Check connection sheet's "Also check the internet" tick: "Track internet latency all the time?" (the button is under it). It is about the internet check that runs in the background, not this one-off check.
 > - Removed: `CHECK_CONN_HINT` ("To measure the internet all the time, turn on ... in Settings.") and `HARDWARE_HISTORY_OFF_MESSAGE` / `HARDWARE_HISTORY_RECORD_OFF_MESSAGE` (the old text drawn into the graph) - replaced by the keys above.
 
+> 🆕 **Pending native review for 2.2.2 (Router vs Internet, see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. The Monitor now says which hop a health figure measured ("Router: steady" with the internet check off) and offers the internet check in one click, with a short confirm. Use "check", never a word that reads as watching or surveillance.
+> - `INTERNET_CHECK_OFFER` - a link beside the Overview's "Router: ..." line, and the Settings switch's label (`CONN_PUBLIC_LABEL` has the same text): "Also check your internet". Short - it sits on one line after the health text.
+> - `INTERNET_CHECK_ALWAYS` - the same link in the Check connection sheet: "Check your internet all the time". It must read as different from the one-off tick above it (`CHECK_CONN_INCLUDE_INTERNET`).
+> - `INTERNET_CONFIRM_TITLE` - the confirm's title: "Also check your internet?"
+> - `INTERNET_CONFIRM_BODY` - its one line on what leaves the PC: `{target}` is the server ("1.1.1.1 (Cloudflare)"), `{count}` 4, `{seconds}` 3, `{mb}` about 9, `{who}` who runs it ("Cloudflare", or the address). Keep "sees your IP address" plain and honest; "as any website does" may be dropped if it reads oddly (German does).
+> - `INTERNET_CONFIRM_BODY_NAME` - the same when the user typed a host NAME: it is looked up every time, so the DNS server sees the name.
+> - `INTERNET_CONFIRM_TURN_ON` / `INTERNET_CONFIRM_NOT_NOW` / `INTERNET_CONFIRM_NO_THANKS` - the buttons. "No thanks" replaces "Not now" on the last offer (it will not be offered again).
+> - `INTERNET_CONFIRM_DONE` + `INTERNET_CHECK_OFF_HINT` - after Turn on: "The internet check is on." / "Turn it off any time in Settings." (the hint is also the tooltip of "Internet: checking…"). Use your word for Settings from `SETTINGS_MENU_ITEM`.
+> - `CONN_HEALTH_CHECKING` - "Internet: checking…" until the internet test server first answers. `CONN_HEALTH_STEADY_SINCE` - "steady since {time}" (`{time}` is a clock time like 14:05) when the check was turned on part-way through the period.
+> - `CONN_HEALTH_ROUTER_TOOLTIP` / `CONN_HEALTH_INTERNET_TOOLTIP` - the tooltip (and screen-reader description) of the health line: what it checks and when a drop is counted (`{seconds}` is 6). Use your `CONN_HEALTH_DROPS` word.
+> - Changed: `CONN_PUBLIC_LABEL` (was "Also measure true internet latency" - "true" wrongly suggested the router figure is false), `CHECK_CONN_INCLUDE_INTERNET` (now "Include the internet this time (pings {host})"; `{host}` is e.g. "1.1.1.1, Cloudflare").
+> - Removed: `CONN_HEALTH_LABEL` ("Connection" - the line now uses your `CHECK_CONN_ROUTER` / `LATENCY_LABEL` word) and `CONN_PUBLIC_SUB` (Settings now shows `INTERNET_CONFIRM_BODY`).
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)
