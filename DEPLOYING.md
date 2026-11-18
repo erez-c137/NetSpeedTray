@@ -131,6 +131,35 @@ Turning the app off in Task Manager's Startup tab also stops it.
   and the release page opens.
 - **Pinning a version:** turn the check off as above and deploy the version you want.
 
+## First-run tip and "what's new"
+
+Since 2.2.2 the app shows, at most once each, a small card beside the widget:
+
+- **First-run tip** - on a new install's first launch: hover for details, double-click for the Monitor,
+  right-click for the menu and Settings. Buttons: **Open the Monitor** / **Got it**.
+- **What's new** - on the first launch of a newer final release: one sentence, with **What's new**
+  (opens that version's GitHub release page in the browser) and **Dismiss**. Prereleases never show it;
+  a beta tester sees it once, on the final. Not on a downgrade, never on the same launch as the tip.
+
+Neither takes the keyboard from the app in front, times out or repeats. Each waits (retried every 30 s)
+while the widget is hidden, a fullscreen app or a modal dialog is up, the session is locked or idle for
+2 minutes, or the session signed in less than 2 minutes ago. Nothing is sent anywhere; the release page
+opens only if the user clicks. The state is two settings in `NetSpeedTray_Config.json`:
+`first_run_tip_shown` and `last_seen_version`.
+
+- **Turning both off for everyone:** set the policy value
+  `HKLM\SOFTWARE\Policies\NetSpeedTray DisableTips` (a DWORD; any nonzero value turns them off; the same
+  value under `HKCU\SOFTWARE\Policies\NetSpeedTray` is honored too, OR-ed, like `DisableUpdateCheck`).
+  The app then never shows either card, and still records the version, so lifting the policy later
+  never brings back a stale one. A Store or silent install is not "managed" by itself: set the policy.
+
+  ```
+  reg add "HKLM\SOFTWARE\Policies\NetSpeedTray" /v DisableTips /t REG_DWORD /d 1 /f
+  ```
+- **Per user, without a policy:** pre-seed the config with `"first_run_ever": false,
+  "first_run_v2_seen": true, "first_run_tip_shown": true` and `"last_seen_version": "<the version you
+  deploy>"` before the first launch.
+
 ## Network activity
 
 | What | Destination | When | Default | Turn off |

@@ -314,6 +314,7 @@ class NetworkSpeedWidget(QWidget):
         self._manual_update_check: bool = False       # the result in flight answers the menu item
         self._update_auto_source: Optional[str] = None  # "startup"/"periodic"/"resume" while one is out
         self._pending_update_offer: Optional[tuple] = None  # a flyout offer waiting out fullscreen etc.
+        self._startup_notices = None  # the first-run tip / one-time "what's new" (2.2.2 D1/D2)
         self._update_flyout = None
         self.app_icon: QIcon
         # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
@@ -780,18 +781,17 @@ class NetworkSpeedWidget(QWidget):
         QTimer.singleShot(1200, self._maybe_show_welcome)
 
     def _maybe_show_welcome(self) -> None:
-        """First-run onboarding. An upgrader gets the one-time 2.0 welcome dialog; a brand-new install
-        gets no pop-up (the hover card's gesture hint is its onboarding)."""
-        # Brand-new install: no interrupting pop-up until there's a real guided tour (the old 'unfold'
-        # flyout only opened the Monitor and was removed in 2.2). We still advance the first-run flags
-        # so nothing pops later and the upgrade dialog stays correctly suppressed.
-        if self.config.get("first_run_ever", True):
-            self.config["first_run_ever"] = False
-            self.config["first_run_v2_seen"] = True  # a new 2.0 user has no "before"
-            self.update_config({"first_run_ever": False, "first_run_v2_seen": True})
-            return
-
-        if self.config.get("first_run_v2_seen", False):
+        """First-run onboarding, once the widget has settled. A 1.x upgrader gets the one-time 2.0
+        welcome dialog; everyone else goes to the one-time notices (2.2.2): a brand-new install's
+        first-run tip (D1), or the first launch of a newer final release's "what's new" (D2) -
+        views/widget/startup_notices.py, decided by core/startup_notices.py. Never both in one launch."""
+        if self.config.get("first_run_ever", True) or self.config.get("first_run_v2_seen", False):
+            try:
+                from netspeedtray.views.widget.startup_notices import StartupNotices
+                self._startup_notices = StartupNotices(self)
+                self._startup_notices.start()
+            except Exception as e:
+                self.logger.error(f"Error starting the one-time notices: {e}", exc_info=True)
             return
         try:
             from netspeedtray.views.welcome_dialog import WelcomeDialog
@@ -804,9 +804,13 @@ class NetworkSpeedWidget(QWidget):
                 )
         except Exception as e:
             self.logger.error(f"Error showing welcome dialog: {e}", exc_info=True)
-        # Mark seen (even if the dialog errored) so it appears at most once.
+        # Mark seen (even if the dialog errored) so it appears at most once - and record this version,
+        # so the next launch does not follow it with this release's "what's new" (D2).
+        from netspeedtray.core.startup_notices import later_version
+        seen = later_version(self.config.get("last_seen_version"), constants.app.VERSION)
         self.config["first_run_v2_seen"] = True
-        self.update_config({"first_run_v2_seen": True})
+        self.config["last_seen_version"] = seen
+        self.update_config({"first_run_v2_seen": True, "last_seen_version": seen})
 
     def _on_latency(self, sample) -> None:
         """A LatencySample arrived (main thread, queued from the probe thread). Update the live
@@ -2174,6 +2178,9 @@ class NetworkSpeedWidget(QWidget):
                 handler.check_shell_theme()
             except Exception as e:
                 self.logger.debug("theme re-check on show failed: %s", e)
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_widget_shown()   # a deferred first-run tip / "what's new" gets its moment
 
     def event(self, event: QEvent) -> bool:
         # Qt sends WinIdChange whenever the native window is created or recreated (a window-flag
@@ -2225,6 +2232,9 @@ class NetworkSpeedWidget(QWidget):
             self._hide_usage_hover_card()
         except Exception:
             pass
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_widget_hidden()   # ...nor a first-run tip / "what's new" card (it comes back)
         super().hideEvent(event)
 
 

@@ -633,5 +633,11 @@
     "BACKUP_HISTORY_ERR_BUSY": "已在備份到此檔案。",
     "CONTEXT_MENU_ITEMS_LABEL": "右鍵選單項目",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "選擇小工具右鍵選單中顯示的項目。「{settings}」和「{exit}」一律顯示。",
-    "ACCENT_TASKBAR_COLORS_NOTE": "你的工作列顯示了輔色，因此在其上難以辨識的色彩會以易讀的文字色彩繪製。"
+    "ACCENT_TASKBAR_COLORS_NOTE": "你的工作列顯示了輔色，因此在其上難以辨識的色彩會以易讀的文字色彩繪製。",
+    "FIRST_RUN_TIP_TITLE": "歡迎使用 NetSpeedTray",
+    "FIRST_RUN_TIP_BODY": "將滑鼠停在速度上可查看詳細資訊。\n按兩下可開啟監控中心。\n按滑鼠右鍵可開啟選單和設定。",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "開啟監控中心",
+    "WHATS_NEW_TITLE": "已更新至 NetSpeedTray {version}",
+    "WHATS_NEW_DISMISS_BUTTON": "關閉",
+    "WHATS_NEW_2_2_2": "新功能：一鍵前往對應設定；從「開始」開啟 NetSpeedTray 時顯示快速面板；設定更清楚。"
 }

@@ -633,5 +633,11 @@
     "BACKUP_HISTORY_ERR_BUSY": "이 파일로 백업이 이미 진행 중입니다.",
     "CONTEXT_MENU_ITEMS_LABEL": "마우스 오른쪽 메뉴 항목",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "위젯의 마우스 오른쪽 메뉴에 표시할 항목을 선택합니다. {settings} 및 {exit}은(는) 항상 표시됩니다.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "작업 표시줄에 강조 색이 표시되어 있어서, 그 위에서 읽기 어려운 색은 읽기 쉬운 텍스트 색으로 그려집니다."
+    "ACCENT_TASKBAR_COLORS_NOTE": "작업 표시줄에 강조 색이 표시되어 있어서, 그 위에서 읽기 어려운 색은 읽기 쉬운 텍스트 색으로 그려집니다.",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray에 오신 것을 환영합니다",
+    "FIRST_RUN_TIP_BODY": "속도 위에 마우스를 올리면 자세한 정보가 표시됩니다.\n두 번 클릭하면 모니터가 열립니다.\n마우스 오른쪽 버튼을 클릭하면 메뉴와 설정이 열립니다.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "모니터 열기",
+    "WHATS_NEW_TITLE": "NetSpeedTray {version}(으)로 업데이트됨",
+    "WHATS_NEW_DISMISS_BUTTON": "닫기",
+    "WHATS_NEW_2_2_2": "새로운 기능: 클릭 한 번으로 해당 설정으로 이동, 시작 메뉴에서 NetSpeedTray를 열 때 표시되는 빠른 패널, 더 명확해진 설정."
 }

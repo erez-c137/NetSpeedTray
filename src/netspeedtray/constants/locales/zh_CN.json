@@ -634,5 +634,11 @@
     "BACKUP_HISTORY_ERR_BUSY": "已有备份任务正在写入此文件。",
     "CONTEXT_MENU_ITEMS_LABEL": "右键菜单项",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "选择小组件右键菜单中显示的项目。“{settings}”和“{exit}”始终显示。",
-    "ACCENT_TASKBAR_COLORS_NOTE": "你的任务栏显示了主题色，因此在其上难以看清的颜色会以易读的文字颜色绘制。"
+    "ACCENT_TASKBAR_COLORS_NOTE": "你的任务栏显示了主题色，因此在其上难以看清的颜色会以易读的文字颜色绘制。",
+    "FIRST_RUN_TIP_TITLE": "欢迎使用 NetSpeedTray",
+    "FIRST_RUN_TIP_BODY": "将鼠标悬停在速度上可查看详情。\n双击打开监控面板。\n右键打开菜单和设置。",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "打开监控面板",
+    "WHATS_NEW_TITLE": "已更新到 NetSpeedTray {version}",
+    "WHATS_NEW_DISMISS_BUTTON": "关闭",
+    "WHATS_NEW_2_2_2": "新功能：一键直达对应设置；从“开始”菜单打开 NetSpeedTray 时显示快捷面板；设置更清晰。"
 }

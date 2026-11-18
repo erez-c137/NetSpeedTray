@@ -633,5 +633,11 @@
     "BACKUP_HISTORY_ERR_BUSY": "Ya se está haciendo una copia de seguridad en este archivo.",
     "CONTEXT_MENU_ITEMS_LABEL": "Elementos del menú contextual",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Elige qué muestra el menú contextual del widget. {settings} y {exit} siempre se muestran.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Tu barra de tareas muestra un color de énfasis, así que los colores difíciles de leer sobre ella se dibujan en un color de texto legible."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Tu barra de tareas muestra un color de énfasis, así que los colores difíciles de leer sobre ella se dibujan en un color de texto legible.",
+    "FIRST_RUN_TIP_TITLE": "Bienvenido a NetSpeedTray",
+    "FIRST_RUN_TIP_BODY": "Pasa el ratón sobre las velocidades para ver detalles.\nHaz doble clic para abrir el Monitor.\nHaz clic derecho para el menú y la Configuración.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Abrir el Monitor",
+    "WHATS_NEW_TITLE": "Actualizado a NetSpeedTray {version}",
+    "WHATS_NEW_DISMISS_BUTTON": "Descartar",
+    "WHATS_NEW_2_2_2": "Novedades: accesos de un clic al ajuste adecuado, un panel rápido al abrir NetSpeedTray desde Inicio y una Configuración más clara."
 }

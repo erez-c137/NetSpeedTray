@@ -633,5 +633,11 @@
     "BACKUP_HISTORY_ERR_BUSY": "Varnostno kopiranje v to datoteko že poteka.",
     "CONTEXT_MENU_ITEMS_LABEL": "Elementi menija desnega klika",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Izberite, kaj prikaže meni desnega klika pripomočka. {settings} in {exit} sta vedno prikazana.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Opravilna vrstica prikazuje barvo poudarka, zato so barve, ki so na njej težko berljive, narisane v berljivi barvi besedila."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Opravilna vrstica prikazuje barvo poudarka, zato so barve, ki so na njej težko berljive, narisane v berljivi barvi besedila.",
+    "FIRST_RUN_TIP_TITLE": "Dobrodošli v NetSpeedTray",
+    "FIRST_RUN_TIP_BODY": "Za podrobnosti pokažite z miško na hitrosti.\nZ dvoklikom odprete Monitor.\nDesni klik za meni in nastavitve.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Odpri Monitor",
+    "WHATS_NEW_TITLE": "Posodobljeno na NetSpeedTray {version}",
+    "WHATS_NEW_DISMISS_BUTTON": "Zapri",
+    "WHATS_NEW_2_2_2": "Novo: bližnjice z enim klikom do prave nastavitve, hitra plošča, ko NetSpeedTray odprete iz menija Start, in preglednejše nastavitve."
 }

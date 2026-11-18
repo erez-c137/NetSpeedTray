@@ -96,6 +96,12 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - Removed: `PAUSE_IN_MENU_LABEL` ("Add Pause/Resume to the right-click menu") - that switch is now the Pause / Resume row of the section above.
 > - No review needed: `NET_GRAPH_NO_TRAFFIC_TITLE` (the old first line, your translation kept as is), `HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP` (the old `RECORD_HARDWARE_HISTORY_INACTIVE_SUB` text, kept as is) and `HARDWARE_NEEDS_CPU_TOOLTIP` (back, with its 2.2.0 text).
 
+> 🆕 **Pending native review for 2.2.2 (first-run tip and "what's new", see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. All 16 translated locales.
+> - `FIRST_RUN_TIP_TITLE` / `FIRST_RUN_TIP_BODY` - a small card beside the widget on a new install's first launch: the title ("Welcome to NetSpeedTray") and three short lines teaching the gestures (hover = details, double-click = the Monitor, right-click = menu and Settings). **Keep the three lines and the two line breaks.** Use your own words for "the Monitor" and "Settings" (`SHOW_MONITOR_MENU_ITEM`, `SETTINGS_MENU_ITEM`).
+> - `FIRST_RUN_TIP_OPEN_MONITOR_BUTTON` - its button ("Open the Monitor"). The other button reuses your `WELCOME_2_0_GOT_IT_BUTTON`.
+> - `WHATS_NEW_TITLE` - the title of the one-time card after an update ("Updated to NetSpeedTray {version}"). **Keep `{version}`.** Its buttons are your `WELCOME_2_0_WHATS_NEW_BUTTON` and the new `WHATS_NEW_DISMISS_BUTTON` ("Dismiss" - closes the card).
+> - `WHATS_NEW_2_2_2` - that card's one sentence for 2.2.2. Short, one line of news; "Start" is Windows' Start menu - use its name in your language. Each future release gets its own `WHATS_NEW_x_y_z` key.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

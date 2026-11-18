@@ -633,5 +633,11 @@
     "BACKUP_HISTORY_ERR_BUSY": "A backup to this file is already running.",
     "CONTEXT_MENU_ITEMS_LABEL": "Right-click menu items",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choose what the widget's right-click menu shows. {settings} and {exit} always show.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Your taskbar shows an accent color, so colors that are hard to read on it are drawn in a readable text color."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Your taskbar shows an accent color, so colors that are hard to read on it are drawn in a readable text color.",
+    "FIRST_RUN_TIP_TITLE": "Welcome to NetSpeedTray",
+    "FIRST_RUN_TIP_BODY": "Hover over the speeds for details.\nDouble-click to open the Monitor.\nRight-click for the menu and Settings.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Open the Monitor",
+    "WHATS_NEW_TITLE": "Updated to NetSpeedTray {version}",
+    "WHATS_NEW_DISMISS_BUTTON": "Dismiss",
+    "WHATS_NEW_2_2_2": "New: one-click shortcuts to the right setting, a quick panel when you open NetSpeedTray from Start, and clearer Settings."
 }

@@ -633,5 +633,11 @@
     "BACKUP_HISTORY_ERR_BUSY": "È già in corso un backup su questo file.",
     "CONTEXT_MENU_ITEMS_LABEL": "Voci del menu del tasto destro",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Scegli cosa mostra il menu del tasto destro del widget. {settings} e {exit} sono sempre visibili.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "La barra delle applicazioni mostra un colore principale, quindi i colori difficili da leggere su di essa vengono disegnati con un colore del testo leggibile."
+    "ACCENT_TASKBAR_COLORS_NOTE": "La barra delle applicazioni mostra un colore principale, quindi i colori difficili da leggere su di essa vengono disegnati con un colore del testo leggibile.",
+    "FIRST_RUN_TIP_TITLE": "Benvenuto in NetSpeedTray",
+    "FIRST_RUN_TIP_BODY": "Passa il mouse sulle velocità per i dettagli.\nDoppio clic per aprire il Monitor.\nClic destro per il menu e le Impostazioni.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Apri il Monitor",
+    "WHATS_NEW_TITLE": "Aggiornato a NetSpeedTray {version}",
+    "WHATS_NEW_DISMISS_BUTTON": "Ignora",
+    "WHATS_NEW_2_2_2": "Novità: scorciatoie con un clic all'impostazione giusta, un pannello rapido quando apri NetSpeedTray da Start e Impostazioni più chiare."
 }
