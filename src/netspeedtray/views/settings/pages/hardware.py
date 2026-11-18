@@ -3,9 +3,9 @@ Hardware Monitoring Settings Page.
 """
 from typing import Dict, Any, Callable, Optional, Tuple
 
-from PyQt6.QtCore import pyqtSignal, QTimer
+from PyQt6.QtCore import pyqtSignal, QTimer, Qt
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (QWidget, QLabel, QHBoxLayout, QVBoxLayout,
+from PyQt6.QtWidgets import (QWidget, QLabel, QHBoxLayout, QVBoxLayout, QFrame,
                              QLineEdit, QPushButton, QSpinBox)
 
 from netspeedtray import constants
@@ -15,6 +15,73 @@ from netspeedtray.utils import secret_store
 from netspeedtray.utils import styles as su
 from netspeedtray.utils.components import Win11Toggle, Win11Slider, SettingCard, SettingExpander, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
+
+def _page_surface() -> str:
+    """The Settings content background a Hardware-page notice sits on (NoticeLink contrast, D6)."""
+    tokens = constants.styles
+    return tokens.DIALOG_CONTENT_BG_DARK if su.is_dark_mode() else tokens.DIALOG_CONTENT_BG_LIGHT
+
+
+class _InfoBar(QFrame):
+    """A light Win11 InfoBar for a status (D6): a 16 px info icon in the accent colour, the message in
+    the primary text colour, and a link under it (a NoticeLink without text, full width so its text
+    lines up with the message). High Contrast: the theme's own colours. ``text()`` / ``action_text()`` / ``click()``
+    mirror NoticeLink's."""
+
+    _INFO_GLYPH = 0xE946   # Segoe Fluent Icons "Info"
+    _ICON_PX = 16
+
+    def __init__(self, action_text: str, on_click: Callable[[], None]) -> None:
+        super().__init__()
+        from netspeedtray.utils.components import NoticeLink
+        self.setObjectName("lhmInfoBar")
+        self._text = ""
+        row = QHBoxLayout(self)
+        row.setContentsMargins(2, constants.styles.SPACE_S, 2, constants.styles.SPACE_S)
+        row.setSpacing(constants.styles.SPACE_S)
+        self.icon = QLabel()
+        self.icon.setFixedSize(self._ICON_PX, self._ICON_PX + 2)
+        self.icon.setAccessibleName("")
+        row.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignTop)
+        col = QVBoxLayout()
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(2)
+        self.label = su.ui_label("")
+        self.label.setWordWrap(True)
+        col.addWidget(self.label)
+        self.link = NoticeLink("", action_text, on_click, stacked=True, surface=_page_surface)
+        col.addWidget(self.link)
+        row.addLayout(col, 1)
+        self.refresh_theme()
+
+    def refresh_theme(self) -> None:
+        from netspeedtray.utils.components import readable_on
+        from netspeedtray.utils.taskbar_appearance import read_high_contrast_link_colors
+        hc = read_high_contrast_link_colors()
+        if hc:
+            text, icon = hc["text"], hc["focus"]
+        else:
+            c = su.semantic_colors()
+            text, icon = c["text_primary"], readable_on(c["accent"], _page_surface())
+        self.label.setStyleSheet(f"color: {text}; background: transparent;")
+        self.icon.setPixmap(su.fluent_icon(self._INFO_GLYPH, self._ICON_PX, icon).pixmap(
+            self._ICON_PX, self._ICON_PX))
+        self.link.refresh_theme()
+
+    def text(self) -> str:
+        return self._text
+
+    def set_text(self, text: str) -> None:
+        self._text = str(text)
+        su.set_ui_text(self.label, self._text)
+        self.link.button().setAccessibleDescription(self._text)
+
+    def action_text(self) -> str:
+        return self.link.action_text()
+
+    def click(self) -> None:
+        self.link.click()
+
 
 class HardwarePage(QWidget):
     layout_changed = pyqtSignal()
@@ -30,7 +97,8 @@ class HardwarePage(QWidget):
 
     def __init__(self, i18n, on_change: Callable[[], None],
                  color_dialog_callback: Optional[Callable[[str], None]] = None,
-                 lhm_status_provider: Optional[Callable[[], Optional[Tuple[str, int]]]] = None):
+                 lhm_status_provider: Optional[Callable[[], Optional[Tuple[str, int]]]] = None,
+                 temp_setup_callback: Optional[Callable[[int], None]] = None):
         super().__init__()
         self.i18n = i18n
         self.on_change = on_change
@@ -39,6 +107,8 @@ class HardwarePage(QWidget):
         # () -> (status, port) of the running LHM client (constants.lhm.STATUS_*), or None. Polled while
         # this page is visible, so a fixed password or port shows its result within a second or two.
         self.lhm_status_provider = lhm_status_provider or (lambda: None)
+        # step -> opens the temperature setup dialog at that step (SettingsDialog._open_temp_setup, D6).
+        self.open_temp_setup = temp_setup_callback or (lambda _step: None)
         # The LHM password as config stores it (a DPAPI blob) and the plain text it was made from, so an
         # unchanged field never re-encrypts (DPAPI output differs on every call).
         self._lhm_password_blob = ""
@@ -111,6 +181,7 @@ class HardwarePage(QWidget):
 
         self.show_temps = Win11Toggle(label_text="")
         self.show_temps.toggled.connect(self.on_change)
+        self.show_temps.toggled.connect(lambda _on: self.refresh_lhm_status())   # the D6 notice
         self._temps_card = SettingCard(self.i18n.SHOW_HARDWARE_TEMPS_LABEL, control=self.show_temps)
         layout.addWidget(self._temps_card)
 
@@ -127,20 +198,31 @@ class HardwarePage(QWidget):
 
         self.show_power = Win11Toggle(label_text="")
         self.show_power.toggled.connect(self.on_change)
+        self.show_power.toggled.connect(lambda _on: self.refresh_lhm_status())
         self._power_card = SettingCard(self.i18n.SHOW_HARDWARE_POWER_LABEL, control=self.show_power)
         layout.addWidget(self._power_card)
 
-        temps_note = QLabel(self.i18n.HARDWARE_TEMPS_LIMITATION_NOTE)
+        # D6: LibreHardwareMonitor runs, but nothing accepts a connection on its web-server port - current
+        # LHM is read only over that server (#187), off by default. Shown while temperatures or power
+        # are on and the monitor thread reports STATUS_SERVER_OFF (refresh_lhm_status); the action opens
+        # the setup dialog at its step 2. A light InfoBar (status, not a hint) right under the switches.
+        from netspeedtray.utils.components import NoticeLink
+        self.lhm_server_off_notice = _InfoBar(
+            self.i18n.LHM_SERVER_OFF_ACTION, lambda: self.open_temp_setup(2))
+        self.lhm_server_off_notice.setVisible(False)
+        layout.addWidget(self.lhm_server_off_notice)
+
+        temps_note = su.ui_label(self.i18n.HARDWARE_TEMPS_LIMITATION_NOTE)   # RTL: isolates LHM's menu path
         temps_note.setWordWrap(True)
         temps_note.setStyleSheet(
             f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
         layout.addWidget(temps_note)
-        # LHM v0.9.5+ is read over its web server (#187), which is off until the user enables it.
-        self.lhm_web_server_hint = su.ui_label(   # "Options → Remote Web Server": no arrow in Nirmala UI
-            self.i18n.LHM_WEB_SERVER_HINT.format(port=constants.lhm.HTTP_PORT))
-        self.lhm_web_server_hint.setWordWrap(True)
-        self.lhm_web_server_hint.setStyleSheet(temps_note.styleSheet())
-        layout.addWidget(self.lhm_web_server_hint)
+        # The two setup steps (and the version / firewall details) live in the setup dialog (D6) - it
+        # replaced the long web-server paragraph that used to sit here.
+        self.temps_setup_link = NoticeLink("", self.i18n.HARDWARE_TEMPS_SETUP_ACTION,
+                                           lambda: self.open_temp_setup(1), stacked=True,
+                                           surface=_page_surface)
+        layout.addWidget(self.temps_setup_link)
         self._build_lhm_connection(layout)
 
         # Throttle temperature (Statistics): flags time spent at/above this temp in the Stats-detail
@@ -334,7 +416,6 @@ class HardwarePage(QWidget):
             self.i18n.LHM_PASSWORD_UNREADABLE if self._lhm_password_unreadable else " ")
 
     def _on_lhm_port_changed(self, _value: int = 0) -> None:
-        su.set_ui_text(self.lhm_web_server_hint, self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
         self.refresh_lhm_status()
         self.on_change()
 
@@ -348,6 +429,7 @@ class HardwarePage(QWidget):
         key = {
             L.STATUS_OK: "LHM_STATUS_CONNECTED",
             L.STATUS_NOT_FOUND: "LHM_STATUS_NOT_FOUND",
+            L.STATUS_SERVER_OFF: "LHM_STATUS_NOT_FOUND",   # the notice above says why (D6)
             L.STATUS_AUTH_REQUIRED: "LHM_STATUS_AUTH_REQUIRED",
             L.STATUS_AUTH_FAILED: "LHM_STATUS_AUTH_FAILED",
             L.STATUS_OTHER: "LHM_STATUS_OTHER",
@@ -366,6 +448,29 @@ class HardwarePage(QWidget):
         if text != self._lhm_status_shown:
             self._lhm_status_shown = text
             self._lhm_port_card.set_description(text)
+        self._sync_server_off_notice(status, port)
+
+    def _sync_server_off_notice(self, status: Optional[str], status_port: Optional[int]) -> None:
+        """Show the "Remote Web Server is off" InfoBar (D6) only while it is true for the port in the
+        field, and only while temperatures or power - the readings LHM gives - are on. While it shows,
+        the note's "How to set it up" link hides (the bar's own link is the next step). Touched only on
+        a change: refresh_lhm_status runs every second.
+
+        The wording is as sure as the facts: on LHM's default port, LHM running with nothing listening
+        there means its server is off; on another port, NetSpeedTray only knows nothing answers there
+        (LHM may be serving on its default port), so it says exactly that."""
+        port = int(self.lhm_port.value())
+        want = (status == constants.lhm.STATUS_SERVER_OFF and status_port == port
+                and (self.show_temps.isChecked() or self.show_power.isChecked()))
+        if want:
+            text = (self.i18n.LHM_SERVER_OFF_NOTICE if port == constants.lhm.HTTP_PORT
+                    else self.i18n.LHM_SERVER_NO_ANSWER_NOTICE.format(port=port))
+            if text != self.lhm_server_off_notice.text():
+                self.lhm_server_off_notice.set_text(text)
+        if want == self.lhm_server_off_notice.isHidden():
+            self.lhm_server_off_notice.setVisible(want)
+            self.temps_setup_link.setVisible(not want)
+            self.layout_changed.emit()
 
     def _lhm_password_setting(self) -> str:
         """The password field as config stores it: a DPAPI blob, re-made only when the text changed.
@@ -444,7 +549,6 @@ class HardwarePage(QWidget):
         self.lhm_port.blockSignals(True)
         self.lhm_port.setValue(lhm_port if L.MIN_PORT <= lhm_port <= L.MAX_PORT else L.HTTP_PORT)
         self.lhm_port.blockSignals(False)
-        su.set_ui_text(self.lhm_web_server_hint, self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
         self.lhm_username.setText(str(config.get("lhm_username", "") or ""))
         # A blob this Windows user cannot decrypt (a config copied from another account or PC, DPAPI
         # broken) shows as an empty field with a hint, and is KEPT until the user types a new password

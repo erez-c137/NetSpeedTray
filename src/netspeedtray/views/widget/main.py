@@ -3199,25 +3199,24 @@ class NetworkSpeedWidget(QWidget):
 
     def _on_lhm_not_detected(self) -> None:
         """
-        Temps/power are enabled but no sensor source was found. Show the actionable
-        onboarding explainer (one click to LHM, clear that the app never runs as admin),
-        unless the user has permanently dismissed it.
+        Temps/power are enabled but no sensor source was found. Show the two-step temperature setup
+        (install LibreHardwareMonitor, turn on its web server; clear that the app never runs as admin),
+        unless the user has permanently dismissed it. With LHM already running but its web server off
+        (D6), it opens at step 2. Its "Get LibreHardwareMonitor" link opens the browser itself.
         """
         try:
             if self.config.get("temp_onboarding_dismissed", False):
                 return
-            from netspeedtray.views.temp_onboarding_dialog import (
-                TempOnboardingDialog, LHM_RELEASES_URL,
-            )
-            # The port the user configured for LHM (Settings > Hardware), as the hint names it.
+            from netspeedtray.views.temp_onboarding_dialog import TempOnboardingDialog
+            # The port the user configured for LHM (Settings > Hardware), as step 2 names it.
             lhm_port = getattr(self.monitor_thread, "lhm_port", constants.lhm.HTTP_PORT)
-            dlg = TempOnboardingDialog(self.i18n, self, lhm_port=lhm_port)
+            server_off = getattr(self.monitor_thread, "lhm_status", None) == constants.lhm.STATUS_SERVER_OFF
+            mt = self.monitor_thread
+            dlg = TempOnboardingDialog(self.i18n, self, lhm_port=lhm_port, focus_step=2 if server_off else 1,
+                                       status_provider=lambda: getattr(mt, "lhm_status", None))
             dlg.exec()
             if dlg.dismissed_forever():
                 self.update_config({"temp_onboarding_dismissed": True})
-            if dlg.action == TempOnboardingDialog.ACTION_GET_LHM:
-                from netspeedtray.utils.helpers import open_external
-                open_external(LHM_RELEASES_URL)
         except Exception as e:
             self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
 

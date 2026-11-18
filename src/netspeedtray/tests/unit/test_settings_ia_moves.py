@@ -275,8 +275,10 @@ def test_hardware_appearance_header_and_throttle_position(dlg):
     assert len(header) == 1
     throttle = flat.index(_card_of(h.throttle_temp))
     assert flat.index(_card_of(h.show_temps)) < flat.index(note) < throttle
-    # The LHM connection expander (rc.2 G2/G3) sits with the LHM hint, between the note and throttle.
-    assert flat.index(h.lhm_web_server_hint) < flat.index(h.lhm_connection_section) < throttle
+    # The LHM connection expander (rc.2 G2/G3) sits under the note's setup link (D6), before throttle;
+    # the "web server is off" notice (D6) sits right above the note.
+    assert flat.index(h.lhm_server_off_notice) < flat.index(note) < flat.index(h.temps_setup_link)
+    assert flat.index(h.temps_setup_link) < flat.index(h.lhm_connection_section) < throttle
     assert throttle + 1 == flat.index(header[0])
     after = [flat.index(_card_of(h.label_style)), flat.index(_card_of(h.label_color)),
              flat.index(h.label_colors_container),
