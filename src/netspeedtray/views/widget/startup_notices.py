@@ -34,7 +34,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from PyQt6.QtCore import QObject, QTimer
+from PyQt6.QtCore import QObject, Qt, QTimer
 
 from netspeedtray import constants
 from netspeedtray.core import startup_notices as logic
@@ -91,6 +91,44 @@ def _seconds_since_sign_in() -> Optional[float]:
 def _screen_reader_running() -> bool:
     from netspeedtray.views.flyout import screen_reader_running
     return screen_reader_running()
+
+
+def tip_body(i18n, config) -> str:
+    """The first-run tip's three lines, its double-click line following the configured double-click
+    action like the hover card's hint (combined review U7): "Double-click to open the Monitor." as
+    written for the default; "Double-click: <action>" for another; no line when it does nothing."""
+    body = str(i18n.FIRST_RUN_TIP_BODY)
+    lines = body.split("\n")
+    defaults = constants.config.defaults
+    action = (config or {}).get("double_click_action", defaults.DEFAULT_DOUBLE_CLICK_ACTION)
+    if len(lines) != 3 or action == defaults.CLICK_ACTION_OPEN_MONITOR:
+        return body
+    from netspeedtray.views.widget.main import _DOUBLE_CLICK_HINT_LABELS
+    key = _DOUBLE_CLICK_HINT_LABELS.get(action)
+    if key:
+        lines[1] = i18n.WIDGET_HOVER_DOUBLE_CLICK_HINT.format(action=getattr(i18n, key))
+    else:
+        del lines[1]
+    return "\n".join(lines)
+
+
+def _mark_opens_browser(card) -> None:
+    """The card's action opens a web page: Fluent's OpenInNewWindow glyph on its button (U7)."""
+    btn = getattr(card, "_action_btn", None)
+    if btn is None:
+        return
+    try:
+        from PyQt6.QtCore import QSize
+        from netspeedtray.constants.styles import styles as tokens
+        from netspeedtray.utils import styles as su
+        color = getattr(card, "_colors", {}).get("text_primary", "#000000")
+        px = tokens.NOTICE_LINK_CHEVRON_PX
+        btn.setIcon(su.fluent_icon(tokens.OPEN_IN_NEW_CODEPOINT, px, color))
+        btn.setIconSize(QSize(px, px))
+        btn.setLayoutDirection(Qt.LayoutDirection.LeftToRight if btn.isRightToLeft()
+                               else Qt.LayoutDirection.RightToLeft)   # the glyph trails the words
+    except Exception as e:
+        logger.debug("Could not add the open-in-new glyph: %s", e)
 
 
 def _modal_dialog_up(ignore=None) -> bool:
@@ -374,8 +412,8 @@ class StartupNotices(QObject):
         from netspeedtray.views.flyout import Flyout
         i18n = self._w.i18n
         if notice == logic.NOTICE_TIP:
-            card = Flyout(i18n.FIRST_RUN_TIP_TITLE, i18n.FIRST_RUN_TIP_BODY,
-                          action_text=i18n.FIRST_RUN_TIP_OPEN_MONITOR_BUTTON,
+            card = Flyout(i18n.FIRST_RUN_TIP_TITLE, tip_body(i18n, getattr(self._w, "config", None) or {}),
+                          action_text=i18n.CLICK_ACTION_OPEN_MONITOR_LABEL,
                           secondary_text=i18n.WELCOME_2_0_GOT_IT_BUTTON,
                           close_text=i18n.CLOSE_BUTTON, auto_dismiss_ms=0, focusable=True)
             # Deferred: the card closes (and deletes itself) right after action_clicked returns.
@@ -389,6 +427,7 @@ class StartupNotices(QObject):
                       secondary_text=i18n.WELCOME_2_0_GOT_IT_BUTTON,
                       close_text=i18n.CLOSE_BUTTON, auto_dismiss_ms=0, focusable=True,
                       action_style="neutral")
+        _mark_opens_browser(card)
         card.action_clicked.connect(self._open_release_page)
         return card
 

@@ -98,6 +98,10 @@ class UIStyleConstants:
     NOTICE_LINK_CHEVRON_PX: Final[int] = 10       # the trailing Segoe Fluent Icons chevron
     CHEVRON_RIGHT_CODEPOINT: Final[int] = 0xE76C  # ChevronRight (LTR)
     CHEVRON_LEFT_CODEPOINT: Final[int] = 0xE76B   # ChevronLeft (RTL)
+    # OpenInNewWindow: a link or button that opens a web page in the browser, not a place in the app
+    # (combined review U7) - never mirrored.
+    OPEN_IN_NEW_CODEPOINT: Final[int] = 0xE8A7
+    GLYPH_GLOBE: Final[int] = 0xE774              # Check connection, everywhere it appears
     # --- "Also check your internet?" (2.2.2 D5, views/monitor/internet_offer) --
     INTERNET_CONFIRM_BUTTON_HEIGHT: Final[int] = 32   # Fluent button height, in every theme (HC too)
     INTERNET_TIP_WIDTH: Final[int] = 360              # the TeachingTip card's width

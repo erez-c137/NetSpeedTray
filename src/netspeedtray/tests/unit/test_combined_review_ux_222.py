@@ -80,3 +80,80 @@ def test_the_secondary_buttons_share_one_style(qtbot, light):
     qtbot.addWidget(confirm)
     for sheet in (tip._secondary_btn.styleSheet(), confirm.styleSheet().split("internetConfirmNotNow", 1)[1]):
         assert c["subtle_fill"].lower() in sheet.lower() and c["card_stroke"].lower() in sheet.lower()
+
+
+# --- U2 / U7: glyphs ---------------------------------------------------------------------------------
+
+def test_the_overviews_check_connection_button_is_the_globe(qtbot, light, monkeypatch):
+    """The same glyph as the right-click menu's and the running panel's Check connection (E774)."""
+    from netspeedtray.views.monitor import connection_check as cc
+    seen = []
+    real = su.fluent_icon
+    monkeypatch.setattr(su, "fluent_icon", lambda cp, *a, **k: (seen.append(cp), real(cp, *a, **k))[1])
+    btn = cc.make_check_button(EN)
+    qtbot.addWidget(btn)
+    assert seen == [0xE774]
+
+
+def test_a_link_that_opens_the_browser_shows_open_in_new(qtbot, light):
+    from netspeedtray.utils.components import NoticeLink
+    from netspeedtray.views.temp_onboarding_dialog import TempOnboardingDialog
+    dlg = TempOnboardingDialog(EN, None)
+    qtbot.addWidget(dlg)
+    assert dlg.get_lhm_link.chevron_codepoint() == 0xE8A7          # Get LibreHardwareMonitor: a web page
+    inside = NoticeLink("", "Open Settings", lambda: None)
+    qtbot.addWidget(inside)
+    assert inside.chevron_codepoint() == 0xE76C                     # an in-app link keeps the chevron
+
+
+def test_whats_new_shows_open_in_new_on_its_button(qtbot, light, monkeypatch):
+    from netspeedtray.core import startup_notices as logic
+    from netspeedtray.views.widget import startup_notices as ui
+    w = types.SimpleNamespace(i18n=EN, config={})
+    card = ui.StartupNotices._build(types.SimpleNamespace(_w=w, _version="2.2.2",
+                                                          _open_release_page=lambda: None), logic.NOTICE_WHATS_NEW)
+    qtbot.addWidget(card)
+    assert not card._action_btn.icon().isNull()
+
+
+def test_all_apps_has_no_arrow_character_and_a_chevron_glyph(qtbot, light):
+    from netspeedtray.views.monitor.overview.busiest_apps import BusiestAppsCard
+    card = BusiestAppsCard(EN)
+    qtbot.addWidget(card)
+    assert "→" not in EN.MONITOR_VIEW_ALL_APPS
+    assert card.all_apps_chevron.pixmap() is not None and not card.all_apps_chevron.pixmap().isNull()
+
+
+# --- U7: the first-run tip's button and its double-click line ----------------------------------------
+
+def _tip(config):
+    from netspeedtray.core import startup_notices as logic
+    from netspeedtray.views.widget import startup_notices as ui
+    w = types.SimpleNamespace(i18n=EN, config=config, open_monitor_window=lambda: None)
+    return ui.StartupNotices._build(types.SimpleNamespace(_w=w, _version="2.2.2", _open_monitor=lambda: None),
+                                    logic.NOTICE_TIP)
+
+
+def _body(card):
+    from PyQt6.QtWidgets import QLabel
+    return "\n".join(lbl.text() for lbl in card.findChildren(QLabel))
+
+
+@pytest.mark.parametrize("action,line", [
+    ("open_monitor", "Double-click to open the Monitor."),
+    ("settings", "Double-click: Open Settings"),
+    ("pause_resume", "Double-click: Pause / Resume"),
+    ("none", None),
+])
+def test_the_tips_double_click_line_follows_the_setting(qtbot, light, action, line):
+    card = _tip({"double_click_action": action})
+    qtbot.addWidget(card)
+    assert card._action_btn.text() == EN.CLICK_ACTION_OPEN_MONITOR_LABEL == "Open Monitor"
+    body = _body(card)
+    assert "Point to the speeds for details." in body and "Right-click for the menu and Settings." in body
+    if line is None:
+        assert "Double-click" not in body
+    else:
+        assert line in body
+        if action != "open_monitor":
+            assert "open the Monitor" not in body

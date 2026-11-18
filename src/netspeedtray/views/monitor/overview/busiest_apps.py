@@ -56,10 +56,21 @@ class BusiestAppsCard(QFrame):
         self._title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         head.addWidget(self._title)
         head.addStretch(1)
-        more = su.ui_label(self._tr("MONITOR_VIEW_ALL_APPS", "All apps →"))   # → not in every UI face
+        more = su.ui_label(self._tr("MONITOR_VIEW_ALL_APPS", "All apps"))
         more.setFont(su.font(tokens.TYPE_CAPTION))
         more.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         head.addWidget(more)
+        # The NoticeLinks' chevron (a Segoe Fluent Icons pixmap; mirrored in RTL) - not a Unicode arrow,
+        # which not every UI face has (combined review U7).
+        from PyQt6.QtCore import QSize
+        px = tokens.NOTICE_LINK_CHEVRON_PX
+        rtl = self.layoutDirection() == Qt.LayoutDirection.RightToLeft
+        cp = tokens.CHEVRON_LEFT_CODEPOINT if rtl else tokens.CHEVRON_RIGHT_CODEPOINT
+        self.all_apps_chevron = QLabel()
+        self.all_apps_chevron.setPixmap(su.fluent_icon(cp, px, c['text_secondary']).pixmap(QSize(px, px)))
+        self.all_apps_chevron.setStyleSheet("background: transparent;")
+        head.addSpacing(tokens.SPACE_XS)
+        head.addWidget(self.all_apps_chevron, 0, Qt.AlignmentFlag.AlignVCenter)
         root.addLayout(head)
 
         # One honest line under the title (2.2.2 D7): ranked by open connections, not speed - Windows

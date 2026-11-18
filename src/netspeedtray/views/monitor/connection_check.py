@@ -803,7 +803,8 @@ def make_check_button(i18n) -> QToolButton:
     c = su.semantic_colors()
     btn = QToolButton()
     btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-    btn.setIcon(su.fluent_icon(0xE9D9, 16, c['text_secondary']))   # Fluent "Diagnostic"
+    # Fluent "Globe" - the right-click menu's and the running panel's Check connection glyph (U2).
+    btn.setIcon(su.fluent_icon(tokens.GLYPH_GLOBE, 16, c['text_secondary']))
     btn.setText(_tr(i18n, "CHECK_CONN_ACTION", "Check connection"))
     btn.setToolTip(_tr(i18n, "CHECK_CONN_ACTION_TIP",
                        "Ping your router 20 times (and the internet, if you choose) and show what came back"))

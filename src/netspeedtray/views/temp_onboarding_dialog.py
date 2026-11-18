@@ -336,7 +336,7 @@ class TempOnboardingDialog(QDialog):
         layout.addWidget(self.intro)
 
         # Step 1's action: LHM's official releases page. The dialog stays open - step 2 is still to do.
-        self.get_lhm_link = NoticeLink("", i18n.TEMP_ONBOARDING_GET_LHM_BUTTON, self._get_lhm,
+        self.get_lhm_link = NoticeLink("", i18n.TEMP_ONBOARDING_GET_LHM_BUTTON, self._get_lhm, external=True,
                                        stacked=True, font_token=tokens.TYPE_BODY, surface=c["bg"])
         step2_text = i18n.TEMP_ONBOARDING_STEP_2_DESC
         if int(lhm_port) != constants.lhm.HTTP_PORT:   # LHM listens on 8085 until told otherwise

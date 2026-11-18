@@ -1535,15 +1535,18 @@ class NoticeLink(QFrame):
 
     ``stacked`` puts the action under the text instead of after it; ``centered`` centres both (an
     empty-state overlay on a chart), else both start-align. ``text`` may be empty: the action alone.
+    ``external``: the action opens a web page in the browser - the trailing glyph is Fluent's
+    OpenInNewWindow instead of the chevron (combined review U7).
     """
 
     activated = pyqtSignal()
 
     def __init__(self, text: str, action_text: str, on_click: Optional[Callable[[], None]] = None,
                  *, stacked: bool = False, centered: bool = False, font_token: tuple = tokens.TYPE_CAPTION,
-                 surface=None, parent: Optional[QWidget] = None) -> None:
+                 surface=None, external: bool = False, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("noticeLink")
+        self._external = bool(external)
         self._on_click = on_click
         self._action_text = str(action_text or "")
         self._surface = surface
@@ -1646,16 +1649,22 @@ class NoticeLink(QFrame):
             self._button.setIcon(QIcon())
             return
         from netspeedtray.utils.styles import fluent_icon
-        cp = tokens.CHEVRON_LEFT_CODEPOINT if self.isRightToLeft() else tokens.CHEVRON_RIGHT_CODEPOINT
+        cp = self._trailing_codepoint()
         px = tokens.NOTICE_LINK_CHEVRON_PX
         self._button.setIcon(fluent_icon(cp, px, link))
         self._button.setIconSize(QSize(px, px))
 
+    def _trailing_codepoint(self) -> int:
+        if getattr(self, "_external", False):
+            return tokens.OPEN_IN_NEW_CODEPOINT
+        return tokens.CHEVRON_LEFT_CODEPOINT if self.isRightToLeft() else tokens.CHEVRON_RIGHT_CODEPOINT
+
     def chevron_codepoint(self) -> Optional[int]:
-        """The chevron the action shows (tests): ChevronRight, or ChevronLeft in RTL; None without one."""
+        """The glyph the action shows (tests): ChevronRight, or ChevronLeft in RTL, or OpenInNewWindow for
+        an ``external`` link; None without one."""
         if self._button.icon().isNull():
             return None
-        return tokens.CHEVRON_LEFT_CODEPOINT if self.isRightToLeft() else tokens.CHEVRON_RIGHT_CODEPOINT
+        return self._trailing_codepoint()
 
     # Palette / style changes, and QEvent::ThemeChange (210 - a Windows light/dark or High Contrast
     # switch; PyQt6's QEvent.Type has no name for it), by value.

@@ -1281,7 +1281,8 @@ class OverviewTab(QWidget):
                             "Older history is per minute, so short drops there are estimated.").format(
                 seconds=seconds)
             if self._context_r_lbl.text() and self._tr("CONN_HEALTH_CHECKING", "checking…") in self._context_r_lbl.text():
-                text = self._tr("INTERNET_CHECK_OFF_HINT", "Turn it off any time in Settings.")
+                # Just turned on: what it checks, AND where to turn it off (combined review U7).
+                text += "\n" + self._tr("INTERNET_CHECK_OFF_HINT", "Turn it off any time in Settings.")
             return text
         if hop == HOP_GATEWAY:
             return self._tr("CONN_HEALTH_ROUTER_TOOLTIP",

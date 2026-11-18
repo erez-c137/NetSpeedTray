@@ -288,9 +288,10 @@ def test_the_health_line_explains_itself(tab):
     ov._latency_events = _events(0, hop="anchor")
     ov._render_health_strip(mw)
     assert "internet test server" in ov._context_r_lbl.toolTip()
-    mw.latency_anchor = None                      # checking…: where to turn it off
+    mw.latency_anchor = None                      # checking…: what it is AND where to turn it off (U7)
     ov._render_health_strip(mw)
-    assert ov._context_r_lbl.toolTip() == EN.INTERNET_CHECK_OFF_HINT
+    tip = ov._context_r_lbl.toolTip()
+    assert "internet test server" in tip and tip.endswith(EN.INTERNET_CHECK_OFF_HINT)
 
 
 # --- System power never pushes the health line out ----------------------------------------------------
@@ -423,7 +424,7 @@ def test_turn_on_turns_the_internet_check_on_and_says_checking(tab, monkeypatch)
     QApplication.processEvents()
     assert reloads.count(True) == 1               # one forced read, not two
     assert _plain(ov._context_r_lbl.text()) == "Internet: checking…"
-    assert ov._context_r_lbl.toolTip() == "Turn it off any time in Settings."
+    assert ov._context_r_lbl.toolTip().endswith("\nTurn it off any time in Settings.")   # + what it is (U7)
     QApplication.processEvents()
     assert QApplication.focusWidget() is ov._context_r_lbl       # Narrator reads the new status
     assert ov._internet_link.isHidden()
