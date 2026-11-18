@@ -201,7 +201,7 @@ def test_settings_section_names_settings_and_exit(page, i18n):
     texts = [l.text() for l in page.context_menu_items.findChildren(QLabel)]
     assert i18n.CONTEXT_MENU_ITEMS_LABEL in texts
     assert any("Settings" in t and "Exit" in t and "&" not in t for t in texts), texts
-    assert "Check for Updates" in texts and "Support this Project" in texts
+    assert "Check for updates" in texts and "Support this project" in texts   # sentence case (2.2.2 D7)
 
 
 # ------------------------------------------------- Pause / Resume row (folded into the list, 2.2.1)
@@ -213,7 +213,7 @@ def test_pause_row_sits_in_the_list_after_show_monitor(page, i18n):
     assert page.context_menu_items.isAncestorOf(page.pause_in_menu)
     rows = [c._title_label.text() for c in page.context_menu_items.findChildren(SettingCard)]
     assert rows == ["Show Monitor", "Check connection", i18n.CLICK_ACTION_PAUSE_LABEL, "Reset Position",
-                    "Check for Updates", "Support this Project"]
+                    "Check for updates", "Support this project"]
     assert "pause" not in page.context_menu_toggles   # its own key, not a hidden-items id
     titles = [c._title_label.text() for c in page.findChildren(SettingCard)]
     assert "Add Pause/Resume to the right-click menu" not in titles

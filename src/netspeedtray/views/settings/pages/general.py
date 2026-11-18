@@ -123,7 +123,7 @@ class GeneralPage(QWidget):
         layout.addWidget(self._updates_card)
         self._apply_update_policy_lock()
 
-        # (Preferred Monitor moved to the Widget page's Behavior section, 2.2 IA pass: it decides which
+        # (Preferred Monitor moved to the Widget page's Placement section, 2.2 IA pass: it decides which
         # taskbar the widget docks to, and its dependent "Float on a display without a taskbar" is there.)
 
         # --- Interaction (community PR #165, @rami123) ---

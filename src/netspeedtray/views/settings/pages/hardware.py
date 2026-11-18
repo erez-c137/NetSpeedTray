@@ -134,15 +134,17 @@ class HardwarePage(QWidget):
         # redundant section caption here). ---
         self.monitor_cpu = Win11Toggle(label_text="")
         self.monitor_cpu.toggled.connect(self._on_monitor_toggled)
-        # "Show CPU usage" (2.2.2 D7, was "Monitor CPU utilization"): the line under it says the switch
-        # also records the history the Monitor draws (Advanced > Record hardware history can narrow that).
+        # "Show CPU usage" (2.2.2 D7, was "Monitor CPU utilization"): the line under CPU, GPU and RAM says
+        # the switch also keeps the history the Monitor draws (Advanced > Record hardware history can
+        # narrow that). Not under VRAM: its history is not kept (controller.handle_stats).
         layout.addWidget(SettingCard(self.i18n.MONITOR_CPU_LABEL, description=self.i18n.HARDWARE_USAGE_DESC,
                                      control=self.monitor_cpu))
 
         # RAM / VRAM are monitors of their own (2.2.1): they show without CPU / GPU monitoring.
         self.monitor_ram = Win11Toggle(label_text="")
         self.monitor_ram.toggled.connect(self._on_monitor_toggled)
-        self._ram_card = SettingCard(self.i18n.MONITOR_RAM_LABEL, control=self.monitor_ram)
+        self._ram_card = SettingCard(self.i18n.MONITOR_RAM_LABEL, description=self.i18n.HARDWARE_USAGE_DESC,
+                                     control=self.monitor_ram)
         layout.addWidget(self._ram_card)
 
         self.monitor_gpu = Win11Toggle(label_text="")

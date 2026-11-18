@@ -62,10 +62,9 @@ class BusiestAppsCard(QFrame):
         head.addWidget(more)
         root.addLayout(head)
 
-        # One honest line under the title (2.2.2 D7): the ranking is by open connections, because
-        # Windows reports no per-app speed without admin rights. Also the card's screen-reader description.
-        caption_text = self._tr("MONITOR_MOST_CONNECTIONS_CAPTION",
-                                "Apps with the most open connections - Windows doesn't report per-app speed.")
+        # One honest line under the title (2.2.2 D7): ranked by open connections, not speed - Windows
+        # reports no per-app speed without admin rights. Also the card's screen-reader description.
+        caption_text = self._tr("MONITOR_MOST_CONNECTIONS_CAPTION", "Ranked by open connections, not speed.")
         self._caption = QLabel(caption_text)
         self._caption.setWordWrap(True)
         self._caption.setFont(su.font(tokens.TYPE_CAPTION))

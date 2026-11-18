@@ -162,9 +162,10 @@ class HistoryOffNotice(QObject):
     Qt-only (no matplotlib)."""
 
     _MONITOR_TEXT = {
-        None: ("HW_HISTORY_MONITOR_OFF_NOTICE", "Hardware monitoring is off."),
-        "cpu": ("HW_HISTORY_CPU_OFF_NOTICE", "CPU monitoring is off."),
-        "gpu": ("HW_HISTORY_GPU_OFF_NOTICE", "GPU monitoring is off."),
+        # Named after the Hardware page's switches ("Show CPU usage", 2.2.2 D7).
+        None: ("HW_HISTORY_MONITOR_OFF_NOTICE", "CPU, GPU and RAM usage are off."),
+        "cpu": ("HW_HISTORY_CPU_OFF_NOTICE", "CPU usage is off."),
+        "gpu": ("HW_HISTORY_GPU_OFF_NOTICE", "GPU usage is off."),
     }
     _MONITOR_ANCHOR = {None: "hardware_monitoring", "cpu": "monitor_cpu_enabled", "gpu": "monitor_gpu_enabled"}
     _RECORD_TEXT = ("HW_HISTORY_RECORD_OFF_NOTICE", "Hardware history recording is off.")

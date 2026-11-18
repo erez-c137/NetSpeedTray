@@ -409,12 +409,13 @@ class StatsDetailSheet(QDialog):
         ]
         # Plain-words tooltips for the percentiles (2.2.2 D7), by cell index. Neutral about
         # direction: the same cells show speeds (higher is better) and ping times (lower is better).
+        # None on a dashed-out cell ("-", a rolled-up period): there is no figure to explain.
         tips = {
             3: self._tr("STAT_CELL_P95_TOOLTIP",
-                        "95% of the readings were at or below this - only the top 5% went higher."),
+                        "95% of readings were at or below this; the other 5% were above it."),
             4: self._tr("STAT_CELL_P99_TOOLTIP",
-                        "99% of the readings were at or below this - only the top 1% went higher."),
-        }
+                        "99% of readings were at or below this; the other 1% were above it."),
+        } if summ.exact else {}
         grid = QGridLayout()
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
@@ -527,9 +528,12 @@ class StatsDetailSheet(QDialog):
                     # ("below the N Mbps plan") does not survive translation: Spanish and French
                     # were left with a dangling noun, and Russian said "тариф" twice. A template
                     # lets each language put the number and the noun where they belong.
+                    # {unit}: the locale's own megabit unit (Mbit/s, Мбит/с...); plan speeds are
+                    # always stored in decimal megabits per second (2.2.2 D7).
                     extra = self._tr(
-                        'STATS_DETAIL_BELOW_PLAN_TEMPLATE', '{pct}% of time below the {plan} Mbps plan'
-                    ).format(pct=f"{below:.0f}", plan=f"{plan:.0f}")
+                        'STATS_DETAIL_BELOW_PLAN_TEMPLATE', '{pct}% of time below the {plan} {unit} plan'
+                    ).format(pct=f"{below:.0f}", plan=f"{plan:.0f}",
+                             unit=self._tr("MBITS_UNIT", "Mbps"))
                     text = f"{text}   ·   {extra}" if text else extra
 
         if not text:

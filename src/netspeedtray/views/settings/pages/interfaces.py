@@ -77,7 +77,8 @@ class InterfacesPage(QWidget):
 
         # Subtitle under each option (muted, indented to align under the radio label) - the Win11
         # "option + helper text" pattern.
-        subtitle_style = (f"color: {c['text_secondary']}; font-size: 11px;"
+        # The caption face every card description uses (2.2.2 D7; it was a smaller 11 px).
+        subtitle_style = (f"color: {c['text_secondary']};"
                           f" margin-left: 24px; margin-bottom: 6px; background: transparent;")
         radio_subtitle_pairs = [
             (self.auto_interface_radio, self.i18n.MONITORING_MODE_AUTO_SUBTITLE),
@@ -96,6 +97,7 @@ class InterfacesPage(QWidget):
             radio.toggled.connect(self._on_mode_toggled)
             ml.addWidget(radio)
             subtitle = QLabel(subtitle_text)
+            subtitle.setFont(style_utils.font(tokens.TYPE_CAPTION))
             subtitle.setWordWrap(True)
             subtitle.setStyleSheet(subtitle_style)
             if radio in tooltips:

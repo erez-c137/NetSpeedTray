@@ -67,15 +67,17 @@ _DETAIL_ROWS = [
     ("ipv6", "CHECK_CONN_DETAILS_IPV6", "IPv6 address", False),
     ("dns", "CHECK_CONN_DETAILS_DNS", "DNS servers", True),
 ]
-# Stat cells per hop, in grid order: (field, i18n key, English fallback).
-# Plain-words tooltips for the two figures people ask about (2.2.2 D7): (i18n key, English fallback).
+# Plain-words tooltips for the two figures people ask about (2.2.2 D7): field -> (i18n key, English
+# fallback). Every figure here is a ping time, so the p95 text can say "this fast or faster" (the
+# Statistics sheet's p95 text stays neutral: it also shows speeds, where higher is better).
 _CELL_TIPS = {
-    "p95_ms": ("STAT_CELL_P95_TOOLTIP",
-               "95% of the readings were at or below this - only the top 5% went higher."),
+    "p95_ms": ("CHECK_CONN_P95_TOOLTIP",
+               "95% of replies came back this fast or faster; the slowest 5% took longer."),
     "jitter_ms": ("CHECK_CONN_JITTER_TOOLTIP",
-                  "How much the ping time changes from one reply to the next. Low jitter means a steady "
-                  "connection - it matters most for calls and games."),
+                  "How much the ping time varies from one reply to the next. Lower is steadier - it matters "
+                  "most for calls and games."),
 }
+# Stat cells per hop, in grid order: (field, i18n key, English fallback).
 _CELLS = [
     ("sent", "CHECK_CONN_SENT", "Sent"),
     ("received", "CHECK_CONN_RECEIVED", "Received"),

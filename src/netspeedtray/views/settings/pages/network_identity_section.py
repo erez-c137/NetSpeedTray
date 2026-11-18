@@ -1,4 +1,4 @@
-""""Network identity" settings section (Network page, v2.1).
+""""Wi-Fi band and name" settings section (Network page, v2.1; "Network identity" until 2.2.2 D7).
 
 Surfaces the Wi-Fi band / network indicator on the taskbar widget:
   • show_network_identity - the header toggle; shows the estimated band tag (2.4G/5G) on the widget. The band
@@ -37,9 +37,9 @@ class NetworkIdentitySettings(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
 
         self._exp = SettingExpander(
-            self._tr("NETWORK_IDENTITY_TITLE", "Network identity"),
+            self._tr("NETWORK_IDENTITY_TITLE", "Wi-Fi band and name"),
             self._tr("NETWORK_IDENTITY_SUB",
-                     "Show the Wi-Fi band (2.4G / 5G) on the widget - the thing Windows hides at a glance."),
+                     "Shows 2.4G or 5G on the widget, and the network name if you choose."),
             header_toggle=True, initial_on=False, i18n=self._i18n)
         self._exp.toggled.connect(lambda _on: self.on_change())
         body = self._exp.contentLayout()
@@ -53,7 +53,7 @@ class NetworkIdentitySettings(QWidget):
         body.addWidget(SettingCard(
             self._tr("IDENTITY_MODE_LABEL", "Show"),
             self._tr("IDENTITY_MODE_SUB",
-                     "Read the connected Wi-Fi name without scanning nearby networks."),
+                     "The name comes from your current connection. NetSpeedTray never scans for nearby networks."),
             control=self._mode))
 
         # How the band presents.

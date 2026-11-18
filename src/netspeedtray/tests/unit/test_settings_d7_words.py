@@ -119,13 +119,17 @@ def test_appearance_speed_text_header(dlg):
 
 # --- Hardware: say what the switch does -------------------------------------------------------------------
 
-@pytest.mark.parametrize("attr, title", [("monitor_cpu", "Show CPU usage"), ("monitor_gpu", "Show GPU usage")])
-def test_cpu_gpu_switches_say_show_and_record(dlg, attr, title):
+@pytest.mark.parametrize("attr, title, history", [
+    ("monitor_cpu", "Show CPU usage", True), ("monitor_gpu", "Show GPU usage", True),
+    ("monitor_ram", "Show RAM usage", True),
+    ("monitor_vram", "Show VRAM usage", False),   # VRAM history is not kept (controller.handle_stats)
+])
+def test_usage_switches_say_show_and_whether_history_is_kept(dlg, attr, title, history):
     card = _card_of(getattr(dlg.hardware_page, attr))
     texts = [l.text() for l in card.findChildren(QLabel)]
     assert title in texts
-    assert dlg.i18n.HARDWARE_USAGE_DESC in texts
-    assert "record" in dlg.i18n.HARDWARE_USAGE_DESC.lower()
+    assert (dlg.i18n.HARDWARE_USAGE_DESC in texts) is history
+    assert dlg.i18n.HARDWARE_USAGE_DESC == "Also keeps its history in the Monitor."
 
 
 # --- the plan speed boxes carry the locale's unit ---------------------------------------------------------
@@ -156,18 +160,60 @@ def test_most_connections_says_why_not_speed(q_app):
     i18n = I18nStrings("en_US")
     card = BusiestAppsCard(i18n)
     texts = [l.text() for l in card.findChildren(QLabel)]
+    assert i18n.MONITOR_MOST_CONNECTIONS_CAPTION == "Ranked by open connections, not speed."
     assert i18n.MONITOR_MOST_CONNECTIONS_CAPTION in texts
-    assert "per-app speed" in i18n.MONITOR_MOST_CONNECTIONS_CAPTION
     assert card.accessibleDescription() == i18n.MONITOR_MOST_CONNECTIONS_CAPTION
 
 
-def test_stats_sheet_percentile_cells_explain_themselves(q_app):
+def _cell(root, caption):
+    """The stat cell whose caption label reads ``caption`` (value label first, caption second)."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QFrame
+    found = [f for f in root.findChildren(QFrame)
+             if [l.text() for l in f.findChildren(QLabel, options=Qt.FindChildOption.FindDirectChildrenOnly)][1:2]
+             == [caption]]
+    assert len(found) >= 1, caption
+    return found[0]
+
+
+def _stats_sheet(i18n, exact=True, **cfg):
     from netspeedtray.tests.unit.test_stats_detail import _open, _WS, _window, _cfg
+    kind = ({"key": "download", "label": "Download", "unit": "Mbps", "kind": "net_down", "primary": True}
+            if exact else {"key": "cpu", "label": "CPU", "unit": "%", "kind": "hw", "primary": True})
+    return _open(_WS(), [kind], _window(), _cfg(**cfg), i18n)
+
+
+def test_stats_sheet_percentile_cells_explain_themselves(q_app):
+    """Each tooltip on ITS cell (a swap of the two would fail), as tooltip and accessible description;
+    the other figures carry none."""
     i18n = I18nStrings("en_US")
-    subjects = [{"key": "download", "label": "Download", "unit": "Mbps", "kind": "net_down", "primary": True}]
-    sheet = _open(_WS(), subjects, _window(), _cfg(), i18n)
-    tips = {w.toolTip() for w in sheet.findChildren(QWidget) if w.objectName() == "statCell"}
-    assert i18n.STAT_CELL_P95_TOOLTIP in tips and i18n.STAT_CELL_P99_TOOLTIP in tips
+    sheet = _stats_sheet(i18n)
+    for caption, tip in ((i18n.STAT_CELL_P95, i18n.STAT_CELL_P95_TOOLTIP),
+                         (i18n.STAT_CELL_P99, i18n.STAT_CELL_P99_TOOLTIP)):
+        cell = _cell(sheet, caption)
+        assert cell.toolTip() == tip and cell.accessibleDescription() == tip, caption
+    assert i18n.STAT_CELL_P95_TOOLTIP.startswith("95%") and i18n.STAT_CELL_P99_TOOLTIP.startswith("99%")
+    for caption in (i18n.STAT_CELL_MEDIAN, i18n.STAT_CELL_MIN, i18n.STAT_CELL_AVG, i18n.STAT_CELL_PEAK):
+        cell = _cell(sheet, caption)
+        assert cell.toolTip() == "" and cell.accessibleDescription() == "", caption
+    sheet.close()
+
+
+def test_stats_sheet_dashed_percentiles_have_no_tooltip(q_app):
+    i18n = I18nStrings("en_US")
+    sheet = _stats_sheet(i18n, exact=False)   # rolled-up data: the percentile cells read "-"
+    for caption in (i18n.STAT_CELL_P95, i18n.STAT_CELL_P99):
+        cell = _cell(sheet, caption)
+        assert cell.findChildren(QLabel)[0].text() == "-"
+        assert cell.toolTip() == "" and cell.accessibleDescription() == "", caption
+    sheet.close()
+
+
+@pytest.mark.parametrize("lang, unit", [("en_US", "Mbps"), ("de_DE", "Mbit/s"), ("ru_RU", "Мбит/с")])
+def test_below_plan_line_uses_the_locale_unit(q_app, lang, unit):
+    sheet = _stats_sheet(I18nStrings(lang), plan_down_mbps=100)
+    texts = [l.text() for l in sheet.findChildren(QLabel)]
+    assert any(f"100 {unit}" in t for t in texts), texts
     sheet.close()
 
 
@@ -176,8 +222,17 @@ def test_check_connection_cells_explain_p95_and_jitter(q_app):
     i18n = I18nStrings("en_US")
     sheet = ConnectionCheckSheet({"latency_public_enabled": False}, i18n, gateway_ip="192.168.1.1",
                                  app_version="9.9.9", autostart=False)
-    tips = {w.toolTip() for w in sheet.findChildren(QWidget)}
-    assert i18n.CHECK_CONN_JITTER_TOOLTIP in tips and i18n.STAT_CELL_P95_TOOLTIP in tips
+    from netspeedtray.core import connection_check as CC
+    card = sheet._cards[CC.HOP_GATEWAY]
+    for caption, tip in ((i18n.STAT_CELL_P95, i18n.CHECK_CONN_P95_TOOLTIP),
+                         (i18n.CHECK_CONN_JITTER, i18n.CHECK_CONN_JITTER_TOOLTIP)):
+        cell = _cell(card, caption)
+        assert cell.toolTip() == tip and cell.accessibleDescription() == tip, caption
+    assert "replies" in i18n.CHECK_CONN_P95_TOOLTIP                 # ping times: its own text
+    assert i18n.CHECK_CONN_P95_TOOLTIP != i18n.STAT_CELL_P95_TOOLTIP
+    for caption in (i18n.STAT_CELL_MEDIAN, i18n.CHECK_CONN_MAX, i18n.STAT_CELL_MIN):
+        cell = _cell(card, caption)
+        assert cell.toolTip() == "" and cell.accessibleDescription() == "", caption
     sheet.done(0)
 
 
@@ -228,3 +283,25 @@ def test_settings_lists_check_connection_in_menu_order(qt_owned):
     page.load_settings({"context_menu_hidden_items": ["check_connection"]}, is_startup_enabled=False)
     assert not page.context_menu_toggles["check_connection"].isChecked()
     assert page.get_settings()["context_menu_hidden_items"] == ["check_connection"]
+
+
+# --- review round 1: tooltips name the switch; one description size ---------------------------------------
+
+@pytest.mark.parametrize("path", sorted(LOCALES.glob("*.json")), ids=lambda p: p.stem)
+def test_grayed_tooltips_name_the_switch_in_every_locale(path):
+    d = json.loads(path.read_text(encoding="utf-8"))
+    assert d["MONITOR_CPU_LABEL"] in d["HARDWARE_NEEDS_CPU_TOOLTIP"], path.stem
+    assert d["MONITOR_GPU_LABEL"] in d["HARDWARE_NEEDS_GPU_TOOLTIP"], path.stem
+    assert d["MONITOR_CPU_LABEL"] in d["HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP"], path.stem
+    assert d["MONITOR_GPU_LABEL"] in d["HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP"], path.stem
+    assert "{unit}" in d["STATS_DETAIL_BELOW_PLAN_TEMPLATE"], path.stem
+
+
+def test_adapter_list_subtitles_use_the_description_font(dlg):
+    from netspeedtray.constants.styles import styles as tokens
+    from netspeedtray.utils import styles as su
+    n = dlg.interfaces_page
+    mode_card = n.auto_interface_radio.parentWidget()
+    subtitle = next(l for l in mode_card.findChildren(QLabel) if l.text() == dlg.i18n.MONITORING_MODE_AUTO_SUBTITLE)
+    assert subtitle.font().pointSizeF() == su.font(tokens.TYPE_CAPTION).pointSizeF()
+    assert "font-size" not in subtitle.styleSheet()
