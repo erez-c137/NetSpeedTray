@@ -2745,15 +2745,24 @@ class NetworkSpeedWidget(QWidget):
         self.config_controller.handle_settings_changed(updated_config, save_to_disk)
 
 
-    def open_data_usage_settings(self) -> None:
-        """Open Settings straight on the Network page, where the data-cap 'Data usage' section lives -
-        the Monitor's 'Set a monthly limit' hint's door (was dropping the user on General)."""
+    def open_settings(self, page, anchor_key: Optional[str] = None) -> None:
+        """The settings router (2.2.2 D4): open Settings on ``page`` - a page id ("general", "widget",
+        "appearance", "hardware", "network" / "interfaces", "advanced") or a sidebar index - and, with
+        ``anchor_key``, scroll to, briefly outline and focus that control (each page's
+        ``anchor_widgets``). Every NoticeLink that sends the user to Settings comes through here. It
+        never changes a setting: the user flips the switch it lands on."""
         try:
             self.show_settings()
-            if self.settings_dialog is not None:
-                self.settings_dialog.navigate_to_page(self.settings_dialog.PAGE_NETWORK)
+            dialog = self.settings_dialog
+            if dialog is not None:
+                dialog.open_page(page, anchor_key)
         except Exception as e:
-            self.logger.error("Error opening data-usage settings: %s", e, exc_info=True)
+            self.logger.error("Error opening settings at %r / %r: %s", page, anchor_key, e, exc_info=True)
+
+    def open_data_usage_settings(self) -> None:
+        """Open Settings straight on the Network page's 'Data usage' section - the Monitor's 'Set a
+        monthly limit' hint's door (was dropping the user on General)."""
+        self.open_settings("network", "data_cap")
 
     def show_settings(self) -> None:
         """Build and show the Settings dialog (non-modal, top-level), or bring the open one forward.

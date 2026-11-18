@@ -379,6 +379,16 @@ class HardwarePage(QWidget):
             self._lhm_password_blob = secret_store.protect(text) if text else ""
         return self._lhm_password_blob
 
+    def anchor_widgets(self, key: str) -> list:
+        """The control(s) a Settings deep link for ``key`` lands on (SettingsDialog.open_page, D4).
+        "hardware_monitoring" is both CPU and GPU: the history note asks for either."""
+        return {
+            "hardware_monitoring": [self.monitor_cpu, self.monitor_gpu],
+            "monitor_cpu_enabled": [self.monitor_cpu],
+            "monitor_gpu_enabled": [self.monitor_gpu],
+            "monitor_ram_enabled": [self.monitor_ram],
+        }.get(key, [])
+
     def load_settings(self, config: Dict[str, Any]):
         # Block signals to prevent setChecked from triggering _on_monitor_toggled
         # which would auto-switch the display mode dropdown unexpectedly during load.

@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import weakref
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PyQt6 import sip
 from PyQt6.QtCore import QCoreApplication, QObject, Qt, pyqtSlot
@@ -301,8 +301,12 @@ class ConnectionCheckSheet(QDialog):
 
     def __init__(self, config: Dict[str, Any], i18n, gateway_ip: Optional[str] = None,
                  app_version: str = "", autostart: bool = True, parent=None,
-                 gateway_answered: bool = False) -> None:
+                 gateway_answered: bool = False,
+                 open_settings: Optional[Callable[..., None]] = None) -> None:
         super().__init__(parent)
+        # The settings router (NetworkSpeedWidget.open_settings, D4): the "measure the internet all the
+        # time" notice lands on the internet-check switch. None = the notice has no action to offer.
+        self._open_settings = open_settings
         self._config = config
         self._i18n = i18n
         self._app_version = app_version
@@ -372,12 +376,14 @@ class ConnectionCheckSheet(QDialog):
                                                  "Also check the internet (sends pings to {host})").format(host=host))
         self._tick.setChecked(False)
         self._tick.toggled.connect(self._on_tick)
-        self._hint = QLabel(self._tr(
-            "CHECK_CONN_HINT", "To measure the internet all the time, turn on “{setting}” in Settings."
-        ).format(setting=self._tr("CONN_PUBLIC_LABEL", "Also measure true internet latency")))
-        self._hint.setFont(su.font(tokens.TYPE_CAPTION))
-        self._hint.setWordWrap(True)
-        self._hint.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        # "Measure it all the time?" with a one-click way there (D4) - it used to only name the setting.
+        # The action is swappable (set_on_click): D5 makes it an inline confirm instead of a Settings trip.
+        from netspeedtray.utils.components import NoticeLink
+        self._hint = NoticeLink(
+            self._tr("CHECK_CONN_ALWAYS_NOTICE", "Want the internet measured all the time?"),
+            self._tr("NOTICE_TURN_ON_IN_SETTINGS", "Turn on in Settings"),
+            self._open_internet_setting)
+        self._hint.button().setVisible(self._open_settings is not None)
         root.addWidget(self._tick)
         root.addWidget(self._hint)
         self._tick.setVisible(not self._public_on)
@@ -460,6 +466,15 @@ class ConnectionCheckSheet(QDialog):
             self.stop_check()
         else:
             self.start_check()
+
+    def _open_internet_setting(self) -> None:
+        """The notice's action: close this (modal) sheet - Settings could not be used behind it - and
+        open Settings on the internet-check switch. Only the click opens it; nothing is turned on."""
+        router = self._open_settings
+        if router is None:
+            return
+        self.reject()
+        router("network", "latency_public_enabled")
 
     def _on_tick(self, checked: bool) -> None:
         self._include_internet = bool(checked)
@@ -733,8 +748,10 @@ def open_connection_check(main_widget, config: Dict[str, Any], i18n, parent=None
     except Exception:
         __version__ = ""
     try:
+        router = getattr(main_widget, "open_settings", None)
         sheet = ConnectionCheckSheet(config, i18n, gateway_ip=gateway, app_version=__version__,
-                                     parent=parent, gateway_answered=answered)
+                                     parent=parent, gateway_answered=answered,
+                                     open_settings=router if callable(router) else None)
         sheet.exec()
     except Exception as e:
         logging.getLogger("NetSpeedTray.ConnectionCheck").error(

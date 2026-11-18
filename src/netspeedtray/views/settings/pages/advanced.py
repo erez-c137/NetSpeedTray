@@ -370,6 +370,10 @@ class AdvancedPage(QWidget):
     def _retention_label(self, days: int) -> str:
         return helpers.format_retention_label(days, self.i18n)
 
+    def anchor_widgets(self, key: str) -> list:
+        """The control(s) a Settings deep link for ``key`` lands on (SettingsDialog.open_page, D4)."""
+        return {"record_hardware_history": [self.record_hardware]}.get(key, [])
+
     def load_settings(self, config: Dict[str, Any]) -> None:
         days = int(config.get("keep_data", constants.config.defaults.DEFAULT_KEEP_DATA_DAYS))
         idx = self.keep_data.findData(days)

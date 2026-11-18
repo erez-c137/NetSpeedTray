@@ -9,7 +9,7 @@ to provide a cohesive user experience.
 
 import logging
 import re
-from typing import Optional, Final
+from typing import Callable, Optional, Final
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QBoxLayout, QCheckBox, QLabel, QSlider,
     QSizePolicy, QStyle, QStyleOption, QLineEdit, QFrame, QToolButton, QButtonGroup,
@@ -998,6 +998,14 @@ class SettingExpander(QWidget):
     def contentLayout(self) -> QVBoxLayout:
         return self._content_layout
 
+    def hasHeaderToggle(self) -> bool:
+        """True when the header carries the feature's on/off toggle (the body shows only while it is on)."""
+        return self._has_toggle
+
+    def header(self) -> QWidget:
+        """The header row - all that is on screen while the expander is collapsed."""
+        return self._header
+
     def set_description(self, text: str) -> None:
         """Swap the muted header description (only for an expander built with one)."""
         if self._desc_label is not None:
@@ -1360,3 +1368,263 @@ class ArrowStylePicker(QWidget):
                     return {"arrow_up_symbol": "", "arrow_down_symbol": ""}
                 return {"arrow_up_symbol": up, "arrow_down_symbol": down}
         return {"arrow_up_symbol": "", "arrow_down_symbol": ""}
+
+
+# --- NoticeLink: a moment-of-need prompt with a real action (2.2.2 D4) --------------------------------
+
+def notice_link_colors() -> dict:
+    """The colours a NoticeLink paints with: ``{"text", "link", "focus", "background", "underline"}``.
+
+    High Contrast wins: the theme's own window text / hyperlink / highlight colours on its own window
+    colour (the app's Light/Dark surfaces are not what a High Contrast user picked, so the notice
+    paints its own background then), and the link is always underlined - colour alone must not carry
+    "this is clickable". Otherwise the app's tokens: secondary text, and the Windows accent nudged
+    until it reads at 4.5:1 on the card surface (a dark accent on the dark theme is unreadable as is)."""
+    from netspeedtray.utils.taskbar_appearance import read_high_contrast_link_colors
+    hc = read_high_contrast_link_colors()
+    if hc:
+        return {"text": hc["text"], "link": hc["link"], "focus": hc["focus"],
+                "background": hc["background"], "underline": True}
+    c = semantic_colors()
+    surface = tokens.CARD_BG_DARK if is_dark_mode() else tokens.CARD_BG_LIGHT
+    link = readable_on(c["accent"], surface)
+    return {"text": c["text_secondary"], "link": link, "focus": link, "background": None,
+            "underline": False}
+
+
+def readable_on(color_hex: str, surface_hex: str, minimum: float = 4.5) -> str:
+    """``color_hex``, lightened (on a dark surface) or darkened (on a light one) in small steps until
+    it reaches ``minimum`` contrast against ``surface_hex`` - the hue is kept, only the lightness moves."""
+    from netspeedtray.utils.color_scheme import contrast_ratio
+    color = QColor(color_hex)
+    if not color.isValid():
+        return color_hex
+    surface = QColor(surface_hex)
+    target = QColor(255, 255, 255) if surface.lightness() < 128 else QColor(0, 0, 0)
+    for step in range(0, 21):
+        t = step / 20.0
+        mixed = QColor(round(color.red() + (target.red() - color.red()) * t),
+                       round(color.green() + (target.green() - color.green()) * t),
+                       round(color.blue() + (target.blue() - color.blue()) * t))
+        if contrast_ratio(mixed.name(), surface.name()) >= minimum:
+            return mixed.name()
+    return target.name()
+
+
+class _NoticeLinkButton(QPushButton):
+    """A NoticeLink's action: a real push button - UI Automation sees a Button with Invoke, Tab reaches
+    it, Space (Qt's default) and Enter fire it - drawn as a link. Never a dialog's default button: Enter
+    on it fires IT, never the dialog's Save / Check again."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("noticeLinkAction")
+        self.setAutoDefault(False)
+        self.setDefault(False)
+        self.setFlat(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            # One activation per press; auto-repeats are swallowed too - passed up, an ignored Enter
+            # reaches the dialog, which presses its default button (#432 review, as _ExpanderHeader).
+            if not event.isAutoRepeat():
+                self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class NoticeLink(QFrame):
+    """A short notice with one link-style action: "Hardware history needs CPU or GPU monitoring.
+    Turn on in Settings ->". The pattern for every moment-of-need prompt that used to only SAY where to
+    go (2.2.2 D4); the data-cap tile's "Set a monthly limit" link is the original.
+
+    ``on_click`` is any callable and can be swapped later (``set_on_click``) - Settings deep links pass
+    ``lambda: main_widget.open_settings(page, anchor)``; an inline confirm (D5) or a help sheet (D6)
+    pass their own. ``activated`` is emitted first, on every activation, for listeners that only need
+    to know it happened.
+
+    Accessibility: the action's accessible name is its text (without the arrow), its description the
+    notice text, so a screen reader landing on the button hears both. Keyboard: Tab reaches the button,
+    Enter and Space activate it. Theme: Light/Dark tokens, Windows High Contrast colours when that is
+    on (``refresh_theme`` re-reads them). RTL: the box layout mirrors with the layout direction and the
+    arrow flips.
+
+    ``stacked`` puts the action under the text instead of after it; ``centered`` centres both (an
+    empty-state overlay on a chart). ``text`` may be empty: the action alone.
+    """
+
+    activated = pyqtSignal()
+
+    def __init__(self, text: str, action_text: str, on_click: Optional[Callable[[], None]] = None,
+                 *, stacked: bool = False, centered: bool = False, font_token: tuple = tokens.TYPE_CAPTION,
+                 parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("noticeLink")
+        self._on_click = on_click
+        self._action_text = str(action_text or "")
+        self._colors: dict = {}
+
+        direction = QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight
+        lay = QBoxLayout(direction, self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(tokens.SPACE_XS if stacked else tokens.SPACE_S)
+        self._layout = lay
+
+        self._label = QLabel()
+        self._label.setObjectName("noticeLinkText")
+        self._label.setWordWrap(True)
+        self._label.setFont(token_font(font_token))
+        if centered:
+            self._label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        self._button = _NoticeLinkButton()
+        self._button.setFont(token_font(font_token))
+        self._button.clicked.connect(self._fire)
+
+        if stacked:
+            # The label spans the full width (an alignment flag here would shrink it to its unwrapped
+            # size hint and clip the wrapped lines); its own text alignment does the centring.
+            align = Qt.AlignmentFlag.AlignHCenter if centered else Qt.AlignmentFlag.AlignLeading
+            lay.addWidget(self._label)
+            lay.addWidget(self._button, 0, align)
+        else:
+            lay.addWidget(self._label, 1)
+            lay.addWidget(self._button, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.set_text(text)
+        self._sync_action_text()
+        self.refresh_theme()
+
+    # -- content --------------------------------------------------------------------------------------
+    def text(self) -> str:
+        return self._text
+
+    def action_text(self) -> str:
+        return self._action_text
+
+    def button(self) -> QPushButton:
+        return self._button
+
+    def label(self) -> QLabel:
+        return self._label
+
+    def set_text(self, text: str) -> None:
+        self._text = str(text or "")
+        set_ui_text(self._label, self._text)
+        self._label.setVisible(bool(self._text))
+        self._button.setAccessibleDescription(self._text)
+
+    def set_action_text(self, action_text: str) -> None:
+        self._action_text = str(action_text or "")
+        self._sync_action_text()
+
+    def set_on_click(self, on_click: Optional[Callable[[], None]]) -> None:
+        """Swap what the action does (D5: a Settings deep link becomes an inline confirm)."""
+        self._on_click = on_click
+
+    def click(self) -> None:
+        """Activate the action as a user would (tests, and a host forwarding a click)."""
+        self._button.click()
+
+    def _fire(self) -> None:
+        self.activated.emit()
+        cb = self._on_click
+        if cb is None:
+            return
+        try:
+            cb()
+        except Exception as e:
+            logger.error("NoticeLink action '%s' failed: %s", self._action_text, e, exc_info=True)
+
+    def _sync_action_text(self) -> None:
+        arrow = "←" if self.isRightToLeft() else "→"   # points the reading way
+        shown = f"{self._action_text} {arrow}" if self._action_text else ""
+        self._button.setText(shown)
+        apply_text_face(self._button, shown)
+        self._button.setAccessibleName(self._action_text)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.LayoutDirectionChange:
+            self._sync_action_text()
+
+    # -- theme ----------------------------------------------------------------------------------------
+    def refresh_theme(self) -> None:
+        """(Re)apply the colours: Light/Dark tokens, or High Contrast's own (see notice_link_colors)."""
+        c = notice_link_colors()
+        self._colors = c
+        under = "underline" if c["underline"] else "none"
+        bg = c["background"]
+        frame_bg = (f"QFrame#noticeLink {{ background-color: {bg}; border-radius: {tokens.RADIUS_CONTROL}px; }}"
+                    if bg else "QFrame#noticeLink { background: transparent; }")
+        self.setStyleSheet(
+            frame_bg
+            + f" QLabel#noticeLinkText {{ color: {c['text']}; background: transparent; }}"
+            + f" QPushButton#noticeLinkAction {{ color: {c['link']}; background: transparent;"
+              f" border: 2px solid transparent; border-radius: {tokens.RADIUS_CONTROL}px;"
+              f" padding: 1px 4px; text-decoration: {under}; }}"
+            + " QPushButton#noticeLinkAction:hover { text-decoration: underline; }"
+            + f" QPushButton#noticeLinkAction:focus {{ border: 2px solid {c['focus']}; }}"
+            + " QPushButton#noticeLinkAction:pressed { text-decoration: underline; }"
+        )
+        if bg:
+            self._layout.setContentsMargins(tokens.SPACE_S, tokens.SPACE_XS, tokens.SPACE_S, tokens.SPACE_XS)
+        else:
+            self._layout.setContentsMargins(0, 0, 0, 0)
+
+    def colors(self) -> dict:
+        """The colours last applied (tests, and a host that wants to match them)."""
+        return dict(self._colors)
+
+
+class _AnchorHighlight(QWidget):
+    """The outline Settings draws round the control a deep link landed on (flash_highlight)."""
+
+    def __init__(self, target: QWidget, color: str) -> None:
+        super().__init__(target)
+        self.setObjectName("anchorHighlight")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._color = QColor(color)
+        self.setGeometry(target.rect())
+        target.installEventFilter(self)
+        self.raise_()
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self.parentWidget() and event.type() == QEvent.Type.Resize:
+            self.setGeometry(obj.rect())
+        return False
+
+    def paintEvent(self, event) -> None:
+        from PyQt6.QtGui import QPen
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(self._color)
+        pen.setWidth(2)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), tokens.RADIUS_CARD, tokens.RADIUS_CARD)
+
+
+def flash_highlight(target: QWidget, duration_ms: Optional[int] = None) -> Optional[QWidget]:
+    """Outline ``target`` (a setting card) for ``duration_ms`` - where a deep link landed. A static
+    outline that is simply removed, so there is nothing to animate under Reduce motion. The colour is
+    the (readable) accent; High Contrast: the theme's highlight colour. Returns the outline widget."""
+    if target is None:
+        return None
+    if duration_ms is None:
+        duration_ms = constants.timers.SETTINGS_ANCHOR_HIGHLIGHT_MS
+    for old in target.findChildren(QWidget, "anchorHighlight"):
+        old.hide()
+        old.deleteLater()
+    overlay = _AnchorHighlight(target, notice_link_colors()["focus"])
+    overlay.show()
+    # The timer is the overlay's child: if the card (and so the overlay) goes first, so does the timer.
+    timer = QTimer(overlay)
+    timer.setSingleShot(True)
+    timer.timeout.connect(overlay.deleteLater)
+    timer.start(int(duration_ms))
+    return overlay

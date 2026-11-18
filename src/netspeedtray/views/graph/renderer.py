@@ -61,6 +61,11 @@ class GraphRenderer(QObject):
         self.ax_gpu = None
         self.ax_ram = None
         self.axes = []
+        # D4: True when the host draws the "hardware history is off" notice itself (a Qt overlay with a
+        # Settings button, graph_host.HistoryOffNotice); the render then only reports which one
+        # (history_off_notice: None / "monitor" / "record") instead of drawing the text into the chart.
+        self.notice_overlay = False
+        self.history_off_notice = None
         
         # State
         self._current_date_formatter_type = None
@@ -421,6 +426,8 @@ class GraphRenderer(QObject):
         """
         # Initialize for return statement
         plotted_ts, plotted_up, plotted_down, plotted_vals = None, None, None, None
+        # Set again by _draw_hw_empty_message when this render says hardware history is off.
+        self.history_off_notice = None
 
         # Check if we need to clear everything
         rebuild_required = (
@@ -899,6 +906,11 @@ class GraphRenderer(QObject):
         reasons = [off.get(r) for r in roles if r != "ram" or r in off]
         if period_key == "TIMELINE_SESSION" or not reasons or None in reasons:
             text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
+        elif getattr(self, "notice_overlay", False):
+            # The host draws a real notice with a Settings button over the canvas instead (D4,
+            # graph_host.HistoryOffNotice): say which one, draw nothing here.
+            self.history_off_notice = "record" if "record" in reasons else "monitor"
+            return
         elif "record" in reasons:
             # A role IS monitored but not recorded: the record switch is the reason (M6). Turning on
             # the other monitor - what the old "monitor"-first order said - would record nothing either.

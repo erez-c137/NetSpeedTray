@@ -96,6 +96,13 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - Removed: `PAUSE_IN_MENU_LABEL` ("Add Pause/Resume to the right-click menu") - that switch is now the Pause / Resume row of the section above.
 > - No review needed: `NET_GRAPH_NO_TRAFFIC_TITLE` (the old first line, your translation kept as is), `HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP` (the old `RECORD_HARDWARE_HISTORY_INACTIVE_SUB` text, kept as is) and `HARDWARE_NEEDS_CPU_TOOLTIP` (back, with its 2.2.0 text).
 
+> 🆕 **Pending native review for 2.2.2 (one-click notices, see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. Places that used to only say "turn this on in Settings" now have a button that opens Settings on that exact switch.
+> - `NOTICE_TURN_ON_IN_SETTINGS` - the button ("Turn on in Settings"). It opens Settings and highlights the switch; it does not turn anything on by itself. Keep it short - it sits beside or under a sentence. Use your word for Settings from `SETTINGS_MENU_ITEM`.
+> - `HW_HISTORY_MONITOR_OFF_NOTICE` - the note in the middle of the Monitor's empty Hardware graph when CPU and GPU monitoring are off: "Hardware history needs CPU or GPU monitoring." Shown there instead of `HARDWARE_HISTORY_OFF_MESSAGE`.
+> - `HW_HISTORY_RECORD_OFF_NOTICE` - the same spot when monitoring is on but Settings > Advanced > Record hardware history is off: "Hardware history isn't being recorded."
+> - `CHECK_CONN_ALWAYS_NOTICE` - under the Check connection sheet's "Also check the internet" tick: "Want the internet measured all the time?" (followed by the button).
+> - Removed: `CHECK_CONN_HINT` ("To measure the internet all the time, turn on ... in Settings.") - replaced by the two keys above.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)
