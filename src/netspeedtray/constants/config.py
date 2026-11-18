@@ -448,6 +448,13 @@ class ConfigConstants:
         "update_snooze": "",
         "first_run_v2_seen": False,
         "first_run_ever": True,
+        # 2.2.2 D1: the first-run tip (hover / double-click / right-click) has been shown. A fresh
+        # install keeps first_run_ever True until it shows (deferred past a hidden widget, a fullscreen
+        # app, the sign-in rush), then sets both.
+        "first_run_tip_shown": False,
+        # 2.2.2 D2: the highest version that has run here (None = 2.2.1 or older, or a fresh config).
+        # A final release newer than it shows the one-time "what's new" once; see core/startup_notices.
+        "last_seen_version": None,
         "tooltip_hint_shown_count": 0,     # gesture-hint tooltip fades after a few sessions
         "pin_hint_shown_count": 0,         # "Click the widget to keep this open" footer: first few hover cards
         "history_upgrade_notice_shown": False,  # the one "history upgraded" flyout after v7 -> v8
@@ -626,6 +633,9 @@ class ConfigConstants:
                           "regex": r"(|[0-9A-Za-z.+\-]{1,64}@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"},
         "first_run_v2_seen": {"type": bool, "default": False},
         "first_run_ever": {"type": bool, "default": True},
+        "first_run_tip_shown": {"type": bool, "default": False},
+        # A version string like __version__ ("2.2.2", "2.2.2-beta.1"); same charset as update_snooze's.
+        "last_seen_version": {"type": (str, type(None)), "default": None, "regex": r"[0-9A-Za-z.+\-]{1,64}"},
         "tooltip_hint_shown_count": {"type": int, "default": 0, "min": 0},
         "pin_hint_shown_count": {"type": int, "default": 0, "min": 0},
         "history_upgrade_notice_shown": {"type": bool, "default": False},

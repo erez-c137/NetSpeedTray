@@ -96,6 +96,12 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - Removed: `PAUSE_IN_MENU_LABEL` ("Add Pause/Resume to the right-click menu") - that switch is now the Pause / Resume row of the section above.
 > - No review needed: `NET_GRAPH_NO_TRAFFIC_TITLE` (the old first line, your translation kept as is), `HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP` (the old `RECORD_HARDWARE_HISTORY_INACTIVE_SUB` text, kept as is) and `HARDWARE_NEEDS_CPU_TOOLTIP` (back, with its 2.2.0 text).
 
+> 🆕 **Pending native review for 2.2.2 (first-run tip and "what's new", see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. All 16 translated locales.
+> - `FIRST_RUN_TIP_TITLE` / `FIRST_RUN_TIP_BODY` - a small card pointing at the widget on a new install's first launch: the title ("NetSpeedTray is running" - the same words as the panel that opens from Start) and three short lines teaching the gestures ("Point to the speeds for details." / double-click = the Monitor / right-click = menu and Settings). **Keep the three lines and the two line breaks.** "Point to" is Windows' own word for hovering - use your Windows translation of it. Use your own words for "the Monitor" and "Settings" (`SHOW_MONITOR_MENU_ITEM`, `SETTINGS_MENU_ITEM`). **Hebrew (owner review, please):** the three lines are all noun-form ("ריחוף ... מציג", "לחיצה כפולה ... פותחת", "לחיצה ימנית ... פותחת").
+> - `FIRST_RUN_TIP_OPEN_MONITOR_BUTTON` - its button ("Open the Monitor"). The other button reuses your `WELCOME_2_0_GOT_IT_BUTTON`. **Hebrew:** "פתח מוניטור", the form of `CLICK_ACTION_OPEN_MONITOR_LABEL` - owner review, please.
+> - `WHATS_NEW_TITLE` - the title of the one-time card after an update ("Updated to NetSpeedTray {version}"). **Keep `{version}`.** Its buttons are your `WELCOME_2_0_WHATS_NEW_BUTTON` and `WELCOME_2_0_GOT_IT_BUTTON` - nothing new.
+> - `WHATS_NEW_2_2_2` - that card's text for 2.2.2: "Open it from Start for a quick panel. Notices now link straight to the setting they mean, and Settings is easier to find your way around." Keep it short (a test caps it at 1.5x the English length); "Start" is Windows' Start menu - use its name in your language. Each future release gets its own `WHATS_NEW_x_y_z` key.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

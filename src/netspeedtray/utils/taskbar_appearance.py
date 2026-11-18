@@ -83,6 +83,28 @@ def read_high_contrast() -> tuple:
         return False, None, None
 
 
+_COLOR_HIGHLIGHT = 13
+_COLOR_HIGHLIGHTTEXT = 14
+
+
+def read_high_contrast_ui_colors() -> Optional[dict]:
+    """The contrast theme's own colours for a small window of ours (the Flyout card), or None when
+    High Contrast is off / unreadable: ``text`` (COLOR_WINDOWTEXT), ``background`` (COLOR_WINDOW),
+    ``highlight`` / ``highlight_text`` (COLOR_HIGHLIGHT / COLOR_HIGHLIGHTTEXT, a primary button)."""
+    on, text, background = read_high_contrast()
+    if not on or not text or not background:
+        return None
+    try:
+        get = ctypes.windll.user32.GetSysColor
+        get.restype = ctypes.c_uint32
+        return {"text": text, "background": background,
+                "highlight": _colorref_hex(get(_COLOR_HIGHLIGHT)),
+                "highlight_text": _colorref_hex(get(_COLOR_HIGHLIGHTTEXT))}
+    except Exception as e:   # pragma: no cover - defensive
+        logger.debug("High Contrast colours unreadable: %s", e)
+        return {"text": text, "background": background, "highlight": text, "highlight_text": background}
+
+
 def _read_dword(path: str, name: str) -> Optional[int]:
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, path)

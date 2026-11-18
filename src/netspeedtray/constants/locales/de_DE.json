@@ -633,5 +633,10 @@
     "BACKUP_HISTORY_ERR_BUSY": "Eine Sicherung in diese Datei läuft bereits.",
     "CONTEXT_MENU_ITEMS_LABEL": "Einträge im Rechtsklick-Menü",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Wählen Sie, was das Rechtsklick-Menü des Widgets anzeigt. {settings} und {exit} werden immer angezeigt.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Deine Taskleiste zeigt eine Akzentfarbe. Farben, die darauf schwer lesbar sind, werden deshalb in einer gut lesbaren Textfarbe dargestellt."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Deine Taskleiste zeigt eine Akzentfarbe. Farben, die darauf schwer lesbar sind, werden deshalb in einer gut lesbaren Textfarbe dargestellt.",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray läuft",
+    "FIRST_RUN_TIP_BODY": "Für Details mit der Maus auf die Werte zeigen.\nDoppelklick öffnet den Monitor.\nRechtsklick für das Menü und die Einstellungen.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Monitor öffnen",
+    "WHATS_NEW_TITLE": "Aktualisiert auf NetSpeedTray {version}",
+    "WHATS_NEW_2_2_2": "Öffne es über Start für ein Schnellfenster. Hinweise führen jetzt direkt zur passenden Einstellung, und in den Einstellungen findest du dich leichter zurecht."
 }

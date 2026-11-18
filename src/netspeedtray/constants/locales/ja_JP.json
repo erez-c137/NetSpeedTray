@@ -633,5 +633,10 @@
     "BACKUP_HISTORY_ERR_BUSY": "このファイルへのバックアップはすでに実行中です。",
     "CONTEXT_MENU_ITEMS_LABEL": "右クリックメニューの項目",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "ウィジェットの右クリックメニューに表示する項目を選びます。「{settings}」と「{exit}」は常に表示されます。",
-    "ACCENT_TASKBAR_COLORS_NOTE": "タスクバーにアクセント カラーが表示されているため、その上で読みにくい色は読みやすい文字色で描画されます。"
+    "ACCENT_TASKBAR_COLORS_NOTE": "タスクバーにアクセント カラーが表示されているため、その上で読みにくい色は読みやすい文字色で描画されます。",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray は実行中です",
+    "FIRST_RUN_TIP_BODY": "速度をポイントすると詳細を表示します。\nダブルクリックでモニターを開きます。\n右クリックでメニューと設定を開きます。",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "モニターを開く",
+    "WHATS_NEW_TITLE": "NetSpeedTray {version} に更新されました",
+    "WHATS_NEW_2_2_2": "スタートから開くとクイック パネルが表示されます。通知から該当する設定へ直接移動でき、設定画面もわかりやすくなりました。"
 }
