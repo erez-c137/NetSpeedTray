@@ -128,6 +128,20 @@ class StartupNotices(QObject):
         except Exception:
             self._timer.start(constants.app.STARTUP_NOTICE_RETRY_MS)
 
+    def yield_to_window(self, window) -> None:
+        """Integration 2.2.2 (#592 x #591): the user opened a window of ours from Start - D3's
+        "NetSpeedTray is running" panel, which already carries the same gesture hint. It wins like
+        another card: the tip / "what's new" steps aside (never lost) and comes back
+        STARTUP_NOTICE_DELAY_MS after the window is gone (blocked_reason keeps it waiting meanwhile)."""
+        if self._live_card() is None and not self._pending:
+            return
+        self._step_aside()
+        self._timer.start(constants.app.STARTUP_NOTICE_RETRY_MS)   # a backstop if destroyed never comes
+        try:
+            window.destroyed.connect(self._after_other_card)
+        except Exception:
+            pass
+
     def _after_other_card(self) -> None:
         if self._pending or self._card_stepped_aside():
             self._timer.start(constants.app.STARTUP_NOTICE_DELAY_MS)
@@ -170,6 +184,13 @@ class StartupNotices(QObject):
             pass
         if self._other_card_up():
             return "another notice is up"
+        # Integration 2.2.2 (#592 x #591): never beside D3's running panel - the user is using it.
+        panel = getattr(w, "_running_panel", None)
+        try:
+            if _alive(panel) and panel.isVisible():
+                return "the running panel is open"
+        except Exception:
+            pass
         return None
 
     def _other_card_up(self) -> bool:

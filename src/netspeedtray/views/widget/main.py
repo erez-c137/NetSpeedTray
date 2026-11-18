@@ -2609,6 +2609,14 @@ class NetworkSpeedWidget(QWidget):
                 panel.place_on_screen(running_panel.screen_for_new_window(lparam, self))
             running_panel.bring_to_front(panel)
             self.logger.info("Second launch: the 'running' panel is open.")
+            # Integration 2.2.2 (#591 x #592): a first-run tip / "what's new" up or waiting steps
+            # aside for the panel and returns after it closes (StartupNotices.yield_to_window).
+            notices = getattr(self, "_startup_notices", None)
+            if notices is not None:
+                try:
+                    notices.yield_to_window(panel)
+                except Exception as e:
+                    self.logger.debug("one-time notice could not yield to the panel: %s", e)
         except Exception as e:
             self.logger.error("Opening the 'running' panel failed: %s", e, exc_info=True)
 
