@@ -108,6 +108,13 @@ class TrayIconManager(QObject):
             if hasattr(self.widget, 'open_monitor_window'):
                 monitor_action.triggered.connect(self.widget.open_monitor_window)
 
+            # Check connection (2.2.2 D7): the on-demand router + internet check, until now only inside
+            # the Monitor. The sheet's own label (CHECK_CONN_ACTION), so no new string; hideable in Settings.
+            self.check_connection_action = self.context_menu.addAction(
+                getattr(self.i18n, "CHECK_CONN_ACTION", "Check connection"))
+            if hasattr(self.widget, 'open_connection_check'):
+                self.check_connection_action.triggered.connect(self.widget.open_connection_check)
+
             self.context_menu.addSeparator()
 
             # --- Control (opt-in) - Pause/Resume plus its own divider, shown only when the user
@@ -151,6 +158,7 @@ class TrayIconManager(QObject):
             self._menu_icon_actions = [
                 (settings_action, 0xE713),    # Settings (gear)
                 (monitor_action, 0xE9D9),     # Monitor (chart)
+                (self.check_connection_action, 0xE774),  # Check connection (globe, as on the running panel)
                 (self.pause_action, 0xE769),  # Pause (→ play when paused)
                 (self.reset_position_action, 0xE72C),  # Reset position (refresh)
                 (update_action, 0xE895),      # Check for updates (sync)
@@ -243,6 +251,8 @@ class TrayIconManager(QObject):
             hidden = self._hidden_menu_items()
             if getattr(self, "monitor_action", None) is not None:
                 self.monitor_action.setVisible(ids.CONTEXT_MENU_ITEM_MONITOR not in hidden)
+            if getattr(self, "check_connection_action", None) is not None:
+                self.check_connection_action.setVisible(ids.CONTEXT_MENU_ITEM_CHECK_CONNECTION not in hidden)
             if getattr(self, "support_action", None) is not None:
                 self.support_action.setVisible(ids.CONTEXT_MENU_ITEM_SUPPORT not in hidden)
             # Pause/Resume is opt-in: show the action + its divider only when enabled in Settings.

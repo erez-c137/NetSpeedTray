@@ -169,7 +169,7 @@ state is two settings in `NetSpeedTray_Config.json`: `first_run_tip_shown` and `
 |---|---|---|---|---|
 | Update check | HTTPS to `api.github.com` | At most once per 24 h (looked for at start, every 3 h and after a wake; a failed check is retried), and from the right-click menu | On | Settings → General → Check for updates automatically, or the policy above |
 | Update download | HTTPS to `github.com` release assets (redirects to GitHub's download CDN), plus a certificate revocation check to the certificate authority | Only when a user clicks Download | - | The policy or the toggle above (no check, no offer) |
-| Latency check | ICMP echo to the default gateway (a connected physical adapter's, when there are several) | Four every 3 s (about 1.3/s), 12-byte payload `netspeedtray` | On | Settings → Network Interfaces → Connection latency |
+| Latency check | ICMP echo to the default gateway (a connected physical adapter's, when there are several) | Four every 3 s (about 1.3/s), 12-byte payload `netspeedtray` | On | Settings → Network → Connection latency |
 | Internet latency | ICMP echo to `1.1.1.1` (or the host you set) | Same rate, in addition | **Off** | Same card |
 | DNS lookup | Your normal DNS server | Once per burst (every 3 s), only if the internet host is a *name* | Off | Use an IP address |
 | Check connection | 20 pings, 200 ms apart, to the gateway (and the internet host if enabled or ticked) | Only when a user clicks it, even while the latency check is off | - | - |

@@ -113,8 +113,8 @@ class AdvancedPage(QWidget):
                                         description=self.i18n.BACKUP_HISTORY_SUB, control=backup_ctl)
         layout.addWidget(self._backup_card)
 
-        # --- Behavior ---
-        layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
+        # --- Motion and windows (was "Behavior", 2.2.2 D7) ---
+        layout.addWidget(section_header(self.i18n.WINDOWS_MOTION_GROUP_TITLE))
         self.reduce_motion = Win11Toggle(label_text="")
         self.reduce_motion.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.ADVANCED_REDUCE_MOTION_LABEL, control=self.reduce_motion))

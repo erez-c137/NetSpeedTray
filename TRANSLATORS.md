@@ -149,6 +149,22 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - `WHATS_NEW_TITLE` - the title of the one-time card after an update ("Updated to NetSpeedTray {version}"). **Keep `{version}`.** Its buttons are your `WELCOME_2_0_WHATS_NEW_BUTTON` and `WELCOME_2_0_GOT_IT_BUTTON` - nothing new.
 > - `WHATS_NEW_2_2_2` - that card's text for 2.2.2: "Open it from Start for a quick panel. Notices now link straight to the setting they mean, and Settings is easier to find your way around." Keep it short (a test caps it at 1.5x the English length); "Start" is Windows' Start menu - use its name in your language. Each future release gets its own `WHATS_NEW_x_y_z` key.
 
+> 🆕 **Pending native review for 2.2.2 (clearer words in Settings, see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. All 16 translated locales. Settings now says what a switch does and names each section by what is in it.
+> - **Changed text** (same key - please re-check your translation):
+>   - `MONITOR_CPU_LABEL` / `MONITOR_GPU_LABEL`: "Monitor CPU utilization" -> **"Show CPU usage"**, "Monitor GPU utilization" -> **"Show GPU usage"** ("Monitor" is also the name of the window). Follow your `MONITOR_RAM_LABEL` ("Show RAM usage") - the four switches sit together.
+>   - `NETWORK_INTERFACES_GROUP` (the Settings page in the sidebar): "Network interfaces" -> **"Network"**. Filled with your `MONITOR_TAB_NETWORK`, the Monitor's Network tab - the same word in both windows.
+>   - `GRAPH_FIXED_SCALE_DESC`: "(Network interfaces page)" -> **"(Network page)"** - only the page name changed, to your new `NETWORK_INTERFACES_GROUP`.
+>   - `INTERFACE_LAYOUT_GROUP` (a section on Settings > Appearance): "Interface layout" -> **"Speed text layout"** (swap upload/download, hide arrows, hide unit, short units - "interface" was easy to read as a network interface).
+>   - `NETWORK_IDENTITY_TITLE` (Settings > Network): "Network identity" -> **"Wi-Fi band and name"**. Use your Windows' word for Wi-Fi (German "WLAN").
+> - **New:**
+>   - `STARTUP_UPDATES_GROUP_TITLE` ("Startup and updates" - Settings > General), `PLACEMENT_GROUP_TITLE` ("Placement and visibility" - Settings > Widget: which taskbar, dragging, floating, full screen; not your word for "Position" - the Display order rows right above it are your `ORDER_POSITION_1`..`3`) and `WINDOWS_MOTION_GROUP_TITLE` ("Motion and windows" - Settings > Advanced: fewer animations, keep the windows on top). Section headers - short.
+>   - `HARDWARE_USAGE_DESC` - the line under "Show CPU usage" and "Show GPU usage": "Shows it on the widget and records its history for the Monitor." Use your word for the widget and your `MONITOR_WINDOW_TITLE`.
+>   - `MONITOR_MOST_CONNECTIONS_CAPTION` - a muted line under the Monitor's "Most connections" title: "Apps with the most open connections - Windows doesn't report per-app speed." Keep it to one short line.
+>   - `STAT_CELL_P95_TOOLTIP` / `STAT_CELL_P99_TOOLTIP` - tooltips on the "95th pct" / "99th pct" figures (Statistics sheet, Check connection): "95% of the readings were at or below this - only the top 5% went higher." The same text serves speeds and ping times, so don't say "slower" or "faster". Write the percent as your `PERCENT_TEMPLATE` does.
+>   - `CHECK_CONN_JITTER_TOOLTIP` - the tooltip on Check connection's "Jitter": what it is, in plain words. Use your `CHECK_CONN_JITTER` word.
+> - **Removed:** `BEHAVIOR_GROUP_TITLE` ("Behavior") - the three pages that shared it have their own headers now (above).
+> - **Nothing new to translate:** the right-click menu's new "Check connection" item and its switch under Settings > General > Right-click menu items reuse your `CHECK_CONN_ACTION`; the plan-speed boxes' unit is your `MBITS_UNIT` (it was a hard-coded "Mbps").
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

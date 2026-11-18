@@ -68,6 +68,14 @@ _DETAIL_ROWS = [
     ("dns", "CHECK_CONN_DETAILS_DNS", "DNS servers", True),
 ]
 # Stat cells per hop, in grid order: (field, i18n key, English fallback).
+# Plain-words tooltips for the two figures people ask about (2.2.2 D7): (i18n key, English fallback).
+_CELL_TIPS = {
+    "p95_ms": ("STAT_CELL_P95_TOOLTIP",
+               "95% of the readings were at or below this - only the top 5% went higher."),
+    "jitter_ms": ("CHECK_CONN_JITTER_TOOLTIP",
+                  "How much the ping time changes from one reply to the next. Low jitter means a steady "
+                  "connection - it matters most for calls and games."),
+}
 _CELLS = [
     ("sent", "CHECK_CONN_SENT", "Sent"),
     ("received", "CHECK_CONN_RECEIVED", "Received"),
@@ -192,6 +200,10 @@ class _HopCard(QFrame):
         self.values: Dict[str, QLabel] = {}
         for i, (field, key, default) in enumerate(_CELLS):
             cell, val = self._cell(_tr(i18n, key, default))
+            if field in _CELL_TIPS:
+                tip = _tr(i18n, *_CELL_TIPS[field])
+                cell.setToolTip(tip)
+                cell.setAccessibleDescription(tip)
             self.values[field] = val
             grid.addWidget(cell, i // 3, i % 3)
         box.addLayout(grid)

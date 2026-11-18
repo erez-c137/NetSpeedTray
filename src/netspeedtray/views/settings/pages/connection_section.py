@@ -81,7 +81,8 @@ class ConnectionSettings(QWidget):
         s = QSpinBox()
         s.setRange(0, 100000)
         s.setSingleStep(10)
-        s.setSuffix(" Mbps")
+        # The locale's own unit (Mbit/s, Мбит/с...); the value is always decimal megabits per second.
+        s.setSuffix(" " + self._tr("MBITS_UNIT", "Mbps"))
         s.setSpecialValueText(self._tr("CONN_PLAN_OFF", "Off"))   # 0 reads "Off", not "0 Mbps"
         s.valueChanged.connect(lambda _v: self.on_change())
         return s

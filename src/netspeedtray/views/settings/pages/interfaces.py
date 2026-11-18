@@ -43,7 +43,23 @@ class InterfacesPage(QWidget):
         layout = page_layout(self)
         c = style_utils.semantic_colors()
 
-        # --- Monitoring mode (radio group in a card) ---
+        # Order (2.2.2 D7): Data usage, Connection, Wi-Fi band and name, then the adapter list LAST - the
+        # most technical control (which adapters to count) used to open the page. Last also means the
+        # "Select specific" reveal grows at the bottom of the page and shifts nothing above it.
+
+        # Data-usage / data-cap section (the feature's in-settings home, 2.0 IA).
+        self.datacap = DataCapSettings(self.on_change, self.i18n)
+        layout.addWidget(self.datacap)
+
+        # Connection section - latency monitoring (gateway + opt-in public anchor) + advertised plan.
+        self.connection = ConnectionSettings(self.on_change, self.i18n)
+        layout.addWidget(self.connection)
+
+        # Wi-Fi band and name (v2.1 "Network identity") - the Wi-Fi indicator on the widget.
+        self.identity = NetworkIdentitySettings(self.on_change, self.i18n)
+        layout.addWidget(self.identity)
+
+        # --- Monitoring mode (radio group in a card) - which adapters are counted. Last on the page. ---
         layout.addWidget(section_header(self.i18n.MONITORING_MODE_LABEL))
         mode_card = QFrame()
         mode_card.setObjectName("modeCard")
@@ -108,21 +124,6 @@ class InterfacesPage(QWidget):
         ml.addWidget(self.interface_scroll)
 
         layout.addWidget(mode_card)
-
-        # Order (2.2 IA pass): Data usage, Connection, Network identity. Data usage has its own tray
-        # entry and was last on the page below two open expanders; identity is the most cosmetic.
-
-        # Data-usage / data-cap section (the feature's in-settings home, 2.0 IA).
-        self.datacap = DataCapSettings(self.on_change, self.i18n)
-        layout.addWidget(self.datacap)
-
-        # Connection section - latency monitoring (gateway + opt-in public anchor) + advertised plan.
-        self.connection = ConnectionSettings(self.on_change, self.i18n)
-        layout.addWidget(self.connection)
-
-        # Network identity (v2.1) - the Wi-Fi band / network indicator on the widget.
-        self.identity = NetworkIdentitySettings(self.on_change, self.i18n)
-        layout.addWidget(self.identity)
 
         layout.addStretch()
 

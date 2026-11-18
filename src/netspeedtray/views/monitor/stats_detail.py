@@ -407,11 +407,19 @@ class StatsDetailSheet(QDialog):
             (self._tr("STAT_CELL_P99", "99th pct"), fmt(summ.p99) if summ.exact else "-"),
             (self._tr("STAT_CELL_MIN", "Min"), fmt(summ.min) if summ.exact else "-"),
         ]
+        # Plain-words tooltips for the percentiles (2.2.2 D7), by cell index. Neutral about
+        # direction: the same cells show speeds (higher is better) and ping times (lower is better).
+        tips = {
+            3: self._tr("STAT_CELL_P95_TOOLTIP",
+                        "95% of the readings were at or below this - only the top 5% went higher."),
+            4: self._tr("STAT_CELL_P99_TOOLTIP",
+                        "99% of the readings were at or below this - only the top 1% went higher."),
+        }
         grid = QGridLayout()
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
         for i, (cap, val) in enumerate(cells):
-            grid.addWidget(self._stat_cell(cap, val, c), i // 3, i % 3)
+            grid.addWidget(self._stat_cell(cap, val, c, tips.get(i)), i // 3, i % 3)
         box.addLayout(grid)
 
         # Plain-text copy buffer for this block.
@@ -432,9 +440,12 @@ class StatsDetailSheet(QDialog):
             box.addWidget(ctx)
         return card
 
-    def _stat_cell(self, caption: str, value: str, c: Dict[str, str]) -> QFrame:
+    def _stat_cell(self, caption: str, value: str, c: Dict[str, str], tip: Optional[str] = None) -> QFrame:
         cell = QFrame()
         cell.setObjectName("statCell")
+        if tip:
+            cell.setToolTip(tip)
+            cell.setAccessibleDescription(tip)
         cell.setStyleSheet(f"QFrame#statCell {{ background: {c['subtle_fill']}; border-radius: 6px; }}")
         v = QVBoxLayout(cell)
         v.setContentsMargins(12, 8, 12, 8)

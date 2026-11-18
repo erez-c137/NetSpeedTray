@@ -46,9 +46,10 @@ def _shown(manager):
     return ["-" if a.isSeparator() else a.text() for a in manager.context_menu.actions() if a.isVisible()]
 
 
-def test_default_menu_is_unchanged(qt_owned, i18n):
+def test_default_menu(qt_owned, i18n):
     m = _menu(qt_owned, i18n, {})
-    assert _shown(m) == [i18n.SETTINGS_MENU_ITEM, i18n.SHOW_MONITOR_MENU_ITEM, "-",
+    # 2.2.2 D7 added Check connection after Show Monitor (the one item the default menu gained).
+    assert _shown(m) == [i18n.SETTINGS_MENU_ITEM, i18n.SHOW_MONITOR_MENU_ITEM, i18n.CHECK_CONN_ACTION, "-",
                          i18n.RESET_POSITION_MENU_ITEM, "-",
                          i18n.CHECK_FOR_UPDATES_MENU_ITEM, i18n.SUPPORT_MENU_ITEM, "-",
                          i18n.EXIT_MENU_ITEM]
@@ -211,7 +212,7 @@ def test_pause_row_sits_in_the_list_after_show_monitor(page, i18n):
     from netspeedtray.utils.components import SettingCard
     assert page.context_menu_items.isAncestorOf(page.pause_in_menu)
     rows = [c._title_label.text() for c in page.context_menu_items.findChildren(SettingCard)]
-    assert rows == ["Show Monitor", i18n.CLICK_ACTION_PAUSE_LABEL, "Reset Position",
+    assert rows == ["Show Monitor", "Check connection", i18n.CLICK_ACTION_PAUSE_LABEL, "Reset Position",
                     "Check for Updates", "Support this Project"]
     assert "pause" not in page.context_menu_toggles   # its own key, not a hidden-items id
     titles = [c._title_label.text() for c in page.findChildren(SettingCard)]
