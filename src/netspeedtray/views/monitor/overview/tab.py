@@ -20,6 +20,7 @@ dropped.
 from __future__ import annotations
 
 import logging
+import re
 from collections import deque
 from functools import partial
 from typing import Any, Deque, Dict, Optional
@@ -88,6 +89,36 @@ def _resolve_window(ws, key: str, now: datetime, session_start: Optional[datetim
     return start, now, (key == "TIMELINE_SESSION")
 
 
+def drop_time_label(last: datetime, now: datetime, language: Optional[str]) -> str:
+    """The "last" drop's time: HH:MM today, else the locale's numeric short date without the year
+    plus HH:MM ("10/11 16:48", "11.10 16:48") - an old drop must not read as this morning's. The
+    locale gives the day/month ORDER only: digits stay Western in every language, as every clock
+    and value does (helpers.fixed_digits) - formatted under QLocale "C", never "১১/১০"."""
+    hm = last.strftime("%H:%M")
+    if last.date() == now.date():
+        return hm
+    fallback = constants.network.latency.OUTAGE_LAST_DATE_FALLBACK_FORMAT
+    try:
+        from PyQt6.QtCore import QDate, QLocale
+        fmt = QLocale(str(language or "en_US")).dateFormat(QLocale.FormatType.ShortFormat)
+        fmt = re.sub(r"^y+[^dMy]*|[^dMy]*y+", "", fmt).strip() or fallback
+        if "MMM" in fmt:   # a month NAME would be in C (English) - keep it numeric
+            fmt = fmt.replace("MMMM", "M").replace("MMM", "M")
+        day = QLocale.c().toString(QDate(last.year, last.month, last.day), fmt)
+    except Exception:
+        day = f"{last.month}/{last.day}"
+    return f"{day} {hm}"
+
+
+def drop_color(last: Optional[datetime], now: datetime) -> str:
+    """The drop count's colour: red while the last drop is at most OUTAGE_RECENT_SEC old (24 h,
+    elapsed time - not "today"), amber when older or unknown. Red means recent, not "many"."""
+    lat = constants.network.latency
+    if last is not None and (now - last) <= timedelta(seconds=lat.OUTAGE_RECENT_SEC):
+        return lat.VERDICT_COLORS["slow"]
+    return lat.VERDICT_COLORS["ok"]
+
+
 def _boot_time() -> Optional[datetime]:
     """When this PC last started (psutil; no DB, no matplotlib), or None if unreadable."""
     try:
@@ -133,7 +164,7 @@ def _cap_coverage(ws, cap_start: Optional[datetime]) -> Optional[float]:
 
 def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
                  series: Optional[Dict[str, list]], poll: float, latency_enabled: bool,
-                 cap_start: Optional[datetime] = None):
+                 cap_start: Optional[datetime] = None, public_enabled: bool = False):
     """The window's DB reads - (series, summaries, drop events, session volume, cap coverage). Runs
     on the reader thread. ``series`` is the Session window's, already copied from the in-memory deques on the GUI
     thread (they are appended there); None means read the sparklines from the DB. The session volume
@@ -156,12 +187,16 @@ def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
         "gpu": ws.summarize_hardware("gpu", start, end, poll),
         "ram": ws.summarize_hardware("ram", start, end, poll),
     }
-    # Connection-drop events over the window (from the persisted gateway-timeout series), so a
-    # latency blip you missed live is still counted.
+    # Connection-drop events over the window (from the persisted loss series), so a latency blip you
+    # missed live is still counted. ONE hop decides: the internet anchor when the internet ping is on
+    # (if it answered, the connection was up - and a real router failure loses it too, so nothing
+    # true is lost), else the router. The Stats sheet's block for the same hop reads the same.
     events: Dict[str, Any] = {}
     if latency_enabled:
         from netspeedtray.utils import summaries as S   # lazy (only this reader uses it)
-        events = S.outage_summary(ws.get_hardware_history("latency_gw_timeout", start, end))
+        lat = constants.network.latency
+        stat = lat.STAT_ANCHOR_TIMEOUT if public_enabled else lat.STAT_GW_TIMEOUT
+        events = S.monitor_outages(ws.get_loss_history([stat], start, end).get(stat, []))
     volume = None
     if session_start is not None:
         try:
@@ -576,7 +611,8 @@ class OverviewTab(QWidget):
         self._load_busy = True
         self._load_requested.emit(self._load_seq, partial(
             _read_window, ws, key, now, session_start, series, poll,
-            bool(self._config.get("latency_enabled", True)), self._cap_period_start(ws)))
+            bool(self._config.get("latency_enabled", True)), self._cap_period_start(ws),
+            bool(self._config.get("latency_public_enabled", False))))
 
     def _cap_period_start(self, ws) -> Optional[datetime]:
         """The data cap's current period start (the odometer owns it), or None with no cap set."""
@@ -782,12 +818,16 @@ class OverviewTab(QWidget):
         if count == 0 and gw is None and anchor is None:
             return ""
         label = self._tr("CONN_HEALTH_LABEL", "Connection")
+        colors = constants.network.latency.VERDICT_COLORS
         if count == 0:
-            return (f"<span style='color:#3FB950;'>{label}: "
+            return (f"<span style='color:{colors['good']};'>{label}: "
                     f"{self._tr('CONN_HEALTH_STEADY', 'steady')}</span>")
-        color = "#E81123" if count >= 3 else "#FFB900"
         last = ev.get("last_start")
-        lt = last.strftime("%H:%M") if hasattr(last, "strftime") else ""
+        now = datetime.now()
+        # Red means RECENT (the last drop within 24 h); an older one is a caution, whatever the count.
+        dated = hasattr(last, "strftime")
+        color = drop_color(last if dated else None, now)
+        lt = drop_time_label(last, now, getattr(self._i18n, "language", None)) if dated else ""
         drops = self._tr("CONN_HEALTH_DROPS", "drops")
         out = f"<span style='color:{color};'>{label}: {count} {drops}</span>"
         if lt:

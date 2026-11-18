@@ -44,6 +44,9 @@ class _WS:
     def get_hardware_history(self, stat, start, end):
         return [(datetime.now(), 42.0)]
 
+    def get_loss_history(self, stats, start, end):
+        return {st: self.get_hardware_history(st, start, end) for st in stats}
+
     def summarize_network(self, direction, start, end, iface, poll):
         from netspeedtray.utils.summaries import summarize_raw
         return summarize_raw([2.0e6, 3.0e6] if direction == "download" else [1.0e6, 1.5e6])
@@ -175,6 +178,10 @@ class _HeldWS(_WS):
     def get_hardware_history(self, stat, start, end):
         self._note()
         return super().get_hardware_history(stat, start, end)
+
+    def get_loss_history(self, stats, start, end):
+        self._note()
+        return super().get_loss_history(stats, start, end)
 
     def summarize_network(self, *a):
         self._note()
