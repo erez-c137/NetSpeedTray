@@ -913,3 +913,24 @@ def test_graph_host_shows_the_notice_only_on_hardware_stats(q_app, qt_owned):
     host._current_stat = "network"
     host._sync_history_notice()
     assert host._history_notice.kind is None and host._history_notice.widget.isHidden()
+
+
+def test_high_contrast_paints_its_own_background_whatever_the_object_name(q_app, qt_owned, monkeypatch):
+    """The Monitor's "Also check your internet" (2.2.2 live test F4): its host renamed it
+    ("internetCheckOffer"), the ``QFrame#noticeLink`` rule stopped matching, and the High Contrast link
+    colour (light cyan) sat on the Monitor's light surface. The background rule follows the widget,
+    not its name."""
+    from PyQt6.QtGui import QColor
+    monkeypatch.setattr(ta, "read_high_contrast_link_colors",
+                        lambda: {"text": "#FFFFFF", "background": "#202020", "link": "#8EE3F0", "focus": "#8EE3F0"})
+    host = QWidget()
+    host.setStyleSheet("background: #F9F9F9;")
+    qt_owned(host)
+    link = NoticeLink("", "Also check your internet", parent=host)
+    link.setObjectName("internetCheckOffer")
+    link.adjustSize()
+    host.resize(link.width() + 20, link.height() + 20)
+    host.show()
+    QApplication.processEvents()
+    img = link.grab().toImage()
+    assert QColor(img.pixel(4, img.height() // 2)).name() == "#202020"

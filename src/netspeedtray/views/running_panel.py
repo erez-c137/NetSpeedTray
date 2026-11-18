@@ -32,7 +32,7 @@ from typing import Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QEvent, QRectF, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen
-from PyQt6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton,
+from PyQt6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QStyle,
                              QVBoxLayout, QWidget)
 
 from netspeedtray import constants
@@ -202,16 +202,19 @@ def _style_sheet(p: Dict[str, str], rtl: bool) -> str:
         f" border-radius: {r_card}px; }}"
         f" QPushButton#Row {{ text-align: left; margin: {_RING}px; padding: 0px {pad_r}px 0px {pad_l}px;"
         f" border-radius: {r_card - 2}px; background: {p['btn_bg']}; color: {p['btn_text']};"
-        f" border: 1px solid {p['stroke']}; }}"
-        f" QPushButton#Row:hover {{ background: {p['hover_bg']}; color: {p['hover_text']}; }}"
+        f" border: 1px solid {p['stroke']}; outline: none; }}"
+        # Hover by the control's own "hover" property (set on enter / leave), not the :hover state: on
+        # the VM's High Contrast the :hover fill never came while the painted icon and chevron did turn
+        # HighlightText - and vanished on the dark row (live test F4). One state drives both now.
+        f" QPushButton#Row[hover=\"true\"] {{ background: {p['hover_bg']}; color: {p['hover_text']}; }}"
         f" QPushButton#Row:pressed {{ background: {p['pressed_bg']}; color: {p['sub'] if not p['hc'] else p['hover_text']}; }}"
         f" QPushButton#Quiet {{ background: transparent; color: {p['sub']}; margin: {_RING}px;"
-        f" padding: 4px 8px; border: none; border-radius: {r_ctl}px; }}"
-        f" QPushButton#Quiet:hover {{ background: {p['hover_bg']}; color: {p['hover_text']}; }}"
+        f" padding: 4px 8px; border: none; border-radius: {r_ctl}px; outline: none; }}"
+        f" QPushButton#Quiet[hover=\"true\"] {{ background: {p['hover_bg']}; color: {p['hover_text']}; }}"
         f" QPushButton#Quiet:pressed {{ background: {p['pressed_bg']}; }}"
         f" QPushButton#Link {{ background: transparent; color: {p['link']}; margin: {_RING}px;"
-        f" padding: 0px 2px; border: none; text-align: left; }}"
-        f" QPushButton#Link:hover {{ text-decoration: underline; }}"
+        f" padding: 0px 2px; border: none; text-align: left; outline: none; }}"
+        f" QPushButton#Link[hover=\"true\"] {{ text-decoration: underline; }}"
         f" QPushButton#Link:pressed {{ color: {p['sub']}; }}")
 
 
@@ -245,7 +248,7 @@ class _Control(QPushButton):
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             if self.objectName() == "Row":
                 inner = self.rect().adjusted(_RING, _RING, -_RING, -_RING)
-                icon = self._icon_hover if self.underMouse() else self._icon_normal
+                icon = self._icon_hover if self.hovered() else self._icon_normal
                 if icon is not None:
                     x = inner.right() - 12 - _ROW_ICON + 1 if rtl else inner.left() + 12
                     y = inner.top() + (inner.height() - _ROW_ICON) // 2
@@ -253,7 +256,7 @@ class _Control(QPushButton):
                 f = QFont(su.icon_font_family())
                 f.setPixelSize(_CHEVRON_PX)
                 painter.setFont(f)
-                hover_hc = p["hc"] and self.underMouse()
+                hover_hc = p["hc"] and self.hovered()
                 painter.setPen(QColor(p["hover_text"] if hover_hc else p["sub"]))
                 cw = _CHEVRON_PX + 2
                 cx = inner.left() + 12 if rtl else inner.right() - 12 - cw + 1
@@ -269,13 +272,34 @@ class _Control(QPushButton):
         finally:
             painter.end()
 
+    def hovered(self) -> bool:
+        return bool(self.property("hover"))
+
+    def _set_hover(self, on: bool) -> None:
+        if self.hovered() != on:
+            self.setProperty("hover", on)
+            style = self.style()
+            style.unpolish(self)
+            style.polish(self)
+        self.update()
+
     def enterEvent(self, event) -> None:  # type: ignore[override]
         super().enterEvent(event)
-        self.update()
+        self._set_hover(True)
 
     def leaveEvent(self, event) -> None:  # type: ignore[override]
         super().leaveEvent(event)
-        self.update()
+        self._set_hover(False)
+
+    def hideEvent(self, event) -> None:  # type: ignore[override]
+        super().hideEvent(event)
+        self._set_hover(False)
+
+    def initStyleOption(self, option) -> None:  # type: ignore[override]
+        """Never the style's own focus rectangle (the VM's High Contrast drew a box around the label,
+        live test F4): the panel paints its Fluent ring, after keyboard use only."""
+        super().initStyleOption(option)
+        option.state &= ~QStyle.StateFlag.State_HasFocus
 
 
 class RunningPanel(QDialog):
@@ -301,8 +325,11 @@ class RunningPanel(QDialog):
         self.setWindowTitle(APP_NAME)
         self.setAccessibleName(APP_NAME)
         self.setAccessibleDescription(self._tr("RUNNING_PANEL_RUNNING", "Running on your taskbar"))
-        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint
-                            | Qt.WindowType.WindowCloseButtonHint)
+        # CustomizeWindowHint: exactly these buttons. Without it Qt gives every top-level dialog on
+        # Windows min AND max buttons - a maximize on a fixed-size panel (live test F5).
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.CustomizeWindowHint
+                            | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint
+                            | Qt.WindowType.WindowMinimizeButtonHint | Qt.WindowType.WindowCloseButtonHint)
         self.setLayoutDirection(QApplication.layoutDirection())
         self.setProperty(_KEYBOARD_PROP, False)
         self.palette_tokens = _palette()

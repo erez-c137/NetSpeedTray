@@ -449,3 +449,62 @@ def test_the_panel_opens_on_the_launch_monitor_else_the_widgets(qtbot, i18n, mon
     p = mw._running_panel
     assert p.screen().availableGeometry().contains(p.frameGeometry().center())
     p.close()
+
+
+# --- High Contrast hover / focus (2.2.2 live test F4, Aquatic on the VM) --------------------------------
+
+def _hover(row, on: bool):
+    from PyQt6.QtCore import QEvent, QPointF
+    from PyQt6.QtGui import QEnterEvent
+    if on:
+        row.enterEvent(QEnterEvent(QPointF(5, 5), QPointF(5, 5), QPointF(5, 5)))
+    else:
+        row.leaveEvent(QEvent(QEvent.Type.Leave))
+    QApplication.processEvents()
+
+
+def test_high_contrast_hover_fills_the_row_with_highlight(panel, monkeypatch):
+    """The VM: a hovered row kept its dark fill while its icon and chevron turned HighlightText - they
+    vanished. The fill and the content colours now switch together, on one state."""
+    from PyQt6.QtGui import QColor
+    _hc(monkeypatch)
+    p, _ = panel()
+    p.show()
+    QApplication.processEvents()
+    row = p.monitor_button
+    y = row.height() // 2
+    before = QColor(row.grab().toImage().pixel(8, y)).name()
+    _hover(row, True)
+    assert QColor(row.grab().toImage().pixel(8, y)).name() == "#1aebff"   # Highlight behind the content
+    assert row.hovered()
+    _hover(row, False)
+    assert QColor(row.grab().toImage().pixel(8, y)).name() == before and not row.hovered()
+
+
+def test_the_native_focus_rectangle_is_never_drawn(panel, monkeypatch):
+    """The VM: a focused row showed a stray box around its label (the style's focus rectangle). The
+    panel draws its own ring, after keyboard use only."""
+    from PyQt6.QtWidgets import QStyle, QStyleOptionButton
+    _hc(monkeypatch)
+    p, _ = panel()
+    p.show()
+    QApplication.processEvents()
+    for ctl in (p.settings_button, p.quit_button, p.update_link):
+        ctl.setFocus(Qt.FocusReason.TabFocusReason)
+        QApplication.processEvents()
+        assert ctl.hasFocus()
+        opt = QStyleOptionButton()
+        ctl.initStyleOption(opt)
+        assert not (opt.state & QStyle.StateFlag.State_HasFocus)
+    assert p.styleSheet().count("outline: none") >= 3
+
+
+def test_the_fixed_size_panel_has_no_maximize_button(panel):
+    """The VM showed a maximize button: without CustomizeWindowHint Qt adds the min/max buttons to
+    every top-level dialog on Windows, whatever the flags asked for."""
+    p, _ = panel()
+    flags = p.windowFlags()
+    assert flags & Qt.WindowType.CustomizeWindowHint
+    assert not (flags & Qt.WindowType.WindowMaximizeButtonHint)
+    assert flags & Qt.WindowType.WindowCloseButtonHint and flags & Qt.WindowType.WindowTitleHint
+    assert flags & Qt.WindowType.WindowMinimizeButtonHint     # still minimizes to its taskbar button

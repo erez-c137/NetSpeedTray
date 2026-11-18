@@ -1705,8 +1705,11 @@ class NoticeLink(QFrame):
             pressed.setAlphaF(tokens.NOTICE_LINK_PRESSED_TEXT_ALPHA)
         pressed_text = f"rgba({pressed.red()}, {pressed.green()}, {pressed.blue()}, {pressed.alphaF():.2f})"
         under = "underline" if c["underline"] else "none"
-        frame_bg = (f"QFrame#noticeLink {{ background-color: {bg}; border-radius: {tokens.RADIUS_CONTROL}px; }}"
-                    if bg else "QFrame#noticeLink { background: transparent; }")
+        # By class, never by object name: a host that renames the notice (the Monitor's
+        # "internetCheckOffer") lost the High Contrast background, and the theme's link colour sat on
+        # the Monitor's light surface (live test F4).
+        frame_bg = (f"NoticeLink {{ background-color: {bg}; border-radius: {tokens.RADIUS_CONTROL}px; }}"
+                    if bg else "NoticeLink { background: transparent; }")
         self._theming = True
         try:
             self.setStyleSheet(
