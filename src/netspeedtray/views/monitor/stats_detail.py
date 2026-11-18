@@ -145,14 +145,9 @@ def _load_subjects(ws, subjects: List[Dict[str, Any]], start: datetime, end: dat
         outage = None
         if key in _LOSS_SERIES_FOR and (summ.count or loss is not None):
             try:
-                # The same reading as the Overview's connection health: raw cycles unbinned, rollup
-                # bins as peaks, split where nothing was recorded (app off).
-                lat = constants.network.latency
+                # The same reading as the Overview's connection health (summaries.monitor_outages).
                 stat = _LOSS_SERIES_FOR[key]
-                outage = S.outage_summary(ws.get_loss_history([stat], start, end).get(stat, []),
-                                          max_gap=lat.OUTAGE_GAP_SLACK_SEC,
-                                          raw_cycle=lat.OUTAGE_CYCLE_SEC,
-                                          min_cycles=lat.OUTAGE_MIN_CYCLES)
+                outage = S.monitor_outages(ws.get_loss_history([stat], start, end).get(stat, []))
             except Exception:
                 outage = None
         out.append({"key": key, "label": label, "summ": summ, "pairs": pairs, "loss": loss,
@@ -496,7 +491,9 @@ class StatsDetailSheet(QDialog):
                 o = data["outage"]   # read on the reader thread (_load_subjects)
                 if o and o["count"]:
                     last = o["last_start"]
-                    lt = last.strftime("%H:%M") if hasattr(last, "strftime") else ""
+                    from netspeedtray.views.monitor.overview.tab import drop_time_label   # lazy
+                    lt = (drop_time_label(last, datetime.now(), getattr(self._i18n, "language", None))
+                          if hasattr(last, "strftime") else "")
                     drops = (f"{o['count']} {self._tr('STATS_DETAIL_DROPS', 'connection drops')}")
                     if lt:
                         drops += f" · {self._tr('STATS_DETAIL_LAST', 'last')} {lt}"

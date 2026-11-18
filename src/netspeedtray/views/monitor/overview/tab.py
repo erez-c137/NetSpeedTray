@@ -88,6 +88,24 @@ def _resolve_window(ws, key: str, now: datetime, session_start: Optional[datetim
     return start, now, (key == "TIMELINE_SESSION")
 
 
+def drop_time_label(last: datetime, now: datetime, language: Optional[str]) -> str:
+    """The "last" drop's time: HH:MM today, else the locale's numeric short date without the year
+    plus HH:MM ("10/11 16:48", "11.10 16:48") - an old drop must not read as this morning's."""
+    hm = last.strftime("%H:%M")
+    if last.date() == now.date():
+        return hm
+    try:
+        import re
+        from PyQt6.QtCore import QDate, QLocale
+        loc = QLocale(str(language or "en_US"))
+        fmt = loc.dateFormat(QLocale.FormatType.ShortFormat)
+        fmt = re.sub(r"^y+[^dMy]*|[^dMy]*y+", "", fmt).strip() or "M/d"
+        day = loc.toString(QDate(last.year, last.month, last.day), fmt)
+    except Exception:
+        day = f"{last.month}/{last.day}"
+    return f"{day} {hm}"
+
+
 def _boot_time() -> Optional[datetime]:
     """When this PC last started (psutil; no DB, no matplotlib), or None if unreadable."""
     try:
@@ -157,18 +175,15 @@ def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
         "ram": ws.summarize_hardware("ram", start, end, poll),
     }
     # Connection-drop events over the window (from the persisted loss series), so a latency blip you
-    # missed live is still counted. The router's series always; with the internet ping on, the
-    # anchor's too - the router answering while the internet is down is still an outage. One query
-    # for both hops; raw cycles unbinned, rollup bins as peaks (an average hides a short drop).
+    # missed live is still counted. ONE hop decides: the internet anchor when the internet ping is on
+    # (if it answered, the connection was up - and a real router failure loses it too, so nothing
+    # true is lost), else the router. The Stats sheet's block for the same hop reads the same.
     events: Dict[str, Any] = {}
     if latency_enabled:
         from netspeedtray.utils import summaries as S   # lazy (only this reader uses it)
         lat = constants.network.latency
-        stats = [lat.STAT_GW_TIMEOUT] + ([lat.STAT_ANCHOR_TIMEOUT] if public_enabled else [])
-        loss = ws.get_loss_history(stats, start, end)
-        events = S.outage_summary(*(loss.get(st, []) for st in stats),
-                                  max_gap=lat.OUTAGE_GAP_SLACK_SEC, hop_join=lat.OUTAGE_HOP_JOIN_SEC,
-                                  raw_cycle=lat.OUTAGE_CYCLE_SEC, min_cycles=lat.OUTAGE_MIN_CYCLES)
+        stat = lat.STAT_ANCHOR_TIMEOUT if public_enabled else lat.STAT_GW_TIMEOUT
+        events = S.monitor_outages(ws.get_loss_history([stat], start, end).get(stat, []))
     volume = None
     if session_start is not None:
         try:
@@ -790,12 +805,16 @@ class OverviewTab(QWidget):
         if count == 0 and gw is None and anchor is None:
             return ""
         label = self._tr("CONN_HEALTH_LABEL", "Connection")
+        colors = constants.network.latency.VERDICT_COLORS
         if count == 0:
-            return (f"<span style='color:#3FB950;'>{label}: "
+            return (f"<span style='color:{colors['good']};'>{label}: "
                     f"{self._tr('CONN_HEALTH_STEADY', 'steady')}</span>")
-        color = "#E81123" if count >= 3 else "#FFB900"
         last = ev.get("last_start")
-        lt = last.strftime("%H:%M") if hasattr(last, "strftime") else ""
+        now = datetime.now()
+        # Red means RECENT (the last drop within 24 h); an older one is a caution, whatever the count.
+        recent = hasattr(last, "strftime") and (now - last) <= timedelta(hours=24)
+        color = colors["slow"] if recent else colors["ok"]
+        lt = drop_time_label(last, now, getattr(self._i18n, "language", None)) if hasattr(last, "strftime") else ""
         drops = self._tr("CONN_HEALTH_DROPS", "drops")
         out = f"<span style='color:{color};'>{label}: {count} {drops}</span>"
         if lt:

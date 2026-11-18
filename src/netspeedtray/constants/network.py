@@ -206,10 +206,13 @@ class LatencyConstants:
     OUTAGE_GAP_SLACK_SEC: Final[int] = 30
     # The probe's cadence (LatencyProbe._CADENCE_SEC): a rollup bin's lost time is its lost cycles x this.
     OUTAGE_CYCLE_SEC: Final[float] = 3.0
-    # A drop needs at least this many lost cycles in a row (raw), or one rollup row that lost this
-    # many (avg loss x samples - a rollup cannot tell if they were consecutive). One lost 3 s cycle
-    # is a blip, not an outage. Drop count + downtime only (Overview, Stats sheet); loss % unchanged.
+    # A drop needs at least this many lost raw cycles in a row. One lost 3 s cycle is a blip, not an
+    # outage. Drop count + downtime only (Overview, Stats sheet); loss %, graphs, exports unchanged.
     OUTAGE_MIN_CYCLES: Final[int] = 2
+    # A minute-rollup row counts as a drop from this many estimated lost cycles (avg x samples, >= 12 s
+    # of the minute): a rollup cannot tell if its cycles were consecutive, and from 4 the raw 2-in-a-row
+    # rule more likely than not would have counted it too. Hour rows never count (see loss_history).
+    OUTAGE_MIN_ROLLUP_CYCLES: Final[int] = 4
     # The router's and the internet anchor's rows of one cycle are written a moment apart: a drop on
     # one hop that starts within this many seconds after the other hop's drop (past that row's own
     # span) ended is the same outage. Runs of ONE hop are never joined this way.

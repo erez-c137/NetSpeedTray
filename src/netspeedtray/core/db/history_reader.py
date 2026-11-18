@@ -183,13 +183,16 @@ class HistoryReader(ABC):
     def loss_history(self, stat_types: Sequence[str], start_time: datetime,
                      end_time: datetime) -> Dict[str, List["LossRow"]]:
         """{stat: [LossRow, ...] in time order} for the latency loss series - the input of
-        ``summaries.outage_summary``. Every tier at its NATIVE span, never binned by window length:
-        raw rows one per probe cycle (``down`` None), minute rows 60 s, hour rows 3600 s, each with
-        its PEAK (a bin's average hides a one-cycle drop) and, for rollups, an estimate of the time
+        ``summaries.outage_summary``. The raw and minute tiers at their NATIVE span, never binned by
+        window length: raw rows one per probe cycle (``down`` None), minute rows 60 s, each with its
+        PEAK (a bin's average hides a one-cycle drop) and, for minute rows, an estimate of the time
         lost in it (``_loss_down_sql``). Binning chained adjacent bad bins into one long outage
-        (60 s bins: "1 drop, 29 min down"; hour bins past 30 days: 327 drops read as 10). History
-        that exists only at hour level (older than ~30 days) can still chain adjacent bad hours -
-        inherent to that tier.
+        (60 s bins: "1 drop, 29 min down"; hour bins past 30 days: 327 drops read as 10).
+
+        The HOUR tier is not read: an hour row's estimate inflates (~1.8x the same time kept as
+        minutes) and adjacent bad hours chain into multi-day "drops" (386 h seen). Drop counts cover
+        minute-or-finer history only - about the last 30 days; the All window shows the drops of
+        its last ~30 days. (Rollups that store a bad-cycle count / longest run need a schema change.)
 
         The v8 reader reads only what ``outage_summary`` can tell apart: the BAD rows (peak >= 0.5)
         plus, for each, its previous and next row in the same tier (a clean row there ends the run;
@@ -298,7 +301,7 @@ def _loss_down_sql(avg: str, count: str, native: int) -> str:
     return f"MIN(COALESCE({avg}, 0) * COALESCE({count}, 1) * {cyc}, {native})"
 
 
-_LOSS_NATIVE_SPANS = (1, 60, 3600)   # raw, minute, hour
+_LOSS_NATIVE_SPANS = (1, 60)   # raw, minute - the hour tier is never read for drops
 
 
 def _read_loss_rows(cur, stats: Sequence[str], st: int, et: int, tiers) -> Dict[str, List["LossRow"]]:
@@ -1717,7 +1720,8 @@ class V8HistoryReader(_ReaderBase):
                 cols += [lo_sql or "NULL", hi_sql or "NULL"]
                 params += [*lo_p, *hi_p]
             bounds = cur.execute(f"SELECT {', '.join(cols)}", params).fetchone()
-            tiers = [(self._HW[k], "ts", "metric_id", keys, bounds[2 * k], bounds[2 * k + 1]) for k in range(3)]
+            tiers = [(self._HW[k], "ts", "metric_id", keys, bounds[2 * k], bounds[2 * k + 1])
+                     for k in range(len(_LOSS_NATIVE_SPANS))]
             return _read_loss_rows(cur, stats, st, et, tiers)
 
         return self._snapshot_call(run, lambda: {s_: [] for s_ in stats})

@@ -218,11 +218,12 @@ def _loss_runs(rows: Sequence, is_bad, max_gap: Optional[float], raw_cycle: floa
     reads the same 3 s raw as rolled up); a rollup bin adds its estimated lost seconds from the bin's
     start (where in the bin is unknown) - never the bin's length.
 
-    ``cycles``: the run's longest stretch of lost cycles we can see - a raw segment's consecutive bad
-    rows, or one rollup row's estimated lost cycles (its down / ``raw_cycle``; a rollup cannot tell
-    whether those cycles were consecutive - its count is the closest honest proxy). Segments are
-    never added up: two blips in adjacent minutes, or one rolled-up and one raw cycle either side of
-    the tier boundary, are not a 2-cycle outage."""
+    ``raw_cycles`` / ``rollup_cycles``: the run's longest stretch of lost cycles we can see - a raw
+    segment's consecutive bad rows, and one rollup row's estimated lost cycles (its down /
+    ``raw_cycle``; 0 when ``raw_cycle`` is 0). A rollup cannot tell whether its cycles were
+    consecutive - its count is the closest honest proxy, judged against its own, stricter bar.
+    Segments are never added up: two blips in adjacent minutes, or one rolled-up and one raw cycle
+    either side of the tier boundary, are not one longer outage."""
     runs: List[dict] = []
     cur = None
     seg = None    # the open raw segment [from, to]
@@ -235,7 +236,8 @@ def _loss_runs(rows: Sequence, is_bad, max_gap: Optional[float], raw_cycle: floa
             cur = seg = None
         if bool(is_bad(v)):
             if cur is None:
-                cur = {"start": ts, "end": ts, "end_span": span, "down": [], "cycles": 0.0}
+                cur = {"start": ts, "end": ts, "end_span": span, "down": [], "raw_cycles": 0.0,
+                       "rollup_cycles": 0.0}
             cur["end"], cur["end_span"] = ts, span
             if down is None:
                 if seg is None:
@@ -243,12 +245,12 @@ def _loss_runs(rows: Sequence, is_bad, max_gap: Optional[float], raw_cycle: floa
                     cur["down"].append(seg)
                 seg[1] = t
                 seg[3] += 1
-                cur["cycles"] = max(cur["cycles"], float(seg[3]))
+                cur["raw_cycles"] = max(cur["raw_cycles"], float(seg[3]))
             else:
                 seg = None
                 lost = max(0.0, float(down))
                 cur["down"].append([t, t + lost, False, 0])
-                cur["cycles"] = max(cur["cycles"], lost / raw_cycle if raw_cycle > 0 else float("inf"))
+                cur["rollup_cycles"] = max(cur["rollup_cycles"], lost / raw_cycle if raw_cycle > 0 else 0.0)
         elif cur is not None:
             runs.append(cur)
             cur = seg = None
@@ -261,7 +263,8 @@ def _loss_runs(rows: Sequence, is_bad, max_gap: Optional[float], raw_cycle: floa
 
 
 def outage_summary(timeout_rows: Sequence, *more_series: Sequence, max_gap: Optional[float] = None,
-                   hop_join: float = 0.0, raw_cycle: float = 0.0, min_cycles: float = 0) -> Dict[str, object]:
+                   hop_join: float = 0.0, raw_cycle: float = 0.0, min_cycles: float = 0,
+                   min_rollup_cycles: Optional[float] = None) -> Dict[str, object]:
     """Connection-drop events from the hop-timeout series. A row >= 0.5 is a drop: half or more of
     that cycle's burst lost (2.2+ rows are the lost fraction, 0-1 in quarter steps), or the single lost
     ping of an older 0/1 row - so one unlucky packet in a burst (0.25) is not an outage. Returns
@@ -282,19 +285,24 @@ def outage_summary(timeout_rows: Sequence, *more_series: Sequence, max_gap: Opti
     An outage's downtime is the UNION of its runs' down intervals across hops (see ``_loss_runs``;
     ``raw_cycle`` = the probe's cadence, 0 keeps the old first-to-last measure of pairs).
 
-    ``min_cycles``: a run is a drop only when its longest visible stretch of lost cycles reaches it
-    (``_loss_runs``' ``cycles``) - 2 for the Monitor (``OUTAGE_MIN_CYCLES``): a single lost 3 s
-    cycle is a blip, not an outage. Runs below it are dropped BEFORE hops are merged, so they never
+    ``min_cycles`` / ``min_rollup_cycles`` (default: the same): a run is a drop only when it holds
+    that many consecutive lost raw cycles, or one rollup row with that many estimated lost cycles
+    (``_loss_runs``) - for the Monitor 2 raw (``OUTAGE_MIN_CYCLES``: a single lost 3 s cycle is a
+    blip, not an outage) and 4 per minute row (``OUTAGE_MIN_ROLLUP_CYCLES``: >= 12 s of the minute
+    lost - where two consecutive raw cycles more likely than not were among them; a minute row
+    cannot say). So a rollup's verdict can differ from the raw tier's for the same event. Runs below it are dropped BEFORE hops are merged, so they never
     count, add downtime, or bridge two drops; an outage seen on both hops counts when either hop's
     run reaches the bar (the same lost cycle on both hops is one cycle, not two). 0 (the default)
     keeps every run, as before."""
     def bad(v):
         return v is not None and float(v) >= 0.5
 
+    min_rollup = min_cycles if min_rollup_cycles is None else min_rollup_cycles
     tagged = []
     for hop, series in enumerate((timeout_rows,) + tuple(more_series)):
         for run in _loss_runs(series, bad, max_gap, raw_cycle):
-            if run["cycles"] + 1e-9 >= min_cycles:
+            if (run["raw_cycles"] + 1e-9 >= min_cycles
+                    or (run["rollup_cycles"] > 0 and run["rollup_cycles"] + 1e-9 >= min_rollup)):
                 tagged.append((hop, run))
     tagged.sort(key=lambda t: _epoch(t[1]["start"]))
 
@@ -318,6 +326,16 @@ def outage_summary(timeout_rows: Sequence, *more_series: Sequence, max_gap: Opti
         total += _union_seconds(c["down"])
     return {"count": len(runs), "last_start": runs[-1][0] if runs else None,
             "total_down_seconds": total, "runs": runs}
+
+
+def monitor_outages(*series: Sequence) -> Dict[str, object]:
+    """``outage_summary`` with the Monitor's rules (constants.network.latency) - the ONE reading the
+    Overview's connection health and the Stats sheet's drops share, so the two always agree."""
+    from netspeedtray import constants   # lazy: summaries stays importable without the app
+    lat = constants.network.latency
+    return outage_summary(*series, max_gap=lat.OUTAGE_GAP_SLACK_SEC, hop_join=lat.OUTAGE_HOP_JOIN_SEC,
+                          raw_cycle=lat.OUTAGE_CYCLE_SEC, min_cycles=lat.OUTAGE_MIN_CYCLES,
+                          min_rollup_cycles=lat.OUTAGE_MIN_ROLLUP_CYCLES)
 
 
 def _union_seconds(intervals) -> float:

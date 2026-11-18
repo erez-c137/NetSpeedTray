@@ -134,13 +134,13 @@ def test_graphs_still_read_bin_averages_and_loss_rows_are_unbinned(make, which):
 
 @BOTH
 def test_minute_tier_reads_max_and_estimates_the_lost_time(make, which):
-    """Rolled-up history: a minute row of avg 0.1 / max 1.0 / 20 samples is a drop of ~two cycles."""
+    """Rolled-up history: a minute row of avg 0.2 / max 1.0 / 20 samples is a drop of ~four cycles."""
     t0 = BASE - 50 * 3600   # below the raw watermark -> answered by hw_minute
-    mins = [(t0 + i * 60, GW, 0.1 if i == 30 else 0.0, 1.0 if i == 30 else 0.0, 20) for i in range(120)]
+    mins = [(t0 + i * 60, GW, 0.2 if i == 30 else 0.0, 1.0 if i == 30 else 0.0, 20) for i in range(120)]
     r = make(which, hw_minute=mins)
     ev = _events(r, public=False, key="TIMELINE_WEEK")
     assert ev["count"] == 1
-    assert ev["total_down_seconds"] == pytest.approx(6.0)
+    assert ev["total_down_seconds"] == pytest.approx(12.0)
 
 
 # --- per-bin peaks must not chain short drops into a long outage (review MAJOR 2) -----------------
@@ -159,13 +159,13 @@ def test_a_short_drop_every_minute_is_not_one_half_hour_outage_in_the_raw_tier(m
 @BOTH
 def test_coalesced_minute_bins_claim_only_their_estimated_downtime(make, which):
     """Rolled up, the same pattern is one run of 30 bad minutes (the tier cannot tell the cycles
-    apart) - but its downtime is the lost cycles (30 x 2 x 3 s), not 29 minutes."""
+    apart) - but its downtime is the lost cycles (30 x 4 x 3 s), not 29 minutes."""
     t0 = BASE - 50 * 3600
-    mins = [(t0 + i * 60, GW, 0.1, 1.0, 20) for i in range(30)]
+    mins = [(t0 + i * 60, GW, 0.2, 1.0, 20) for i in range(30)]
     r = make(which, hw_minute=mins)
     ev = _sheet(r, NOW - timedelta(days=7), NOW)
     assert ev["count"] == 1
-    assert ev["total_down_seconds"] == pytest.approx(180.0)
+    assert ev["total_down_seconds"] == pytest.approx(360.0)
 
 
 def test_coalesced_bins_as_loss_rows_in_the_pure_function():
@@ -199,17 +199,12 @@ def test_the_week_window_joins_a_drop_across_the_raw_minute_boundary(make, which
 
 
 @BOTH
-def test_the_all_window_hour_bins_keep_separate_drops_apart(make, which):
-    """3600 s bins: bad 10:00, clean 11:00, bad 12:00 -> two drops."""
-    t0 = BASE - 60 * 86400   # below the minute watermark -> answered by hw_hour
+def test_the_hour_tier_is_not_read_for_drops(make, which):
+    """Hour rows inflate and chain into multi-day drops: loss_history never reads them."""
+    t0 = BASE - 60 * 86400   # below the minute watermark -> only hw_hour could answer
     hours = [(t0, GW, 0.01, 1.0, 1200), (t0 + 3600, GW, 0.0, 0.0, 1200), (t0 + 7200, GW, 0.01, 1.0, 1200)]
     r = make(which, hw_hour=hours)
-    start = NOW - timedelta(days=90)
-    loss = r.loss_history([GW], start, NOW)[GW]
-    assert {x.span for x in loss} == {3600}
-    ev = S.outage_summary(loss, max_gap=GAP)
-    assert ev["count"] == 2
-    assert ev["total_down_seconds"] == pytest.approx(2 * 0.01 * 1200 * 3)
+    assert r.loss_history([GW], NOW - timedelta(days=90), NOW)[GW] == []
 
 
 # --- time the app was off ------------------------------------------------------------------------
@@ -255,8 +250,8 @@ def test_internet_ping_off_reads_the_router_only_as_before(internet_down_router_
 
 @BOTH
 def test_one_outage_seen_by_both_hops_is_counted_once(make, which):
-    """The two hops' rows are written a moment apart and can land in different seconds: the same
-    outage on both is one drop, and its downtime is their union, not their sum."""
+    """With the internet ping on, the internet series alone decides (the router lost 60 s of the
+    same outage; it changes nothing). The cross-hop union itself is pinned by the pure tests."""
     t0 = BASE - 3 * 3600
     rows = [(ts, GW, v) for ts, v in _cycles(t0, 30, drops=[(t0 + 600, t0 + 660)])]
     rows += [(ts + 1, ANCHOR, v) for ts, v in _cycles(t0, 30, drops=[(t0 + 600, t0 + 720)])]
@@ -264,7 +259,7 @@ def test_one_outage_seen_by_both_hops_is_counted_once(make, which):
     for key in ("TIMELINE_4_HOURS", "TIMELINE_24_HOURS"):
         ev = _events(r, public=True, key=key)
         assert ev["count"] == 1
-        assert ev["total_down_seconds"] == pytest.approx(121.0)   # [600, 660] u [601, 721]
+        assert ev["total_down_seconds"] == pytest.approx(120.0)   # anchor: [601, 721]
 
 
 # --- cross-hop merge only (review MAJOR 1) ---------------------------------------------------------
@@ -329,8 +324,8 @@ def test_stats_sheet_router_drops_count_a_short_drop_in_24h(make, which):
 # --- native spans: rollups are never re-binned by window length (second review, MAJOR 1) ---------
 
 def _alternating_minutes(t0, n=60):
-    """A bad minute (two lost cycles), a clean minute, a bad minute ... - n minutes."""
-    return [(t0 + i * 60, GW, 0.1 if i % 2 == 0 else 0.0, 1.0 if i % 2 == 0 else 0.0, 20) for i in range(n)]
+    """A bad minute (four lost cycles), a clean minute, a bad minute ... - n minutes."""
+    return [(t0 + i * 60, GW, 0.2 if i % 2 == 0 else 0.0, 1.0 if i % 2 == 0 else 0.0, 20) for i in range(n)]
 
 
 @BOTH
@@ -341,7 +336,7 @@ def test_the_all_window_keeps_minute_rows_at_their_own_span(make, which):
     r = make(which, hw_minute=_alternating_minutes(t0))
     ev = _sheet(r, NOW - timedelta(days=90), NOW)
     assert ev["count"] == 30
-    assert ev["total_down_seconds"] == pytest.approx(30 * 6.0)
+    assert ev["total_down_seconds"] == pytest.approx(30 * 12.0)
 
 
 @BOTH
@@ -428,7 +423,7 @@ def _full_read(r, stats, start, end):
     out = {}
     for stat in stats:
         rows = []
-        for k, native in enumerate((1, 60, 3600)):
+        for k, native in enumerate((1, 60)):   # the hour tier is never read for drops
             peak = "h.value" if k == 0 else "h.max_value"
             down = "NULL" if k == 0 else _loss_down_sql("h.avg_value", "h.sample_count", native)
             q = (f"SELECT h.{ts}, {peak}, {down} FROM {tables[k]} h WHERE {key} "
@@ -494,7 +489,8 @@ def test_bad_rows_read_matches_the_full_read(tmp_path, seed):
                     ref = _full_read(r, stats, s, NOW)
                     got_rows = r.loss_history(stats, s, NOW)
                     for mc in (0, 2):   # every run, and the Monitor's 2-cycle bar
-                        kw = dict(max_gap=GAP, hop_join=JOIN, raw_cycle=CYCLE, min_cycles=mc)
+                        kw = dict(max_gap=GAP, hop_join=JOIN, raw_cycle=CYCLE, min_cycles=mc,
+                                  min_rollup_cycles=2 * mc)   # the Monitor's 2 raw / 4 per minute
                         want = S.outage_summary(*(ref[x] for x in stats), **kw)
                         assert want["count"] > 0
                         got = S.outage_summary(*(got_rows[x] for x in stats), **kw)
@@ -535,15 +531,6 @@ def test_two_blips_with_a_clean_cycle_between_are_no_drop(make, which):
 
 
 @BOTH
-@pytest.mark.parametrize("avg, drops", [(0.05, 0), (0.1, 1)], ids=["1-cycle", "2-cycles"])
-def test_a_minute_row_needs_two_estimated_lost_cycles(make, which, avg, drops):
-    t0 = BASE - 50 * 3600   # rolled up: avg x 20 samples = 1.0 / 2.0 lost cycles
-    mins = [(t0 - 60, GW, 0.0, 0.0, 20), (t0, GW, avg, 1.0, 20), (t0 + 60, GW, 0.0, 0.0, 20)]
-    r = make(which, hw_minute=mins)
-    assert _sheet(r, NOW - timedelta(days=7), NOW)["count"] == drops
-
-
-@BOTH
 @pytest.mark.parametrize("raw_bad, drops", [(1, 0), (2, 1)], ids=["1+1-cycles", "1+2-cycles"])
 def test_a_run_across_the_raw_minute_boundary(make, which, raw_bad, drops):
     """The last rolled-up minute lost one cycle and the raw tier carries on: the stretches are
@@ -566,3 +553,111 @@ def test_a_blip_on_the_other_hop_neither_counts_nor_bridges_two_drops():
     one_each = _ser([0, 1, 0, 0]), _ser([0, 1, 0, 0], off=1)   # the same blip on both hops
     assert S.outage_summary(*one_each, max_gap=GAP, hop_join=JOIN, raw_cycle=CYCLE,
                             min_cycles=2)["count"] == 0
+
+
+# --- final round (#587): minute rows need 4 lost cycles, hour rows never count, the internet hop
+# decides when it is on, and "last" says which day ------------------------------------------------
+
+@BOTH
+@pytest.mark.parametrize("avg, drops", [(0.1, 0), (0.15, 0), (0.2, 1)], ids=["2", "3", "4"])
+def test_a_minute_row_needs_four_estimated_lost_cycles(make, which, avg, drops):
+    """avg x 20 samples = 2 / 3 / 4 lost cycles: a minute row counts from 4 (>= 12 s of it lost) -
+    where two consecutive raw cycles more likely than not were among them."""
+    t0 = BASE - 50 * 3600
+    mins = [(t0 - 60, GW, 0.0, 0.0, 20), (t0, GW, avg, 1.0, 20), (t0 + 60, GW, 0.0, 0.0, 20)]
+    r = make(which, hw_minute=mins)
+    assert _sheet(r, NOW - timedelta(days=7), NOW)["count"] == drops
+
+
+# The owner's 2026-10-21 12:31-12:42 outage as the minute tier keeps it: (avg, samples) per minute -
+# the probe slows while echoes time out, so the samples fall to 7-8 a minute.
+_OCT21 = [(0.0, 20), (0.088, 17), (1.0, 15), (1.0, 15), (1.0, 12), (1.0, 7), (1.0, 8), (1.0, 7), (1.0, 8),
+          (1.0, 7), (1.0, 8), (1.0, 7), (0.105, 19), (0.0, 20), (0.0, 20), (0.039, 19), (0.0, 20)]
+
+
+@BOTH
+def test_a_real_ten_minute_outage_in_the_minute_tier_is_one_drop(make, which):
+    t0 = BASE - 50 * 3600
+    mins = [(t0 + 60 * i, GW, a, (1.0 if a >= 0.08 else (0.75 if a else 0.0)), n) for i, (a, n) in enumerate(_OCT21)]
+    r = make(which, hw_minute=mins)
+    ev = _sheet(r, NOW - timedelta(days=7), NOW)
+    assert ev["count"] == 1
+    assert ev["runs"][0][0] == datetime.fromtimestamp(t0 + 60)          # 12:31 ... 12:42
+    assert ev["runs"][0][1] == datetime.fromtimestamp(t0 + 60 * 12)
+    lost = sum(min(a * n * 3.0, 60.0) for a, n in _OCT21[1:13])
+    assert ev["total_down_seconds"] == pytest.approx(lost)
+
+
+@BOTH
+def test_hour_rows_never_count_as_drops(make, which):
+    """Hour rows inflate (~1.8x the same time as minutes) and chain into multi-day drops: the drop
+    count covers minute-or-finer data only (about the last 30 days)."""
+    t0 = BASE - 60 * 86400
+    hours = [(t0 + 3600 * i, GW, 0.5, 1.0, 1200) for i in range(48)]   # two days of heavy loss
+    r = make(which, hw_hour=hours)
+    ev = _sheet(r, NOW - timedelta(days=90), NOW)
+    assert ev["count"] == 0 and ev["total_down_seconds"] == 0.0
+
+
+def test_raw_cycle_zero_never_makes_a_rollup_row_infinite():
+    rows = [_lr(0, 1.0, 30.0, 60)]
+    assert S.outage_summary(rows, min_cycles=2, min_rollup_cycles=4)["count"] == 0
+
+
+@pytest.fixture
+def router_and_internet(make):
+    """Router: a 30 s drop at +600 s. Internet: a 60 s drop at +1200 s (the router answered)."""
+    t0 = BASE - 3 * 3600
+    rows = [(ts, GW, v) for ts, v in _cycles(t0, 30, drops=[(t0 + 600, t0 + 630)])]
+    rows += [(ts + 1, ANCHOR, v) for ts, v in _cycles(t0, 30, drops=[(t0 + 1200, t0 + 1260)])]
+    return make(1, hw_raw=rows)
+
+
+def test_with_the_internet_ping_on_only_the_internet_series_counts(router_and_internet):
+    ev = _events(router_and_internet, public=True)
+    assert ev["count"] == 1 and ev["total_down_seconds"] == pytest.approx(60.0)
+    assert _events(router_and_internet, public=False)["count"] == 1   # router only: its own drop
+
+
+def test_the_overview_matches_the_stats_sheets_internet_block(router_and_internet):
+    import logging
+    from netspeedtray.views.monitor.stats_detail import _load_subjects
+    s, e = NOW - timedelta(hours=24), NOW
+    ov = _events(router_and_internet, public=True)
+    blocks = _load_subjects(_WS(router_and_internet), [{"key": "latency_anchor", "kind": "hw"},
+                                                       {"key": "latency_gw", "kind": "hw"}],
+                            s, e, 1.0, logging.getLogger("t"))
+    internet, router = blocks[0]["outage"], blocks[1]["outage"]
+    assert (ov["count"], ov["total_down_seconds"], ov["last_start"]) == \
+        (internet["count"], internet["total_down_seconds"], internet["last_start"])
+    assert router["count"] == 1 and router["last_start"] != internet["last_start"]   # its own count
+
+
+def test_last_drop_shows_a_date_when_it_was_not_today():
+    from netspeedtray.views.monitor.overview.tab import drop_time_label
+    now = datetime(2026, 11, 18, 10, 0)
+    assert drop_time_label(datetime(2026, 11, 18, 8, 40), now, "en_US") == "08:40"
+    assert drop_time_label(datetime(2026, 10, 11, 16, 48), now, "en_US") == "10/11 16:48"
+    de = drop_time_label(datetime(2026, 10, 11, 16, 48), now, "de_DE")
+    assert de.startswith("11.10") and de.endswith("16:48") and "2026" not in de and "26 " not in de
+
+
+def test_red_means_a_recent_drop(q_app):
+    from types import SimpleNamespace
+    from netspeedtray import constants
+    from netspeedtray.constants.i18n import I18nStrings
+    from netspeedtray.tests.unit.test_overview_tiles import _MW, _cfg
+    from netspeedtray.views.monitor.overview.tab import OverviewTab
+    colors = constants.network.latency.VERDICT_COLORS
+    mw = SimpleNamespace(system_power=None, latency_gw=12.0, latency_anchor=None)
+    ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
+    now = datetime.now()
+    ov._latency_events = {"count": 5, "last_start": now - timedelta(hours=2)}
+    assert colors["slow"] in ov._context_right_text(mw)
+    ov._latency_events = {"count": 5, "last_start": now - timedelta(days=3)}
+    txt = ov._context_right_text(mw)
+    assert colors["ok"] in txt and colors["slow"] not in txt
+    ov._latency_events = {"count": 1, "last_start": now - timedelta(minutes=5)}
+    assert colors["slow"] in ov._context_right_text(mw)
+    ov._latency_events = {"count": 0, "last_start": None}
+    assert colors["good"] in ov._context_right_text(mw)
