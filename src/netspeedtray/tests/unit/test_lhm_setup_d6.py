@@ -615,7 +615,12 @@ def test_the_nudge_opens_at_step_two_when_the_web_server_is_off(q_app, monkeypat
 
         def dismissed_forever(self):
             return False
+
+        def deleteLater(self):
+            pass
     monkeypatch.setattr(tod, "TempOnboardingDialog", _Fake)
+    from netspeedtray.views.widget import startup_notices as sn
+    monkeypatch.setattr(sn, "_seconds_since_sign_in", lambda: 3600.0)   # not in the sign-in rush
     for status, step in ((L.STATUS_SERVER_OFF, 2), (L.STATUS_NOT_FOUND, 1)):
         mt = type("MT", (), {"lhm_port": 8085, "lhm_status": status})()
         host = type("W", (), {"config": {}, "monitor_thread": mt, "i18n": EN,
@@ -701,3 +706,105 @@ def test_translators_md_flags_the_d6_strings():
     for k in ADDED + RETIRED + CHANGED:
         assert f"`{k}`" in text, k
     assert "~~`LHM_WEB_SERVER_HINT`~~" in text and "~~`TEMP_ONBOARDING_BODY`~~" in text
+
+
+# --- combined review C10/C11: the automatic temperature setup shows once ever, through the card gates --
+
+class _FakeSetup:
+    made = []
+
+    def __init__(self, i18n, parent=None, **kw):
+        _FakeSetup.made.append(kw)
+        self.deleted = False
+
+    def exec(self):
+        return 0
+
+    def dismissed_forever(self):
+        return False
+
+    def deleteLater(self):
+        self.deleted = True
+
+
+def _nag_host(config=None, **attrs):
+    import types
+    mt = types.SimpleNamespace(lhm_port=8085, lhm_status=L.STATUS_NOT_FOUND)
+    host = types.SimpleNamespace(config={} if config is None else config, monitor_thread=mt, i18n=EN,
+                                 logger=logging.getLogger("t"), settings_dialog=None, _running_panel=None,
+                                 _update_flyout=None, _notice_flyout=None, _usage_alert_flyout=None,
+                                 _startup_notices=None, _update_offer_blocked=lambda: False,
+                                 _app_is_quitting=lambda: False)
+    host.update_config = lambda u: host.config.update(u)
+    host.__dict__.update(attrs)
+    return host
+
+
+@pytest.fixture
+def nag_world(monkeypatch):
+    from netspeedtray.views import temp_onboarding_dialog as tod
+    from netspeedtray.views.widget import startup_notices as sn
+    _FakeSetup.made = []
+    monkeypatch.setattr(tod, "TempOnboardingDialog", _FakeSetup)
+    state = type("S", (), {"since": 3600.0})()
+    monkeypatch.setattr(sn, "_seconds_since_sign_in", lambda: state.since)
+    return state
+
+
+def test_the_automatic_setup_shows_once_ever_closing_counts_as_dismissed(q_app, nag_world):
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    from netspeedtray.views.widget import startup_notices as sn
+    host = _nag_host()
+    NetworkSpeedWidget._on_lhm_not_detected(host)
+    assert len(_FakeSetup.made) == 1
+    assert _FakeSetup.made[-1]["show_remind"] is False          # closing IS the dismissal: no check box
+    assert host.config["temp_onboarding_dismissed"] is True     # used up, whatever the close
+    assert sn.moment_taken(host) == sn.MOMENT_TEMP_SETUP
+    nxt = _nag_host(config=dict(host.config))                   # the next launch
+    NetworkSpeedWidget._on_lhm_not_detected(nxt)
+    assert len(_FakeSetup.made) == 1                            # never again on its own
+
+
+@pytest.mark.parametrize("why", ["sign_in", "blocked", "settings", "card", "panel", "notice_owed", "moment"])
+def test_the_automatic_setup_waits_behind_the_card_gates(q_app, nag_world, why):
+    import types
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    from netspeedtray.views.widget import startup_notices as sn
+    visible = types.SimpleNamespace(isVisible=lambda: True)
+    host = _nag_host()
+    if why == "sign_in":
+        nag_world.since = 30.0
+    elif why == "blocked":                                      # fullscreen, a modal dialog, away
+        host._update_offer_blocked = lambda: True
+    elif why == "settings":
+        host.settings_dialog = visible
+    elif why == "card":
+        host._update_flyout = visible
+    elif why == "panel":
+        host._running_panel = visible
+    elif why == "notice_owed":
+        host._startup_notices = types.SimpleNamespace(owes_moment=lambda: True)
+    elif why == "moment":
+        sn.take_moment(host, sn.MOMENT_SUPPORT)
+    assert NetworkSpeedWidget._temp_setup_blocked_reason(host) is not None
+    NetworkSpeedWidget._on_lhm_not_detected(host)
+    assert _FakeSetup.made == []
+    assert host.config.get("temp_onboarding_dismissed", False) is False     # still owed
+
+
+def test_the_widgets_setup_dialog_is_deleted_after_it_closes(q_app, nag_world):
+    """C10: the dialog parented to the widget is released once exec returns (it lived until quit)."""
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    host = _nag_host()
+    made = []
+    orig = _FakeSetup.__init__
+
+    def init(self, *a, **kw):
+        orig(self, *a, **kw)
+        made.append(self)
+    _FakeSetup.__init__ = init
+    try:
+        NetworkSpeedWidget._on_lhm_not_detected(host)
+    finally:
+        _FakeSetup.__init__ = orig
+    assert made and made[0].deleted is True

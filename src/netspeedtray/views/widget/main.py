@@ -3476,26 +3476,75 @@ class NetworkSpeedWidget(QWidget):
 
     def _on_lhm_not_detected(self) -> None:
         """
-        Temps/power are enabled but no sensor source was found. Show the two-step temperature setup
-        (install LibreHardwareMonitor, turn on its web server; clear that the app never runs as admin),
-        unless the user has permanently dismissed it. With LHM already running but its web server off
-        (D6), it opens at step 2. Its "Get LibreHardwareMonitor" link opens the browser itself.
+        Temps/power are enabled but no sensor source was found: the two-step temperature setup
+        (install LibreHardwareMonitor, turn on its web server; clear that the app never runs as admin).
+        With LHM already running but its web server off (D6), it opens at step 2. Its "Get
+        LibreHardwareMonitor" link opens the browser itself.
+
+        Combined review C11: shown on its own at most ONCE ever - showing it uses it up
+        (``temp_onboarding_dismissed``), however it is closed, so no "Don't remind me again" box -
+        and only through the startup cards' gates (``_temp_setup_blocked_reason``: the sign-in rush, a
+        fullscreen app / modal dialog / nobody at the screen, Settings open, another card or the
+        "running" panel up, and one one-time moment per session). Blocked, it retries every
+        STARTUP_NOTICE_RETRY_MS this session (another moment taken: next launch). After that only
+        Settings > Hardware's link opens it.
         """
         try:
             if self.config.get("temp_onboarding_dismissed", False):
                 return
+            quitting = getattr(self, "_app_is_quitting", None)
+            if callable(quitting) and quitting():
+                return
+            reason = NetworkSpeedWidget._temp_setup_blocked_reason(self)
+            if reason:
+                self.logger.info("Temperature setup owed, not now: %s.", reason)
+                from netspeedtray.views.widget.startup_notices import moment_taken
+                if moment_taken(self) is None:
+                    QTimer.singleShot(constants.app.STARTUP_NOTICE_RETRY_MS, self._on_lhm_not_detected)
+                return
             from netspeedtray.views.temp_onboarding_dialog import TempOnboardingDialog
+            from netspeedtray.views.widget.startup_notices import MOMENT_TEMP_SETUP, take_moment
             # The port the user configured for LHM (Settings > Hardware), as step 2 names it.
             lhm_port = getattr(self.monitor_thread, "lhm_port", constants.lhm.HTTP_PORT)
             server_off = getattr(self.monitor_thread, "lhm_status", None) == constants.lhm.STATUS_SERVER_OFF
             mt = self.monitor_thread
             dlg = TempOnboardingDialog(self.i18n, self, lhm_port=lhm_port, focus_step=2 if server_off else 1,
+                                       show_remind=False,
                                        status_provider=lambda: getattr(mt, "lhm_status", None))
-            dlg.exec()
-            if dlg.dismissed_forever():
-                self.update_config({"temp_onboarding_dismissed": True})
+            # Used up the moment it shows (a crash or a quit while it is open never brings it back).
+            self.update_config({"temp_onboarding_dismissed": True})
+            take_moment(self, MOMENT_TEMP_SETUP)
+            self.logger.info("Temperature setup shown (once, ever).")
+            try:
+                dlg.exec()
+            finally:
+                dlg.deleteLater()   # C10: parented to the widget - never kept until quit
         except Exception as e:
             self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
+
+    def _temp_setup_blocked_reason(self) -> Optional[str]:
+        """Why the automatic temperature setup may not show now (the startup cards' gates), or None.
+        Tolerant of a stand-in widget: an attribute it lacks blocks nothing."""
+        from netspeedtray.views.widget import startup_notices as sn
+        since = sn._seconds_since_sign_in()
+        if since is not None and 0 <= since < constants.app.SIGN_IN_DUPLICATE_WINDOW_S:
+            return "the sign-in rush"
+        blocked = getattr(self, "_update_offer_blocked", None)
+        try:
+            if callable(blocked) and blocked():
+                return "fullscreen app, modal dialog, or nobody at the screen"
+        except Exception:
+            pass
+        for name, why in (("settings_dialog", "Settings is open"), ("_update_flyout", "another card is up"),
+                          ("_notice_flyout", "another card is up"), ("_usage_alert_flyout", "another card is up"),
+                          ("_running_panel", "the running panel is open")):
+            obj = getattr(self, name, None)
+            try:
+                if sn._alive(obj) and obj.isVisible():
+                    return why
+            except Exception:
+                continue
+        return sn.one_time_moment_blocked(self, sn.MOMENT_TEMP_SETUP)
 
     @staticmethod
     def _widgets_text_within(rect, content, side: bool):

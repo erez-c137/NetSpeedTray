@@ -15,8 +15,10 @@ The steps follow LHM live while the dialog is open (``status_provider``, polled 
 connected ticks both and says "Temperatures are on.".
 
 Opened from two places:
-- the widget, once per session, when temperatures / power are on but no sensor reads (gated upstream:
-  StatsMonitorThread._update_lhm_notice; "Don't remind me again" -> config temp_onboarding_dismissed).
+- the widget, once EVER, when temperatures / power are on but no sensor reads (gated upstream:
+  StatsMonitorThread._update_lhm_notice; then the startup cards' gates, widget._on_lhm_not_detected).
+  Showing it uses it up (config temp_onboarding_dismissed), so no reminder checkbox (combined review
+  C11; ``show_remind`` stays for a caller that wants one).
 - Settings > Hardware: the temperature note's "How to set it up" (step 1) and the "Remote Web Server is
   off" notice's "How to turn it on" (step 2). No reminder checkbox there.
 
