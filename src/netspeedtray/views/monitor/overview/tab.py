@@ -403,9 +403,16 @@ def _read_db(ws, start: datetime, end: datetime, want_series: bool, poll: float,
         events = S.monitor_outages(rows)
         events["hop"] = HOP_ANCHOR if public_enabled else HOP_GATEWAY
         # How much of the window this hop covers: "Internet: steady" right after Turn on must not
-        # speak for a month the internet ping never saw (D5 review).
-        events["rows"] = len(rows)
-        events["first"] = min((r.ts for r in rows if getattr(r, "ts", None) is not None), default=None)
+        # speak for a month the internet ping never saw (D5 review). Its own read: loss_history holds
+        # only the BAD rows and their neighbours on v8, none for a clean hop (live test F2 - the line
+        # said "checking…" for good while every reply came back).
+        coverage_fn = getattr(ws, "get_metric_coverage", None)
+        if callable(coverage_fn):
+            n, first = coverage_fn(stat, start, end)
+            events["rows"], events["first"] = int(n or 0), first
+        else:
+            events["rows"] = len(rows)
+            events["first"] = min((r.ts for r in rows if getattr(r, "ts", None) is not None), default=None)
         events["window_start"] = start
     return series, summ, events, _cap_coverage(ws, cap_start), ok
 

@@ -179,6 +179,14 @@ class HistoryReader(ABC):
                          end_time: Optional[datetime]) -> List[Tuple[datetime, float]]:
         """(timestamp, value) for one hardware stat, binned by window length (1 s / 60 s / 3600 s)."""
 
+    def metric_coverage(self, stat_type: str, start_time: datetime,
+                        end_time: datetime) -> Tuple[int, Optional[datetime]]:
+        """(rows, first row's time) of one hardware stat over [start, end] in the tiers
+        ``loss_history`` reads (raw + minute) - how much of the window a loss series covers. Never
+        derived from ``loss_history`` itself: on v8 that returns only BAD rows and their neighbours, so
+        a clean hop read as "not covered" (2.2.2 live test F2: "Internet: checking…" forever)."""
+        return 0, None
+
     @abstractmethod
     def loss_history(self, stat_types: Sequence[str], start_time: datetime,
                      end_time: datetime) -> Dict[str, List["LossRow"]]:
@@ -1047,6 +1055,25 @@ class V7HistoryReader(_ReaderBase):
 
     # --- hardware -----------------------------------------------------------------------------
 
+    def metric_coverage(self, stat_type: str, start_time: datetime,
+                        end_time: datetime) -> Tuple[int, Optional[datetime]]:
+        st, et = int(start_time.timestamp()), int(end_time.timestamp())
+        count, first = 0, None
+        try:
+            cur = self._conn().cursor()
+            for table, (b_sql, b_params) in zip(self._HW_TIERS[:len(_LOSS_NATIVE_SPANS)],
+                                                self._bounds(self._HW_TIERS)):
+                n, lo = cur.execute(
+                    f"SELECT COUNT(*), MIN(timestamp) FROM {table} WHERE stat_type = ? "
+                    f"AND timestamp BETWEEN ? AND ?{b_sql}", (stat_type, st, et, *b_params)).fetchone()
+                count += int(n or 0)
+                if lo is not None and (first is None or int(lo) < first):
+                    first = int(lo)
+        except Exception as e:
+            self._log_read_failure("Error reading a loss series' coverage", e)
+            return 0, None
+        return count, (datetime.fromtimestamp(first) if first is not None else None)
+
     def loss_history(self, stat_types: Sequence[str], start_time: datetime,
                      end_time: datetime) -> Dict[str, List[LossRow]]:
         stats = tuple(dict.fromkeys(stat_types))
@@ -1873,6 +1900,24 @@ class V8HistoryReader(_ReaderBase):
         return None
 
     # --- hardware -----------------------------------------------------------------------------------
+
+    def metric_coverage(self, stat_type: str, start_time: datetime,
+                        end_time: datetime) -> Tuple[int, Optional[datetime]]:
+        st, et = int(start_time.timestamp()), int(end_time.timestamp())
+        bounds = self._tier_bounds(self._HW, "h")
+
+        def run(cur):
+            count, first = 0, None
+            for k in range(len(_LOSS_NATIVE_SPANS)):   # raw, minute: the tiers loss_history reads
+                n, lo = cur.execute(
+                    f"SELECT COUNT(*), MIN(h.ts) FROM {self._HW[k]} h WHERE {self._METRIC} "
+                    f"AND h.ts BETWEEN ? AND ?{bounds[k][0]}", (stat_type, st, et) + bounds[k][1]).fetchone()
+                count += int(n or 0)
+                if lo is not None and (first is None or int(lo) < first):
+                    first = int(lo)
+            return count, (datetime.fromtimestamp(first) if first is not None else None)
+
+        return self._snapshot_call(run, lambda: (0, None))
 
     def loss_history(self, stat_types: Sequence[str], start_time: datetime,
                      end_time: datetime) -> Dict[str, List[LossRow]]:

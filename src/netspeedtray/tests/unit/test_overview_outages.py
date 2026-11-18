@@ -76,6 +76,7 @@ class _WS:
     """WidgetState's real history accessors over a temp-DB reader (no DB worker, no Qt)."""
     get_hardware_history = WidgetState.get_hardware_history
     get_loss_history = getattr(WidgetState, "get_loss_history", None)
+    get_metric_coverage = getattr(WidgetState, "get_metric_coverage", None)
 
     def __init__(self, reader):
         self.history_reader = reader
@@ -695,3 +696,28 @@ def test_across_local_midnight_a_recent_drop_is_dated_and_still_red():
     assert drop_color(last, now) == constants.network.latency.VERDICT_COLORS["slow"]
     assert drop_time_label(last, now, "en_US") == "11/17 23:50"
     assert drop_time_label(datetime(2026, 11, 18, 0, 5), now, "en_US") == "00:05"
+
+
+# --- the internet line's coverage (2.2.2 live test F2) -----------------------------------------------
+
+@BOTH
+def test_a_clean_internet_ping_covers_the_window(make, which):
+    """The VM DB of 2026-11-18: the internet ping turned on ~4 min ago, every reply clean. The Overview
+    said "Internet: checking…" for 8+ min: its coverage (row count, first row) came from loss_history,
+    which on v8 returns only BAD rows and their neighbours - none at all for a clean hop."""
+    t0 = NOW_TS - 230
+    rows = [(ts, GW, 0.0) for ts, _ in _cycles(NOW_TS - 2300, 38)]
+    rows += [(ts, ANCHOR, v) for ts, v in _cycles(t0, 4)]
+    r = make(which, hw_raw=rows)
+    for key in ("TIMELINE_24_HOURS", "TIMELINE_ALL"):
+        ev = _events(r, public=True, key=key)
+        assert ev["hop"] == "anchor" and ev["count"] == 0
+        assert ev["rows"] > 0, key                                  # "steady", not "checking…"
+        assert int(ev["first"].timestamp()) == t0, key              # "steady since" the first reply
+
+
+@BOTH
+def test_no_internet_rows_in_the_window_still_reads_as_not_covered(make, which):
+    rows = [(ts, GW, 0.0) for ts, _ in _cycles(NOW_TS - 600, 5)]
+    ev = _events(make(which, hw_raw=rows), public=True)
+    assert ev["rows"] == 0 and ev["first"] is None

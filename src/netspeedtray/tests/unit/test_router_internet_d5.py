@@ -249,7 +249,9 @@ def test_window_reads_tag_their_drops_with_the_hop_and_coverage():
     for public, hop, stat in ((False, "gateway", LAT.STAT_GW_TIMEOUT), (True, "anchor", LAT.STAT_ANCHOR_TIMEOUT)):
         ws.get_loss_history.return_value = {stat: [LossRow(first + timedelta(seconds=3 * i), 0.0, None, 1)
                                                     for i in range(3)]}
+        ws.get_metric_coverage.return_value = (3, first)   # its own read, not the loss rows (F2)
         events = _read_db(ws, start, end, False, 1.0, True, None, public)[2]
+        ws.get_metric_coverage.assert_called_with(stat, start, end)
         assert events["hop"] == hop and events["rows"] == 3
         assert events["first"] == first and events["window_start"] == start
 
