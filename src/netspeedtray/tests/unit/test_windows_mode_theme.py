@@ -195,6 +195,8 @@ def _fake_dialog(opened_with=None, page_returns=None):
     fake._pages = types.MethodType(SettingsDialog._pages, fake)
     # 2.2.2 (#592 M1): what Save / Cancel / the preview send is filtered by _for_widget.
     fake._for_widget = types.MethodType(SettingsDialog._for_widget, fake)
+    # integration 2.2.2: _for_widget's key set is shared with save_config_keys (#597 x #592).
+    fake.unowned_app_state_keys = types.MethodType(SettingsDialog.unowned_app_state_keys, fake)
     fake._update_timer = MagicMock()
     fake.reject = lambda: SettingsDialog._revert_live_preview(fake)
     return fake
