@@ -411,6 +411,31 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 # (onefile) AND COLLECT re-copied them loose into the folder, so the release
 # folder carried the whole payload twice (~2x on-disk). Splitting the two modes
 # fixes that.
+
+# GPLv3 section 4 says every copy carries the licence, and the bundled libraries (Qt's LGPLv3, the
+# BSD/MIT/Apache packages) expect their notices to travel with the binaries. Write LICENSE.txt and a
+# freshly generated THIRD-PARTY-NOTICES.txt (build/third_party_notices.py, from this build venv's
+# package metadata) NEXT TO NetSpeedTray.exe. In onedir mode this runs before build.bat embeds the
+# bundle manifest, so both files are covered by it and land in the installer and the portable zip.
+_RELEASE_DOCS = ('LICENSE.txt', 'THIRD-PARTY-NOTICES.txt')
+
+
+def _write_release_docs(target_dir):
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location(
+        'nst_third_party_notices', os.path.join(SPECPATH, 'third_party_notices.py'))
+    _mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    written = _mod.write_release_docs(target_dir)
+    names = sorted(os.path.basename(p) for p in written)
+    if names != sorted(_RELEASE_DOCS):
+        raise SystemExit(f"[netspeedtray.spec] FATAL: licence files written {names}, "
+                         f"expected {sorted(_RELEASE_DOCS)}")
+    for p in written:
+        if os.path.getsize(p) < 1024:
+            raise SystemExit(f"[netspeedtray.spec] FATAL: {p} is suspiciously small")
+    print(f'[netspeedtray.spec] Licence files written next to the exe: {", ".join(names)}')
+
 _onefile = bool(os.environ.get('NST_ONEFILE'))
 
 if _onefile:
@@ -435,6 +460,7 @@ if _onefile:
         icon='..\\assets\\NetSpeedTray.ico',
         version='version_info.txt'
     )
+    _write_release_docs(DISTPATH)
 else:
     print('[netspeedtray.spec] Build mode: ONEDIR (bootstrap exe + _internal/).')
     exe = EXE(
@@ -465,6 +491,7 @@ else:
         upx=_UPX,
         name='NetSpeedTray'
     )
+    _write_release_docs(os.path.join(DISTPATH, 'NetSpeedTray'))
     # Guard: no bundled binary may be UPX-packed (see _UPX at the top). Packing strips a vendor's
     # Authenticode signature and nothing else would ever say so - the beta.3 zip shipped ~20
     # PSF-signed CPython modules unsigned. A packed PE carries UPX's section names in its header.

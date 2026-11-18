@@ -110,7 +110,13 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
-Source: "..\dist\NetSpeedTray\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; LICENSE.txt (GPLv3) and THIRD-PARTY-NOTICES.txt are written next to the exe by netspeedtray.spec.
+; They are listed on their own (and excluded from the wildcard; a leading "\" anchors the pattern to
+; the top of the source folder) so a build without them fails to compile instead of shipping without
+; them. Files installed here are removed by the uninstaller like every other [Files] entry.
+Source: "..\dist\NetSpeedTray\*"; Excludes: "\LICENSE.txt,\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\NetSpeedTray\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\NetSpeedTray\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

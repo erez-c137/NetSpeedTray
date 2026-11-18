@@ -45,6 +45,9 @@ class _WS:
             return [(self._t0, 33.0), (self._t0 + timedelta(seconds=1), 44.0)]
         return []
 
+    def get_loss_history(self, stats, start, end):   # the drops read
+        return {st: self.get_hardware_history(st, start, end) for st in stats}
+
 
 def _cfg(**over):
     c = {"update_rate": 1.0, "unit_type": "bits_decimal", "decimal_places": 1}
@@ -260,6 +263,10 @@ class _ThreadRecordingWS(_WS):
     def get_hardware_history(self, *a, **k):
         self._note()
         return super().get_hardware_history(*a, **k)
+
+    def get_loss_history(self, *a, **k):
+        self._note()
+        return super().get_loss_history(*a, **k)
 
 
 _ALL_KINDS = [

@@ -75,6 +75,62 @@ ALSO
 
 ---
 
+## [2.2.1-beta.2] - November 18, 2026
+
+*A beta, for testers. It's a manual download from the release page - the in-app updater, WinGet
+and the Store never offer prereleases.*
+
+The second beta of 2.2.1: the Monitor's connection drops are counted honestly, the Overview is
+light again and its small graphs span the whole range, light traffic reads "<0.1", and the license
+texts ship with the app.
+
+### Fixed
+
+- **Light traffic no longer reads "0.0 Mbps" with "Always show megabytes" on** (the default). Anything that
+  rounds to zero at your decimal places now reads **<0.1** (or <1 / <0.01), and only real silence reads 0.0.
+  ([#578]; [#556], thanks [@Buuuush]; vote on the default in [#577])
+- **The Monitor's connection drops are now honest.** Short drops were averaged away, so the Overview could
+  say "steady" through real outages - and with the internet check on, internet-side drops were never
+  counted at all. Drops are now read from the detail data, a drop needs at least two lost probe cycles in
+  a row (about 6 s; single blips don't count), the internet check decides when it's on, an older "last"
+  drop shows its date, and red now means "in the last 24 hours" (older is amber). The count covers the
+  last ~30 days, where per-minute detail exists. ([#587])
+- **The Monitor's Overview is light again, and its small graphs show the whole range.** It re-read and
+  re-added up the last day of data several times every 6 s - a steady 6-17 % of one CPU core while it was
+  open, even on Month or All. It now refreshes long ranges every 90 s (still at once when you change the
+  range, switch back to the window or reconnect), skips the read when nothing changed, and reads only what
+  the cards show: under 1 % of a core. The small graphs drew only their last 120 points, so "24 hours"
+  showed about the last 2 hours; they now span the whole range, gaps (a sleeping laptop) stay gaps, and the
+  peak never reads below the live speed. ([#594])
+- **License texts ship with the app.** LICENSE.txt (GPLv3) and THIRD-PARTY-NOTICES.txt - every bundled
+  component's license, plus where to get the source of the GPL/LGPL parts - now sit next to
+  NetSpeedTray.exe, in both the installer and the portable zip. The release build checks they are
+  installed and removed again on uninstall. ([#588])
+
+### Developer notes
+
+- Two tests that failed once on CI are steadier: the Qt-lifetime control case pauses automatic garbage
+  collection so it can't run on the main thread mid-test, and the history golden test's day-resolution
+  sanity floor allows the lower day count CI saw at 00:01 UTC. ([#581])
+- The other Qt lifetime test now checks its own window's registry entry instead of the global count -
+  processing deferred deletes also freed windows an earlier test on the same worker had left behind. ([#586])
+- The golden history test runs on a frozen clock in a pinned time zone instead of #581's lowered floor: it read
+  the wall clock in three places, so a run at UTC midnight compared one day bucket fewer (940 rows). It now
+  asserts exact counts at five times of day, and pytest's own timer stays real. ([#589])
+
+[#556]: https://github.com/erez-c137/NetSpeedTray/issues/556
+[#577]: https://github.com/erez-c137/NetSpeedTray/issues/577
+[#578]: https://github.com/erez-c137/NetSpeedTray/pull/578
+[#581]: https://github.com/erez-c137/NetSpeedTray/pull/581
+[#586]: https://github.com/erez-c137/NetSpeedTray/pull/586
+[#589]: https://github.com/erez-c137/NetSpeedTray/pull/589
+[#587]: https://github.com/erez-c137/NetSpeedTray/pull/587
+[#594]: https://github.com/erez-c137/NetSpeedTray/pull/594
+[#588]: https://github.com/erez-c137/NetSpeedTray/pull/588
+[@Buuuush]: https://github.com/Buuuush
+
+---
+
 ## [2.2.1-beta.1] - November 17, 2026
 
 *A beta, for testers. It's a manual download from the release page - the in-app updater, WinGet

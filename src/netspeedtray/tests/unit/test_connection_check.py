@@ -481,11 +481,14 @@ class _HopWS:
 
     def get_hardware_history(self, stat, start, end):
         self.asked.append(stat)
-        if stat == "latency_anchor_timeout":
-            return [(self._t0, 0.5), (self._t0 + timedelta(seconds=3), 0.0)]
+        if stat == "latency_anchor_timeout":   # two lost cycles in a row: one drop (OUTAGE_MIN_CYCLES)
+            return [(self._t0, 0.5), (self._t0 + timedelta(seconds=3), 0.5), (self._t0 + timedelta(seconds=6), 0.0)]
         if stat == "latency_gw_timeout":
             return [(self._t0, 0.0), (self._t0 + timedelta(seconds=3), 0.0)]
         return [(self._t0, 3.0)]
+
+    def get_loss_history(self, stats, start, end):   # the drops read
+        return {st: self.get_hardware_history(st, start, end) for st in stats}
 
 
 def _detail_copy(q_app, public: bool):
@@ -552,6 +555,9 @@ class _BlockedAnchorWS(_HopWS):
         if stat == "latency_gw_timeout" and self._gw:
             return [(self._t0, 0.0), (self._t0 + timedelta(seconds=3), 0.0)]
         return []
+
+    def get_loss_history(self, stats, start, end):   # the drops read
+        return {st: self.get_hardware_history(st, start, end) for st in stats}
 
 
 def _detail_with(q_app, ws):

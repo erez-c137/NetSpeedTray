@@ -46,7 +46,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Sequence, Tuple, Union
 
 from netspeedtray import constants
 from netspeedtray.core import usage_snapshot
@@ -180,6 +180,27 @@ class HistoryReader(ABC):
         """(timestamp, value) for one hardware stat, binned by window length (1 s / 60 s / 3600 s)."""
 
     @abstractmethod
+    def loss_history(self, stat_types: Sequence[str], start_time: datetime,
+                     end_time: datetime) -> Dict[str, List["LossRow"]]:
+        """{stat: [LossRow, ...] in time order} for the latency loss series - the input of
+        ``summaries.outage_summary``. The raw and minute tiers at their NATIVE span, never binned by
+        window length: raw rows one per probe cycle (``down`` None), minute rows 60 s, each with its
+        PEAK (a bin's average hides a one-cycle drop) and, for minute rows, an estimate of the time
+        lost in it (``_loss_down_sql``). Binning chained adjacent bad bins into one long outage
+        (60 s bins: "1 drop, 29 min down"; hour bins past 30 days: 327 drops read as 10).
+
+        The HOUR tier is not read: an hour row's estimate inflates (~1.8x the same time kept as
+        minutes) and adjacent bad hours chain into multi-day "drops" (386 h seen). Drop counts cover
+        minute-or-finer history only - about the last 30 days; the All window shows the drops of
+        its last ~30 days. (Rollups that store a bad-cycle count / longest run need a schema change.)
+
+        The v8 reader reads only what ``outage_summary`` can tell apart: the BAD rows (peak >= 0.5)
+        plus, for each, its previous and next row in the same tier (a clean row there ends the run;
+        its timestamp keeps the "nothing recorded" gap split exact). That gives the same outages as
+        reading every row, at a fraction of the cost (most rows are clean). The v7 reader (an upgrade
+        still deferred) reads every row: its tiers can overlap."""
+
+    @abstractmethod
     def summarize_hardware(self, stat_type: str, start_time: datetime, end_time: datetime,
                            poll_interval: float = 1.0):
         """Honest WindowSummary for a hardware stat over [start, end] (see utils.summaries)."""
@@ -262,12 +283,98 @@ class HistoryReader(ABC):
         caller defers). Storage errors propagate; a bad snapshot only empties ``snapshot``."""
 
 
+class LossRow(NamedTuple):
+    """One row of a latency loss series as ``loss_history`` returns it."""
+    ts: datetime              # the row's (raw) or its bin's (rollup) start
+    peak: float               # the worst cycle's lost fraction in it (0-1)
+    down: Optional[float]     # rollup bins: estimated seconds lost; raw rows: None (outage_summary
+                              # measures a raw run: first bad row to last, plus one cycle)
+    span: int                 # seconds the row stands for (1 raw, 60 minute, 3600 hour)
+
+
+def _loss_down_sql(avg: str, count: str, native: int) -> str:
+    """SQL for a rollup row's estimated lost time: its average loss x its sample count = the cycles
+    lost, at the probe's cadence - capped at the row's own span (a minute can hold 21 cycles at a 3 s
+    cadence, and rows from before 2.2 counted samples differently). Never the bin's full length: a
+    minute that lost one 3 s cycle was not down for a minute."""
+    cyc = float(constants.network.latency.OUTAGE_CYCLE_SEC)
+    return f"MIN(COALESCE({avg}, 0) * COALESCE({count}, 1) * {cyc}, {native})"
+
+
+_LOSS_NATIVE_SPANS = (1, 60)   # raw, minute - the hour tier is never read for drops
+
+
+def _read_loss_rows(cur, stats: Sequence[str], st: int, et: int, tiers) -> Dict[str, List["LossRow"]]:
+    """``loss_history``'s shared core. ``tiers``: per tier (finest first)
+    (table, ts_col, key_col, {stat: key}, lo, hi_exclusive) - lo/hi None = unbounded. One statement
+    per hop per tier: the bad rows inside the tier's range, each with its previous / next row of the
+    same hop and tier (correlated MIN/MAX on the (key, ts) index - never ORDER BY .. LIMIT 1, which
+    measured 486 ms). The neighbour lookup takes ONE range bound so SQLite's MIN/MAX shortcut seeks
+    a single index entry (a second BETWEEN bound made it scan: 650 ms on a month of minutes); a
+    neighbour outside the tier's range is dropped here instead - the range is contiguous, so then
+    the tier has no row on that side inside it."""
+    per: Dict[str, Dict[int, tuple]] = {s_: {} for s_ in stats}
+    neighbours: Dict[str, list] = {s_: [] for s_ in stats}
+    for (table, ts, key_col, keys, lo, hi), native in zip(tiers, _LOSS_NATIVE_SPANS):
+        a = st if lo is None else max(st, int(lo))
+        b = et if hi is None else min(et, int(hi) - 1)
+        if a > b:
+            continue
+        peak = "h.value" if native == 1 else "h.max_value"
+        down = "NULL" if native == 1 else _loss_down_sql("h.avg_value", "h.sample_count", native)
+        nb = (f"(SELECT {{agg}}(n.{ts}) FROM {table} n WHERE n.{key_col} = h.{key_col} "
+              f"AND n.{ts} {{op}} h.{ts})")
+        sql = (f"SELECT h.{ts}, {peak}, {down}, {nb.format(agg='MAX', op='<')}, "
+               f"{nb.format(agg='MIN', op='>')} FROM {table} h "
+               f"WHERE h.{key_col} = ? AND h.{ts} BETWEEN {a} AND {b} AND {peak} >= 0.5")
+        for stat, key in keys.items():
+            for t, pk, dn, prev_ts, next_ts in cur.execute(sql, (key,)).fetchall():
+                per[stat][int(t)] = (float(pk), None if dn is None else float(dn), native)
+                for x in (prev_ts, next_ts):
+                    if x is not None and a <= x <= b:
+                        neighbours[stat].append((int(x), native))
+    out: Dict[str, List[LossRow]] = {}
+    for stat in stats:
+        rows = per[stat]
+        for x, native in neighbours[stat]:
+            if x not in rows:   # a clean row next to a bad one: it ends the run
+                rows[x] = (0.0, None if native == 1 else 0.0, native)
+        out[stat] = [LossRow(datetime.fromtimestamp(t), pk, dn, sp)
+                     for t, (pk, dn, sp) in sorted(rows.items())]
+    return out
+
+
 def hardware_history_bin_seconds(start_ts: int, end_ts: int) -> int:
     """Seconds one ``hardware_history`` point stands for, by window length: raw (<= 6 h, 1 s bins),
     minute averages (<= 30 days), hour averages (beyond). Shared with the Stats sheet, which turns
     a count of points into a duration ("above the throttle temperature for ...")."""
     duration = end_ts - start_ts
     return 1 if duration <= 6 * 3600 else (60 if duration <= 30 * 86400 else 3600)
+
+
+class LeanSummary(NamedTuple):
+    """A window's sample count, mean and peak - the only figures the Monitor Overview shows. The same
+    numbers as ``summarize_network``'s ``WindowSummary.count`` / ``avg`` / ``max``, aggregated in SQL
+    instead of fetching every sample to compute percentiles nobody on the Overview reads."""
+    count: int
+    avg: Optional[float]
+    max: Optional[float]
+
+
+EMPTY_LEAN_SUMMARY = LeanSummary(0, None, None)
+
+
+def overview_bin_seconds(start_ts: int, end_ts: int, bins: Optional[int] = None) -> int:
+    """Seconds per Overview sparkline point so ``bins`` points span the WHOLE window. Bins are aligned to
+    the epoch (``ts / bin``), so a reload a few seconds later draws the same shape; a bin over a minute
+    is a whole number of minutes, so its length - and the shape - only changes when the window grows
+    by a minute per point (All). At most ``bins + 2`` bins are touched."""
+    n = int(bins or constants.timers.OVERVIEW_SPARK_BINS)
+    span = max(1, int(end_ts) - int(start_ts))
+    b = max(1, -(-span // n))
+    if b > 60:
+        b = -(-b // 60) * 60
+    return b
 
 
 # network_hourly_profile: (ts, rate, weight) rows from every tier -> weighted mean rate per LOCAL clock
@@ -412,6 +519,22 @@ class _ReaderBase(HistoryReader):
             self.logger.info("%s stopped (reader interrupted for close/quit), returning empty", what)
         else:
             self.logger.error("%s: %s", what, e, exc_info=True)
+
+    def data_version(self) -> Optional[Tuple[sqlite3.Connection, int]]:
+        """This thread's read connection and its ``PRAGMA data_version`` - which changes whenever another
+        connection (the DB worker) commits - or None when unreadable. Equal tokens from two calls on
+        one thread mean nothing was written in between, so a read made at the first is still current.
+
+        The token holds the connection OBJECT, not ``id(conn)``: a pruned connection (idle > 120 s,
+        WidgetState._get_read_conn) is closed and a new one opened, whose counter restarts - and
+        CPython hands the new object the freed one's id, so ``(id, version)`` matched a token taken
+        before writes happened (200/200 in a probe). While a token holds the old object, its id cannot
+        be reused, and a new connection never compares equal to it."""
+        try:
+            conn = self._conn()
+            return conn, int(conn.execute("PRAGMA data_version").fetchone()[0])
+        except Exception:
+            return None
 
     _NO_BOUND = "9e18"   # past any epoch second: "no finer data inside the horizon" bounds nothing
 
@@ -924,6 +1047,36 @@ class V7HistoryReader(_ReaderBase):
 
     # --- hardware -----------------------------------------------------------------------------
 
+    def loss_history(self, stat_types: Sequence[str], start_time: datetime,
+                     end_time: datetime) -> Dict[str, List[LossRow]]:
+        stats = tuple(dict.fromkeys(stat_types))
+        if not stats:
+            return {}
+        # The v7 file (an upgrade still deferred) is read in FULL at native spans: its tiers have no
+        # lower bounds, so stray minute rows can overlap the hour tier, and a bad row's same-tier
+        # neighbours would no longer be its neighbours in the merged series. Rare and short-lived.
+        st, et = int(start_time.timestamp()), int(end_time.timestamp())
+        qs = ", ".join("?" * len(stats))
+        out: Dict[str, List[LossRow]] = {s_: [] for s_ in stats}
+        try:
+            cur = self._conn().cursor()
+            for (table, native), (b_sql, b_params) in zip(zip(self._HW_TIERS, _LOSS_NATIVE_SPANS),
+                                                          self._bounds(self._HW_TIERS)):
+                peak = "value" if native == 1 else "max_value"
+                down = "NULL" if native == 1 else _loss_down_sql("avg_value", "sample_count", native)
+                for name, t, pk, dn in cur.execute(
+                        f"SELECT stat_type, timestamp, {peak}, {down} FROM {table} WHERE stat_type IN ({qs}) "
+                        f"AND timestamp BETWEEN ? AND ?{b_sql}", (*stats, st, et, *b_params)):
+                    if pk is not None:
+                        out[name].append(LossRow(datetime.fromtimestamp(t), float(pk),
+                                                 None if dn is None else float(dn), native))
+            for rows in out.values():   # by epoch: naive local times repeat in a DST fall-back hour
+                rows.sort(key=lambda r: r.ts.timestamp())
+            return out
+        except Exception as e:
+            self._log_read_failure("Error fetching loss history", e)
+            return {s_: [] for s_ in stats}
+
     def hardware_history(self, stat_type: str, start_time: Optional[datetime] = None,
                          end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:
         try:
@@ -1116,8 +1269,10 @@ class V8HistoryReader(_ReaderBase):
                 f"AND value NOT GLOB '*[^0-9]*' AND CAST(value AS INTEGER) BETWEEN 1 AND ?)",
                 (key, now_ts + S8.WATERMARK_MAX_LEAD_SECONDS))
 
-    def _tier_bounds(self, tables: Tuple[str, str, str], alias: str) -> List[Tuple[str, tuple]]:
-        """Per tier (finest first): `` AND ...`` confining ``alias.ts`` to the range that tier answers.
+    def _tier_range_exprs(self, tables: Tuple[str, str, str]) -> List[Tuple[Optional[str], tuple,
+                                                                         Optional[str], tuple]]:
+        """Per tier (finest first): (lower SQL, params, upper-exclusive SQL, params) of the range that
+        tier answers - scalar expressions, None where unbounded.
 
         Lower bound (raw, minute): the tier's own watermark - rows below it were rolled up already.
         Upper bound (minute, hour): every finer tier's ceiling, which is that tier's watermark, or - only
@@ -1131,21 +1286,30 @@ class V8HistoryReader(_ReaderBase):
             return (f"COALESCE({w_sql}, (SELECT MIN(ts) FROM {tables[j]} WHERE ts >= ?), {self._NO_BOUND})",
                     w_p + (horizons[j],))
 
-        out: List[Tuple[str, tuple]] = []
+        out = []
         for k in range(3):
-            parts: List[str] = []
-            params: List[Any] = []
+            lo_sql, lo_p, hi_sql, hi_p = None, (), None, ()
             if k < 2:
                 w_sql, w_p = self._watermark(keys[k], now_ts)
-                parts.append(f"{alias}.ts >= COALESCE({w_sql}, -{self._NO_BOUND})")
-                params += w_p
+                lo_sql, lo_p = f"COALESCE({w_sql}, -{self._NO_BOUND})", tuple(w_p)
             if k > 0:
                 cs = [ceiling(j) for j in range(k)]
-                expr = cs[0][0] if k == 1 else f"MIN({', '.join(c[0] for c in cs)})"
-                parts.append(f"{alias}.ts < {expr}")
-                for c in cs:
-                    params += c[1]
-            out.append(("".join(f" AND {p}" for p in parts), tuple(params)))
+                hi_sql = cs[0][0] if k == 1 else f"MIN({', '.join(c[0] for c in cs)})"
+                hi_p = tuple(x for c in cs for x in c[1])
+            out.append((lo_sql, lo_p, hi_sql, hi_p))
+        return out
+
+    def _tier_bounds(self, tables: Tuple[str, str, str], alias: str) -> List[Tuple[str, tuple]]:
+        """Per tier (finest first): `` AND ...`` confining ``alias.ts`` to the range that tier answers
+        (``_tier_range_exprs``)."""
+        out: List[Tuple[str, tuple]] = []
+        for lo_sql, lo_p, hi_sql, hi_p in self._tier_range_exprs(tables):
+            parts: List[str] = []
+            if lo_sql:
+                parts.append(f"{alias}.ts >= {lo_sql}")
+            if hi_sql:
+                parts.append(f"{alias}.ts < {hi_sql}")
+            out.append(("".join(f" AND {p}" for p in parts), tuple(lo_p) + tuple(hi_p)))
         return out
 
     def _snapshot_call(self, fn, on_error):
@@ -1371,6 +1535,137 @@ class V8HistoryReader(_ReaderBase):
 
         return self._snapshot_call(run, lambda: S.summarize_raw([]))
 
+    # --- the Monitor Overview's window read ----------------------------------------------------------
+
+    _OVERVIEW_HW = ("cpu", "gpu", "ram")
+
+    def overview_window(self, start_time: datetime, end_time: datetime, bin_seconds: int,
+                        want_series: bool = True):
+        """The Overview card figures for [start, end], all interfaces, in one read transaction:
+        ``(series, {"down": LeanSummary, "up": LeanSummary}, ok)`` - ``ok`` False when the read failed
+        (empty figures; a caller must not keep them as the window's current state).
+
+        The summaries are ``summarize_network``'s count / avg / max - the same rows, weights and
+        precedence (``tests/unit/test_overview_lean_read.py`` diffs them) - aggregated in SQL, both
+        directions per statement, instead of fetching every sample into Python for the percentiles the
+        Overview never shows.
+
+        ``series`` (None unless ``want_series``) are the sparklines, ~``OVERVIEW_SPARK_BINS`` points
+        spread over the WHOLE window: one value per ``bin_seconds`` integer bin (``overview_bin_seconds``)
+        from the bin holding ``start`` to the one holding ``end`` - EVERY bin, None where nothing was
+        stored (the app was not running, the PC slept). A gap stays a gap at its place on the time axis
+        and every card shares that axis; it is never drawn as zero (nobody measured a zero) and never
+        squeezed out (which stretched the rest across the card and moved spikes in time). The old
+        minute-resolution series was cut to its last 120 points (2 h of "24 h") by the tile. Network: each bin's peak of the all-interface rate, built as speed_history builds
+        it at minute resolution (per-interface peak per minute, summed across interfaces); hardware:
+        the mean of every stored value in the bin (the ``metrics`` ids resolved once, one ``hw_raw``
+        scan for all three - no per-row localtime, no per-metric subquery)."""
+        st, et = int(start_time.timestamp()), int(end_time.timestamp())
+        b = max(1, int(bin_seconds))
+        nb = self._tier_bounds(self._NET, "n")
+        hb = self._tier_bounds(self._HW, "h")
+
+        def run(cur):
+            summ = self._overview_net_summaries(cur, st, et, nb)
+            series = self._overview_series(cur, st, et, b, nb, hb) if want_series else None
+            return series, summ, True
+
+        def failed():
+            return ({k: [] for k in ("down", "up") + self._OVERVIEW_HW} if want_series else None,
+                    {"down": EMPTY_LEAN_SUMMARY, "up": EMPTY_LEAN_SUMMARY}, False)
+
+        return self._snapshot_call(run, failed)
+
+    def _overview_net_summaries(self, cur, st: int, et: int, bounds) -> Dict[str, LeanSummary]:
+        """summarize_network(d, st, et).count / avg / max for both directions (no interface filter).
+        Mirrors its rules exactly: raw rows grouped per timestamp (rate summed across interfaces,
+        weighted by the measured seconds clipped to the window, FLAG_GAP rows excluded); rollup buckets
+        through _bucket_rate, weighted by their sample_count (0/NULL -> 1); a row whose rate is NULL is
+        not a sample. Raw only -> the plain mean of the raw rates and their count; any rollup bucket ->
+        the weighted mean over every sample and the total weight as the count."""
+        raw = cur.execute(
+            "SELECT COUNT(u), SUM(u), MAX(u), SUM(u * s), SUM(CASE WHEN u IS NOT NULL THEN s END), "
+            "COUNT(d), SUM(d), MAX(d), SUM(d * s), SUM(CASE WHEN d IS NOT NULL THEN s END) FROM ("
+            f"SELECT SUM({self._RAW_RATE.format(d='up')}) AS u, SUM({self._RAW_RATE.format(d='down')}) AS d, "
+            "MAX(0.0, MIN(COALESCE(MAX(n.dt_ms) / 1000.0, 0.0), n.ts - ?)) AS s "
+            f"FROM {S8.NET_RAW} n WHERE n.ts BETWEEN ? AND ? AND (n.flags & {S8.FLAG_GAP}) = 0"
+            f"{bounds[0][0]} GROUP BY n.ts)", (st, st, et) + bounds[0][1]).fetchone()
+        rolls = []
+        for k in (1, 2):
+            ru, w = self._bucket_rate("up", k)
+            rd, _w = self._bucket_rate("down", k)
+            rolls.append(cur.execute(
+                "SELECT COUNT(ru), SUM(ru * w), SUM(CASE WHEN ru IS NOT NULL THEN w END), "
+                "MAX(CASE WHEN ru IS NOT NULL THEN mu END), "
+                "COUNT(rd), SUM(rd * w), SUM(CASE WHEN rd IS NOT NULL THEN w END), "
+                "MAX(CASE WHEN rd IS NOT NULL THEN md END) FROM ("
+                f"SELECT {ru} AS ru, {rd} AS rd, COALESCE(NULLIF({w}, 0), 1) AS w, "
+                "MAX(n.up_max) AS mu, MAX(n.down_max) AS md "
+                f"FROM {self._NET[k]} n WHERE n.ts BETWEEN ? AND ?{bounds[k][0]} GROUP BY n.ts)",
+                (st, et) + bounds[k][1]).fetchone())
+        out: Dict[str, LeanSummary] = {}
+        for name, r0, q0 in (("up", 0, 0), ("down", 5, 4)):
+            r_n, r_sum, r_max, r_vw, r_w = raw[r0:r0 + 5]
+            buckets = sum(int(q[q0] or 0) for q in rolls)
+            if not buckets:
+                out[name] = (LeanSummary(int(r_n), float(r_sum) / r_n, float(r_max)) if r_n
+                             else EMPTY_LEAN_SUMMARY)
+                continue
+            vw = sum(float(q[q0 + 1] or 0.0) for q in rolls) + float(r_vw or 0.0)
+            total = sum(float(q[q0 + 2] or 0.0) for q in rolls) + float(r_w or 0.0)
+            peaks = [float(x) for x in [r_max] + [q[q0 + 3] for q in rolls] if x is not None]
+            out[name] = LeanSummary(int(total), vw / total if total > 0 else None,
+                                    max(peaks) if peaks else None)
+        return out
+
+    def _overview_series(self, cur, st: int, et: int, b: int, nb, hb) -> Dict[str, List[float]]:
+        g = min(b, 60)   # the source grain: speed_history's minute (or the bin, when shorter)
+        parts, params = [], []
+        for k, (u, d) in enumerate(((self._RAW_RATE.format(d="up"), self._RAW_RATE.format(d="down")),
+                                    ("n.up_max", "n.down_max"), ("n.up_max", "n.down_max"))):
+            parts.append(f"SELECT CAST(n.ts AS INTEGER) / {g} AS m, n.iface_id AS i, {u} AS u, {d} AS d "
+                         f"FROM {self._NET[k]} n WHERE n.ts BETWEEN ? AND ?{nb[k][0]}")
+            params += [st, et, *nb[k][1]]
+        net = cur.execute(
+            f"SELECT m * {g} / {b} AS bb, MAX(u), MAX(d) FROM ("
+            f"SELECT m, COALESCE(SUM(u), 0) AS u, COALESCE(SUM(d), 0) AS d FROM ("
+            f"SELECT m, i, MAX(u) AS u, MAX(d) AS d FROM ({' UNION ALL '.join(parts)}) GROUP BY m, i"
+            f") GROUP BY m) GROUP BY bb ORDER BY bb", params).fetchall()
+        first, n_bins = st // b, et // b - st // b + 1
+
+        def filled(pairs) -> List[Optional[float]]:
+            out: List[Optional[float]] = [None] * n_bins
+            for bb, v in pairs:
+                i = int(bb) - first
+                if 0 <= i < n_bins and v is not None:
+                    out[i] = float(v)
+            return out
+
+        series: Dict[str, List[Optional[float]]] = {"down": filled((r[0], r[2]) for r in net),
+                                                    "up": filled((r[0], r[1]) for r in net)}
+        names = self._OVERVIEW_HW
+        ids = {name: int(mid) for name, mid in cur.execute(
+            f"SELECT name, metric_id FROM {S8.METRICS} WHERE entity = '' AND name IN "
+            f"({', '.join('?' * len(names))})", names)}
+        hw_rows: Dict[str, list] = {name: [] for name in names}
+        if ids:
+            lit = ", ".join(str(i) for i in sorted(ids.values()))   # ints from the DB: safe literals
+            hparts, hparams = [], []
+            for k, col in ((0, "h.value"), (1, "h.avg_value"), (2, "h.avg_value")):
+                hparts.append(f"SELECT h.metric_id AS mid, CAST(h.ts AS INTEGER) / {b} AS bb, {col} AS v "
+                              f"FROM {self._HW[k]} h WHERE h.metric_id IN ({lit}) "
+                              f"AND h.ts BETWEEN ? AND ?{hb[k][0]}")
+                hparams += [st, et, *hb[k][1]]
+            by_id = {mid: name for name, mid in ids.items()}
+            for mid, bb, v in cur.execute(
+                    f"SELECT mid, bb, AVG(v) FROM ({' UNION ALL '.join(hparts)}) WHERE v IS NOT NULL "
+                    f"GROUP BY mid, bb ORDER BY mid, bb", hparams):
+                hw_rows[by_id[int(mid)]].append((bb, v))
+        for name in names:
+            # A metric never stored at all (no GPU) stays an empty series - the tile's "no data" state.
+            series[name] = filled(hw_rows[name]) if hw_rows[name] else []
+        return series
+
     def network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,
                                interface_name: Optional[str] = None) -> Dict[int, float]:
         """Exactly summarize_network's samples and weights (raw: measured seconds clipped to the window,
@@ -1578,6 +1873,30 @@ class V8HistoryReader(_ReaderBase):
         return None
 
     # --- hardware -----------------------------------------------------------------------------------
+
+    def loss_history(self, stat_types: Sequence[str], start_time: datetime,
+                     end_time: datetime) -> Dict[str, List[LossRow]]:
+        stats = tuple(dict.fromkeys(stat_types))
+        if not stats:
+            return {}
+        st, et = int(start_time.timestamp()), int(end_time.timestamp())
+        exprs = self._tier_range_exprs(self._HW)
+
+        def run(cur):
+            qs = ", ".join("?" * len(stats))
+            keys = {name: mid for mid, name in cur.execute(
+                f"SELECT metric_id, name FROM {S8.METRICS} WHERE name IN ({qs}) AND entity = ''", stats)}
+            # The tier ranges, evaluated ONCE (the same expressions as _tier_bounds).
+            cols, params = [], []
+            for lo_sql, lo_p, hi_sql, hi_p in exprs:
+                cols += [lo_sql or "NULL", hi_sql or "NULL"]
+                params += [*lo_p, *hi_p]
+            bounds = cur.execute(f"SELECT {', '.join(cols)}", params).fetchone()
+            tiers = [(self._HW[k], "ts", "metric_id", keys, bounds[2 * k], bounds[2 * k + 1])
+                     for k in range(len(_LOSS_NATIVE_SPANS))]
+            return _read_loss_rows(cur, stats, st, et, tiers)
+
+        return self._snapshot_call(run, lambda: {s_: [] for s_ in stats})
 
     def hardware_history(self, stat_type: str, start_time: Optional[datetime] = None,
                          end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:

@@ -12,19 +12,34 @@ what production would hold: three eras (hour tier 31-40 days ago, minute tier 1-
 24 h), several interfaces (one that only survives in the hour tier, one that only appears in the last two
 hours), multi-day gaps, the full hardware set including fractional latency_*_timeout loss rows, and a
 usage_counter row with its counter snapshot.
+
+The whole module runs on a FROZEN clock in a PINNED timezone, so no count below depends on when or
+where the suite runs. On the wall clock, day resolution's row total moved with the time of day (where
+"now" falls against the day buckets): CI hit 939 at 00:01 UTC against the 1,000 floor (run
+43983774035) and #581 lowered the floor to 500. freezegun freezes Python's clocks only - SQLite's
+'localtime' (the local-day bins) follows the C runtime's timezone, which freezegun does not touch - so
+the zone is pinned at the C level too (``_pinned_timezone``), and no reader under test asks SQLite for
+'now' (every bound is an explicit epoch from Python). ``test_day_resolution_at_any_time_of_day``
+re-runs the day-boundary comparison at the instants that used to matter. (DST buckets are covered by
+test_rc_dst_buckets.py, in a subprocess.)
 """
 import contextlib
+import ctypes
+import os
 import math
 import random
 import sqlite3
 import time
 import types
 from dataclasses import astuple, is_dataclass, replace
+from typing import NamedTuple
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from _pytest.timing import Instant
+from freezegun import freeze_time
 
 from netspeedtray import constants
 from netspeedtray.core import usage_snapshot
@@ -35,6 +50,97 @@ from netspeedtray.tests.unit.legacy_v7_reader_oracle import LegacyV7Readers as L
 
 DAY = 86400
 IFACES_ALL = (None, "all", "Ethernet", "Wi-Fi", "vEthernet (WSL)", "Tailscale", "Ghost")
+
+class Zone(NamedTuple):
+    tz: str                  # POSIX TZ syntax, which the Windows C runtime reads too
+    std_h: int               # UTC offset in hours; a zone WITHOUT DST (see _pinned_timezone)
+
+
+# The module's pinned timezone: UTC+9, no DST. Not UTC, so local midnight (the reader's day buckets) and
+# UTC midnight (the legacy reader's) stay 9 h apart and the intended local-day divergence is really
+# exercised - on CI (a UTC machine) as on a dev box.
+JST = Zone("JST-9", 9)
+# The module's frozen instant, in UTC: one minute past UTC midnight, the time CI failed at.
+ANCHOR_UTC = datetime(2026, 11, 17, 0, 1, 0)
+_JAN, _JUL = 1_768_435_200, 1_784_073_600     # 2026-01-15 / 2026-07-15 00:00 UTC
+
+
+def _offset_h(zone: Zone, anchor_utc: datetime) -> int:
+    """The zone's UTC offset - fixed: only DST-free zones are pinned (the pin's self-check proves it)."""
+    return zone.std_h
+
+
+def _local_now(anchor_utc: datetime, zone: Zone = JST) -> datetime:
+    """The naive LOCAL "now" for a UTC anchor in the pinned zone - plain arithmetic, so it is right
+    even at import time, before the zone is pinned (``.timestamp()`` is only called inside it)."""
+    return anchor_utc + timedelta(hours=_offset_h(zone, anchor_utc))
+
+
+def _tzset() -> None:
+    if hasattr(time, "tzset"):
+        time.tzset()
+    else:   # Windows: Python's time.localtime and SQLite's 'localtime' both read the UCRT's zone
+        ctypes.cdll.ucrtbase._tzset()
+
+
+@contextlib.contextmanager
+def _pinned_timezone(zone: Zone = JST):
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = zone.tz
+    _tzset()
+    try:
+        # Prove the pin took on BOTH sides (Python's localtime, SQLite's 'localtime'), in winter and in
+        # summer, or every day-bucket assertion below is about the host zone. DST-free zones only: a
+        # PST8PDT case was dropped after the GitHub runner's C runtime reported tm_isdst=1 in July with
+        # tm_gmtoff still at standard time (run 44270652400) - DST lives in test_rc_dst_buckets.py.
+        c = sqlite3.connect(":memory:")
+        try:
+            for ts in (_JAN, _JUL):
+                lt = time.localtime(ts)
+                assert lt.tm_gmtoff == zone.std_h * 3600 and not lt.tm_isdst, (zone.tz, ts, lt)
+                assert int(c.execute("SELECT strftime('%H', ?, 'unixepoch', 'localtime')",
+                                     (ts,)).fetchone()[0]) == lt.tm_hour, (zone.tz, ts)
+        finally:
+            c.close()
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old
+        _tzset()
+
+
+@contextlib.contextmanager
+def _frozen_world(anchor_utc: datetime, zone: Zone = JST):
+    """Pinned zone + every Python clock frozen at ``anchor_utc``.
+
+    ``tz_offset`` keeps freezegun's ``datetime.now()`` (naive local) consistent with its ``time.time()``
+    in the pinned zone. pytest's own timer (``_pytest.timing``, which imports ``time``/``perf_counter``
+    by name) and the xdist/execnet plumbing are excluded, or ``--durations`` reports a setup phase of
+    ~1.8e9 s (started on the real clock, stopped on the frozen one) - checked below on every entry.
+    Trap: inside the freeze, ``time.localtime()`` / ``time.strftime()`` WITHOUT an argument are
+    freezegun's, shifted by Python's import-time ``time.timezone`` (the HOST zone on Windows, which has
+    no ``time.tzset``), not the pinned zone. Nothing here uses them; always pass a timestamp."""
+    started = Instant()
+    with _pinned_timezone(zone), freeze_time(anchor_utc, tz_offset=_offset_h(zone, anchor_utc),
+                                             ignore=["_pytest.timing"]):
+        assert datetime.now() == _local_now(anchor_utc, zone)
+        assert int(datetime.now().timestamp()) == int(time.time())
+        assert 0 <= started.elapsed().seconds < 600, "pytest's timer is frozen: fix freeze_time(ignore=)"
+        yield
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _module_clock():
+    with _frozen_world(ANCHOR_UTC):
+        yield
+
+
+# The config the fixture's maintenance pass and the readers see, with the values that shape what the
+# tiers hold (retention) and how the readers weigh samples (poll interval) pinned here - so a change to
+# the app's DEFAULT_CONFIG does not silently move the exact counts asserted below.
+FIXTURE_CONFIG = {**constants.config.defaults.DEFAULT_CONFIG, "keep_data": 365, "update_rate": 1.0}
 
 
 def _build_fixture_db(db_dir: Path, now: datetime) -> None:
@@ -94,7 +200,7 @@ def _build_fixture_db(db_dir: Path, now: datetime) -> None:
         w._persist_speed_batch(speed[i:i + 20000])
     for i in range(0, len(hw), 20000):
         w._persist_hardware_batch(hw[i:i + 20000])
-    w._run_maintenance(dict(constants.config.defaults.DEFAULT_CONFIG), now)   # raw->minute->hour, real path
+    w._run_maintenance(dict(FIXTURE_CONFIG), now)   # raw->minute->hour, real path
 
     counters = {"Ethernet": types.SimpleNamespace(bytes_sent=123456789, bytes_recv=987654321)}
     snap = usage_snapshot.encode_snapshot(counters, now_ts - 30, now_ts - 5 * DAY, primary="Ethernet")
@@ -112,13 +218,13 @@ def _build_fixture_db(db_dir: Path, now: datetime) -> None:
 
 
 def _make_state(db_dir: Path) -> WidgetState:
-    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
+    cfg = dict(FIXTURE_CONFIG)
     with patch("netspeedtray.core.widget_state.get_app_data_path", return_value=db_dir):
         return WidgetState(cfg, read_only=True)   # never starts the write thread
 
 
 @pytest.fixture(scope="module")
-def ws(q_app, tmp_path_factory):
+def ws(q_app, tmp_path_factory, _module_clock):
     db_dir = tmp_path_factory.mktemp("history_reader_golden")
     _build_fixture_db(db_dir, datetime.now())
     state = _make_state(db_dir)
@@ -134,7 +240,8 @@ def _frozen_clock(ws, now_ts=None):
     legacy oracle reads ``datetime.now()``, the facade reads its injected ``_clock``. Left on the wall
     clock, a second tick between the two calls slides the window one second and a 30 s sample can cross
     its inclusive start edge (CI, PR #473: hardware_history(latency_anchor, None, None) len 1434 vs
-    1435). A whole-second instant, so ``int(now.timestamp())`` is exact on both sides."""
+    1435). A whole-second instant, so ``int(now.timestamp())`` is exact on both sides. (The module's
+    frozen clock already gives both one instant; this stays as the explicit, local guarantee.)"""
     now_ts = int(time.time()) if now_ts is None else now_ts
 
     class _FrozenDatetime(datetime):
@@ -176,9 +283,8 @@ def _same(a, b, path="result"):
     assert type(a) is type(b) and a == b, f"{path}: {a!r} vs {b!r}"
 
 
-def _windows():
+def _windows(now: datetime):
     """(start, end) pairs covering every tier, every tier boundary, gaps, open and future windows."""
-    now = datetime.now()
     out = [(None, None), (None, now)]
     for d in (timedelta(minutes=5), timedelta(hours=1), timedelta(hours=6), timedelta(hours=12),
               timedelta(hours=24), timedelta(hours=30), timedelta(hours=48), timedelta(days=7),
@@ -197,7 +303,7 @@ def _windows():
     return out
 
 
-WINDOWS = _windows()
+WINDOWS = _windows(_local_now(ANCHOR_UTC))
 
 
 # --- 1. get_speed_history ---------------------------------------------------------------------------
@@ -237,7 +343,10 @@ def _expected_local_days(ws, start, end, iface):
                                                      resolution="hour", wait_for_flush=False):
             if not (up or down):
                 continue
-            day = int(datetime.fromtimestamp(int(ts)).replace(hour=0, minute=0, second=0).timestamp())
+            # Local midnight via the C runtime (mktime, isdst=-1), NOT datetime(...).timestamp(): under
+            # freezegun a naive datetime is a FakeDatetime whose timestamp() applies the freeze's FIXED
+            # tz_offset, an hour off on the far side of a DST change in any zone that has one.
+            day = int(time.mktime(time.localtime(int(ts))[:3] + (0, 0, 0, 0, 0, -1)))
             pu, pd = peaks.get(day, (0.0, 0.0))
             peaks[day] = (max(pu, up), max(pd, down))
         for day, (up, down) in peaks.items():
@@ -246,11 +355,15 @@ def _expected_local_days(ws, start, end, iface):
     return days
 
 
-@pytest.mark.parametrize("resolution", ["auto", "raw", "minute", "hour", "day"])
-@pytest.mark.parametrize("return_raw", [False, True])
-def test_speed_history_matches_legacy(ws, resolution, return_raw):
-    checked = 0
-    for start, end in WINDOWS:
+class Compared(NamedTuple):
+    rows: int    # legacy-oracle rows compared one by one (non-day) / legacy rows the day windows held
+    days: int    # local-day buckets compared value by value (day resolution only)
+
+
+def _compare_speed_history(ws, windows, resolution, return_raw) -> Compared:
+    """Compare every window x interface; return what was compared."""
+    checked = days = 0
+    for start, end in windows:
         for iface in IFACES_ALL:
             span = (end - start) if (start and end) else None
             # A forced fine resolution over a long window is not a real call (auto would never pick
@@ -280,6 +393,9 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
                         ts = int(p[0] if return_raw else p[0].timestamp())
                         got[ts] = (p[1], p[2])
                 assert set(got) == set(want), f"day buckets ({start},{end},{iface})"
+                if any(r[1] or r[2] for r in old):   # the window holds data: the oracle must see it too
+                    assert want, f"empty day oracle over data ({start},{end},{iface})"
+                days += len(want)
                 for day, (u, d) in want.items():
                     assert got[day][0] == pytest.approx(u) and got[day][1] == pytest.approx(d), \
                         (datetime.fromtimestamp(day), iface)
@@ -287,10 +403,50 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
                 continue
             _same(new, old, f"speed_history({start},{end},{iface},{resolution},{return_raw})")
             checked += len(old)
-    # A floor that proves the windows compared real rows, not a row count: every row above was already
-    # compared one by one. Day resolution counts days, and its total depends on the wall-clock time -
-    # CI hit 939 at 00:01 UTC (run 43983774035, both day variants) against ~1,070 the rest of the day.
-    assert checked > 500
+    return Compared(checked, days)
+
+
+_COUNTS_CHANGED = "fixture/retention changed: update the expected counts (the clock is frozen, so they are exact)"
+
+# What each resolution compares at the module's anchor (00:01 UTC, JST). Exact, not a floor: the clock
+# is frozen, so these are the same on every run (#581 had lowered a floor to 500 because day
+# resolution's row total followed the wall clock - 939 at 00:01 UTC on CI). A change in either number
+# means the fixture, the retention config or a reader's bucketing changed.
+SPEED_EXPECTED = {
+    "auto": Compared(49890, 441),
+    "raw": Compared(126507, 0),
+    "minute": Compared(46000, 0),
+    "hour": Compared(21539, 0),
+    "day": Compared(1015, 1070),
+}
+
+
+@pytest.mark.parametrize("resolution", ["auto", "raw", "minute", "hour", "day"])
+@pytest.mark.parametrize("return_raw", [False, True])
+def test_speed_history_matches_legacy(ws, resolution, return_raw):
+    got = _compare_speed_history(ws, WINDOWS, resolution, return_raw)
+    assert got == SPEED_EXPECTED[resolution], _COUNTS_CHANGED
+
+
+# The day comparison at other instants, each on a fresh fixture written and read
+# entirely at that instant. Legacy rows move with the time of day by design: a window whose edges sit
+# exactly on UTC midnight touches one legacy bucket fewer than the same window a minute later (940 at
+# 00:00 UTC). What must not move is the per-day comparison itself, which passes at every instant.
+@pytest.mark.parametrize("anchor_utc, zone, expected", [
+    (datetime(2026, 11, 17, 0, 0, 0), JST, Compared(940, 1070)),      # exactly UTC midnight: the legacy buckets' edge
+    (datetime(2026, 11, 17, 12, 0, 0), JST, Compared(1066, 1066)),
+    (datetime(2026, 11, 17, 15, 0, 0), JST, Compared(1066, 940)),     # exactly LOCAL midnight: the new buckets' edge
+    (datetime(2026, 11, 17, 23, 59, 0), JST, Compared(1019, 1067)),
+], ids=["0000Z", "1200Z", "1500Z-local-midnight", "2359Z"])   # 00:01 UTC: the module anchor
+def test_day_resolution_at_any_time_of_day(q_app, tmp_path, anchor_utc, zone, expected):
+    with _frozen_world(anchor_utc, zone):
+        _build_fixture_db(tmp_path, datetime.now())
+        state = _make_state(tmp_path)
+        try:
+            got = _compare_speed_history(state, _windows(datetime.now()), "day", False)
+            assert got == expected, _COUNTS_CHANGED
+        finally:
+            state.cleanup()
 
 
 # --- 2. get_hardware_history ------------------------------------------------------------------------
@@ -371,7 +527,7 @@ def test_total_bandwidth_matches_legacy(ws, update_rate):
                 nonzero += old[1] > 0
         assert nonzero > 50
     finally:
-        ws.config["update_rate"] = constants.config.defaults.DEFAULT_CONFIG["update_rate"]
+        ws.config["update_rate"] = FIXTURE_CONFIG["update_rate"]
 
 
 # --- 6. get_distinct_interfaces ---------------------------------------------------------------------
