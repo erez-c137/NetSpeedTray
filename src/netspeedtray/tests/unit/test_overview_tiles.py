@@ -137,6 +137,11 @@ def test_reload_window_passes_the_configured_poll(q_app):
         ov.teardown()
 
 
+def _vals(series):
+    """A binned sparkline's measured values (None = a bin with nothing recorded)."""
+    return [v for v in series if v is not None]
+
+
 def _spin(cond, timeout: float = 5.0) -> None:
     """Spin the GUI event loop until ``cond()`` holds (the reader thread's result is a queued signal)."""
     import time
@@ -233,7 +238,7 @@ def test_window_reads_run_off_the_gui_thread(q_app):
         _spin(lambda: ov._win_summ is not None)
         assert ws.threads and gui not in ws.threads, "a history read ran on the GUI thread"
         # ...and the tiles get the same figures the synchronous reload produced.
-        assert ov._series["down"] == [86400.0, 86400.0] and ov._series["cpu"] == [42.0]
+        assert _vals(ov._series["down"]) == [86400.0] and _vals(ov._series["cpu"]) == [42.0]
         assert ov._win_summ["down"].max == 3.0e6 and ov._latency_events is not None
         assert "avg" in ov._hero._sub.text() and "Reading" not in ov._hero._sub.text()
     finally:
@@ -252,7 +257,7 @@ def test_reloads_coalesce_while_one_is_in_flight(q_app):
         ov._reload_window()
         _spin(lambda: ws.speed_calls == 1)
         for _ in range(3):
-            ov._reload_window()
+            ov._reload_window(force=True)         # forced: a 24 h re-read is otherwise not due yet
         assert ws.speed_calls == 1, "a reload started while another was in flight"
         hold.set()
         _spin(lambda: ws.speed_calls == 2)        # exactly one rerun for the three requests...
@@ -281,7 +286,7 @@ def test_a_result_for_the_old_range_is_dropped(q_app):
         assert ov._win_summ is None and ov._series == {}, "the old range's result was applied"
         holds[1].set()
         _spin(lambda: ov._win_summ is not None)
-        assert ov._series["down"] == [3600.0, 3600.0]
+        assert _vals(ov._series["down"]) == [3600.0]
     finally:
         ov.teardown()
 
@@ -344,10 +349,10 @@ def test_a_same_range_reload_keeps_the_figures_on_screen(q_app):
     try:
         ov._reload_window()
         _spin(lambda: ov._win_summ is not None)
-        ov._reload_window()                       # the timer's reload, held
+        ov._reload_window(force=True)             # a re-read of the same range, held
         _spin(lambda: ws.speed_calls == 2)
         ov._render()                              # the 1 Hz tick meanwhile
-        assert ov._win_summ is not None and ov._series["down"] == [86400.0, 86400.0]
+        assert ov._win_summ is not None and _vals(ov._series["down"]) == [86400.0]
         assert "Reading" not in ov._hero._sub.text() and "avg" in ov._hero._sub.text()
         holds[1].set()
         _spin(lambda: not ov._load_busy)
@@ -372,7 +377,7 @@ def test_hide_then_show_mid_read_ends_with_data(q_app):
         ov.showEvent(QShowEvent())
         hold.set()
         _spin(lambda: ov._win_summ is not None)
-        assert ws.speed_calls == 2 and ov._series["down"] == [86400.0, 86400.0]
+        assert ws.speed_calls == 2 and _vals(ov._series["down"]) == [86400.0]
         assert "Reading" not in ov._hero._sub.text()
     finally:
         ov.teardown()
@@ -397,7 +402,7 @@ def test_session_volume_and_earliest_sample_are_read_off_the_gui_thread(q_app):
         assert len(ws.threads) == reads, "the 1 Hz render read the DB"
         assert "2.0 GB" in ov._session_lbl.text(), ov._session_lbl.text()
         # The range really starts at the earliest stored sample (span = now - 2026-01-01).
-        assert ov._series["down"][0] > 86400.0 * 30
+        assert _vals(ov._series["down"])[0] > 86400.0 * 30
     finally:
         ov.teardown()
 

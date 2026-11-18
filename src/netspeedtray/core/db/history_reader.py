@@ -520,14 +520,19 @@ class _ReaderBase(HistoryReader):
         else:
             self.logger.error("%s: %s", what, e, exc_info=True)
 
-    def data_version(self) -> Optional[Tuple[int, int]]:
+    def data_version(self) -> Optional[Tuple[sqlite3.Connection, int]]:
         """This thread's read connection and its ``PRAGMA data_version`` - which changes whenever another
         connection (the DB worker) commits - or None when unreadable. Equal tokens from two calls on
         one thread mean nothing was written in between, so a read made at the first is still current.
-        The connection's identity is part of the token: a replaced connection restarts the counter."""
+
+        The token holds the connection OBJECT, not ``id(conn)``: a pruned connection (idle > 120 s,
+        WidgetState._get_read_conn) is closed and a new one opened, whose counter restarts - and
+        CPython hands the new object the freed one's id, so ``(id, version)`` matched a token taken
+        before writes happened (200/200 in a probe). While a token holds the old object, its id cannot
+        be reused, and a new connection never compares equal to it."""
         try:
             conn = self._conn()
-            return id(conn), int(conn.execute("PRAGMA data_version").fetchone()[0])
+            return conn, int(conn.execute("PRAGMA data_version").fetchone()[0])
         except Exception:
             return None
 
@@ -1537,7 +1542,8 @@ class V8HistoryReader(_ReaderBase):
     def overview_window(self, start_time: datetime, end_time: datetime, bin_seconds: int,
                         want_series: bool = True):
         """The Overview card figures for [start, end], all interfaces, in one read transaction:
-        ``(series, {"down": LeanSummary, "up": LeanSummary})``.
+        ``(series, {"down": LeanSummary, "up": LeanSummary}, ok)`` - ``ok`` False when the read failed
+        (empty figures; a caller must not keep them as the window's current state).
 
         The summaries are ``summarize_network``'s count / avg / max - the same rows, weights and
         precedence (``tests/unit/test_overview_lean_read.py`` diffs them) - aggregated in SQL, both
@@ -1545,9 +1551,12 @@ class V8HistoryReader(_ReaderBase):
         Overview never shows.
 
         ``series`` (None unless ``want_series``) are the sparklines, ~``OVERVIEW_SPARK_BINS`` points
-        spread over the WHOLE window: ``bin_seconds`` integer bins (``overview_bin_seconds``), so a
-        24 h card draws 24 h - the old minute-resolution series was cut to its last 120 points (2 h)
-        by the tile. Network: each bin's peak of the all-interface rate, built as speed_history builds
+        spread over the WHOLE window: one value per ``bin_seconds`` integer bin (``overview_bin_seconds``)
+        from the bin holding ``start`` to the one holding ``end`` - EVERY bin, None where nothing was
+        stored (the app was not running, the PC slept). A gap stays a gap at its place on the time axis
+        and every card shares that axis; it is never drawn as zero (nobody measured a zero) and never
+        squeezed out (which stretched the rest across the card and moved spikes in time). The old
+        minute-resolution series was cut to its last 120 points (2 h of "24 h") by the tile. Network: each bin's peak of the all-interface rate, built as speed_history builds
         it at minute resolution (per-interface peak per minute, summed across interfaces); hardware:
         the mean of every stored value in the bin (the ``metrics`` ids resolved once, one ``hw_raw``
         scan for all three - no per-row localtime, no per-metric subquery)."""
@@ -1559,11 +1568,11 @@ class V8HistoryReader(_ReaderBase):
         def run(cur):
             summ = self._overview_net_summaries(cur, st, et, nb)
             series = self._overview_series(cur, st, et, b, nb, hb) if want_series else None
-            return series, summ
+            return series, summ, True
 
         def failed():
             return ({k: [] for k in ("down", "up") + self._OVERVIEW_HW} if want_series else None,
-                    {"down": EMPTY_LEAN_SUMMARY, "up": EMPTY_LEAN_SUMMARY})
+                    {"down": EMPTY_LEAN_SUMMARY, "up": EMPTY_LEAN_SUMMARY}, False)
 
         return self._snapshot_call(run, failed)
 
@@ -1622,14 +1631,23 @@ class V8HistoryReader(_ReaderBase):
             f"SELECT m, COALESCE(SUM(u), 0) AS u, COALESCE(SUM(d), 0) AS d FROM ("
             f"SELECT m, i, MAX(u) AS u, MAX(d) AS d FROM ({' UNION ALL '.join(parts)}) GROUP BY m, i"
             f") GROUP BY m) GROUP BY bb ORDER BY bb", params).fetchall()
-        series: Dict[str, List[float]] = {"down": [float(r[2] or 0.0) for r in net],
-                                          "up": [float(r[1] or 0.0) for r in net]}
+        first, n_bins = st // b, et // b - st // b + 1
+
+        def filled(pairs) -> List[Optional[float]]:
+            out: List[Optional[float]] = [None] * n_bins
+            for bb, v in pairs:
+                i = int(bb) - first
+                if 0 <= i < n_bins and v is not None:
+                    out[i] = float(v)
+            return out
+
+        series: Dict[str, List[Optional[float]]] = {"down": filled((r[0], r[2]) for r in net),
+                                                    "up": filled((r[0], r[1]) for r in net)}
         names = self._OVERVIEW_HW
         ids = {name: int(mid) for name, mid in cur.execute(
             f"SELECT name, metric_id FROM {S8.METRICS} WHERE entity = '' AND name IN "
             f"({', '.join('?' * len(names))})", names)}
-        for name in names:
-            series[name] = []
+        hw_rows: Dict[str, list] = {name: [] for name in names}
         if ids:
             lit = ", ".join(str(i) for i in sorted(ids.values()))   # ints from the DB: safe literals
             hparts, hparams = [], []
@@ -1639,10 +1657,13 @@ class V8HistoryReader(_ReaderBase):
                               f"AND h.ts BETWEEN ? AND ?{hb[k][0]}")
                 hparams += [st, et, *hb[k][1]]
             by_id = {mid: name for name, mid in ids.items()}
-            for mid, _bb, v in cur.execute(
+            for mid, bb, v in cur.execute(
                     f"SELECT mid, bb, AVG(v) FROM ({' UNION ALL '.join(hparts)}) WHERE v IS NOT NULL "
                     f"GROUP BY mid, bb ORDER BY mid, bb", hparams):
-                series[by_id[int(mid)]].append(float(v))
+                hw_rows[by_id[int(mid)]].append((bb, v))
+        for name in names:
+            # A metric never stored at all (no GPU) stays an empty series - the tile's "no data" state.
+            series[name] = filled(hw_rows[name]) if hw_rows[name] else []
         return series
 
     def network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,

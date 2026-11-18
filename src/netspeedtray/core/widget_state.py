@@ -1163,7 +1163,7 @@ class WidgetState(QObject):
     def get_overview_window(self, start_time: datetime, end_time: datetime, bin_seconds: int,
                             want_series: bool = True):
         """The Monitor Overview's lean window read (``V8HistoryReader.overview_window``):
-        ``(series or None, {"down": LeanSummary, "up": LeanSummary})`` - or None when the backend has no
+        ``(series or None, {"down": LeanSummary, "up": LeanSummary}, ok)`` - or None when the backend has no
         lean read (v7, while an upgrade is deferred) or there is no database; the Overview then reads
         through get_speed_history / summarize_network as before."""
         if not getattr(self, 'db_worker', None):
