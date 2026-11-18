@@ -6,7 +6,7 @@ Windows attaches the input queues of an owner/owned pair's threads: any stall on
 delay the taskbar's own clicks (a tray right-click that opens late). The steady state is clean
 (a message round trip p99 2.8 ms); this catches the occasional stall in the field.
 
-How, at no new wake-up cost:
+How, without a timer or thread of its own:
 
 - The heartbeat is the widget's existing 1 s safety-net tick (``_state_watcher_timer``); ``on_tick``
   is connected to it ahead of the refresh. No timer, no thread of its own. Each tick measures its
@@ -17,7 +17,16 @@ How, at no new wake-up cost:
   ``crash_log.arm_stall_dump``) on the crash log. Its C watchdog thread blocks on a timed lock wait
   and never wakes while ticks keep re-arming it; when the GUI thread is stuck for
   ``GUI_STALL_DUMP_TIMEOUT_SEC`` it writes every thread's stack there once ("Timeout (...)!") and
-  the late tick's log line points at it.
+  the late tick's log line points at it - only when the crash log really holds a new "Timeout (...)!"
+  block since that arm (``crash_log.stall_dump_written``), never inferred from the clock. Cost: each
+  re-arm ends the previous watchdog thread and starts a new one (~0.23 ms of process CPU per tick,
+  two extra thread dispatches a second, all inside the tick that is already running). Re-arming
+  every tick keeps the detection exact (a dump means "stuck GUI_STALL_DUMP_TIMEOUT_SEC since the
+  last tick"); every 2nd tick would halve that cost but make the threshold depend on the phase.
+- The first tick after start / resume only sets the baseline and arms: a slow startup is never
+  dumped before the watch has announced itself in the crash log.
+- A gap over ``GUI_STALL_CLOCK_JUMP_SEC`` is sleep without a notice (Modern Standby), a clock jump or
+  a very long hang: one INFO line, not a stall, fresh baseline.
 - Lines are rate-limited (``GUI_STALL_LOG_MAX_PER_WINDOW`` per ``GUI_STALL_LOG_WINDOW_SEC``); the
   rest are counted and summarised with the worst one. Dumps are capped too
   (``GUI_STALL_DUMP_MAX_PER_WINDOW`` / ``_PER_SESSION``): past the cap the watchdog stays disarmed. Sleep pauses the watch (``suspend``/
@@ -41,6 +50,7 @@ class GuiStallWatch:
                  arm: Optional[Callable[[float], bool]] = None,
                  cancel: Optional[Callable[[], None]] = None,
                  note: Optional[Callable[[str], None]] = None,
+                 dump_written: Optional[Callable[[], bool]] = None,
                  context: Optional[Callable[[], str]] = None,
                  logger: Optional[logging.Logger] = None) -> None:
         t = constants.timeouts
@@ -50,12 +60,14 @@ class GuiStallWatch:
         self._max_lines = t.GUI_STALL_LOG_MAX_PER_WINDOW
         self._window_s = float(t.GUI_STALL_LOG_WINDOW_SEC)
         self._suspend_hold_s = float(t.GUI_STALL_SUSPEND_HOLD_SEC)
+        self._jump_s = float(t.GUI_STALL_CLOCK_JUMP_SEC)
         self._dump_max_window = t.GUI_STALL_DUMP_MAX_PER_WINDOW
         self._dump_max_session = t.GUI_STALL_DUMP_MAX_PER_SESSION
         self._clock = clock
         self._arm_fn = arm or crash_log.arm_stall_dump
         self._cancel_fn = cancel or crash_log.cancel_stall_dump
         self._note_fn = note or crash_log.note
+        self._dump_written_fn = dump_written or crash_log.stall_dump_written
         self._context = context
         self._log = logger or logging.getLogger(f"{constants.app.APP_NAME}.GuiStallWatch")
 
@@ -81,11 +93,7 @@ class GuiStallWatch:
         self._running = True
         self._last = None
         self._suspended_at = None
-        self._arm()
-        if self._armed_at is not None and not self._announced:
-            self._announced = True
-            self._note("GUI stall watchdog on (%.1f s): a 'Timeout (...)!' block below is the stacks of a "
-                       "stuck GUI thread, not a crash" % self._dump_s)
+        # Baseline only: the first tick arms (and announces), so a slow startup is never dumped.
 
     def stop(self) -> None:
         """Quit: disarm first (the quit's own bounded waits must not dump), then summarise."""
@@ -109,11 +117,11 @@ class GuiStallWatch:
         self._last = None
 
     def resume(self) -> None:
+        """Awake again: the next tick is a fresh baseline and re-arms."""
         if not self._running:
             return
         self._suspended_at = None
         self._last = None
-        self._arm()
 
     # ------------------------------------------------------------------ the heartbeat
 
@@ -133,22 +141,47 @@ class GuiStallWatch:
             last, self._last = self._last, now
             self._roll_window(now)
             if last is not None:
-                late_s = (now - last) - self._interval_s
-                if late_s >= self._late_s:
-                    dumped = self._armed_at is not None and (now - self._armed_at) >= self._dump_s
-                    self._on_stall(int(round(late_s * 1000)), dumped)
+                gap_s = now - last
+                late_s = gap_s - self._interval_s
+                if gap_s > self._jump_s:
+                    self._on_gap(gap_s)
+                elif late_s >= self._late_s:
+                    self._on_stall(int(round(late_s * 1000)), self._dump_happened())
             self._arm()
         except Exception:
             pass
 
     # ------------------------------------------------------------------ internals
 
+    def _dump_happened(self) -> bool:
+        """Did the armed watchdog really write a dump? Read from the crash log, not the clock."""
+        if self._armed_at is None:
+            return False
+        try:
+            return bool(self._dump_written_fn())
+        except Exception:
+            return False
+
+    def _count_dump(self) -> None:
+        self._window_dumps += 1
+        self._session_dumps += 1
+
+    def _on_gap(self, gap_s: float) -> None:
+        """Sleep without a notice (Modern Standby), a clock jump, or a very long hang: not a stall.
+        A dump written meanwhile still counts toward the caps (it is in the crash log)."""
+        dumped = self._dump_happened()
+        if dumped:
+            self._count_dump()
+        self._log.info("GUI heartbeat gap of %d s (sleep, a clock jump or a hang) - not counted as a "
+                       "stall%s", int(gap_s),
+                       "; a stack dump was written meanwhile, see %s" % crash_log.CRASH_LOG_FILENAME
+                       if dumped else "")
+
     def _on_stall(self, late_ms: int, dumped: bool) -> None:
         self.stall_count += 1
         self._worst_ms = max(self._worst_ms, late_ms)
         if dumped:
-            self._window_dumps += 1
-            self._session_dumps += 1
+            self._count_dump()
             self._note("GUI stall of %d ms ended (the Timeout block above)" % late_ms)
         if self._window_lines >= self._max_lines:
             self._suppressed += 1
@@ -193,6 +226,10 @@ class GuiStallWatch:
         except Exception:
             ok = False
         self._armed_at = self._clock() if ok else None
+        if ok and not self._announced:
+            self._announced = True
+            self._note("GUI stall watchdog on (%.1f s): a 'Timeout (...)!' block below is the stacks of a "
+                       "stuck GUI thread, not a crash" % self._dump_s)
 
     def _cancel(self) -> None:
         self._armed_at = None

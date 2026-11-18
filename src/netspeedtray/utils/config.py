@@ -162,8 +162,29 @@ class ObfuscatingFormatter(logging.Formatter):
             if not path_str or len(path_str) <= 3: continue
             paths_to_obfuscate.add(os.path.normcase(os.path.normpath(path_str)))
         # Sort longest-first so AppData paths get matched before the user home prefix.
+        # faulthandler (the crash log's stall / fault dumps) writes a non-ASCII path ESCAPED -
+        # C:\Users\\u0141ukasz - so a user name with "Ł" or Hebrew letters would pass the plain
+        # rule. Match that spelling too (#218 review).
+        paths_to_obfuscate |= {self.faulthandler_escape(p) for p in paths_to_obfuscate}
         sorted_paths = sorted(list(paths_to_obfuscate), key=len, reverse=True)
         self._path_regexes = [re.compile(self._path_pattern(p), re.IGNORECASE) for p in sorted_paths]
+
+    @staticmethod
+    def faulthandler_escape(text: str) -> str:
+        """``text`` as faulthandler writes it: ASCII kept, other characters as \\xhh (< 0x100),
+        \\uhhhh (< 0x10000) or \\Uhhhhhhhh, lowercase hex (CPython's _Py_DumpASCII)."""
+        out = []
+        for ch in text:
+            c = ord(ch)
+            if c < 0x80:
+                out.append(ch)
+            elif c < 0x100:
+                out.append("\\x%02x" % c)
+            elif c < 0x10000:
+                out.append("\\u%04x" % c)
+            else:
+                out.append("\\U%08x" % c)
+        return "".join(out)
 
     # One path separator in any spelling a log line carries it: "\" (plain), "\\" (repr() - every
     # OSError message - and JSON), "\\\\" (repr of JSON), or "/" (pathlib repr, URLs). Matching only
@@ -196,9 +217,10 @@ class ObfuscatingFormatter(logging.Formatter):
         whole word. Same length guard as the hostname rule, plus the generic-name list."""
         self._username_regex = None
         names = {self._current_username(), os.environ.get("USERNAME", "")}
-        names = sorted((n for n in names
-                        if n and len(n) > 3 and n.lower() not in self._GENERIC_ACCOUNT_NAMES),
-                       key=len, reverse=True)
+        names = {n for n in names
+                 if n and len(n) > 3 and n.lower() not in self._GENERIC_ACCOUNT_NAMES}
+        names |= {self.faulthandler_escape(n) for n in names}   # crash-log dumps (see _setup_paths)
+        names = sorted(names, key=len, reverse=True)
         if names:
             alternation = "|".join(re.escape(n) for n in names)
             self._username_regex = re.compile(

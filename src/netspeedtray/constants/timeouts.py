@@ -68,6 +68,10 @@ class TimeoutConstants:
     # Sleep (PBT_APMSUSPEND) pauses the watch until the resume notice - or, if that never comes,
     # until this long after the suspend notice (ticks meanwhile only reset the baseline).
     GUI_STALL_SUSPEND_HOLD_SEC: Final[int] = 60
+    # A heartbeat gap longer than this is not logged as a stall: sleep without a notice (Modern
+    # Standby sends none to a desktop app it freezes), a clock jump, or a hang long enough that the
+    # crash log's dump says more than a number would. One INFO line, fresh baseline.
+    GUI_STALL_CLOCK_JUMP_SEC: Final[int] = 45
     # Fast poll purely for the fullscreen-HIDE case: an app fullscreening while
     # already focused fires no foreground event, so without this the hide waits
     # for the 1s state-watcher tick (a visible ~1s lag). Cheap: short-circuits

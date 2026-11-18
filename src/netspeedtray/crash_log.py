@@ -36,6 +36,9 @@ CRASH_LOG_FILENAME = "NetSpeedTray_Crash.log"
 MAX_BYTES = 256 * 1024
 
 _file: Optional[TextIO] = None
+# The crash log's size when the stall watchdog was last armed (None: not armed / unknown).
+_stall_armed_size: Optional[int] = None
+_STALL_DUMP_MARK = b"Timeout ("
 _lock = threading.Lock()
 
 
@@ -125,18 +128,44 @@ def arm_stall_dump(timeout_s: float) -> bool:
     (``enable``/``startup_complete`` never touch it, and it never reports access violations). Its C
     watchdog thread blocks on a timed lock wait; it only wakes to be cancelled by the next re-arm or
     to write a dump. Returns False (nothing armed) when the crash log is not open."""
+    global _stall_armed_size
     fh = _file
     if fh is None:
         return False
     try:
-        faulthandler.dump_traceback_later(timeout_s, repeat=False, file=fh)
-        return True
+        faulthandler.dump_traceback_later(timeout_s, repeat=False, file=fh)   # flushes fh first
+    except Exception:
+        _stall_armed_size = None
+        return False
+    try:
+        _stall_armed_size = os.fstat(fh.fileno()).st_size
+    except Exception:
+        _stall_armed_size = None
+    return True
+
+
+def stall_dump_written() -> bool:
+    """True when the crash log grew since the last ``arm_stall_dump`` AND the new bytes hold a
+    faulthandler "Timeout (" header - i.e. the watchdog really fired (an exception record appended
+    meanwhile does not count). Called only on a late tick; never raises."""
+    fh, start = _file, _stall_armed_size
+    if fh is None or start is None:
+        return False
+    try:
+        fh.flush()
+        if os.fstat(fh.fileno()).st_size <= start:
+            return False
+        with open(crash_log_path(), "rb") as rf:
+            rf.seek(start)
+            return _STALL_DUMP_MARK in rf.read(256 * 1024)
     except Exception:
         return False
 
 
 def cancel_stall_dump() -> None:
     """Disarm the GUI-stall watchdog (quit, sleep). Safe when nothing is armed."""
+    global _stall_armed_size
+    _stall_armed_size = None
     try:
         faulthandler.cancel_dump_traceback_later()
     except Exception:

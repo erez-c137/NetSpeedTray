@@ -3584,6 +3584,14 @@ class NetworkSpeedWidget(QWidget):
         waits DB_SHUTDOWN_WAIT_MS; the database thread keeps draining best-effort until the process
         ends. Each step is guarded, so a failing one never skips the next."""
         self.logger.info("Windows session ending (%s): saving settings and the usage counter.", reason)
+        # Sign-out blocks the GUI thread on purpose (these saves, Windows' own end-session dance): not
+        # a stall to log or dump (#218). A cancelled logoff heals after GUI_STALL_SUSPEND_HOLD_SEC.
+        watch = getattr(self, "_stall_watch", None)
+        if watch is not None:
+            try:
+                watch.suspend()
+            except Exception:
+                pass
 
         def _odometer() -> None:
             if getattr(self, "widget_state", None):
