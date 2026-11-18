@@ -659,5 +659,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "A backup to this file is already running.",
     "CONTEXT_MENU_ITEMS_LABEL": "Right-click menu items",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choose what the widget's right-click menu shows. {settings} and {exit} always show.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Your taskbar shows an accent color, so colors that are hard to read on it are drawn in a readable text color."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Your taskbar shows an accent color, so colors that are hard to read on it are drawn in a readable text color.",
+    "RUNNING_PANEL_VERSION": "Version {version}",
+    "RUNNING_PANEL_RUNNING": "Running on your taskbar",
+    "RUNNING_PANEL_HINT": "Point to the speeds on the taskbar for details. Right-click them for more options.",
+    "RUNNING_PANEL_CHECK_UPDATES": "Check for updates",
+    "RUNNING_PANEL_QUIT": "Quit NetSpeedTray",
+    "RUNNING_PANEL_CHECKING": "Checking…",
+    "RUNNING_PANEL_UP_TO_DATE": "You're up to date",
+    "RUNNING_PANEL_CHECK_FAILED": "Couldn't check for updates",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} is available",
+    "RUNNING_PANEL_UPDATE_NOW": "Update",
+    "RUNNING_PANEL_BETA": "Beta",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "Running - hidden while a full-screen app is open",
+    "RUNNING_PANEL_HIDDEN_YIELD": "Running - stepped aside for your taskbar's app buttons",
+    "RUNNING_PANEL_HIDDEN": "Running - the widget is hidden right now",
+    "RUNNING_PANEL_PAUSED_LINE": "Speeds are paused.",
+    "RUNNING_PANEL_QUIT_TIP": "Stops NetSpeedTray. It starts again when you sign in."
 }

@@ -659,5 +659,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "Une sauvegarde vers ce fichier est déjà en cours.",
     "CONTEXT_MENU_ITEMS_LABEL": "Éléments du menu clic droit",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choisissez ce qu'affiche le menu clic droit du widget. {settings} et {exit} sont toujours affichés.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Votre barre des tâches affiche une couleur d’accentuation : les couleurs difficiles à lire dessus sont donc dessinées dans une couleur de texte lisible."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Votre barre des tâches affiche une couleur d’accentuation : les couleurs difficiles à lire dessus sont donc dessinées dans une couleur de texte lisible.",
+    "RUNNING_PANEL_VERSION": "Version {version}",
+    "RUNNING_PANEL_RUNNING": "En cours d'exécution dans la barre des tâches",
+    "RUNNING_PANEL_HINT": "Pointez les vitesses dans la barre des tâches pour les détails. Clic droit pour plus d'options.",
+    "RUNNING_PANEL_CHECK_UPDATES": "Vérifier les mises à jour",
+    "RUNNING_PANEL_QUIT": "Quitter NetSpeedTray",
+    "RUNNING_PANEL_CHECKING": "Vérification…",
+    "RUNNING_PANEL_UP_TO_DATE": "Vous êtes à jour",
+    "RUNNING_PANEL_CHECK_FAILED": "Impossible de vérifier les mises à jour",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} est disponible",
+    "RUNNING_PANEL_UPDATE_NOW": "Mettre à jour",
+    "RUNNING_PANEL_BETA": "Bêta",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "En cours - masqué pendant qu'une app est en plein écran",
+    "RUNNING_PANEL_HIDDEN_YIELD": "En cours - écarté pour les boutons d'apps de la barre des tâches",
+    "RUNNING_PANEL_HIDDEN": "En cours - le widget est masqué pour l'instant",
+    "RUNNING_PANEL_PAUSED_LINE": "Les vitesses sont en pause.",
+    "RUNNING_PANEL_QUIT_TIP": "Arrête NetSpeedTray. Il redémarre à votre prochaine connexion."
 }

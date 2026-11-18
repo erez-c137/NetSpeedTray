@@ -134,6 +134,15 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - `TEMP_ONBOARDING_GET_LHM_BUTTON` - German and Hebrew reworded ("herunterladen", "הורידו"); others unchanged.
 > - Removed: `LHM_WEB_SERVER_HINT` (the ~600-character paragraph - its points moved to the steps and to `TEMP_ONBOARDING_DETAILS`), `TEMP_ONBOARDING_BODY` and `TEMP_ONBOARDING_NOT_NOW_BUTTON` (the dialog has one Close button now, your `CLOSE_BUTTON`).
 
+> 🆕 **Pending native review for 2.2.2 (the "running" panel, see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. All 16 translated locales have each key. The panel is the small window that opens when you start NetSpeedTray from the Start menu while it is already running.
+> - `RUNNING_PANEL_VERSION` - the line under the app name: "Version {version}". **Keep `{version}`** (filled with e.g. `2.2.2`).
+> - `RUNNING_PANEL_BETA` - a small badge after the version on a test (pre-release) build: "Beta". One short word.
+> - `RUNNING_PANEL_CHECK_UPDATES` - a link after the version: "Check for updates" (sentence case; your `CHECK_FOR_UPDATES_MENU_ITEM` without the `&` is usually right). Its result replaces it on the same line: `RUNNING_PANEL_CHECKING` ("Checking…"), `RUNNING_PANEL_UP_TO_DATE` ("You're up to date"), `RUNNING_PANEL_CHECK_FAILED` ("Couldn't check for updates"), `RUNNING_PANEL_UPDATE_AVAILABLE` ("{version} is available" - **keep `{version}`**, e.g. `2.2.3`) followed by the link `RUNNING_PANEL_UPDATE_NOW` ("Update"). Keep them short: they share one line with the version.
+> - `RUNNING_PANEL_RUNNING` - the status card's title: "Running on your taskbar". When the widget can't be seen right now, the title says why instead: `RUNNING_PANEL_HIDDEN_FULLSCREEN` ("Running - hidden while a full-screen app is open"), `RUNNING_PANEL_HIDDEN_YIELD` ("Running - stepped aside for your taskbar's app buttons" - the widget moved out of the way of the taskbar's app buttons; reuse the words of your `APP_OVERLAP_YIELD_BODY`) and `RUNNING_PANEL_HIDDEN` ("Running - the widget is hidden right now"). While the speeds are paused the title is your `MONITOR_PAUSED` and the line under it `RUNNING_PANEL_PAUSED_LINE` ("Speeds are paused."), followed by your `RESUME_MENU_ITEM` as a link.
+> - `RUNNING_PANEL_HINT` - a muted line at the bottom of the card: "Point to the speeds on the taskbar for details. Right-click them for more options." (changed since the first draft). Reuse your "point to" / "hover" and "right-click" words from `WIDGET_HOVER_TOOLTIP`.
+> - `RUNNING_PANEL_QUIT` - a quiet button at the bottom: "Quit NetSpeedTray" - the same action as your `EXIT_MENU_ITEM`. Keep the name `NetSpeedTray` untranslated. Its tooltip, `RUNNING_PANEL_QUIT_TIP` ("Stops NetSpeedTray. It starts again when you sign in."), shows only when the app starts with Windows.
+> - The rows reuse your `MONITOR_WINDOW_TITLE`, `SETTINGS_WINDOW_TITLE` and `CHECK_CONN_ACTION`, so nothing else is new.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

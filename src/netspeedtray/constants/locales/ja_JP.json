@@ -659,5 +659,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "このファイルへのバックアップはすでに実行中です。",
     "CONTEXT_MENU_ITEMS_LABEL": "右クリックメニューの項目",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "ウィジェットの右クリックメニューに表示する項目を選びます。「{settings}」と「{exit}」は常に表示されます。",
-    "ACCENT_TASKBAR_COLORS_NOTE": "タスクバーにアクセント カラーが表示されているため、その上で読みにくい色は読みやすい文字色で描画されます。"
+    "ACCENT_TASKBAR_COLORS_NOTE": "タスクバーにアクセント カラーが表示されているため、その上で読みにくい色は読みやすい文字色で描画されます。",
+    "RUNNING_PANEL_VERSION": "バージョン {version}",
+    "RUNNING_PANEL_RUNNING": "タスクバーで実行中",
+    "RUNNING_PANEL_HINT": "詳細はタスクバーの速度をポイントしてください。その他のオプションは右クリックします。",
+    "RUNNING_PANEL_CHECK_UPDATES": "更新の確認",
+    "RUNNING_PANEL_QUIT": "NetSpeedTray を終了",
+    "RUNNING_PANEL_CHECKING": "確認しています…",
+    "RUNNING_PANEL_UP_TO_DATE": "最新の状態です",
+    "RUNNING_PANEL_CHECK_FAILED": "更新を確認できませんでした",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} が利用可能です",
+    "RUNNING_PANEL_UPDATE_NOW": "更新",
+    "RUNNING_PANEL_BETA": "ベータ",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "実行中 - 全画面アプリの表示中は非表示",
+    "RUNNING_PANEL_HIDDEN_YIELD": "実行中 - タスクバーのアプリボタンのために退避中",
+    "RUNNING_PANEL_HIDDEN": "実行中 - ウィジェットは現在非表示です",
+    "RUNNING_PANEL_PAUSED_LINE": "速度の更新は一時停止中です。",
+    "RUNNING_PANEL_QUIT_TIP": "NetSpeedTray を終了します。次回サインイン時に再び起動します。"
 }

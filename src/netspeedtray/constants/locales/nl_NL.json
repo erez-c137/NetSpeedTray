@@ -659,5 +659,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "Er loopt al een back-up naar dit bestand.",
     "CONTEXT_MENU_ITEMS_LABEL": "Items in het rechtsklikmenu",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Kies wat het rechtsklikmenu van de widget toont. {settings} en {exit} worden altijd getoond.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Je taakbalk toont een accentkleur, dus kleuren die daarop moeilijk leesbaar zijn, worden in een goed leesbare tekstkleur getekend."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Je taakbalk toont een accentkleur, dus kleuren die daarop moeilijk leesbaar zijn, worden in een goed leesbare tekstkleur getekend.",
+    "RUNNING_PANEL_VERSION": "Versie {version}",
+    "RUNNING_PANEL_RUNNING": "Actief op je taakbalk",
+    "RUNNING_PANEL_HINT": "Wijs de snelheden op de taakbalk aan voor details. Klik met rechts voor meer opties.",
+    "RUNNING_PANEL_CHECK_UPDATES": "Updates controleren",
+    "RUNNING_PANEL_QUIT": "NetSpeedTray afsluiten",
+    "RUNNING_PANEL_CHECKING": "Controleren…",
+    "RUNNING_PANEL_UP_TO_DATE": "Je bent up-to-date",
+    "RUNNING_PANEL_CHECK_FAILED": "Kon niet op updates controleren",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} is beschikbaar",
+    "RUNNING_PANEL_UPDATE_NOW": "Bijwerken",
+    "RUNNING_PANEL_BETA": "Bèta",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "Actief - verborgen zolang een app op volledig scherm open is",
+    "RUNNING_PANEL_HIDDEN_YIELD": "Actief - opzij voor de app-knoppen op de taakbalk",
+    "RUNNING_PANEL_HIDDEN": "Actief - de widget is nu verborgen",
+    "RUNNING_PANEL_PAUSED_LINE": "De snelheden zijn gepauzeerd.",
+    "RUNNING_PANEL_QUIT_TIP": "Sluit NetSpeedTray af. Het start opnieuw wanneer je je aanmeldt."
 }

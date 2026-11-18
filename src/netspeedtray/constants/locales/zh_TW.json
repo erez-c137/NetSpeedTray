@@ -659,5 +659,21 @@
     "BACKUP_HISTORY_ERR_BUSY": "已在備份到此檔案。",
     "CONTEXT_MENU_ITEMS_LABEL": "右鍵選單項目",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "選擇小工具右鍵選單中顯示的項目。「{settings}」和「{exit}」一律顯示。",
-    "ACCENT_TASKBAR_COLORS_NOTE": "你的工作列顯示了輔色，因此在其上難以辨識的色彩會以易讀的文字色彩繪製。"
+    "ACCENT_TASKBAR_COLORS_NOTE": "你的工作列顯示了輔色，因此在其上難以辨識的色彩會以易讀的文字色彩繪製。",
+    "RUNNING_PANEL_VERSION": "版本 {version}",
+    "RUNNING_PANEL_RUNNING": "正在工作列中執行",
+    "RUNNING_PANEL_HINT": "將指標指向工作列上的速度可查看詳細資料。按滑鼠右鍵可查看更多選項。",
+    "RUNNING_PANEL_CHECK_UPDATES": "檢查更新",
+    "RUNNING_PANEL_QUIT": "結束 NetSpeedTray",
+    "RUNNING_PANEL_CHECKING": "正在檢查…",
+    "RUNNING_PANEL_UP_TO_DATE": "已是最新版本",
+    "RUNNING_PANEL_CHECK_FAILED": "無法檢查更新",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} 已推出",
+    "RUNNING_PANEL_UPDATE_NOW": "更新",
+    "RUNNING_PANEL_BETA": "Beta 版",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "執行中 - 全螢幕應用程式開啟時隱藏",
+    "RUNNING_PANEL_HIDDEN_YIELD": "執行中 - 已為工作列的應用程式按鈕讓位",
+    "RUNNING_PANEL_HIDDEN": "執行中 - 小工具目前已隱藏",
+    "RUNNING_PANEL_PAUSED_LINE": "速度已暫停。",
+    "RUNNING_PANEL_QUIT_TIP": "結束 NetSpeedTray。下次登入時會再次啟動。"
 }
