@@ -7,14 +7,15 @@
 <img src="screenshots/widget_hero_2.2.gif" alt="NetSpeedTray widget on the Windows taskbar, next to the clock - live upload and download speeds, the mini graph in Trend and Detailed styles, CPU and GPU stats, everything at once, split graphs, a light taskbar, and the compact layout on a side taskbar" width="626" />
 
 **Live network speeds, CPU/GPU stats, temperatures, and power draw - right on your Windows taskbar.**
-Open source, signed, no ads, no telemetry. The feature Windows forgot.
+Free and open source, signed, no ads, no telemetry. The feature Windows forgot.
 
 [**Install**](#install) · [**Quick Start**](#quick-start) · [**Features**](#what-you-get) · [**The Monitor**](#the-monitor) · [**Hardware & temperatures**](#hardware-monitoring---do-i-need-librehardwaremonitor) · [**FAQ**](#faq) · [**Discussions**](https://github.com/erez-c137/NetSpeedTray/discussions) · [**Support 💛**](#-support-netspeedtray)
 
 </div>
 
-> 🎉 **New in 2.2.1:** every GPU in the hover card, an optional 0.5 s update rate, a lighter touch on laptop
-> batteries, and update checks that no longer pop up a window. [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/latest)
+> 🎉 **New in 2.2.1:** an optional 0.5 s update rate, every GPU listed when you hover the widget, a hybrid
+> laptop's NVIDIA GPU left to sleep, the Wi-Fi name without Location access, and a quiet notice by the widget
+> when an update is out. [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/latest)
 
 ---
 
@@ -38,7 +39,7 @@ Also on the [**Microsoft Store**](https://apps.microsoft.com/detail/XP9MHWQZJPLQ
 
 ## Quick Start
 
-1. **Right-click the widget** for **Settings**, the **Monitor**, **Check for Updates**, or **Exit**. Pick what else it shows (Pause/Resume, Reset Position, ...) in **Settings → General**.
+1. **Right-click the widget** for **Settings**, the **Monitor**, **Check for Updates**, or **Exit**. Add **Pause / Resume**, or hide items you don't use, under **Settings → General → Right-click menu items**.
 2. **Double-click the widget** to open the **Monitor** (history, per-app activity, hardware, statistics).
 3. **Hover over it** for the hover card - the data you've used today and this month (and your cap, if you set one), plus CPU, GPU, memory and, on a laptop, battery if you turn them on. Click to pin it open.
 4. **Drag it to reposition** - grab the widget and drag it along the taskbar to wherever you like; it remembers the spot. Turn on **Free move (no snapping)** in **Settings → Widget** to place it anywhere, including off the taskbar.
@@ -60,7 +61,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 📍 **Every taskbar, every position.** Bottom, top, left or right, and Windows 11's Small taskbar - move or resize the taskbar and the widget follows, no restart. When your app buttons reach the widget it steps aside and comes back when there's room. With "Show my taskbar on all displays" on, it can put a copy on every taskbar.
 
-🖥️ **Hardware stats too.** CPU and GPU utilization beside your network speeds, with optional temperature (°C or °F), power (Watts), RAM, and VRAM. Vendor-agnostic GPU support - NVIDIA, AMD, and Intel. On a PC with two or more GPUs you pick the one the taskbar shows, and the hover card lists them all. RAM and VRAM can show on their own, too. ([When do temps need a helper? →](#hardware-monitoring---do-i-need-librehardwaremonitor))
+🖥️ **Hardware stats too.** CPU and GPU utilization beside your network speeds, with optional temperature (°C or °F), power (Watts), RAM, and VRAM. Vendor-agnostic GPU support - NVIDIA, AMD, and Intel. On a PC with two or more GPUs you pick the one the taskbar shows, and the hover card lists them all. RAM and VRAM can show without CPU or GPU, too. ([When do temps need a helper? →](#hardware-monitoring---do-i-need-librehardwaremonitor))
 
 🪟 **A hover card.** Point at the widget for today's and this month's data usage - and, if you like, CPU, GPU, memory and, on a laptop, battery, so the taskbar itself can stay just your network speed. Click to pin it open.
 
@@ -68,7 +69,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 📈 **Usage & data caps.** Usage by day, month and year, a settable monthly cap with a billing reset day, and 80% / 100% alerts - shown as a quiet flyout above the widget, no extra tray icon. Your history is exact bytes in a local SQLite file you can back up, query or wipe from Settings.
 
-🩺 **Network latency & packet loss.** A light probe of your own router shows a plain-word verdict - **Internet: Good / OK / Slow** - with the milliseconds as quiet subtext. It stays on your LAN - your real router, even with a VPN up - and pinging a public host is up to you. **Check connection** tells you whether packet loss starts on your Wi-Fi or beyond it.
+🩺 **Network latency & packet loss.** A light probe of your own router shows a plain-word verdict - **Router: Good / OK / Slow**, or **Internet: ...** once you turn on **Also measure true internet latency** - with the milliseconds as quiet subtext. It stays on your LAN - your real router, even with a VPN up - and pinging a public host is up to you. **Check connection** tells you whether packet loss starts on your Wi-Fi or beyond it.
 
 🎨 **Make it yours.** Layout modes, fonts, decimals, arrow styles, color thresholds, a mini graph (Trend or Detailed, your colors, or split upload/download), one color scheme that switches with Windows' light/dark mode, and a live preview in Settings that shows the exact effect before you commit.
 
@@ -158,7 +159,7 @@ Double-click the widget (or pick **Show Monitor** from the right-click menu) for
   </div>
 </details>
 
-- **📐 Honest statistics & export.** Click any card for a **Statistics** sheet: the real distribution (min / avg / peak, with percentiles shown only where they're exact), peak vs off-peak, throttle time, and connection drops - two or more lost probes in a row, so a single blip isn't counted as an outage. **Copy** or **Export** the window to a CSV + JSON bundle - and there's a headless `NetSpeedTray.exe --export-csv` for scripted/automation use.
+- **📐 Honest statistics & export.** Click any card for a **Statistics** sheet: the real distribution (min / avg / peak, with percentiles shown only where they're exact), peak vs off-peak, throttle time, and connection drops - at least two failed checks in a row (about 6 seconds), so a single blip isn't counted as an outage. **Copy** or **Export** the window to a CSV + JSON bundle - and there's a headless `NetSpeedTray.exe --export-csv` for scripted/automation use.
 
 - **⏯️ Live / Pause & a Windows 11 feel.** Freeze a chart to read a moment, then resume. Native dark title bar and rounded corners, a Fluent tab strip, remembered size/position/last-tab, a default size that fits the whole Overview without scrolling, and full keyboard navigation (Tab to the cards and tabs, Enter/Space to drill in).
 
@@ -178,7 +179,9 @@ Double-click the widget (or pick **Show Monitor** from the right-click menu) for
 | **CPU temperature** | ⚠️ only if your board exposes ACPI thermal zones | AMD Ryzen, and boards without usable zones |
 | **CPU power** | ✅ Intel (RAPL) | AMD CPUs |
 
-**In plain terms:** on a typical **NVIDIA + Intel** PC you'll see most temps and power without installing anything. If you have an **AMD CPU**, accurate CPU temperature and power realistically need LHM. To enable it, install **[LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest)**, run it **as Administrator**, and turn on **Options → Remote Web Server** (v0.9.5 and newer; port 8085) - NetSpeedTray detects it automatically and temps and power across all vendors light up. NetSpeedTray only ever asks `127.0.0.1`, but LHM up to v0.9.6 listens on every interface, so **don't open its port in your firewall**, and pick 127.0.0.1 once a newer LHM offers it. If you turn on its authentication, enter the same user name and password in **Settings → Hardware**. On a PC with two or more GPUs, pick the one to show in **Settings → Hardware** (Automatic follows the busiest); its temperature and power then come only from a sensor of that GPU's maker, and the hover card lists every GPU from its own sensors ([#236](https://github.com/erez-c137/NetSpeedTray/issues/236)). On a hybrid (Optimus) laptop, the NVIDIA GPU's temperature and power show while it's awake - NetSpeedTray lets it sleep rather than wake it to read them.
+**In plain terms:** on a typical **NVIDIA + Intel** PC you'll see most temps and power without installing anything. If you have an **AMD CPU**, accurate CPU temperature and power realistically need LHM. To enable it, install **[LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest)**, run it **as Administrator**, and turn on **Options → Remote Web Server** (v0.9.5 and newer; port 8085) - NetSpeedTray detects it automatically and temps and power across all vendors light up. NetSpeedTray only ever asks `127.0.0.1`, but LHM up to v0.9.6 listens on every interface, so **don't open its port in your firewall**, and pick 127.0.0.1 once a newer LHM offers it. If you turn on its authentication, enter the same user name and password in **Settings → Hardware**. On a PC with two or more GPUs, pick the one to show in **Settings → Hardware** (Automatic follows the busiest); its temperature and power then come only from a sensor of that GPU's maker, and the hover card lists every GPU from its own sensors ([#236](https://github.com/erez-c137/NetSpeedTray/issues/236)).
+
+On a hybrid (Optimus) laptop, the NVIDIA GPU's temperature and power show while it's awake - NetSpeedTray lets it sleep rather than wake it to read them.
 
 > NetSpeedTray itself **never runs as admin and never ships a kernel driver.** Reading CPU/GPU die
 > temperatures requires a driver that Windows doesn't expose to normal apps; LHM provides that driver and
@@ -192,7 +195,7 @@ Double-click the widget (or pick **Show Monitor** from the right-click menu) for
 <details>
 <summary><b>Will it slow down my PC?</b></summary>
 
-Idle RAM is about **35-50 MB** - that's the number Windows Task Manager shows you (its *full* working set, which counts the shared Windows/Qt DLLs it maps, is ~100 MB), and CPU sits near zero between updates (~0.1-0.2% at the default 1 s; more at Real-time 0.5 s). It rarely wakes in the background, so it's easy on a laptop battery. The Monitor's Overview tab is deliberately chart-free and re-reads long time ranges only every so often, so glancing at it - or leaving it open - stays light; opening the Network or Hardware **charts** loads the plotting library for the session, which adds roughly **50-60 MB** while the Monitor is open - close the Monitor and it eases back down. The widget polls every ~1 second (0.5 s if you choose it) using the same Windows APIs Task Manager uses.
+Idle RAM is about **40-50 MB** - that's the number Windows Task Manager shows you (its *full* working set, which counts the shared Windows/Qt DLLs it maps, is ~100 MB), and CPU sits near zero between updates (~0.1-0.2% at the default 1 s; a bit more at 0.5 s). It wakes only to take its readings, so it's easy on a laptop battery. The Monitor's Overview tab is deliberately chart-free and re-reads long time ranges only every so often, so glancing at it - or leaving it open - stays light; opening the Network or Hardware **charts** loads the plotting library for the session, which adds roughly **50-60 MB** while the Monitor is open - close the Monitor and it eases back down. The widget polls every ~1 second (0.5 s if you choose it) using the same Windows APIs Task Manager uses.
 
 </details>
 
@@ -213,7 +216,7 @@ If you dragged it somewhere odd, right-click it and pick **Reset Position** (it 
 <details>
 <summary><b>How do I update?</b></summary>
 
-The app looks for a new release when it starts, every few hours while it runs and after your PC wakes (asking GitHub at most once a day), and shows a small notice by the widget; **Check for Updates** in the right-click menu checks right away. Every download is verified before anything runs, and the portable build updates itself in place. With WinGet you can also run `winget upgrade erez-c137.NetSpeedTray`. Betas are never offered - trying one is always a manual download. To turn update checks off across many PCs, see [DEPLOYING.md](DEPLOYING.md).
+The app checks for a new release about once a day - at startup, while it runs, and after your PC wakes - and shows a small notice by the widget when there is one; **Check for Updates** in the right-click menu checks right away (if you've hidden it, turn it back on in **Settings → General**). Every download is verified before anything runs, and the portable build updates itself in place. With WinGet you can also run `winget upgrade erez-c137.NetSpeedTray`. Betas are never offered - trying one is always a manual download. To turn update checks off across many PCs, see [DEPLOYING.md](DEPLOYING.md).
 
 </details>
 
@@ -290,7 +293,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 ### Hardware Monitoring
 - **CPU & GPU utilization** on the taskbar - always native (psutil + Windows PDH), all vendors, no admin
 - **RAM & VRAM** usage, on their own or beside CPU/GPU (an integrated GPU's shared memory shows as VRAM; "N/A" instead of a fake 0 when there is no counter)
-- **GPU picker** - on a PC with two or more GPUs, choose which one the widget shows (Automatic follows the busiest); the hover card lists **every GPU** with its own usage, temperature, power and memory
+- **GPU picker** - on a PC with two or more GPUs, choose which one the widget shows (Automatic follows the busiest); the hover card lists **every GPU** with its own usage and memory, plus temperature and power where you've turned them on
 - **Hybrid (Optimus) laptops** - the NVIDIA GPU is left to sleep: NetSpeedTray reads its temperature and power only while it's already awake, and the hover card marks it **Idle** meanwhile
 - **°C or °F**, and **Brand / Match text / Custom** colors for the CPU and GPU labels
 - **Hover card** - today's and this month's data usage on hover, plus CPU, GPU, memory and battery if you like; click to pin; optionally show hardware *only* there
@@ -322,7 +325,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **Taskbar-docked** - stays above the taskbar through the Start menu, flyouts, and the tray overflow
 - **Drag to reposition** - drag the widget to move it along the taskbar; your spot is remembered. **Free move (no snapping)** lets you place it anywhere, including off the taskbar
 - **Preferred monitor** - pin to a specific display (auto free-floats on a taskbar-less screen)
-- **Survives** sleep/resume, monitor add/remove/primary-swap, Explorer restarts, and Remote Desktop reconnects
+- **Survives** sleep/resume, monitor add/remove/primary-swap, Explorer restarts, and Remote Desktop sessions
 - **Every Windows 11 taskbar position** - bottom, top, left, right and Small (32 px); follows moves and resizes without a restart, with a compact layout on side taskbars
 - **Steps aside for your app buttons** when they reach the widget, and comes back when there's room - and stays off Windows 10-style taskbar toolbars (Desktop, Links)
 - **Show on all taskbars** - a copy of the widget on every display's taskbar (opt-in)
@@ -340,7 +343,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **PII obfuscation** - logs auto-redact paths, IPs (incl. IPv6), MACs, hostnames, and interface GUIDs - and network-adapter names are replaced with **stable pseudonyms**, so repeated log lines still correlate for debugging without carrying the labels you gave your adapters
 - **Latency boundary** - pings only your own router by default; a public host only if you opt in and name it
 - **Local metrics endpoint** - off by default; when on, it answers this PC only (loopback-bound, non-local peers and foreign `Host` headers refused) and sends nothing
-- **Verified updates** - the in-app updater checks every download's signature (Windows `WinVerifyTrust` + a publisher pin) and the release's published checksums before running it, with a GitHub fallback. The **portable build updates itself in place** and checks every file it installs against a manifest signed into the new exe. Checks run quietly while the app is open (GitHub at most once a day) and show a small notice; the updater never offers a prerelease - trying a beta is always a deliberate download
+- **Verified updates** - the in-app updater checks every download's signature (Windows `WinVerifyTrust` + a publisher pin) and the release's published checksums before running it, with a GitHub fallback. The **portable build updates itself in place** and checks every file it installs against a manifest signed into the new exe. It checks about once a day while the app runs and shows a small notice when an update is out; the updater never offers a prerelease - trying a beta is always a deliberate download
 - **Support Bundle** - one-click sanitized zip of logs + config + system info for bug reports
 - **IT-friendly** - silent install, and update checks can be turned off machine-wide by policy ([DEPLOYING.md](DEPLOYING.md))
 
