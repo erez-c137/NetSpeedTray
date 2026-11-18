@@ -445,19 +445,25 @@ class Flyout(QWidget):
 
     def nativeEvent(self, event_type, message):
         """Remember the window this card took the foreground from (WM_ACTIVATE's lParam), so closing
-        the card hands the keyboard back to it (restore_foreground)."""
+        the card hands the keyboard back to it (restore_foreground).
+
+        CRITICAL (2.2.2 live test F1): observe only and return ``(False, 0)``. Never return
+        ``super().nativeEvent(...)`` - under PyQt 6.10 it gives ``(False, None)``, and that ``None``
+        handed back as the native result access-violates in QtCore.pyd during the window's creation
+        (every card crashed the app on its first show). Never call ``winId()`` here either: this runs
+        while the native window is being created; the message's own hwnd is the card's window."""
         try:
             raw = event_type.data() if hasattr(event_type, "data") else bytes(event_type)
-            if raw == b"windows_generic_MSG":
+            if raw == b"windows_generic_MSG" and message:
                 from ctypes import wintypes
                 msg = wintypes.MSG.from_address(int(message))
                 if msg.message == _WM_ACTIVATE and (msg.wParam & 0xFFFF) != _WA_INACTIVE:
                     prev = int(msg.lParam or 0)
-                    if prev and prev != int(self.winId()):
+                    if prev and prev != int(msg.hWnd or 0):
                         self._prev_foreground = prev
         except Exception:
             pass
-        return super().nativeEvent(event_type, message)
+        return False, 0
 
     def keyPressEvent(self, event) -> None:
         """A focusable card: Esc closes it; Enter presses the focused button (Space already does)."""
