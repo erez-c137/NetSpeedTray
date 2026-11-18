@@ -53,17 +53,28 @@ def tips_disabled_by_policy() -> bool:
     return policy_value_set(constants.app.POLICY_DISABLE_TIPS_VALUE)
 
 
-def release_core(version: str) -> Optional[str]:
-    """'2.2.2-beta.1' -> '2.2.2'; None when unparseable."""
+def _version_key(version: Optional[str]) -> tuple:
+    """``(major, minor, patch, is_final, stage, number)`` by the updater's ordering, or ``()`` when
+    unparseable. A fourth numeric field is accepted only as 0 ("2.2.2.0" is 2.2.2, the exe's version
+    resource shape); any other one ("2.2.2.1001") is rejected - it names no release tag."""
     parsed = _parse_version(version or "")
-    if not parsed:
-        return None
-    return ".".join(str(n) for n in parsed[:3])
+    if len(parsed) < 6:
+        return ()
+    core, flags = parsed[:-3], parsed[-3:]
+    if len(core) > 4 or (len(core) == 4 and core[3] != 0):
+        return ()
+    return (*core[:3], *flags)
+
+
+def release_core(version: str) -> Optional[str]:
+    """'2.2.2-beta.1' -> '2.2.2'; '2.2.2.0' -> '2.2.2'; None when unparseable."""
+    key = _version_key(version)
+    return ".".join(str(n) for n in key[:3]) if key else None
 
 
 def is_prerelease(version: str) -> bool:
-    parsed = _parse_version(version or "")
-    return bool(parsed) and parsed[3] == 0
+    key = _version_key(version)
+    return bool(key) and key[3] == 0
 
 
 def whats_new_key(version: str) -> Optional[str]:
@@ -88,7 +99,7 @@ def later_version(a: Optional[str], b: Optional[str]) -> Optional[str]:
         return b
     if not b:
         return a
-    return b if _parse_version(b) > _parse_version(a) else a
+    return b if _version_key(b) > _version_key(a) else a
 
 
 def plan_startup_notice(config: Mapping[str, Any], version: str, *,
@@ -112,7 +123,7 @@ def plan_startup_notice(config: Mapping[str, Any], version: str, *,
         # version after it). Never two notices in one launch.
         return StartupPlan(None, {})
 
-    if prev and _parse_version(version) <= _parse_version(prev):
+    if prev and _version_key(version) <= _version_key(prev):
         return StartupPlan(None, {})                             # a relaunch or a downgrade
 
     key = whats_new_key(version)

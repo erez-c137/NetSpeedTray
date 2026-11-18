@@ -294,7 +294,7 @@ def test_tip_shows_after_the_delay_once_then_never(qtbot, screen):
     assert n2._live_card() is None
 
 
-@pytest.mark.parametrize("why", ["hidden", "fullscreen", "yielding", "sign_in", "other_card"])
+@pytest.mark.parametrize("why", ["hidden", "fullscreen", "yielding", "sign_in", "other_card", "settings"])
 def test_a_blocked_moment_defers_the_notice_never_loses_it(qtbot, screen, why):
     w = _widget(dict(DEFAULTS))
     other = None
@@ -306,6 +306,8 @@ def test_a_blocked_moment_defers_the_notice_never_loses_it(qtbot, screen, why):
         w.yielding = True
     elif why == "sign_in":
         screen.since_sign_in = 30.0
+    elif why == "settings":
+        w.settings_dialog = types.SimpleNamespace(isVisible=lambda: True)
     else:
         from netspeedtray.views.flyout import Flyout
         other = Flyout("Update", "x", auto_dismiss_ms=0)
@@ -314,12 +316,17 @@ def test_a_blocked_moment_defers_the_notice_never_loses_it(qtbot, screen, why):
         w._update_flyout = other
     n = ui.StartupNotices(w, version="2.2.2")
     n.start()
+    n._timer.stop()
     n.try_show()
     assert n._live_card() is None
-    assert n._timer.isActive() and n._timer.interval() == constants.app.STARTUP_NOTICE_RETRY_MS
+    if why == "hidden":
+        assert not n._timer.isActive()                         # no 30 s polling: on_widget_shown re-arms
+    else:
+        assert n._timer.isActive() and n._timer.interval() == constants.app.STARTUP_NOTICE_RETRY_MS
     assert w.config.get("first_run_tip_shown") is False      # still owed
     # The moment passes: it shows on the retry.
     w.visible, w.blocked, w.yielding, screen.since_sign_in = True, False, False, 3600.0
+    w.settings_dialog = None
     if other is not None:
         other.hide()
     n.on_widget_shown()
@@ -481,7 +488,7 @@ def test_flyout_secondary_button_and_keyboard(qtbot):
                auto_dismiss_ms=0, focusable=True)
     qtbot.addWidget(f)
     assert not (f.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus)
-    assert f._close_btn.accessibleName() == "Close"
+    assert f._close_btn is None                               # "Got it" is the way out: no X
     assert f.accessibleName() == "T" and f.accessibleDescription() == "M"
     fired = []
     f.secondary_clicked.connect(lambda: fired.append("secondary"))
@@ -512,9 +519,9 @@ def test_flyout_high_contrast_uses_system_colors(qtbot, monkeypatch):
                                  "highlight": "#1AEBFF", "highlight_text": "#000000"})
     f = Flyout("T", "M", action_text="Go", secondary_text="Got it", auto_dismiss_ms=0, focusable=True)
     qtbot.addWidget(f)
-    card = f.findChild(type(f._close_btn.parentWidget()), "flyoutCard")
-    assert "#000000" in card.styleSheet() and "#FFFF00" in card.styleSheet()
-    assert "#1AEBFF" in f._action_btn.styleSheet()
+    assert f._colors["card_bg"] == "#000000" and f._colors["card_stroke"] == "#FFFF00"
+    # Every button is plain ButtonText-on-Window; the keyboard ring is Highlight.
+    assert "#1AEBFF" in f._action_btn.styleSheet() and "background-color: #000000" in f._action_btn.styleSheet()
 
 
 def test_flyout_buttons_mirror_right_to_left(qtbot):
@@ -529,3 +536,411 @@ def test_flyout_buttons_mirror_right_to_left(qtbot):
     qtbot.addWidget(rtl)
     rtl.show_at(QPoint(1500, 1000))
     assert rtl._action_btn.x() > rtl._secondary_btn.x()
+
+
+# --- review round 1 (#592): code majors ---------------------------------------------------------
+
+class _SettingsMain:
+    """The parts of the widget SettingsDialog touches (ConfigController's merge semantics)."""
+
+    def __init__(self, cfg):
+        self.config = dict(cfg)
+        self.config_manager = MagicMock()
+        self.calls = []
+        self.metrics_endpoint = None
+
+    def handle_settings_changed(self, updated, save_to_disk=True):
+        self.calls.append((dict(updated), save_to_disk))
+        self.config.update(updated)
+
+    def toggle_startup(self, on):
+        pass
+
+    def update(self):
+        pass
+
+    def width(self):
+        return 200
+
+
+@pytest.mark.parametrize("close", ["save", "cancel", "preview"])
+def test_open_settings_never_undoes_a_notice_shown_meanwhile(qtbot, monkeypatch, close):
+    """M1: Settings' snapshot is from when it opened. A card shown while it is open must stay shown
+    through a preview, Save and Cancel."""
+    from PyQt6.QtWidgets import QMessageBox
+    from netspeedtray.views.settings.dialog import SettingsDialog
+    for name in ("critical", "information", "warning"):
+        monkeypatch.setattr(QMessageBox, name, lambda *a, **k: None)
+    cfg = dict(DEFAULTS)                                        # a fresh install, tip still owed
+    main = _SettingsMain(cfg)
+    dlg = SettingsDialog(main_widget=main, config=cfg, version="2.2.2", i18n=I18nStrings("en_US"),
+                         available_interfaces=["Ethernet"], is_startup_enabled=False)
+    dlg.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    dlg.settings_changed.connect(lambda c: main.handle_settings_changed(c, save_to_disk=False))
+    qtbot.addWidget(dlg)
+    dlg.show()
+    # The tip shows while Settings is open.
+    main.config.update(first_run_ever=False, first_run_tip_shown=True, last_seen_version="2.2.2")
+    if close == "preview":
+        dlg._update_timer.stop()
+        dlg._emit_settings_changed_throttled()
+    elif close == "save":
+        dlg._save_and_close()
+    else:
+        dlg.reject()
+    assert main.calls, "the dialog wrote nothing - the test proves nothing"
+    assert main.config["first_run_tip_shown"] is True
+    assert main.config["first_run_ever"] is False
+    assert main.config["last_seen_version"] == "2.2.2"
+    for sent, _ in main.calls:
+        assert "first_run_tip_shown" not in sent and "last_seen_version" not in sent
+
+
+def test_settings_still_sends_the_keys_its_pages_own(qtbot):
+    from netspeedtray.views.settings.dialog import SettingsDialog
+    main = _SettingsMain(DEFAULTS)
+    dlg = SettingsDialog(main_widget=main, config=dict(DEFAULTS), version="2.2.2",
+                         i18n=I18nStrings("en_US"), available_interfaces=["Ethernet"],
+                         is_startup_enabled=False)
+    qtbot.addWidget(dlg)
+    dlg._build_all_pages()
+    out = dlg._for_widget(dlg.get_settings())
+    assert "start_with_windows" in out                          # a RESET_ALL_KEEPS key a page shows
+    assert "font_size" in out
+    assert not ({"first_run_tip_shown", "last_seen_version", "update_snooze", "position_x"} & set(out))
+
+
+def _visible_tip(cfg=None, **kw):
+    w = _widget(dict(DEFAULTS) if cfg is None else cfg, **kw)
+    n = ui.StartupNotices(w, version="2.2.2")
+    n.start()
+    n._timer.stop()
+    n.try_show()
+    assert _shown(n)
+    return w, n
+
+
+def test_fullscreen_with_keep_visible_hides_the_card_and_it_comes_back(qtbot, screen):
+    """M2: "Keep visible in fullscreen" keeps the widget over a game - never the card."""
+    w, n = _visible_tip()
+    n.on_fullscreen()
+    assert not n._live_card().isVisible()
+    assert n._timer.isActive() and n._timer.interval() == constants.app.STARTUP_NOTICE_RETRY_MS
+    w.blocked = True                                          # still fullscreen at the retry
+    n.try_show()
+    assert not n._live_card().isVisible()
+    w.blocked = False
+    n.try_show()
+    assert _shown(n)
+    assert sum(1 for s in w.saved if s.get("first_run_tip_shown")) == 1
+    _close(n)
+
+
+def test_widget_fullscreen_hook_reaches_the_notices_even_with_keep_visible():
+    from netspeedtray.views.widget import main as main_mod
+    notices = MagicMock()
+    stub = types.SimpleNamespace(config={"keep_visible_fullscreen": True}, dismiss_hover_card=MagicMock(),
+                                 _startup_notices=notices, position_manager=None)
+    main_mod.NetworkSpeedWidget._on_immediate_hide_requested(stub)
+    notices.on_fullscreen.assert_called_once_with()
+
+
+def test_another_card_wins_and_the_tip_comes_back_after_it(qtbot, screen):
+    """M3: an update offer / notice / data-cap alert never stacks on the tip."""
+    from netspeedtray.views.flyout import Flyout
+    w, n = _visible_tip()
+    other = Flyout("Update available", "x", auto_dismiss_ms=0)
+    other.show()
+    w._update_flyout = other
+    n.yield_to(other)
+    assert not n._live_card().isVisible() and not n._timer.isActive()
+    other._dismiss()
+    assert n._timer.isActive() and n._timer.interval() == constants.app.STARTUP_NOTICE_DELAY_MS
+    n.try_show()
+    assert _shown(n)
+    _close(n)
+
+
+def test_another_card_before_the_tip_shows_delays_it(qtbot, screen):
+    from netspeedtray.views.flyout import Flyout
+    w = _widget(dict(DEFAULTS))
+    n = ui.StartupNotices(w, version="2.2.2")
+    n.start()
+    other = Flyout("Notice", "x", auto_dismiss_ms=0)
+    other.show()
+    w._notice_flyout = other
+    n.yield_to(other)
+    assert not n._timer.isActive()
+    other._dismiss()
+    assert n._timer.isActive()
+    n.try_show()
+    assert _shown(n)
+    _close(n)
+
+
+@pytest.mark.parametrize("method, attr", [("_show_notice_flyout", "_notice_flyout"),
+                                          ("_show_usage_alert", "_usage_alert_flyout")])
+def test_widget_cards_make_the_tip_yield(qtbot, method, attr):
+    from netspeedtray.views.widget import main as main_mod
+    W = main_mod.NetworkSpeedWidget
+    notices = MagicMock()
+    stub = types.SimpleNamespace(_startup_notices=notices, logger=MagicMock(),
+                                 frameGeometry=lambda: QRect(1500, 1000, 120, 40),
+                                 _NOTICE_FLYOUT_DISMISS_MS=W._NOTICE_FLYOUT_DISMISS_MS)
+    setattr(stub, attr, None)
+    getattr(W, method)(stub, "T", "B")
+    card = getattr(stub, attr)
+    notices.yield_to.assert_called_once_with(card)
+    card._dismiss()
+
+
+# --- review round 1: code minors ----------------------------------------------------------------
+
+def test_card_follows_the_widget_when_it_moves(qtbot, screen):
+    w, n = _visible_tip()
+    before = n._live_card().pos()
+    w.frameGeometry = lambda: QRect(300, 1000, 120, 40)
+    n.on_widget_moved()
+    assert n._live_card().pos() != before
+    _close(n)
+
+
+def test_restore_foreground_only_while_the_card_holds_it():
+    from netspeedtray.views import flyout as fmod
+    calls = []
+    u = types.SimpleNamespace(GetForegroundWindow=lambda: 100, IsWindow=lambda h: True,
+                              IsWindowVisible=lambda h: True,
+                              SetForegroundWindow=lambda h: calls.append(h) or 1)
+    assert fmod.restore_foreground(100, 200, user32=u) is True and calls == [200]
+    u.GetForegroundWindow = lambda: 300                        # the user moved on: leave it alone
+    assert fmod.restore_foreground(100, 200, user32=u) is False and calls == [200]
+    u.GetForegroundWindow = lambda: 100
+    u.IsWindow = lambda h: False                               # the previous window is gone
+    assert fmod.restore_foreground(100, 200, user32=u) is False
+    assert fmod.restore_foreground(100, 0, user32=u) is False
+
+
+def test_closing_the_card_hands_the_foreground_back(qtbot, monkeypatch):
+    from netspeedtray.views import flyout as fmod
+    seen = []
+    monkeypatch.setattr(fmod, "restore_foreground",
+                        lambda own, prev, user32=None: seen.append((own, prev)))
+    f = fmod.Flyout("T", "M", action_text="Go", secondary_text="Got it", auto_dismiss_ms=0, focusable=True)
+    f.show()
+    f._prev_foreground = 4242                                  # as WM_ACTIVATE would record it
+    f._secondary_btn.click()
+    assert seen and seen[0][1] == 4242
+
+
+def test_alt_f4_or_any_close_emits_dismissed_once(qtbot):
+    from netspeedtray.views.flyout import Flyout
+    f = Flyout("T", "M", action_text="Go", secondary_text="Got it", auto_dismiss_ms=0, focusable=True)
+    f.show()
+    fired = []
+    f.dismissed.connect(lambda: fired.append(1))
+    f.close()                                                  # Alt+F4 / a system close
+    assert fired == [1]
+    g = Flyout("T", "M", action_text="Go", auto_dismiss_ms=0)
+    g.show()
+    fired2 = []
+    g.dismissed.connect(lambda: fired2.append(1))
+    g._dismiss()
+    assert fired2 == [1]
+
+
+def test_four_part_versions():
+    assert logic.is_prerelease("2.2.2.0") is False
+    assert logic.release_core("2.2.2.0") == "2.2.2"
+    assert logic.whats_new_key("2.2.2.0") == "WHATS_NEW_2_2_2"
+    assert logic.release_core("2.2.2.1001") is None            # a build quad, not a release
+    assert logic.is_prerelease("2.2.2.1001") is False
+    cfg = dict(_upgrader_221(), last_seen_version="2.2.2")
+    assert _plan(cfg, "2.2.2.0").notice is None                # the same release
+    assert logic.later_version("2.2.2.0", "2.2.3") == "2.2.3"
+
+
+def test_every_locale_keeps_whats_new_short():
+    import json
+    from pathlib import Path
+    loc_dir = Path(__file__).resolve().parents[2] / "constants" / "locales"
+    en = json.loads((loc_dir / "en_US.json").read_text(encoding="utf-8"))
+    prefix = logic.WHATS_NEW_KEY_PREFIX
+    keys = [k for k in en if k.startswith(prefix) and k[len(prefix):][:1].isdigit()]
+    assert keys
+    for f in loc_dir.glob("*.json"):
+        data = json.loads(f.read_text(encoding="utf-8"))
+        for k in keys:
+            cap = min(240, int(1.5 * len(en[k])))
+            assert len(data[k]) <= cap, f"{f.stem} {k}: {len(data[k])} > {cap}"
+
+
+def test_real_save_path_is_bookkeeping_only(qtbot, screen):
+    """The notices save through ConfigController.update_config(..., apply_and_repaint=False)."""
+    w = _widget(dict(DEFAULTS))
+    w.config_controller = MagicMock()
+    n = ui.StartupNotices(w, version="2.2.2")
+    n.start()
+    n.try_show()
+    calls = w.config_controller.update_config.call_args_list
+    assert calls and all(c.kwargs == {"apply_and_repaint": False} for c in calls)
+    assert {"first_run_tip_shown": True, "first_run_ever": False} in [c.args[0] for c in calls]
+    assert w.saved == []                                       # never the repainting path
+    _close(n)
+
+
+def _bare_widget():
+    """A NetworkSpeedWidget whose __init__ never ran - just a QWidget with its event handlers."""
+    from PyQt6.QtWidgets import QWidget
+    from netspeedtray.views.widget import main as main_mod
+    W = main_mod.NetworkSpeedWidget
+    obj = W.__new__(W)
+    QWidget.__init__(obj)
+    obj.logger = MagicMock()
+    obj._startup_notices = MagicMock()
+    return obj
+
+
+def test_widget_show_hide_and_move_events_reach_the_notices(qtbot):
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtGui import QHideEvent, QMoveEvent, QShowEvent
+    w = _bare_widget()
+    w._arm_shutdown_channel = lambda create=True: None
+    w._reanchor_hover_card = lambda: None
+    w.showEvent(QShowEvent())
+    w._startup_notices.on_widget_shown.assert_called_once_with()
+    w.hideEvent(QHideEvent())
+    w._startup_notices.on_widget_hidden.assert_called_once_with()
+    w.moveEvent(QMoveEvent(QPoint(1, 1), QPoint(0, 0)))
+    w._startup_notices.on_widget_moved.assert_called_once_with()
+
+
+# --- review round 1: UI/UX ----------------------------------------------------------------------
+
+def test_focus_ring_is_for_the_keyboard_only(qtbot):
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QFocusEvent
+    from PyQt6.QtWidgets import QApplication
+    from netspeedtray.views.flyout import Flyout
+    f = Flyout("T", "M", action_text="Go", secondary_text="Got it", auto_dismiss_ms=0, focusable=True)
+    btn = f._action_btn
+    QApplication.sendEvent(btn, QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.MouseFocusReason))
+    assert not btn.property("kbfocus")
+    QApplication.sendEvent(btn, QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.TabFocusReason))
+    assert btn.property("kbfocus") is True
+    QApplication.sendEvent(btn, QFocusEvent(QEvent.Type.FocusOut, Qt.FocusReason.TabFocusReason))
+    assert not btn.property("kbfocus")
+    # The resting border is as wide as the ring: focus changes a colour, never the text's room.
+    assert "border: 2px solid transparent" in btn.styleSheet()
+    assert 'kbfocus="true"' in btn.styleSheet()
+    assert btn.minimumHeight() >= 32
+    f.close()
+
+
+def test_a_taught_gesture_answers_the_tip(qtbot, screen):
+    w, n = _visible_tip()
+    assert n.tip_visible()
+    n.on_gesture()
+    assert n._live_card() is None
+    assert ui.StartupNotices(w, version="2.2.2").start() is None   # answered: never again
+
+
+def test_a_gesture_leaves_whats_new_alone(qtbot, screen):
+    w, n = _visible_tip(cfg=_upgrader_221())
+    assert not n.tip_visible()
+    n.on_gesture()
+    assert _shown(n)
+    _close(n)
+
+
+def test_widget_gesture_hooks():
+    from netspeedtray.views.widget import main as main_mod
+    from netspeedtray.core.tray_manager import TrayIconManager as TrayManager
+    W = main_mod.NetworkSpeedWidget
+    notices = MagicMock()
+    stub = types.SimpleNamespace(_startup_notices=notices, input_handler=None, logger=MagicMock())
+    W.mouseDoubleClickEvent(stub, None)
+    assert notices.on_gesture.call_count == 1
+    tray = MagicMock()
+    tray.widget = stub
+    TrayManager.show_context_menu(tray)
+    assert notices.on_gesture.call_count == 2
+
+
+@pytest.mark.parametrize("reader", [False, True])
+def test_a_running_screen_reader_gets_an_activated_card(qtbot, screen, monkeypatch, reader):
+    monkeypatch.setattr(ui, "_screen_reader_running", lambda: reader)
+    w, n = _visible_tip()
+    card = n._live_card()
+    assert card.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating) is (not reader)
+    _close(n)
+
+
+def test_screen_reader_flag_is_read_from_spi(monkeypatch):
+    import ctypes
+    from netspeedtray.views import flyout as fmod
+    seen = []
+
+    def spi(action, param, pv, flags):
+        seen.append(action)
+        pv._obj.value = 1
+        return 1
+    monkeypatch.setattr(ctypes.windll.user32, "SystemParametersInfoW", spi)
+    assert fmod.screen_reader_running() is True
+    assert seen == [0x0046]                                    # SPI_GETSCREENREADER
+
+
+_AVAIL = {"BOTTOM": QRect(0, 0, 1920, 1032), "TOP": QRect(0, 48, 1920, 1032),
+          "LEFT": QRect(72, 0, 1848, 1080), "RIGHT": QRect(0, 0, 1848, 1080)}
+
+
+@pytest.mark.parametrize("edge_name, geo, side", [
+    ("BOTTOM", QRect(1600, 1032, 90, 48), "bottom"),
+    ("TOP", QRect(1600, 0, 90, 48), "top"),
+    ("LEFT", QRect(0, 900, 72, 44), "left"),
+    ("RIGHT", QRect(1848, 900, 72, 44), "right"),
+])
+def test_tip_is_placed_like_the_hover_card_with_a_tail_at_the_widget(qtbot, edge_name, geo, side):
+    from netspeedtray.constants import TaskbarEdge
+    from netspeedtray.views.flyout import Flyout, _MARGIN
+    avail = _AVAIL[edge_name]
+    f = Flyout("T", "M", action_text="Go", secondary_text="Got it", auto_dismiss_ms=0, focusable=True)
+    f.show_for(geo, avail, edge=getattr(TaskbarEdge, edge_name), tail=True)
+    r = f.frameGeometry()
+    assert not r.intersects(geo)                               # never over the widget
+    assert avail.contains(r.adjusted(_MARGIN, _MARGIN, -_MARGIN, -_MARGIN))   # body in the work area
+    got_side, at = f.tail()
+    assert got_side == side
+    target = geo.center().x() - r.x() if side in ("top", "bottom") else geo.center().y() - r.y()
+    assert abs(at - target) <= 1                               # pointing at the widget's centre
+    f.close()
+
+
+def test_tail_is_clamped_not_the_card_at_a_screen_corner(qtbot):
+    from netspeedtray.constants import TaskbarEdge
+    from netspeedtray.constants.styles import styles as tokens
+    from netspeedtray.views.flyout import Flyout, _MARGIN
+    geo = QRect(1890, 1032, 30, 48)                            # the widget in the very corner
+    f = Flyout("T", "M", action_text="Go", secondary_text="Got it", auto_dismiss_ms=0, focusable=True)
+    f.show_for(geo, QRect(0, 0, 1920, 1032), edge=TaskbarEdge.BOTTOM, tail=True)
+    side, at = f.tail()
+    r = f.frameGeometry()
+    assert side == "bottom"
+    assert r.right() <= 1919                                   # the card stays on screen...
+    assert at == r.width() - _MARGIN - tokens.RADIUS_CARD - 6  # ...the tail stops at the corner
+    f.close()
+
+
+def test_whats_new_has_no_tail_and_calm_buttons(qtbot, screen):
+    w, n = _visible_tip(cfg=_upgrader_221())
+    card = n._live_card()
+    assert card.tail() is None
+    assert card._secondary_btn.text() == w.i18n.WELCOME_2_0_GOT_IT_BUTTON
+    assert card._close_btn is None
+    assert card._colors["accent"] not in card._action_btn.styleSheet()   # neutral, not a call to action
+    _close(n)
+
+
+def test_tip_has_a_tail(qtbot, screen):
+    w, n = _visible_tip()
+    assert n._live_card().tail() is not None
+    _close(n)

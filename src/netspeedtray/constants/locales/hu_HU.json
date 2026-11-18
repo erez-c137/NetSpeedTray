@@ -634,10 +634,9 @@
     "CONTEXT_MENU_ITEMS_LABEL": "A jobb kattintásos menü elemei",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Válaszd ki, mely elemek jelenjenek meg a widget jobb kattintásos menüjében. A {settings} és a {exit} mindig látható.",
     "ACCENT_TASKBAR_COLORS_NOTE": "A tálcán kiemelőszín van beállítva, ezért a nehezen olvasható színek helyett a program jól látható szövegszínt használ.",
-    "FIRST_RUN_TIP_TITLE": "Üdvözli a NetSpeedTray",
-    "FIRST_RUN_TIP_BODY": "Vigye az egeret a sebességek fölé a részletekért.\nDupla kattintással megnyílik a Monitor.\nJobb kattintás: menü és Beállítások.",
+    "FIRST_RUN_TIP_TITLE": "A NetSpeedTray fut",
+    "FIRST_RUN_TIP_BODY": "Mutasson a sebességekre a részletekért.\nDupla kattintással megnyílik a Monitor.\nJobb kattintás: menü és Beállítások.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Monitor megnyitása",
     "WHATS_NEW_TITLE": "Frissítve: NetSpeedTray {version}",
-    "WHATS_NEW_DISMISS_BUTTON": "Elvetés",
-    "WHATS_NEW_2_2_2": "Újdonság: egy kattintással a megfelelő beállításhoz, gyorspanel, ha a Start menüből nyitja meg a NetSpeedTrayt, és áttekinthetőbb Beállítások."
+    "WHATS_NEW_2_2_2": "Nyissa meg a Start menüből egy gyorspanelért. Az értesítések most közvetlenül a megfelelő beállításhoz visznek, és a Beállításokban is könnyebb eligazodni."
 }

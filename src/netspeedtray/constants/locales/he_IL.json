@@ -634,10 +634,9 @@
     "CONTEXT_MENU_ITEMS_LABEL": "פריטי תפריט הלחיצה הימנית",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "בחר מה יוצג בתפריט הלחיצה הימנית של הווידג'ט. {settings} ו{exit} מוצגים תמיד.",
     "ACCENT_TASKBAR_COLORS_NOTE": "שורת המשימות שלך מציגה צבע הדגשה, ולכן צבעים שקשה לקרוא עליה מצוירים בצבע טקסט קריא.",
-    "FIRST_RUN_TIP_TITLE": "ברוכים הבאים ל-NetSpeedTray",
-    "FIRST_RUN_TIP_BODY": "רחפו מעל המהירויות לפרטים.\nלחיצה כפולה פותחת את המוניטור.\nלחיצה ימנית לתפריט ולהגדרות.",
-    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "פתח את המוניטור",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray פועל",
+    "FIRST_RUN_TIP_BODY": "ריחוף מעל המהירויות מציג פרטים.\nלחיצה כפולה פותחת את המוניטור.\nלחיצה ימנית פותחת תפריט והגדרות.",
+    "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "פתח מוניטור",
     "WHATS_NEW_TITLE": "עודכן ל-NetSpeedTray {version}",
-    "WHATS_NEW_DISMISS_BUTTON": "סגור",
-    "WHATS_NEW_2_2_2": "חדש: קיצורי דרך בלחיצה אחת להגדרה הנכונה, חלונית מהירה כשפותחים את NetSpeedTray מתפריט התחל, והגדרות ברורות יותר."
+    "WHATS_NEW_2_2_2": "פתחו אותו מתפריט התחל לקבלת חלונית מהירה. ההודעות מובילות עכשיו ישירות להגדרה הרלוונטית, וקל יותר להתמצא בהגדרות."
 }

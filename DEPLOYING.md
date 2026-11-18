@@ -135,17 +135,20 @@ Turning the app off in Task Manager's Startup tab also stops it.
 
 Since 2.2.2 the app shows, at most once each, a small card beside the widget:
 
-- **First-run tip** - on a new install's first launch: hover for details, double-click for the Monitor,
-  right-click for the menu and Settings. Buttons: **Open the Monitor** / **Got it**.
+- **First-run tip** - on a new install's first launch, pointing at the widget: point to it for
+  details, double-click for the Monitor, right-click for the menu and Settings. Buttons: **Open the
+  Monitor** / **Got it**. Doing any of those three also counts as an answer.
 - **What's new** - on the first launch of a newer final release: one sentence, with **What's new**
-  (opens that version's GitHub release page in the browser) and **Dismiss**. Prereleases never show it;
+  (opens that version's GitHub release page in the browser) and **Got it**. Prereleases never show it;
   a beta tester sees it once, on the final. Not on a downgrade, never on the same launch as the tip.
 
-Neither takes the keyboard from the app in front, times out or repeats. Each waits (retried every 30 s)
-while the widget is hidden, a fullscreen app or a modal dialog is up, the session is locked or idle for
-2 minutes, or the session signed in less than 2 minutes ago. Nothing is sent anywhere; the release page
-opens only if the user clicks. The state is two settings in `NetSpeedTray_Config.json`:
-`first_run_tip_shown` and `last_seen_version`.
+Neither takes the keyboard from the app in front (unless a screen reader is running, so it can be
+read), times out or repeats. Each waits while the widget is hidden and (retried every 30 s) while a
+fullscreen app or a modal dialog is up, Settings is open, another NetSpeedTray notice is showing, the
+session is locked or idle for 2 minutes, or the session signed in less than 2 minutes ago. A card
+already up steps aside for a fullscreen app (even with **Keep visible in fullscreen**) or another notice,
+and comes back after. Nothing is sent anywhere; the release page opens only if the user clicks. The
+state is two settings in `NetSpeedTray_Config.json`: `first_run_tip_shown` and `last_seen_version`.
 
 - **Turning both off for everyone:** set the policy value
   `HKLM\SOFTWARE\Policies\NetSpeedTray DisableTips` (a DWORD; any nonzero value turns them off; the same

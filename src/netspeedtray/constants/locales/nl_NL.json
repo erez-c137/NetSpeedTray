@@ -634,10 +634,9 @@
     "CONTEXT_MENU_ITEMS_LABEL": "Items in het rechtsklikmenu",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Kies wat het rechtsklikmenu van de widget toont. {settings} en {exit} worden altijd getoond.",
     "ACCENT_TASKBAR_COLORS_NOTE": "Je taakbalk toont een accentkleur, dus kleuren die daarop moeilijk leesbaar zijn, worden in een goed leesbare tekstkleur getekend.",
-    "FIRST_RUN_TIP_TITLE": "Welkom bij NetSpeedTray",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray is actief",
     "FIRST_RUN_TIP_BODY": "Wijs de snelheden aan voor details.\nDubbelklik om de Monitor te openen.\nRechtsklik voor het menu en Instellingen.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Monitor openen",
     "WHATS_NEW_TITLE": "Bijgewerkt naar NetSpeedTray {version}",
-    "WHATS_NEW_DISMISS_BUTTON": "Sluiten",
-    "WHATS_NEW_2_2_2": "Nieuw: met één klik naar de juiste instelling, een snel paneel als je NetSpeedTray vanuit Start opent, en duidelijkere Instellingen."
+    "WHATS_NEW_2_2_2": "Open het vanuit Start voor een snel paneel. Meldingen leiden nu direct naar de juiste instelling, en je vindt makkelijker je weg in Instellingen."
 }

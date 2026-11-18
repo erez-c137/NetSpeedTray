@@ -210,6 +210,27 @@ def widget_qt_scale(widget: Any) -> Optional[float]:
         return None
 
 
+def _startup_notices_yield(widget: Any, card) -> None:
+    """Another card of ours just showed: the first-run tip / "what's new" steps aside until it
+    closes - theirs win (2.2.2 D1/D2 review M3). A module function: stand-in widgets need nothing."""
+    notices = getattr(widget, "_startup_notices", None)
+    if notices is not None:
+        try:
+            notices.yield_to(card)
+        except Exception as e:
+            logging.getLogger("NetSpeedTray.NetworkSpeedWidget").debug("one-time notice could not yield: %s", e)
+
+
+def _startup_tip_gesture(widget: Any) -> None:
+    """The user did what the first-run tip teaches (hover card, double-click, right-click menu)."""
+    notices = getattr(widget, "_startup_notices", None)
+    if notices is not None:
+        try:
+            notices.on_gesture()
+        except Exception as e:
+            logging.getLogger("NetSpeedTray.NetworkSpeedWidget").debug("one-time notice gesture hook failed: %s", e)
+
+
 def _fullscreen_latch(widget: Any) -> FullscreenLatch:
     """The widget's fullscreen latch (#503), created on first use (a stand-in ``self`` in the tests
     gets its own the same way)."""
@@ -616,6 +637,9 @@ class NetworkSpeedWidget(QWidget):
         # Never leave an always-on-top card (pinned or not) over a game/video - even when the widget
         # itself stays (keep_visible_fullscreen / free-float).
         self.dismiss_hover_card()
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_fullscreen()   # the first-run tip / "what's new" steps aside, comes back after
         if self.config.get("keep_visible_fullscreen", False):
             return
         if self.position_manager and self.position_manager.is_free_float_active():
@@ -1030,6 +1054,7 @@ class NetworkSpeedWidget(QWidget):
             self._usage_alert_flyout = Flyout(title, message, auto_dismiss_ms=auto_dismiss_ms)
             geo = self.frameGeometry()
             self._usage_alert_flyout.show_at(QPoint(geo.left(), geo.top()))
+            _startup_notices_yield(self, self._usage_alert_flyout)
         except Exception as e:
             self.logger.error(f"Error showing usage alert: {e}", exc_info=True)
 
@@ -1652,7 +1677,10 @@ class NetworkSpeedWidget(QWidget):
             show_data = bool(self.config.get("show_usage_on_hover", True))
             show_tips = bool(self.config.get("show_hover_tips", True))
             show_power = bool(self.config.get("power_display_enabled", False))
-            hint = self._hover_hint_text() if show_tips else None
+            notices = getattr(self, "_startup_notices", None)
+            tip_up = notices is not None and notices.tip_visible()
+            # While the first-run tip is up, the hover card does not repeat its gesture hint.
+            hint = self._hover_hint_text() if show_tips and not tip_up else None
             today, month = self._hover_usage_totals() if show_data else (None, None)
             cap = self._hover_cap_info() if show_data else None
             power = self._hover_power_summary() if show_power else None
@@ -1689,6 +1717,7 @@ class NetworkSpeedWidget(QWidget):
             # no frame in between, instead of a visible blink.
             old, self._hover_card = self._hover_card, card
             card.show_for(self.frameGeometry(), avail, edge=self._hover_card_edge(), screen=screen)
+            _startup_tip_gesture(self)   # the user found the hover card: the tip has done its job
             if pinned:
                 card.set_pinned(True)    # opened by a click/tap: takes clicks (not pass-through)
                 self._retire_pin_hint()
@@ -2122,6 +2151,7 @@ class NetworkSpeedWidget(QWidget):
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         """Delegates double-click events to the InputHandler."""
+        _startup_tip_gesture(self)
         if self.input_handler:
             self.input_handler.handle_double_click(event)
 
@@ -2164,6 +2194,9 @@ class NetworkSpeedWidget(QWidget):
     def moveEvent(self, event) -> None:
         super().moveEvent(event)
         self._reanchor_hover_card()
+        notices = getattr(self, "_startup_notices", None)
+        if notices is not None:
+            notices.on_widget_moved()
 
     def showEvent(self, event: QShowEvent) -> None:
         self.logger.debug(f"Widget showEvent triggered. New visibility: {self.isVisible()}")
@@ -2689,6 +2722,7 @@ class NetworkSpeedWidget(QWidget):
                 self._notice_flyout.action_clicked.connect(on_action)
             geo = self.frameGeometry()
             self._notice_flyout.show_at(QPoint(geo.left(), geo.top()))
+            _startup_notices_yield(self, self._notice_flyout)
             return True
         except Exception as e:
             self.logger.error("Error showing a notice: %s", e, exc_info=True)
@@ -3097,6 +3131,7 @@ class NetworkSpeedWidget(QWidget):
             self._update_flyout = flyout
             geo = self.frameGeometry()
             flyout.show_at(QPoint(geo.left(), geo.top()))
+            _startup_notices_yield(self, flyout)
             self.logger.info("Update %s offered (flyout).", latest)
         except Exception as e:
             self.logger.error("Error offering the update: %s", e, exc_info=True)

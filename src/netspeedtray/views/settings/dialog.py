@@ -667,7 +667,7 @@ class SettingsDialog(QDialog):
             return
         current_settings = self.get_settings()
         self._update_preview(current_settings)
-        self.settings_changed.emit(current_settings)
+        self.settings_changed.emit(self._for_widget(current_settings))
         # The emit applied the settings synchronously (incl. starting/stopping the metrics endpoint),
         # so the endpoint's status now describes what the user just chose.
         self._refresh_metrics_status()
@@ -763,6 +763,22 @@ class SettingsDialog(QDialog):
         # Only BUILT pages: an unbuilt one never left its loaded state, so its keys are self.config's
         # (get_settings starts from that copy) - never a constructor's defaults.
         return [built[name] for name in self._PAGE_NAMES if name in built and name not in failed]
+
+    def _for_widget(self, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """What Save, Cancel and the live preview send to the widget: ``settings`` WITHOUT the app-state
+        keys (RESET_ALL_KEEPS) that no page owns. The dialog's snapshots are from when it opened, and
+        the app keeps writing its state meanwhile - a one-time notice shown while Settings is open
+        (first_run_tip_shown, last_seen_version), a nudge, update bookkeeping, a drag of the widget.
+        Sending the snapshot back would undo those (2.2.2 D1/D2 review M1). Keys a page shows (e.g.
+        start_with_windows) still go through: they are the user's edit."""
+        owned = set()
+        for page in self._pages():
+            try:
+                owned |= set(page.get_settings())
+            except Exception:
+                continue
+        keeps = set(SettingsDialog.RESET_ALL_KEEPS) - owned
+        return {k: v for k, v in settings.items() if k not in keeps}
 
     def _build_all_pages(self) -> None:
         for name in self._PAGE_NAMES:
@@ -1134,7 +1150,7 @@ class SettingsDialog(QDialog):
 
             # Apply settings to the main widget/application
             if hasattr(self.parent_widget, 'handle_settings_changed'):
-                self.parent_widget.handle_settings_changed(final_settings, save_to_disk=True)
+                self.parent_widget.handle_settings_changed(self._for_widget(final_settings), save_to_disk=True)
             self._refresh_metrics_status()
             
             # Determine startup change
@@ -1179,7 +1195,8 @@ class SettingsDialog(QDialog):
         if hasattr(self.parent_widget, 'handle_settings_changed'):
             # The pre-dialog config as it was: the theme never wrote into it (or into the live config),
             # so after a Windows Light/Dark flip it still paints the right theme's colours.
-            self.parent_widget.handle_settings_changed(self.original_config, save_to_disk=False)
+            self.parent_widget.handle_settings_changed(self._for_widget(self.original_config),
+                                                       save_to_disk=False)
         # Save the position AFTER the revert: handle_settings_changed merges
         # original_config back into the live config, which would otherwise clobber
         # settings_window_pos with the value from when the dialog opened.

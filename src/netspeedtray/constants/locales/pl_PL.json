@@ -634,10 +634,9 @@
     "CONTEXT_MENU_ITEMS_LABEL": "Pozycje menu prawego przycisku",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Wybierz, co pokazuje menu prawego przycisku widżetu. {settings} i {exit} są zawsze widoczne.",
     "ACCENT_TASKBAR_COLORS_NOTE": "Pasek zadań wyświetla kolor akcentu, więc kolory trudne do odczytania na nim są rysowane w czytelnym kolorze tekstu.",
-    "FIRST_RUN_TIP_TITLE": "Witamy w NetSpeedTray",
-    "FIRST_RUN_TIP_BODY": "Najedź na prędkości, aby zobaczyć szczegóły.\nKliknij dwukrotnie, aby otworzyć Monitor.\nKliknij prawym przyciskiem, aby otworzyć menu i Ustawienia.",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray działa",
+    "FIRST_RUN_TIP_BODY": "Wskaż prędkości, aby zobaczyć szczegóły.\nKliknij dwukrotnie, aby otworzyć Monitor.\nKliknij prawym przyciskiem, aby otworzyć menu i Ustawienia.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Otwórz Monitor",
     "WHATS_NEW_TITLE": "Zaktualizowano do NetSpeedTray {version}",
-    "WHATS_NEW_DISMISS_BUTTON": "Zamknij",
-    "WHATS_NEW_2_2_2": "Nowość: skróty jednym kliknięciem do właściwego ustawienia, szybki panel po otwarciu NetSpeedTray z menu Start i czytelniejsze Ustawienia."
+    "WHATS_NEW_2_2_2": "Otwórz go z menu Start, aby zobaczyć szybki panel. Powiadomienia prowadzą teraz prosto do właściwego ustawienia, a w Ustawieniach łatwiej się odnaleźć."
 }

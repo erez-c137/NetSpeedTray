@@ -634,10 +634,9 @@
     "CONTEXT_MENU_ITEMS_LABEL": "Éléments du menu clic droit",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Choisissez ce qu'affiche le menu clic droit du widget. {settings} et {exit} sont toujours affichés.",
     "ACCENT_TASKBAR_COLORS_NOTE": "Votre barre des tâches affiche une couleur d’accentuation : les couleurs difficiles à lire dessus sont donc dessinées dans une couleur de texte lisible.",
-    "FIRST_RUN_TIP_TITLE": "Bienvenue dans NetSpeedTray",
-    "FIRST_RUN_TIP_BODY": "Survolez les vitesses pour voir les détails.\nDouble-cliquez pour ouvrir le moniteur.\nClic droit pour le menu et les Paramètres.",
+    "FIRST_RUN_TIP_TITLE": "NetSpeedTray est en cours d'exécution",
+    "FIRST_RUN_TIP_BODY": "Pointez sur les vitesses pour voir les détails.\nDouble-cliquez pour ouvrir le moniteur.\nClic droit pour le menu et les Paramètres.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Ouvrir le moniteur",
     "WHATS_NEW_TITLE": "Mis à jour vers NetSpeedTray {version}",
-    "WHATS_NEW_DISMISS_BUTTON": "Ignorer",
-    "WHATS_NEW_2_2_2": "Nouveau : des raccourcis en un clic vers le bon réglage, un panneau rapide quand vous ouvrez NetSpeedTray depuis Démarrer, et des Paramètres plus clairs."
+    "WHATS_NEW_2_2_2": "Ouvrez-le depuis Démarrer pour un panneau rapide. Les notifications mènent désormais directement au bon réglage, et on s'oriente plus facilement dans les Paramètres."
 }
