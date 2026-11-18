@@ -310,6 +310,7 @@ class SupportCard(QFrame):
         from netspeedtray.views.flyout import _FlyoutButton   # keyboard-only focus ring
         c = self._c
         btn = _FlyoutButton(text, self)
+        btn.setAccessibleName(text)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFont(su.font(tokens.TYPE_BODY))
         btn.setMinimumHeight(_BUTTON_MIN_H)
@@ -427,7 +428,11 @@ class SupportPrompt:
         self.host: Optional[QWidget] = None
         self._anim: Optional[QPropertyAnimation] = None
 
-    def attach(self, host_layout, index: int, *, now: Optional[datetime] = None) -> Optional[SupportCard]:
+    def attach(self, host_layout, index: int, *, now: Optional[datetime] = None,
+               tab_after: Optional[QWidget] = None) -> Optional[SupportCard]:
+        """Insert the card at ``index`` of ``host_layout`` (in front of the page) when it is owed.
+        ``tab_after``: the header's last focusable control - the card's controls follow it in Tab
+        order, before the page."""
         try:
             if not should_offer(self._w, now):
                 return None
@@ -441,6 +446,7 @@ class SupportPrompt:
             lay.setContentsMargins(m, 4, m, 4)
             lay.addWidget(card)
             host_layout.insertWidget(index, wrap)
+            self._order_before_page(host_layout, index, wrap, card, tab_after)
             self.card, self.host = card, wrap
             from netspeedtray.views.widget.startup_notices import MOMENT_SUPPORT, take_moment
             take_moment(self._w, MOMENT_SUPPORT)
@@ -449,6 +455,24 @@ class SupportPrompt:
         except Exception as e:
             logger.error("Could not show the support card: %s", e, exc_info=True)
             return None
+
+    @staticmethod
+    def _order_before_page(host_layout, index: int, wrap: QWidget, card: SupportCard,
+                           tab_after: Optional[QWidget]) -> None:
+        """Live test F5: made after the page, the card came after the whole page in Tab order and in
+        the UI Automation tree (Qt lists a window's children in creation order) - Narrator's walk
+        never reached it. Put it where it is drawn: right after the header, in front of the page."""
+        try:
+            item = host_layout.itemAt(index + 1)
+            page = item.widget() if item is not None else None
+            if page is not None and page.parentWidget() is wrap.parentWidget():
+                wrap.stackUnder(page)          # reorders the parent's children (no overlap: no z effect)
+        except Exception as e:
+            logger.debug("Support card: could not order it before the page: %s", e)
+        if tab_after is not None:
+            chain = [tab_after] + list(card.buttons.values()) + [card.support_link.button(), card.close_button]
+            for a, b in zip(chain, chain[1:]):
+                QWidget.setTabOrder(a, b)
 
     def _mark_done(self) -> None:
         save_config(self._w, logic.shown_updates())

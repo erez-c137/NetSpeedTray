@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 from netspeedtray import constants
 from netspeedtray.constants.i18n import I18nStrings
@@ -677,3 +677,63 @@ def test_one_one_time_moment_per_session_for_the_card(qtbot, world):
     w2 = _main(_cfg(first_seen_at=_ago(60)))
     assert _attach(qtbot, w2, world)[3] is not None
     assert sn.moment_taken(w2) == sn.MOMENT_SUPPORT
+
+
+# --- live test F5: keyboard order and the accessibility tree --------------------------------------------
+
+def _card_monitor(qtbot, world):
+    from netspeedtray.views.monitor.window import MonitorWindow
+    mw = MagicMock()
+    mw.session_start_time = datetime.now() - timedelta(hours=2)
+    mw.system_event_handler.is_fullscreen_active.return_value = False
+    mw._fs_latch = None
+    mw._startup_notices = None
+    mw.settings_dialog = None
+    mw._update_flyout = mw._notice_flyout = mw._usage_alert_flyout = mw._running_panel = None
+    del mw.save_config_keys
+    cfg = _cfg(first_seen_at=_ago(31))
+    mw.config = cfg
+    win = MonitorWindow(mw, cfg, I18nStrings("en_US"))
+    qtbot.addWidget(win)
+    win.show()
+    win.activateWindow()
+    QApplication.processEvents()
+    return win, win._support_prompt.card
+
+
+def _tab_from(win, start, steps):
+    start.setFocus(Qt.FocusReason.TabFocusReason)
+    QApplication.processEvents()
+    seen = []
+    for _ in range(steps):
+        win.focusNextPrevChild(True)
+        QApplication.processEvents()
+        seen.append(QApplication.focusWidget())
+    return seen
+
+
+def test_the_cards_controls_follow_the_header_in_tab_order(qtbot, world):
+    """The VM: the card's controls were reachable by Tab only after the whole page (they were created
+    after it). They come right after the header (the tabs and the gear), before the page."""
+    win, card = _card_monitor(qtbot, world)
+    controls = list(card.buttons.values()) + [card.support_link.button(), card.close_button]
+    assert _tab_from(win, win._gear, len(controls)) == controls
+    # ...and from the last tab button, Tab goes header -> card, never into the page first.
+    seen = _tab_from(win, win._tab_bar.current_button(), 6)
+    first_card = seen.index(controls[0])
+    assert all(w is win._gear or w in win._tab_bar.findChildren(type(win._tab_bar.current_button()))
+               for w in seen[:first_card])
+
+
+def test_the_card_comes_before_the_page_for_screen_readers(qtbot, world):
+    """The VM: a UI Automation walk from the Monitor window did not reach the card's controls - Qt
+    lists a window's children in creation order, and the card (made after the page) came after the
+    whole page's tree. It is moved right in front of the page; every control is named."""
+    win, card = _card_monitor(qtbot, world)
+    kids = [w for w in win.children() if isinstance(w, QWidget)]
+    host = card.parentWidget()
+    assert kids.index(host) == kids.index(win._stack) - 1
+    for btn in list(card.buttons.values()) + [card.support_link.button(), card.close_button]:
+        assert btn.accessibleName() == btn.text().strip() or btn is card.close_button
+        assert btn.accessibleName()
+    assert card.accessibleName() == "A month with NetSpeedTray" and card.accessibleDescription()
