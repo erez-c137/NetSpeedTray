@@ -3211,7 +3211,9 @@ class NetworkSpeedWidget(QWidget):
             # The port the user configured for LHM (Settings > Hardware), as step 2 names it.
             lhm_port = getattr(self.monitor_thread, "lhm_port", constants.lhm.HTTP_PORT)
             server_off = getattr(self.monitor_thread, "lhm_status", None) == constants.lhm.STATUS_SERVER_OFF
-            dlg = TempOnboardingDialog(self.i18n, self, lhm_port=lhm_port, focus_step=2 if server_off else 1)
+            mt = self.monitor_thread
+            dlg = TempOnboardingDialog(self.i18n, self, lhm_port=lhm_port, focus_step=2 if server_off else 1,
+                                       status_provider=lambda: getattr(mt, "lhm_status", None))
             dlg.exec()
             if dlg.dismissed_forever():
                 self.update_config({"temp_onboarding_dismissed": True})

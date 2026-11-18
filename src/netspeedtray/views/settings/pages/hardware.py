@@ -3,9 +3,9 @@ Hardware Monitoring Settings Page.
 """
 from typing import Dict, Any, Callable, Optional, Tuple
 
-from PyQt6.QtCore import pyqtSignal, QTimer
+from PyQt6.QtCore import pyqtSignal, QTimer, Qt
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (QWidget, QLabel, QHBoxLayout, QVBoxLayout,
+from PyQt6.QtWidgets import (QWidget, QLabel, QHBoxLayout, QVBoxLayout, QFrame,
                              QLineEdit, QPushButton, QSpinBox)
 
 from netspeedtray import constants
@@ -20,6 +20,67 @@ def _page_surface() -> str:
     """The Settings content background a Hardware-page notice sits on (NoticeLink contrast, D6)."""
     tokens = constants.styles
     return tokens.DIALOG_CONTENT_BG_DARK if su.is_dark_mode() else tokens.DIALOG_CONTENT_BG_LIGHT
+
+
+class _InfoBar(QFrame):
+    """A light Win11 InfoBar for a status (D6): a 16 px info icon in the accent colour, the message in
+    the primary text colour, and a link under it (a NoticeLink without text, full width so its text
+    lines up with the message). High Contrast: the theme's own colours. ``text()`` / ``action_text()`` / ``click()``
+    mirror NoticeLink's."""
+
+    _INFO_GLYPH = 0xE946   # Segoe Fluent Icons "Info"
+    _ICON_PX = 16
+
+    def __init__(self, action_text: str, on_click: Callable[[], None]) -> None:
+        super().__init__()
+        from netspeedtray.utils.components import NoticeLink
+        self.setObjectName("lhmInfoBar")
+        self._text = ""
+        row = QHBoxLayout(self)
+        row.setContentsMargins(2, constants.styles.SPACE_S, 2, constants.styles.SPACE_S)
+        row.setSpacing(constants.styles.SPACE_S)
+        self.icon = QLabel()
+        self.icon.setFixedSize(self._ICON_PX, self._ICON_PX + 2)
+        self.icon.setAccessibleName("")
+        row.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignTop)
+        col = QVBoxLayout()
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(2)
+        self.label = su.ui_label("")
+        self.label.setWordWrap(True)
+        col.addWidget(self.label)
+        self.link = NoticeLink("", action_text, on_click, stacked=True, surface=_page_surface)
+        col.addWidget(self.link)
+        row.addLayout(col, 1)
+        self.refresh_theme()
+
+    def refresh_theme(self) -> None:
+        from netspeedtray.utils.components import readable_on
+        from netspeedtray.utils.taskbar_appearance import read_high_contrast_link_colors
+        hc = read_high_contrast_link_colors()
+        if hc:
+            text, icon = hc["text"], hc["focus"]
+        else:
+            c = su.semantic_colors()
+            text, icon = c["text_primary"], readable_on(c["accent"], _page_surface())
+        self.label.setStyleSheet(f"color: {text}; background: transparent;")
+        self.icon.setPixmap(su.fluent_icon(self._INFO_GLYPH, self._ICON_PX, icon).pixmap(
+            self._ICON_PX, self._ICON_PX))
+        self.link.refresh_theme()
+
+    def text(self) -> str:
+        return self._text
+
+    def set_text(self, text: str) -> None:
+        self._text = str(text)
+        su.set_ui_text(self.label, self._text)
+        self.link.button().setAccessibleDescription(self._text)
+
+    def action_text(self) -> str:
+        return self.link.action_text()
+
+    def click(self) -> None:
+        self.link.click()
 
 
 class HardwarePage(QWidget):
@@ -141,18 +202,17 @@ class HardwarePage(QWidget):
         self._power_card = SettingCard(self.i18n.SHOW_HARDWARE_POWER_LABEL, control=self.show_power)
         layout.addWidget(self._power_card)
 
-        # D6: LibreHardwareMonitor runs, but nothing answers on its web-server port - current LHM is read
-        # only over that server (#187), off by default. Shown while temperatures or power are on and the
-        # monitor thread reports STATUS_SERVER_OFF (refresh_lhm_status); the action opens the setup
-        # dialog at its step 2. Right under the switches it explains, so it is seen when it appears.
+        # D6: LibreHardwareMonitor runs, but nothing accepts a connection on its web-server port - current
+        # LHM is read only over that server (#187), off by default. Shown while temperatures or power
+        # are on and the monitor thread reports STATUS_SERVER_OFF (refresh_lhm_status); the action opens
+        # the setup dialog at its step 2. A light InfoBar (status, not a hint) right under the switches.
         from netspeedtray.utils.components import NoticeLink
-        self.lhm_server_off_notice = NoticeLink(
-            self.i18n.LHM_SERVER_OFF_NOTICE, self.i18n.LHM_SERVER_OFF_ACTION,
-            lambda: self.open_temp_setup(2), stacked=True, surface=_page_surface)
+        self.lhm_server_off_notice = _InfoBar(
+            self.i18n.LHM_SERVER_OFF_ACTION, lambda: self.open_temp_setup(2))
         self.lhm_server_off_notice.setVisible(False)
         layout.addWidget(self.lhm_server_off_notice)
 
-        temps_note = QLabel(self.i18n.HARDWARE_TEMPS_LIMITATION_NOTE)
+        temps_note = su.ui_label(self.i18n.HARDWARE_TEMPS_LIMITATION_NOTE)   # RTL: isolates LHM's menu path
         temps_note.setWordWrap(True)
         temps_note.setStyleSheet(
             f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
@@ -391,14 +451,25 @@ class HardwarePage(QWidget):
         self._sync_server_off_notice(status, port)
 
     def _sync_server_off_notice(self, status: Optional[str], status_port: Optional[int]) -> None:
-        """Show "LibreHardwareMonitor is running, but its web server is off" (D6) only while it is true
-        for the port in the field, and only while temperatures or power - the readings LHM gives - are
-        on. Touched only on a change: refresh_lhm_status runs every second."""
-        want = (status == constants.lhm.STATUS_SERVER_OFF
-                and status_port == int(self.lhm_port.value())
+        """Show the "Remote Web Server is off" InfoBar (D6) only while it is true for the port in the
+        field, and only while temperatures or power - the readings LHM gives - are on. While it shows,
+        the note's "How to set it up" link hides (the bar's own link is the next step). Touched only on
+        a change: refresh_lhm_status runs every second.
+
+        The wording is as sure as the facts: on LHM's default port, LHM running with nothing listening
+        there means its server is off; on another port, NetSpeedTray only knows nothing answers there
+        (LHM may be serving on its default port), so it says exactly that."""
+        port = int(self.lhm_port.value())
+        want = (status == constants.lhm.STATUS_SERVER_OFF and status_port == port
                 and (self.show_temps.isChecked() or self.show_power.isChecked()))
+        if want:
+            text = (self.i18n.LHM_SERVER_OFF_NOTICE if port == constants.lhm.HTTP_PORT
+                    else self.i18n.LHM_SERVER_NO_ANSWER_NOTICE.format(port=port))
+            if text != self.lhm_server_off_notice.text():
+                self.lhm_server_off_notice.set_text(text)
         if want == self.lhm_server_off_notice.isHidden():
             self.lhm_server_off_notice.setVisible(want)
+            self.temps_setup_link.setVisible(not want)
             self.layout_changed.emit()
 
     def _lhm_password_setting(self) -> str:

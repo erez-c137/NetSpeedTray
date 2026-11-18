@@ -517,7 +517,7 @@ class StatsMonitorThread(QThread):
         v0.9.4 (or OpenHardwareMonitor) read over WMI needs no web server, so it never shows."""
         client = self._lhm_http
         status = client.status
-        if (status == constants.lhm.STATUS_NOT_FOUND and getattr(client, "process_running", None) is True
+        if (status == constants.lhm.STATUS_NOT_FOUND and getattr(client, "server_off", False) is True
                 and self._wmi_ohm is None):
             return constants.lhm.STATUS_SERVER_OFF
         return status

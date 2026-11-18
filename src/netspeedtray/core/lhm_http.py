@@ -369,6 +369,9 @@ class _DeadlineHTTPConnection(http.client.HTTPConnection):
     def __init__(self, host: str, port: int, connect_timeout: float, deadline: float) -> None:
         super().__init__(host, port, timeout=connect_timeout)
         self._deadline = deadline
+        # True once the TCP connect was accepted: a later failure (a busy or hung server that never
+        # answers) is NOT "nothing listening" (2.2.2 D6 review M1).
+        self.connected_ok = False
 
     def connect(self) -> None:
         sock = _DeadlineSocket(socket.AF_INET, socket.SOCK_STREAM)
@@ -376,6 +379,7 @@ class _DeadlineHTTPConnection(http.client.HTTPConnection):
         try:
             sock.settimeout(max(0.001, min(self.timeout, self._deadline - time.monotonic())))
             sock.connect((self.host, self.port))
+            self.connected_ok = True
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except BaseException:
             sock.close()
@@ -462,15 +466,17 @@ def lhm_process_running() -> bool:
 
     By image name through psutil (``constants.lhm.PROCESS_NAMES``): a local process list, no network
     and no admin rights. LHM usually runs elevated; Windows still gives a standard user its image name
-    (PROCESS_QUERY_LIMITED_INFORMATION). A process whose name can't be read is skipped. Never raises:
-    an error is "not seen", which only means the notice it feeds stays hidden."""
+    (PROCESS_QUERY_LIMITED_INFORMATION). ``proc.name()`` per process, not ``process_iter(["name"])``:
+    that form writes ``.info`` on psutil's shared, cached Process objects, which the Monitor's
+    Hardware worker reads on another thread (review M2). A process whose name can't be read is
+    skipped. Never raises: an error is "not seen", which only means the notice it feeds stays hidden."""
     try:
         import psutil
         names = constants.lhm.PROCESS_NAMES
-        for proc in psutil.process_iter(["name"]):
+        for proc in psutil.process_iter():
             try:
-                name = (proc.info or {}).get("name")
-            except Exception:
+                name = proc.name()
+            except psutil.Error:
                 continue
             if name and str(name).casefold() in names:
                 return True
@@ -491,7 +497,10 @@ class LhmHttpClient:
     After an attempt that found nothing listening (``STATUS_NOT_FOUND``), ``process_probe`` (default
     ``lhm_process_running``) says whether LibreHardwareMonitor itself is running: ``process_running``
     is then True / False - None while unknown (no such failure yet, a success, or reconfigured). It runs
-    at the probe's own cadence, once per failed attempt - so once per backoff window - never per poll.
+    at the probe's own cadence, once per failed attempt - so once per backoff window - never per poll -
+    and only when the TCP connect itself failed: a server that accepted and then went silent is
+    running, not off (review M1). The answer expires after PROCESS_RESULT_TTL_SEC: polling stops when
+    temperatures are turned off, and an old answer must not keep a notice up (review M3).
     """
 
     def __init__(
@@ -507,6 +516,7 @@ class LhmHttpClient:
         username: str = "",
         password: str = "",
         process_probe: Optional[Callable[[], bool]] = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.host = host
         self.port = port
@@ -525,13 +535,21 @@ class LhmHttpClient:
         self.status: str = constants.lhm.STATUS_UNKNOWN
         self._process_probe: Callable[[], bool] = process_probe or lhm_process_running
         self.process_running: Optional[bool] = None
+        self._process_checked_at: Optional[float] = None
+        self._clock = clock
+        self._connect_accepted = False   # the last attempt's TCP connect completed (review M1)
+        self._server_off_logged = False
         self._outage = SourceOutage(logger, "the LibreHardwareMonitor web server")
 
     @property
     def server_off(self) -> bool:
-        """Nothing answers on the port, but LibreHardwareMonitor is running: its web server is off
-        (or on another port). Settings > Hardware explains how to turn it on (2.2.2 D6)."""
-        return self.status == constants.lhm.STATUS_NOT_FOUND and self.process_running is True
+        """Nothing accepted a connection on the port, but LibreHardwareMonitor is running: its web
+        server is off (or on another port). Settings > Hardware explains how to turn it on (2.2.2 D6).
+        False once the process answer is older than PROCESS_RESULT_TTL_SEC."""
+        if self.status != constants.lhm.STATUS_NOT_FOUND or self.process_running is not True:
+            return False
+        at = self._process_checked_at
+        return at is not None and self._clock() - at <= constants.lhm.PROCESS_RESULT_TTL_SEC
 
     @property
     def url(self) -> str:
@@ -554,7 +572,7 @@ class LhmHttpClient:
         self._cached = None
         self._retry_after = 0.0
         self.status = constants.lhm.STATUS_UNKNOWN
-        self.process_running = None
+        self._forget_process()
         # Another endpoint: its first good read is a "reading ... at <url>" line, not a recovery.
         self._outage = SourceOutage(logger, "the LibreHardwareMonitor web server")
 
@@ -585,6 +603,7 @@ class LhmHttpClient:
                 raise ValueError("response too large")
             return _require_lhm_root(json.loads(body.decode("utf-8-sig")))
         finally:
+            self._connect_accepted = bool(getattr(conn, "connected_ok", False))
             conn.close()
 
     def get_snapshot(self) -> Optional[LhmSnapshot]:
@@ -593,6 +612,7 @@ class LhmHttpClient:
             return self._cached
         if now < self._retry_after:
             return None
+        self._connect_accepted = False
         try:
             snapshot = parse_snapshot(self._fetch_json())
         except Exception as e:
@@ -624,20 +644,36 @@ class LhmHttpClient:
         self._cached_at = now
         self._retry_after = 0.0
         self.status = constants.lhm.STATUS_OK
-        self.process_running = None
+        self._forget_process()
         return snapshot
 
+    def _forget_process(self) -> None:
+        self.process_running = None
+        self._process_checked_at = None
+        self._server_off_logged = False
+
     def _check_process(self) -> None:
-        """After a failed attempt: is LHM running at all? Only when nothing answered - an endpoint that
-        answers (401, not LHM) says more than the process list can. Never raises."""
-        if self.status != constants.lhm.STATUS_NOT_FOUND:
-            self.process_running = None
+        """After a failed attempt: is LHM running at all? Only when the connect itself failed - nothing
+        listening. An endpoint that accepted (a 401, not LHM, or a server that accepted and then never
+        answered) is running, and says more than the process list can. Never raises."""
+        if self.status != constants.lhm.STATUS_NOT_FOUND or self._connect_accepted:
+            self._forget_process()
             return
         try:
             self.process_running = bool(self._process_probe())
+            self._process_checked_at = self._clock()
         except Exception as e:
             logger.debug("LibreHardwareMonitor process check failed: %s", e)
-            self.process_running = None
+            self._forget_process()
+            return
+        if self.server_off and not self._server_off_logged:
+            self._server_off_logged = True
+            logger.info(
+                "Hardware monitor: LibreHardwareMonitor is running, but nothing answers on %s - its web "
+                "server is probably off (LHM: Options > Remote Web Server > Run) or on another port.",
+                self.url)
+        elif not self.server_off:
+            self._server_off_logged = False
 
     def _status_for(self, e: BaseException) -> str:
         L = constants.lhm

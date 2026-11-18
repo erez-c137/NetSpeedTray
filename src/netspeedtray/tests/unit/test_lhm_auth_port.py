@@ -533,10 +533,11 @@ def _locale(code):
 def test_every_locale_gives_the_lhm_advice(code):
     """The web-server advice (G1) now lives in the setup dialog: step 2 + "More details" (2.2.2 D6)."""
     data = _locale(code)
-    step2, details = data["TEMP_ONBOARDING_STEP_2"], data["TEMP_ONBOARDING_DETAILS"]
-    assert "Options → Remote Web Server" in step2    # LHM's own menu stays in English
-    assert "{port}" in step2 and "{port}" in details  # the server's port, and the firewall port
-    step2.format(port=8085), details.format(port=8085)
+    step2, port = data["TEMP_ONBOARDING_STEP_2_DESC"], data["TEMP_ONBOARDING_STEP_2_PORT"]
+    details = data["TEMP_ONBOARDING_DETAILS"]
+    assert "Options → Remote Web Server → Run" in step2   # LHM's own menu stays in English
+    assert "{port}" in port and "{port}" in details        # the server's port, and the firewall port
+    port.format(port=8085), details.format(port=8085)
 
 
 def test_the_english_advice_no_longer_says_to_turn_authentication_off():

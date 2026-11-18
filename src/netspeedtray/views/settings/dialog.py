@@ -803,9 +803,19 @@ class SettingsDialog(QDialog):
             from netspeedtray.views.temp_onboarding_dialog import TempOnboardingDialog
             page = getattr(self, "hardware_page", None)
             port = int(page.lhm_port.value()) if page is not None else constants.lhm.HTTP_PORT
-            TempOnboardingDialog(self.i18n, self, lhm_port=port, focus_step=step, show_remind=False).exec()
+            TempOnboardingDialog(self.i18n, self, lhm_port=port, focus_step=step, show_remind=False,
+                                 status_provider=self._lhm_status_for_setup).exec()
         except Exception as e:
             self.logger.error("Could not open the temperature setup: %s", e, exc_info=True)
+
+    def _lhm_status_for_setup(self):
+        """The LHM status the setup dialog follows live (D6): only when it describes the port in the
+        Hardware page's field."""
+        result = self._lhm_status()
+        page = getattr(self, "hardware_page", None)
+        if not result or page is None or result[1] != int(page.lhm_port.value()):
+            return None
+        return result[0]
 
     def _refresh_metrics_status(self) -> None:
         """Show the local metrics endpoint's live status (listening / port in use) under its address."""
