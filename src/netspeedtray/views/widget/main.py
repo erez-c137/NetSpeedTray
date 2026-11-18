@@ -2951,8 +2951,20 @@ class NetworkSpeedWidget(QWidget):
         for snapshot in (getattr(dialog, "config", None), baseline):
             if isinstance(snapshot, dict):
                 snapshot.update(updates)
+        # Integration 2.2.2 (#597 x #592): Settings no longer sends the app state it doesn't own back
+        # (RESET_ALL_KEEPS minus its pages' keys - SettingsDialog._for_widget), so for THOSE keys the
+        # live config is the truth, not the snapshot from when the dialog opened: a tip shown, an
+        # update snoozed or the widget dragged meanwhile. The baseline stays the truth only for the
+        # user's settings (the preview must never reach the file).
+        live_state: Dict[str, Any] = {}
+        keys_of = getattr(dialog, "unowned_app_state_keys", None)
+        if callable(keys_of):
+            try:
+                live_state = {k: self.config[k] for k in keys_of() if k in self.config}
+            except Exception as e:
+                self.logger.debug("Settings' app-state keys unreadable; saving its baseline: %s", e)
         try:
-            self.config_controller.config_manager.save({**baseline, **updates})
+            self.config_controller.config_manager.save({**baseline, **live_state, **updates})
         except Exception as e:
             self.logger.error("Could not save %s: %s", sorted(updates), e, exc_info=True)
 

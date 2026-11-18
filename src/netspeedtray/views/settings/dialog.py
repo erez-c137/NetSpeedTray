@@ -919,14 +919,20 @@ class SettingsDialog(QDialog):
         (first_run_tip_shown, last_seen_version), a nudge, update bookkeeping, a drag of the widget.
         Sending the snapshot back would undo those (2.2.2 D1/D2 review M1). Keys a page shows (e.g.
         start_with_windows) still go through: they are the user's edit."""
+        keeps = self.unowned_app_state_keys()
+        return {k: v for k, v in settings.items() if k not in keeps}
+
+    def unowned_app_state_keys(self) -> set:
+        """The app-state keys (RESET_ALL_KEEPS) no built page owns - the ones whose truth is the LIVE
+        config while this dialog is open, never its snapshots. Shared by _for_widget and the main
+        widget's save_config_keys (integration 2.2.2: #592's save filter x #597's Monitor saves)."""
         owned = set()
         for page in self._pages():
             try:
                 owned |= set(page.get_settings())
             except Exception:
                 continue
-        keeps = set(SettingsDialog.RESET_ALL_KEEPS) - owned
-        return {k: v for k, v in settings.items() if k not in keeps}
+        return set(SettingsDialog.RESET_ALL_KEEPS) - owned
 
     def _build_all_pages(self) -> None:
         for name in self._PAGE_NAMES:
