@@ -20,7 +20,8 @@ where the suite runs. On the wall clock, day resolution's row total moved with t
 'localtime' (the local-day bins) follows the C runtime's timezone, which freezegun does not touch - so
 the zone is pinned at the C level too (``_pinned_timezone``), and no reader under test asks SQLite for
 'now' (every bound is an explicit epoch from Python). ``test_day_resolution_at_any_time_of_day``
-re-runs the day-boundary comparison at the instants that used to matter, and in a DST zone.
+re-runs the day-boundary comparison at the instants that used to matter. (DST buckets are covered by
+test_rc_dst_buckets.py, in a subprocess.)
 """
 import contextlib
 import ctypes
@@ -52,26 +53,20 @@ IFACES_ALL = (None, "all", "Ethernet", "Wi-Fi", "vEthernet (WSL)", "Tailscale", 
 
 class Zone(NamedTuple):
     tz: str                  # POSIX TZ syntax, which the Windows C runtime reads too
-    std_h: int               # UTC offset in hours, standard time
-    dst_h: int | None        # UTC offset in hours during DST, None for a zone without DST
+    std_h: int               # UTC offset in hours; a zone WITHOUT DST (see _pinned_timezone)
 
 
 # The module's pinned timezone: UTC+9, no DST. Not UTC, so local midnight (the reader's day buckets) and
 # UTC midnight (the legacy reader's) stay 9 h apart and the intended local-day divergence is really
 # exercised - on CI (a UTC machine) as on a dev box.
-JST = Zone("JST-9", 9, None)
-# US Pacific: DST ends 2026-11-01, inside the fixture's 40-day lookback from the anchors below, so one
-# local "day" is 25 h long - the case local-midnight day buckets exist for.
-PACIFIC = Zone("PST8PDT", -8, -7)
+JST = Zone("JST-9", 9)
 # The module's frozen instant, in UTC: one minute past UTC midnight, the time CI failed at.
 ANCHOR_UTC = datetime(2026, 11, 17, 0, 1, 0)
 _JAN, _JUL = 1_768_435_200, 1_784_073_600     # 2026-01-15 / 2026-07-15 00:00 UTC
 
 
 def _offset_h(zone: Zone, anchor_utc: datetime) -> int:
-    """The zone's UTC offset at ``anchor_utc``. Every anchor here is in November (standard time) - the
-    pin's self-check below proves the C runtime agrees."""
-    assert anchor_utc.month in (11, 12, 1, 2), "pick a standard-time anchor or extend _offset_h"
+    """The zone's UTC offset - fixed: only DST-free zones are pinned (the pin's self-check proves it)."""
     return zone.std_h
 
 
@@ -95,12 +90,14 @@ def _pinned_timezone(zone: Zone = JST):
     _tzset()
     try:
         # Prove the pin took on BOTH sides (Python's localtime, SQLite's 'localtime'), in winter and in
-        # summer, or every day-bucket assertion below is about the host zone.
+        # summer, or every day-bucket assertion below is about the host zone. DST-free zones only: a
+        # PST8PDT case was dropped after the GitHub runner's C runtime reported tm_isdst=1 in July with
+        # tm_gmtoff still at standard time (run 44270652400) - DST lives in test_rc_dst_buckets.py.
         c = sqlite3.connect(":memory:")
         try:
-            for ts, want_h in ((_JAN, zone.std_h), (_JUL, zone.std_h if zone.dst_h is None else zone.dst_h)):
+            for ts in (_JAN, _JUL):
                 lt = time.localtime(ts)
-                assert lt.tm_gmtoff == want_h * 3600, (zone.tz, ts, lt.tm_gmtoff)
+                assert lt.tm_gmtoff == zone.std_h * 3600 and not lt.tm_isdst, (zone.tz, ts, lt)
                 assert int(c.execute("SELECT strftime('%H', ?, 'unixepoch', 'localtime')",
                                      (ts,)).fetchone()[0]) == lt.tm_hour, (zone.tz, ts)
         finally:
@@ -348,7 +345,7 @@ def _expected_local_days(ws, start, end, iface):
                 continue
             # Local midnight via the C runtime (mktime, isdst=-1), NOT datetime(...).timestamp(): under
             # freezegun a naive datetime is a FakeDatetime whose timestamp() applies the freeze's FIXED
-            # tz_offset, an hour off on the far side of a DST change (found adding the PST8PDT case).
+            # tz_offset, an hour off on the far side of a DST change in any zone that has one.
             day = int(time.mktime(time.localtime(int(ts))[:3] + (0, 0, 0, 0, 0, -1)))
             pu, pd = peaks.get(day, (0.0, 0.0))
             peaks[day] = (max(pu, up), max(pd, down))
@@ -431,7 +428,7 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
     assert got == SPEED_EXPECTED[resolution], _COUNTS_CHANGED
 
 
-# The day comparison at other instants - and in a DST zone - each on a fresh fixture written and read
+# The day comparison at other instants, each on a fresh fixture written and read
 # entirely at that instant. Legacy rows move with the time of day by design: a window whose edges sit
 # exactly on UTC midnight touches one legacy bucket fewer than the same window a minute later (940 at
 # 00:00 UTC). What must not move is the per-day comparison itself, which passes at every instant.
@@ -440,8 +437,7 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
     (datetime(2026, 11, 17, 12, 0, 0), JST, Compared(1066, 1066)),
     (datetime(2026, 11, 17, 15, 0, 0), JST, Compared(1066, 940)),     # exactly LOCAL midnight: the new buckets' edge
     (datetime(2026, 11, 17, 23, 59, 0), JST, Compared(1019, 1067)),
-    (datetime(2026, 11, 17, 12, 0, 0), PACIFIC, Compared(1066, 1077)),  # lookback crosses the 25-hour 2026-11-01
-], ids=["0000Z", "1200Z", "1500Z-local-midnight", "2359Z", "1200Z-PST8PDT"])   # 00:01 UTC: the module anchor
+], ids=["0000Z", "1200Z", "1500Z-local-midnight", "2359Z"])   # 00:01 UTC: the module anchor
 def test_day_resolution_at_any_time_of_day(q_app, tmp_path, anchor_utc, zone, expected):
     with _frozen_world(anchor_utc, zone):
         _build_fixture_db(tmp_path, datetime.now())
