@@ -487,6 +487,9 @@ class _HopWS:
             return [(self._t0, 0.0), (self._t0 + timedelta(seconds=3), 0.0)]
         return [(self._t0, 3.0)]
 
+    def get_hardware_history_peak(self, stat, start, end):   # the drops read (per-bin peaks)
+        return self.get_hardware_history(stat, start, end)
+
 
 def _detail_copy(q_app, public: bool):
     from netspeedtray.views.monitor.overview.tab import OverviewTab
@@ -552,6 +555,9 @@ class _BlockedAnchorWS(_HopWS):
         if stat == "latency_gw_timeout" and self._gw:
             return [(self._t0, 0.0), (self._t0 + timedelta(seconds=3), 0.0)]
         return []
+
+    def get_hardware_history_peak(self, stat, start, end):   # the drops read (per-bin peaks)
+        return self.get_hardware_history(stat, start, end)
 
 
 def _detail_with(q_app, ws):

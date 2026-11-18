@@ -133,7 +133,7 @@ def _cap_coverage(ws, cap_start: Optional[datetime]) -> Optional[float]:
 
 def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
                  series: Optional[Dict[str, list]], poll: float, latency_enabled: bool,
-                 cap_start: Optional[datetime] = None):
+                 cap_start: Optional[datetime] = None, public_enabled: bool = False):
     """The window's DB reads - (series, summaries, drop events, session volume, cap coverage). Runs
     on the reader thread. ``series`` is the Session window's, already copied from the in-memory deques on the GUI
     thread (they are appended there); None means read the sparklines from the DB. The session volume
@@ -156,12 +156,20 @@ def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
         "gpu": ws.summarize_hardware("gpu", start, end, poll),
         "ram": ws.summarize_hardware("ram", start, end, poll),
     }
-    # Connection-drop events over the window (from the persisted gateway-timeout series), so a
-    # latency blip you missed live is still counted.
+    # Connection-drop events over the window (from the persisted loss series), so a latency blip you
+    # missed live is still counted. The router's series always; with the internet ping on, the
+    # anchor's too - the router answering while the internet is down is still an outage. Per-bin
+    # PEAKS: a bin's average hides a short drop in any window over 6 h.
     events: Dict[str, Any] = {}
     if latency_enabled:
         from netspeedtray.utils import summaries as S   # lazy (only this reader uses it)
-        events = S.outage_summary(ws.get_hardware_history("latency_gw_timeout", start, end))
+        from netspeedtray.core.db.history_reader import outage_gap_seconds
+        lat = constants.network.latency
+        series_list = [ws.get_hardware_history_peak(lat.STAT_GW_TIMEOUT, start, end)]
+        if public_enabled:
+            series_list.append(ws.get_hardware_history_peak(lat.STAT_ANCHOR_TIMEOUT, start, end))
+        events = S.outage_summary(*series_list, max_gap=outage_gap_seconds(
+            int(start.timestamp()), int(end.timestamp())))
     volume = None
     if session_start is not None:
         try:
@@ -576,7 +584,8 @@ class OverviewTab(QWidget):
         self._load_busy = True
         self._load_requested.emit(self._load_seq, partial(
             _read_window, ws, key, now, session_start, series, poll,
-            bool(self._config.get("latency_enabled", True)), self._cap_period_start(ws)))
+            bool(self._config.get("latency_enabled", True)), self._cap_period_start(ws),
+            bool(self._config.get("latency_public_enabled", False))))
 
     def _cap_period_start(self, ws) -> Optional[datetime]:
         """The data cap's current period start (the odometer owns it), or None with no cap set."""

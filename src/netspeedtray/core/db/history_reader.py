@@ -176,8 +176,11 @@ class HistoryReader(ABC):
 
     @abstractmethod
     def hardware_history(self, stat_type: str, start_time: Optional[datetime],
-                         end_time: Optional[datetime]) -> List[Tuple[datetime, float]]:
-        """(timestamp, value) for one hardware stat, binned by window length (1 s / 60 s / 3600 s)."""
+                         end_time: Optional[datetime], peak: bool = False) -> List[Tuple[datetime, float]]:
+        """(timestamp, value) for one hardware stat, binned by window length (1 s / 60 s / 3600 s).
+        Each bin is the AVERAGE (the graphs), or with ``peak`` its MAXIMUM - raw values and the
+        rollups' ``max_value``. Event series (the latency loss rows) need the peak: a one-cycle drop
+        among nineteen clean cycles averages to 0.05 and vanished from every window over 6 h."""
 
     @abstractmethod
     def summarize_hardware(self, stat_type: str, start_time: datetime, end_time: datetime,
@@ -268,6 +271,14 @@ def hardware_history_bin_seconds(start_ts: int, end_ts: int) -> int:
     a count of points into a duration ("above the throttle temperature for ...")."""
     duration = end_ts - start_ts
     return 1 if duration <= 6 * 3600 else (60 if duration <= 30 * 86400 else 3600)
+
+
+def outage_gap_seconds(start_ts: int, end_ts: int) -> int:
+    """The longest stretch with no loss row that can still sit inside ONE outage, for a
+    ``hardware_history`` window: one bin plus the probe's slack. A longer stretch has no row at all
+    (the app was not running, or the PC slept) - nothing was measured there, so it is never downtime
+    and the drops either side of it are separate outages."""
+    return hardware_history_bin_seconds(start_ts, end_ts) + int(constants.network.latency.OUTAGE_GAP_SLACK_SEC)
 
 
 # network_hourly_profile: (ts, rate, weight) rows from every tier -> weighted mean rate per LOCAL clock
@@ -925,7 +936,7 @@ class V7HistoryReader(_ReaderBase):
     # --- hardware -----------------------------------------------------------------------------
 
     def hardware_history(self, stat_type: str, start_time: Optional[datetime] = None,
-                         end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:
+                         end_time: Optional[datetime] = None, peak: bool = False) -> List[Tuple[datetime, float]]:
         try:
             conn = self._conn()
             cursor = conn.cursor()
@@ -949,15 +960,16 @@ class V7HistoryReader(_ReaderBase):
             HHOUR = constants.data.HARDWARE_STATS_TABLE_HOUR
             bin_ts = _local_bin_sql("timestamp", interval)
             _, (min_sql, min_params), (hour_sql, hour_params) = self._bounds(self._HW_TIERS)
+            agg, col = ("MAX", "max_value") if peak else ("AVG", "avg_value")
             cursor.execute(f"""
-                SELECT b, AVG(v) FROM (
+                SELECT b, {agg}(v) FROM (
                     SELECT {bin_ts} AS b, value AS v FROM {HRAW}
                         WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
                     UNION ALL
-                    SELECT {bin_ts} AS b, avg_value AS v FROM {HMIN}
+                    SELECT {bin_ts} AS b, {col} AS v FROM {HMIN}
                         WHERE stat_type = ? AND timestamp BETWEEN ? AND ?{min_sql}
                     UNION ALL
-                    SELECT {bin_ts} AS b, avg_value AS v FROM {HHOUR}
+                    SELECT {bin_ts} AS b, {col} AS v FROM {HHOUR}
                         WHERE stat_type = ? AND timestamp BETWEEN ? AND ?{hour_sql}
                 ) GROUP BY b ORDER BY b ASC
             """, (stat_type, start_ts, end_ts) + (stat_type, start_ts, end_ts) + min_params
@@ -1580,20 +1592,21 @@ class V8HistoryReader(_ReaderBase):
     # --- hardware -----------------------------------------------------------------------------------
 
     def hardware_history(self, stat_type: str, start_time: Optional[datetime] = None,
-                         end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:
+                         end_time: Optional[datetime] = None, peak: bool = False) -> List[Tuple[datetime, float]]:
         _end = end_time or self._now()
         _start = start_time or (_end - timedelta(hours=24))
         start_ts, end_ts = int(_start.timestamp()), int(_end.timestamp())
         interval = hardware_history_bin_seconds(start_ts, end_ts)
         bounds = self._tier_bounds(self._HW, "h")
         parts, params = [], []
-        for k, col in ((0, "h.value"), (1, "h.avg_value"), (2, "h.avg_value")):
+        agg, roll = ("MAX", "h.max_value") if peak else ("AVG", "h.avg_value")
+        for k, col in ((0, "h.value"), (1, roll), (2, roll)):
             parts.append(f"SELECT {_local_bin_sql('h.ts', interval)} AS b, {col} AS v "
                          f"FROM {self._HW[k]} h WHERE {self._METRIC} AND h.ts BETWEEN ? AND ?{bounds[k][0]}")
             params += [stat_type, start_ts, end_ts, *bounds[k][1]]
         try:
             rows = self._conn().execute(
-                f"SELECT b, AVG(v) FROM ({' UNION ALL '.join(parts)}) GROUP BY b ORDER BY b ASC", params).fetchall()
+                f"SELECT b, {agg}(v) FROM ({' UNION ALL '.join(parts)}) GROUP BY b ORDER BY b ASC", params).fetchall()
             return [(datetime.fromtimestamp(_bin_start(r[0], interval)), r[1]) for r in rows]
         except Exception as e:
             self._log_read_failure("Error fetching hardware history", e)

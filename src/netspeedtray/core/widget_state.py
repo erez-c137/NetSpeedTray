@@ -1132,6 +1132,14 @@ class WidgetState(QObject):
 
         return self.history_reader.hardware_history(stat_type, start_time, end_time)
 
+    def get_hardware_history_peak(self, stat_type: str, start_time: Optional[datetime] = None,
+                                  end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:
+        """``get_hardware_history`` with each bin's MAXIMUM instead of its average - for event series
+        (the latency loss rows), where a short drop must not be averaged away over a long window."""
+        if not hasattr(self, 'db_worker') or not self.db_worker:
+            return []
+        return self.history_reader.hardware_history(stat_type, start_time, end_time, peak=True)
+
     # --- pro-stats: tier-aware honest window summaries (exact ≤24h raw, avg+max beyond) ----------
     # The SQL lives in core/db/history_reader.py (V7HistoryReader.summarize_*).
 

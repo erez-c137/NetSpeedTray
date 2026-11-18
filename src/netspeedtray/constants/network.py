@@ -200,6 +200,10 @@ class LatencyConstants:
     # before 2.2 are 0/1 for a single echo). The rollups average either shape into a 0-1 rate.
     STAT_GW_TIMEOUT: Final[str] = "latency_gw_timeout"
     STAT_ANCHOR_TIMEOUT: Final[str] = "latency_anchor_timeout"
+    # Drops in a history window (Overview connection health, Stats sheet): two loss rows further
+    # apart than one bin plus this slack have nothing measured between them (app off, PC asleep), so
+    # they are never one outage. Covers the 3 s cadence stretched by a burst of timed-out echoes.
+    OUTAGE_GAP_SLACK_SEC: Final[int] = 30
     # RTT series -> the loss series of the same hop (the exporter's loss_pct).
     LOSS_SERIES_FOR: Final[Dict[str, str]] = {
         "latency_gw": STAT_GW_TIMEOUT,

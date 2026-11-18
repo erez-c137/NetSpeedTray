@@ -40,7 +40,7 @@ from netspeedtray.utils.helpers import format_speed, get_machine_id, format_dura
 from netspeedtray.core.db.schema_v8 import RAW_TS_RESOLUTION_SECONDS
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import summaries as S
-from netspeedtray.core.db.history_reader import hardware_history_bin_seconds
+from netspeedtray.core.db.history_reader import hardware_history_bin_seconds, outage_gap_seconds
 from netspeedtray.utils import stats_exporter
 from netspeedtray.views.monitor.graph_host import bind_reader_thread, stop_reader_thread
 
@@ -145,7 +145,11 @@ def _load_subjects(ws, subjects: List[Dict[str, Any]], start: datetime, end: dat
         outage = None
         if key in _LOSS_SERIES_FOR and (summ.count or loss is not None):
             try:
-                outage = S.outage_summary(ws.get_hardware_history(_LOSS_SERIES_FOR[key], start, end))
+                # Per-bin peaks (an averaged bin hides a short drop past 6 h), split where nothing
+                # was recorded (app off) - the same reading as the Overview's connection health.
+                outage = S.outage_summary(
+                    ws.get_hardware_history_peak(_LOSS_SERIES_FOR[key], start, end),
+                    max_gap=outage_gap_seconds(int(start.timestamp()), int(end.timestamp())))
             except Exception:
                 outage = None
         out.append({"key": key, "label": label, "summ": summ, "pairs": pairs, "loss": loss,

@@ -182,14 +182,19 @@ def hourly_profile(pairs: Sequence) -> Dict[int, float]:
     return {h: sums[h] / counts[h] for h in sums if counts[h]}
 
 
-def event_runs(pairs: Sequence, is_bad) -> List[tuple]:
+def event_runs(pairs: Sequence, is_bad, max_gap: Optional[float] = None) -> List[tuple]:
     """Contiguous runs where ``is_bad(value)`` holds, as (start_ts, end_ts) pairs - the basis for
     "internet went bad then good" events you'd otherwise only catch live. ``pairs`` is (timestamp,
-    value) in time order; ``is_bad`` is a predicate on the value."""
+    value) in time order; ``is_bad`` is a predicate on the value. With ``max_gap`` (seconds), two rows
+    further apart than that never share a run: nothing was recorded between them."""
     runs: List[tuple] = []
     start = None
     prev_ts = None
     for ts, v in pairs:
+        if (start is not None and max_gap is not None and prev_ts is not None
+                and _seconds_between(prev_ts, ts) > max_gap):
+            runs.append((start, prev_ts))
+            start = None
         bad = bool(is_bad(v))
         if bad and start is None:
             start = ts
@@ -202,19 +207,47 @@ def event_runs(pairs: Sequence, is_bad) -> List[tuple]:
     return runs
 
 
-def outage_summary(timeout_pairs: Sequence) -> Dict[str, object]:
-    """Connection-drop events from the gateway-timeout series. A row >= 0.5 is a drop: half or more of
+def _seconds_between(a, b) -> float:
+    """``b - a`` in seconds, for datetime or epoch-number timestamps."""
+    if hasattr(a, "timestamp") and hasattr(b, "timestamp"):
+        return b.timestamp() - a.timestamp()
+    return float(b) - float(a)
+
+
+def outage_summary(timeout_pairs: Sequence, *more_series: Sequence,
+                   max_gap: Optional[float] = None) -> Dict[str, object]:
+    """Connection-drop events from the hop-timeout series. A row >= 0.5 is a drop: half or more of
     that cycle's burst lost (2.2+ rows are the lost fraction, 0-1 in quarter steps), or the single lost
     ping of an older 0/1 row - so one unlucky packet in a burst (0.25) is not an outage. Returns
-    {count, last_start, total_down_seconds, runs} - an honest outage log, not a fabricated SLA."""
-    runs = event_runs(timeout_pairs, lambda v: v is not None and float(v) >= 0.5)
+    {count, last_start, total_down_seconds, runs} - an honest outage log, not a fabricated SLA.
+
+    Feed it per-bin PEAKS for a long window (``hardware_history(..., peak=True)``), never averages.
+    ``more_series`` are other hops' loss series (the internet anchor beside the router): each is
+    turned into runs on its own - the hops' rows land a moment apart, so interleaving them would
+    split one outage at every clean row of the other hop - and runs that overlap or sit within
+    ``max_gap`` of each other are one outage. ``max_gap`` also splits a series' run where no row was
+    recorded for longer than that (see ``event_runs``)."""
+    def bad(v):
+        return v is not None and float(v) >= 0.5
+
+    runs = event_runs(timeout_pairs, bad, max_gap)
+    if more_series:
+        for series in more_series:
+            runs += event_runs(series, bad, max_gap)
+        runs.sort(key=lambda r: r[0])
+        join = float(max_gap) if max_gap is not None else 0.0
+        merged: List[tuple] = []
+        for s, e in runs:
+            if merged and _seconds_between(merged[-1][1], s) <= join:
+                ps, pe = merged[-1]
+                merged[-1] = (ps, e if _seconds_between(pe, e) > 0 else pe)
+            else:
+                merged.append((s, e))
+        runs = merged
     total = 0.0
     for s, e in runs:
         try:
-            if hasattr(s, "timestamp") and hasattr(e, "timestamp"):
-                total += max(0.0, e.timestamp() - s.timestamp())
-            else:
-                total += max(0.0, float(e) - float(s))
+            total += max(0.0, _seconds_between(s, e))
         except (TypeError, ValueError):
             pass
     return {"count": len(runs), "last_start": runs[-1][0] if runs else None,
