@@ -2364,9 +2364,10 @@ class NetworkSpeedWidget(QWidget):
                     return True, 0
                 if _WM_NST_ACTIVATE and msg.message == _WM_NST_ACTIVATE:
                     # A second launch (#234): deferred out of the native dispatch like the shutdown.
-                    # wParam: the second process's own verdict - a duplicate start at sign-in (#373).
-                    duplicate = int(msg.wParam or 0) == constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE
-                    QTimer.singleShot(0, lambda: self.show_from_second_launch(sign_in_duplicate=duplicate))
+                    # wParam: the second process's own verdict - the user, a duplicate start at
+                    # sign-in (#373) or the updater's relaunch (handle_activate_request).
+                    wparam = int(msg.wParam or 0)
+                    QTimer.singleShot(0, lambda: self.handle_activate_request(wparam))
                     return True, 0
                 if msg.message == _WM_QUERYENDSESSION or (msg.message == _WM_ENDSESSION and msg.wParam):
                     # Logoff / shutdown / restart. The normal quit path (closeEvent -> cleanup) never
@@ -2454,6 +2455,55 @@ class NetworkSpeedWidget(QWidget):
         self.update_config({'position_x': None, 'position_y': None,
                             'tray_offset_x': defaults.DEFAULT_TRAY_OFFSET_X,
                             'tray_offset_y': defaults.DEFAULT_TRAY_OFFSET_Y})
+
+    def handle_activate_request(self, wparam: int) -> None:
+        """
+        Another launch of this user's app asked for it (the activate message; ``wparam`` is the second
+        process's verdict - shutdown_channel.activation_kind). Step 1, always: bring the widget back
+        (show_from_second_launch - its #373 sign-in rule included). Step 2 (2.2.2 D3), only when the
+        USER asked - not a duplicate autostart at sign-in, not the updater's relaunch, never while the
+        app is quitting: the "NetSpeedTray is running" panel, in front and focused (the second process
+        allowed this one to take the foreground first). A value this build doesn't know (a newer
+        build's own request) is a user asking. Under a fullscreen app the widget waits as always, but
+        the panel still opens: launching the app is an explicit request for a window.
+        """
+        app = constants.app
+        try:
+            self.show_from_second_launch(sign_in_duplicate=(wparam == app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE))
+        except Exception as e:
+            self.logger.error("Second launch: bringing the widget back failed: %s", e, exc_info=True)
+        if wparam in (app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE, app.ACTIVATE_WPARAM_RELAUNCH):
+            return
+        if self._app_is_quitting():
+            return
+        self.show_running_panel()
+
+    def show_running_panel(self) -> None:
+        """Open the "NetSpeedTray is running" panel (D3) - or bring the open one to the front: one at a
+        time. Released when it closes (WA_DeleteOnClose); the next launch builds a fresh one."""
+        try:
+            from PyQt6 import sip
+            from netspeedtray.views import running_panel
+            panel = getattr(self, "_running_panel", None)
+            if panel is not None and sip.isdeleted(panel):
+                panel = self._running_panel = None
+            if panel is None:
+                panel = running_panel.RunningPanel(self, self.i18n, version=constants.app.VERSION)
+                running_panel.keep_until_destroyed(self, "_running_panel", panel)
+                panel.place_on_screen(running_panel.screen_for_new_window())
+            running_panel.bring_to_front(panel)
+            self.logger.info("Second launch: the 'running' panel is open.")
+        except Exception as e:
+            self.logger.error("Opening the 'running' panel failed: %s", e, exc_info=True)
+
+    def open_connection_check(self) -> None:
+        """The Check connection sheet (the Monitor's Overview/Network headers open the same one), here
+        for the "running" panel - parentless, so it is a window of its own."""
+        try:
+            from netspeedtray.views.monitor.connection_check import open_connection_check
+            open_connection_check(self, self.config, self.i18n)
+        except Exception as e:
+            self.logger.error("Opening the connection check failed: %s", e, exc_info=True)
 
     def show_from_second_launch(self, sign_in_duplicate: bool = False) -> None:
         """

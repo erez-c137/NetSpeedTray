@@ -634,5 +634,10 @@
     "BACKUP_HISTORY_ERR_BUSY": "已有备份任务正在写入此文件。",
     "CONTEXT_MENU_ITEMS_LABEL": "右键菜单项",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "选择小组件右键菜单中显示的项目。“{settings}”和“{exit}”始终显示。",
-    "ACCENT_TASKBAR_COLORS_NOTE": "你的任务栏显示了主题色，因此在其上难以看清的颜色会以易读的文字颜色绘制。"
+    "ACCENT_TASKBAR_COLORS_NOTE": "你的任务栏显示了主题色，因此在其上难以看清的颜色会以易读的文字颜色绘制。",
+    "RUNNING_PANEL_VERSION": "版本 {version}",
+    "RUNNING_PANEL_RUNNING": "正在任务栏中运行",
+    "RUNNING_PANEL_HINT": "将鼠标悬停在任务栏上的速度上可查看详情，右键单击可打开菜单。",
+    "RUNNING_PANEL_CHECK_UPDATES": "检查更新",
+    "RUNNING_PANEL_QUIT": "退出 NetSpeedTray"
 }

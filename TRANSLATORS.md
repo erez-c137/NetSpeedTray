@@ -96,6 +96,14 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - Removed: `PAUSE_IN_MENU_LABEL` ("Add Pause/Resume to the right-click menu") - that switch is now the Pause / Resume row of the section above.
 > - No review needed: `NET_GRAPH_NO_TRAFFIC_TITLE` (the old first line, your translation kept as is), `HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP` (the old `RECORD_HARDWARE_HISTORY_INACTIVE_SUB` text, kept as is) and `HARDWARE_NEEDS_CPU_TOOLTIP` (back, with its 2.2.0 text).
 
+> 🆕 **Pending native review for 2.2.2 (the "running" panel, see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. All 16 translated locales have each key. The panel is the small window that opens when you start NetSpeedTray from the Start menu while it is already running.
+> - `RUNNING_PANEL_VERSION` - the line under the app name: "Version {version}". **Keep `{version}`** (filled with e.g. `2.2.2`).
+> - `RUNNING_PANEL_RUNNING` - the panel's first line: "Running on your taskbar".
+> - `RUNNING_PANEL_HINT` - a muted line under the live speeds: "Hover the speeds on the taskbar for details, or right-click them for the menu." Reuse your "hover" and "right-click" words from `WIDGET_HOVER_TOOLTIP`.
+> - `RUNNING_PANEL_CHECK_UPDATES` - a button: "Check for updates" (sentence case; your `CHECK_FOR_UPDATES_MENU_ITEM` without the `&` is usually right).
+> - `RUNNING_PANEL_QUIT` - a quiet button at the bottom: "Quit NetSpeedTray" - the same action as your `EXIT_MENU_ITEM`. Keep the name `NetSpeedTray` untranslated.
+> - The other buttons reuse your `SETTINGS_WINDOW_TITLE`, `MONITOR_WINDOW_TITLE` and `CHECK_CONN_ACTION`, so nothing else is new.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

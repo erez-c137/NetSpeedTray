@@ -227,7 +227,10 @@ def test_widget_routes_the_activate_message(monkeypatch):
     monkeypatch.setattr("netspeedtray.views.widget.main.QTimer.singleShot",
                         lambda _ms, fn: scheduled.append(fn))
     fake = types.SimpleNamespace(logger=MagicMock(), fully_exit_application=MagicMock(),
-                                 show_from_second_launch=MagicMock())
+                                 show_from_second_launch=MagicMock(), show_running_panel=MagicMock(),
+                                 _app_is_quitting=MagicMock(return_value=False))
+    # 2.2.2 D3: the message goes through handle_activate_request (step 1 = this, step 2 = the panel).
+    fake.handle_activate_request = lambda w: NetworkSpeedWidget.handle_activate_request(fake, w)
     _ref, addr = _msg(sc.activate_message_id())
     assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", addr) == (True, 0)
     assert len(scheduled) == 1

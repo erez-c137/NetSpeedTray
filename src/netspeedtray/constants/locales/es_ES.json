@@ -633,5 +633,10 @@
     "BACKUP_HISTORY_ERR_BUSY": "Ya se está haciendo una copia de seguridad en este archivo.",
     "CONTEXT_MENU_ITEMS_LABEL": "Elementos del menú contextual",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Elige qué muestra el menú contextual del widget. {settings} y {exit} siempre se muestran.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Tu barra de tareas muestra un color de énfasis, así que los colores difíciles de leer sobre ella se dibujan en un color de texto legible."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Tu barra de tareas muestra un color de énfasis, así que los colores difíciles de leer sobre ella se dibujan en un color de texto legible.",
+    "RUNNING_PANEL_VERSION": "Versión {version}",
+    "RUNNING_PANEL_RUNNING": "Ejecutándose en la barra de tareas",
+    "RUNNING_PANEL_HINT": "Pasa el ratón sobre las velocidades de la barra de tareas para ver detalles, o haz clic derecho en ellas para abrir el menú.",
+    "RUNNING_PANEL_CHECK_UPDATES": "Buscar actualizaciones",
+    "RUNNING_PANEL_QUIT": "Salir de NetSpeedTray"
 }

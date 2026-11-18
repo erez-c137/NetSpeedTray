@@ -633,5 +633,10 @@
     "BACKUP_HISTORY_ERR_BUSY": "È già in corso un backup su questo file.",
     "CONTEXT_MENU_ITEMS_LABEL": "Voci del menu del tasto destro",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Scegli cosa mostra il menu del tasto destro del widget. {settings} e {exit} sono sempre visibili.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "La barra delle applicazioni mostra un colore principale, quindi i colori difficili da leggere su di essa vengono disegnati con un colore del testo leggibile."
+    "ACCENT_TASKBAR_COLORS_NOTE": "La barra delle applicazioni mostra un colore principale, quindi i colori difficili da leggere su di essa vengono disegnati con un colore del testo leggibile.",
+    "RUNNING_PANEL_VERSION": "Versione {version}",
+    "RUNNING_PANEL_RUNNING": "In esecuzione sulla barra delle applicazioni",
+    "RUNNING_PANEL_HINT": "Passa il mouse sulle velocità nella barra delle applicazioni per i dettagli, o fai clic destro su di esse per il menu.",
+    "RUNNING_PANEL_CHECK_UPDATES": "Controlla aggiornamenti",
+    "RUNNING_PANEL_QUIT": "Esci da NetSpeedTray"
 }

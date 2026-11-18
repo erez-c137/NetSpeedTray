@@ -52,8 +52,13 @@ class AppConstants:
     # that this session signed in less than SIGN_IN_DUPLICATE_WINDOW_S ago, so it is a duplicate
     # autostart (the Run key plus a Startup-folder shortcut, say), not a request: the running widget
     # then leaves the #24 app-button yield alone. Receivers before rc.4 ignore wParam (a plain activate).
+    # 2.2.2 (D3): a USER request also opens the "NetSpeedTray is running" panel after the widget is
+    # back. ACTIVATE_WPARAM_RELAUNCH = the second process was started by the updater (``--relaunch``)
+    # while the old instance still ran: the widget comes back as for the user (what every earlier build
+    # did with wParam 0), but no window opens. Receivers before 2.2.2 read any value but 1 as 0.
     ACTIVATE_WPARAM_USER: Final[int] = 0
     ACTIVATE_WPARAM_SIGN_IN_DUPLICATE: Final[int] = 1
+    ACTIVATE_WPARAM_RELAUNCH: Final[int] = 2
     # Sign-in startup items can run well after the desktop appears on a slow disk (Windows also delays
     # Run-key apps by ~10 s); 2 minutes covers that. Measured from WTSINFO.LogonTime to its CurrentTime
     # (one wall-clock reading pair from the same query - nothing in our process to drift across sleep).

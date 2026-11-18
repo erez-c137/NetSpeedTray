@@ -779,8 +779,12 @@ def _second_launch_widget(pm, *, fullscreen=False, visible=False, config=None, f
     w._execute_refresh = lambda *a: order.append(("refresh", pm.is_yielding_to_apps()))
     w._show_notice_flyout = lambda title, body: (order.append(("flyout", title, body)), flyout_ok)[1]
     w.system_event_handler = types.SimpleNamespace(is_fullscreen_active=lambda: fullscreen)
-    for name in ("show_from_second_launch", "_stand_down_app_yield", "_explain_app_yield_stand_down",
-                 "_app_overlap_text", "_show_second_launch_notice"):
+    # 2.2.2 D3: the activate message goes through handle_activate_request; its step 2 (the "running"
+    # panel) is a stub here - these tests are about step 1.
+    w.show_running_panel = MagicMock(name="show_running_panel")
+    w._app_is_quitting = lambda: False
+    for name in ("handle_activate_request", "show_from_second_launch", "_stand_down_app_yield",
+                 "_explain_app_yield_stand_down", "_app_overlap_text", "_show_second_launch_notice"):
         if hasattr(W, name):
             setattr(w, name, getattr(W, name).__get__(w))
     return w, order
@@ -942,6 +946,7 @@ def test_the_activate_wparam_reaches_the_second_launch_path(layout, q_app):
             assert main_mod.NetworkSpeedWidget.nativeEvent(
                 w, b"windows_generic_MSG", ctypes.addressof(msg)) == (True, 0)
         assert pm._app_yield.suspended is suspended
+        assert w.show_running_panel.called is suspended   # D3: the panel only for the user's launch
 
 
 def test_second_launch_notice_flag_waits_for_the_flyout(layout, q_app):

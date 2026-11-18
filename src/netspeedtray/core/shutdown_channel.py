@@ -45,6 +45,9 @@ EXIT_ERROR = 2
 
 SHUTDOWN_FLAG = "--shutdown"
 TIMEOUT_FLAG = "--timeout"
+# Added by the updater's relaunch (update_applier.relaunch): this start is not the user asking for a
+# window. Ignored by a first instance (and by builds before 2.2.2, which ignore unknown arguments).
+RELAUNCH_FLAG = "--relaunch"
 
 _MSGFLT_ALLOW = 1
 _SYNCHRONIZE = 0x00100000
@@ -75,6 +78,9 @@ try:
     _ChangeWindowMessageFilterEx.restype = wintypes.BOOL
 except AttributeError:  # pre-Windows 7
     _ChangeWindowMessageFilterEx = None
+_AllowSetForegroundWindow = _user32.AllowSetForegroundWindow
+_AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+_AllowSetForegroundWindow.restype = wintypes.BOOL
 
 _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
 _kernel32.OpenProcess.restype = wintypes.HANDLE
@@ -82,6 +88,8 @@ _kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
 _kernel32.WaitForSingleObject.restype = wintypes.DWORD
 _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 _kernel32.CloseHandle.restype = wintypes.BOOL
+_kernel32.GetStartupInfoW.argtypes = [ctypes.c_void_p]
+_kernel32.GetStartupInfoW.restype = None
 
 _message_id: Optional[int] = None
 _activate_id: Optional[int] = None
@@ -138,6 +146,88 @@ def _window_pid(hwnd: int) -> int:
 
 def _post(hwnd: int, message: int, wparam: int = 0) -> bool:
     return bool(_user32.PostMessageW(hwnd, message, wparam, 0))
+
+
+def _allow_foreground(pid: int) -> bool:
+    """Let ``pid`` take the foreground (D3). Only a process that may set the foreground itself can pass
+    the right on - a launch from Start or Explorer can; without it the running app's panel would open
+    behind the window the user was in, with a flashing taskbar button instead of focus."""
+    return bool(_AllowSetForegroundWindow(pid))
+
+
+class _STARTUPINFOW(ctypes.Structure):
+    _fields_ = [
+        ("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR), ("lpDesktop", wintypes.LPWSTR),
+        ("lpTitle", wintypes.LPWSTR), ("dwX", wintypes.DWORD), ("dwY", wintypes.DWORD),
+        ("dwXSize", wintypes.DWORD), ("dwYSize", wintypes.DWORD), ("dwXCountChars", wintypes.DWORD),
+        ("dwYCountChars", wintypes.DWORD), ("dwFillAttribute", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD), ("wShowWindow", wintypes.WORD), ("cbReserved2", wintypes.WORD),
+        ("lpReserved2", ctypes.c_void_p), ("hStdInput", wintypes.HANDLE),
+        ("hStdOutput", wintypes.HANDLE), ("hStdError", wintypes.HANDLE),
+    ]
+
+
+_STARTF_TITLEISLINKNAME = 0x00000800
+_CSIDL_STARTUP = 0x0007
+_CSIDL_COMMON_STARTUP = 0x0018
+
+
+def _startup_link_name() -> Optional[str]:
+    """The shortcut (.lnk) this process was started from, or None. The shell says so in STARTUPINFO
+    (STARTF_TITLEISLINKNAME, lpTitle = the .lnk path) for a Start-menu entry, a taskbar pin, a desktop
+    or Startup-folder shortcut; a Run-key start, a scheduled task or a double-clicked exe has none."""
+    si = _STARTUPINFOW()
+    si.cb = ctypes.sizeof(_STARTUPINFOW)
+    _kernel32.GetStartupInfoW(ctypes.byref(si))
+    if not (si.dwFlags & _STARTF_TITLEISLINKNAME) or not si.lpTitle:
+        return None
+    return str(si.lpTitle)
+
+
+def _startup_folders() -> List[str]:
+    """This user's and the all-users Startup folders (empty entries dropped on failure)."""
+    out: List[str] = []
+    for csidl in (_CSIDL_STARTUP, _CSIDL_COMMON_STARTUP):
+        try:
+            buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+            if ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf) == 0 and buf.value:
+                out.append(buf.value)
+        except Exception as e:
+            logger.debug("Startup folder %#x unreadable: %s", csidl, e)
+    return out
+
+
+def launched_from_user_shortcut() -> bool:
+    """True when this process was started from a shortcut OUTSIDE the Startup folders - the Start menu,
+    a taskbar pin, the desktop: the user asked, whenever that was (the #373 sign-in rule must never
+    swallow it). A Startup-folder shortcut is an autostart, so it is not one; its folder is matched by
+    path and, should the folder lookup fail, by its name ("Startup", the same on every Windows
+    language). Any failure: False (the sign-in rule then decides, as before)."""
+    try:
+        link = _startup_link_name()
+        if not link or not link.lower().endswith(".lnk"):
+            return False
+        folder = os.path.normcase(os.path.normpath(os.path.dirname(link)))
+        startup = {os.path.normcase(os.path.normpath(f)) for f in _startup_folders() if f}
+        if folder in startup or os.path.basename(folder) == "startup":
+            return False
+        return True
+    except Exception as e:
+        logger.debug("Could not read how this process was started: %s", e)
+        return False
+
+
+def activation_kind(argv: Optional[Sequence[str]] = None) -> int:
+    """The wParam a second launch sends (constants.app.ACTIVATE_WPARAM_*): the updater's relaunch, an
+    explicit launch from a shortcut, a duplicate autostart at sign-in (#373), or a plain user launch."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    if RELAUNCH_FLAG in args:
+        return constants.app.ACTIVATE_WPARAM_RELAUNCH
+    if launched_from_user_shortcut():
+        return constants.app.ACTIVATE_WPARAM_USER
+    if is_sign_in_duplicate():
+        return constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE
+    return constants.app.ACTIVATE_WPARAM_USER
 
 
 def _wait_for_exit(pid: int, hwnd: int, timeout: float) -> bool:
@@ -330,7 +420,7 @@ def is_sign_in_duplicate() -> bool:
         return False
 
 
-def request_activate() -> bool:
+def request_activate(argv: Optional[Sequence[str]] = None) -> bool:
     """
     A second launch (the per-user instance mutex is taken, #234): ask THIS user's running widget to show
     itself again - un-hide, re-dock, re-seat above the taskbar, back to its docked spot if off-screen -
@@ -339,9 +429,13 @@ def request_activate() -> bool:
     mutex; one whose owner can't be told (an elevated instance of ours, or no listing at all) is
     asked anyway - it can only become visible.
 
-    The wParam says who is asking (#373): ACTIVATE_WPARAM_SIGN_IN_DUPLICATE when this process starts
-    within SIGN_IN_DUPLICATE_WINDOW_S of the session's sign-in (``is_sign_in_duplicate``), else
-    ACTIVATE_WPARAM_USER.
+    The wParam says who is asking (``activation_kind``): ACTIVATE_WPARAM_RELAUNCH for the updater's
+    relaunch (``--relaunch`` in ``argv``, default sys.argv); ACTIVATE_WPARAM_USER for a launch from a
+    shortcut outside the Startup folders (D3: the user asked, even right after sign-in);
+    ACTIVATE_WPARAM_SIGN_IN_DUPLICATE when this process starts within SIGN_IN_DUPLICATE_WINDOW_S of the
+    session's sign-in (#373, ``is_sign_in_duplicate``); else ACTIVATE_WPARAM_USER. A USER request opens
+    the "running" panel, so the running process is first allowed to take the foreground
+    (``_allow_foreground``) - a failure there only costs focus, never the post.
 
     True if a running instance was signalled. Never waits: the second process exits right after.
     """
@@ -357,14 +451,20 @@ def request_activate() -> bool:
     if not targets:
         logger.info("Second launch: no running widget of this user on this desktop to bring back.")
         return False
-    duplicate = is_sign_in_duplicate()
-    wparam = (constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE if duplicate
-              else constants.app.ACTIVATE_WPARAM_USER)
+    wparam = activation_kind(argv)
+    why = {constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE: " (a duplicate start at sign-in)",
+           constants.app.ACTIVATE_WPARAM_RELAUNCH: " (the updater's relaunch)"}.get(wparam, "")
     sent = False
     for hwnd, pid in targets:
+        if wparam == constants.app.ACTIVATE_WPARAM_USER:
+            try:
+                if not _allow_foreground(pid):
+                    logger.debug("AllowSetForegroundWindow(%s) refused (err %s).", pid,
+                                 ctypes.get_last_error())
+            except Exception as e:
+                logger.debug("AllowSetForegroundWindow(%s) failed: %s", pid, e)
         if _post(hwnd, msg, wparam):
-            logger.info("Second launch: asked the running widget (pid %s) to show itself%s.", pid,
-                        " (a duplicate start at sign-in)" if duplicate else "")
+            logger.info("Second launch: asked the running widget (pid %s) to show itself%s.", pid, why)
             sent = True
         else:
             logger.warning("Second launch: PostMessage to HWND %s (pid %s) failed (err %s).",

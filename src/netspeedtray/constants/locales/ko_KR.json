@@ -633,5 +633,10 @@
     "BACKUP_HISTORY_ERR_BUSY": "이 파일로 백업이 이미 진행 중입니다.",
     "CONTEXT_MENU_ITEMS_LABEL": "마우스 오른쪽 메뉴 항목",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "위젯의 마우스 오른쪽 메뉴에 표시할 항목을 선택합니다. {settings} 및 {exit}은(는) 항상 표시됩니다.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "작업 표시줄에 강조 색이 표시되어 있어서, 그 위에서 읽기 어려운 색은 읽기 쉬운 텍스트 색으로 그려집니다."
+    "ACCENT_TASKBAR_COLORS_NOTE": "작업 표시줄에 강조 색이 표시되어 있어서, 그 위에서 읽기 어려운 색은 읽기 쉬운 텍스트 색으로 그려집니다.",
+    "RUNNING_PANEL_VERSION": "버전 {version}",
+    "RUNNING_PANEL_RUNNING": "작업 표시줄에서 실행 중",
+    "RUNNING_PANEL_HINT": "작업 표시줄의 속도에 마우스를 올리면 자세한 정보를, 마우스 오른쪽 버튼으로 클릭하면 메뉴를 볼 수 있습니다.",
+    "RUNNING_PANEL_CHECK_UPDATES": "업데이트 확인",
+    "RUNNING_PANEL_QUIT": "NetSpeedTray 종료"
 }

@@ -633,5 +633,10 @@
     "BACKUP_HISTORY_ERR_BUSY": "Bu dosyaya zaten bir yedekleme yapılıyor.",
     "CONTEXT_MENU_ITEMS_LABEL": "Sağ tıklama menüsü öğeleri",
     "CONTEXT_MENU_ITEMS_DESCRIPTION": "Widget'ın sağ tıklama menüsünde nelerin görüneceğini seçin. {settings} ve {exit} her zaman görünür.",
-    "ACCENT_TASKBAR_COLORS_NOTE": "Görev çubuğunuz bir vurgu rengi gösteriyor; bu yüzden üzerinde okunması zor renkler okunaklı bir metin rengiyle çizilir."
+    "ACCENT_TASKBAR_COLORS_NOTE": "Görev çubuğunuz bir vurgu rengi gösteriyor; bu yüzden üzerinde okunması zor renkler okunaklı bir metin rengiyle çizilir.",
+    "RUNNING_PANEL_VERSION": "Sürüm {version}",
+    "RUNNING_PANEL_RUNNING": "Görev çubuğunuzda çalışıyor",
+    "RUNNING_PANEL_HINT": "Ayrıntılar için görev çubuğundaki hızların üzerine gelin, menü için sağ tıklayın.",
+    "RUNNING_PANEL_CHECK_UPDATES": "Güncelleştirmeleri denetle",
+    "RUNNING_PANEL_QUIT": "NetSpeedTray'den çık"
 }
