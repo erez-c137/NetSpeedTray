@@ -65,6 +65,10 @@ _MIN_WIDTH = 380
 _ICON_PX = 40
 _ROW_HEIGHT = 40                 # the visible row (Fluent navigation card)
 _RING = 3                        # reserved around every focusable control: 2 px ring + 1 px gap
+_GWL_STYLE = -16
+_WS_MINIMIZEBOX, _WS_MAXIMIZEBOX = 0x00020000, 0x00010000
+# SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED: redraw the caption only
+_SWP_FRAME_ONLY = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
 _ROW_ICON = 16
 _CHEVRON_PX = 12
 # LRM marks frame one speed ("88.6 Mbps") so it stays whole in an RTL line; a leading RLM makes that
@@ -124,6 +128,21 @@ def screen_for_new_window(lparam: int = 0, widget: Optional[QWidget] = None):
     except Exception:
         screen = None
     return screen or QGuiApplication.primaryScreen()
+
+
+def _strip_min_max_boxes(hwnd: int) -> None:
+    """No minimize / maximize box on the native window (VM round 2): Qt can still set WS_MAXIMIZEBOX
+    on a dialog it treats as resizable, and with either box present Windows draws both (one greyed).
+    Close only. Any failure leaves the window as it is."""
+    try:
+        u = ctypes.windll.user32
+        style = u.GetWindowLongW(hwnd, _GWL_STYLE) & 0xFFFFFFFF
+        stripped = style & ~(_WS_MINIMIZEBOX | _WS_MAXIMIZEBOX)
+        if stripped != style:
+            u.SetWindowLongW(hwnd, _GWL_STYLE, ctypes.c_long(stripped - (1 << 32) if stripped >= 1 << 31 else stripped))
+            u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, _SWP_FRAME_ONLY)
+    except Exception:
+        pass
 
 
 def bring_to_front(window: QWidget) -> None:
@@ -325,11 +344,13 @@ class RunningPanel(QDialog):
         self.setWindowTitle(APP_NAME)
         self.setAccessibleName(APP_NAME)
         self.setAccessibleDescription(self._tr("RUNNING_PANEL_RUNNING", "Running on your taskbar"))
-        # CustomizeWindowHint: exactly these buttons. Without it Qt gives every top-level dialog on
-        # Windows min AND max buttons - a maximize on a fixed-size panel (live test F5).
+        # CustomizeWindowHint: exactly these buttons - title and Close. Without it Qt gives every
+        # top-level dialog on Windows min AND max buttons (live test F5); and with a minimize box kept,
+        # Windows still draws a greyed maximize box beside it (VM round 2). A small fixed panel needs
+        # neither; it keeps its taskbar button and Alt+Tab (a normal dialog, not a tool window).
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.CustomizeWindowHint
                             | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint
-                            | Qt.WindowType.WindowMinimizeButtonHint | Qt.WindowType.WindowCloseButtonHint)
+                            | Qt.WindowType.WindowCloseButtonHint)
         self.setLayoutDirection(QApplication.layoutDirection())
         self.setProperty(_KEYBOARD_PROP, False)
         self.palette_tokens = _palette()
@@ -818,6 +839,7 @@ class RunningPanel(QDialog):
             apply_win11_chrome(int(self.winId()), dark=su.is_dark_mode() and not self.palette_tokens["hc"])
         except Exception:
             pass
+        _strip_min_max_boxes(int(self.winId()))
         self.refresh_status()
         self._status_timer.start()
         if not self._shown_once:

@@ -507,4 +507,65 @@ def test_the_fixed_size_panel_has_no_maximize_button(panel):
     assert flags & Qt.WindowType.CustomizeWindowHint
     assert not (flags & Qt.WindowType.WindowMaximizeButtonHint)
     assert flags & Qt.WindowType.WindowCloseButtonHint and flags & Qt.WindowType.WindowTitleHint
-    assert flags & Qt.WindowType.WindowMinimizeButtonHint     # still minimizes to its taskbar button
+    # VM round 2: with WS_MINIMIZEBOX kept, Windows still draws a greyed maximize box. Close only.
+    assert not (flags & Qt.WindowType.WindowMinimizeButtonHint)
+
+
+_NATIVE_PROBE = r"""
+import ctypes, json, sys, types
+from unittest.mock import MagicMock
+from PyQt6.QtWidgets import QApplication
+app = QApplication(sys.argv)
+from netspeedtray.constants.i18n import I18nStrings
+from netspeedtray.views import running_panel as rp
+rp._update_check_disabled = lambda: False
+i18n = I18nStrings("en_US")
+mw = types.SimpleNamespace(
+    config={"unit_type": "bits_decimal", "decimal_places": 1, "speed_display_mode": "auto",
+            "short_unit_labels": False, "latency_public_enabled": False},
+    i18n=i18n, upload_speed=1.2, download_speed=88.6, is_paused=False, latency_headline_hop=None,
+    latency_headline_ms=None, latency_loss=None, latency_link_lost=False, isVisible=lambda: True,
+    _app_is_quitting=lambda: False, is_startup_enabled=lambda: False)
+p = rp.RunningPanel(mw, i18n, version="2.2.2")
+from PyQt6.QtCore import Qt
+rp._force_foreground = lambda *a, **k: None
+p.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)   # never takes the foreground
+p.show()
+for _ in range(10):
+    app.processEvents()
+p.refresh_status()              # a status refresh refits the fixed size: the style must stay
+app.processEvents()
+style = ctypes.windll.user32.GetWindowLongW(int(p.winId()), -16) & 0xFFFFFFFF
+p.hide()
+print("RESULT" + json.dumps({"style": style}), flush=True)
+"""
+
+
+@pytest.mark.native_desktop
+@pytest.mark.skipif(__import__("sys").platform != "win32", reason="needs real Win32 windows")
+@pytest.mark.parametrize("high_contrast", [False, True])
+def test_the_native_panel_has_no_min_or_max_box(tmp_path, high_contrast):
+    """VM round 2: WS_MAXIMIZEBOX was off but WS_MINIMIZEBOX on, and Windows still drew a greyed
+    maximize box. Neither style is on the real window - so no box is drawn, in either theme."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[3]
+    probe = _NATIVE_PROBE
+    if high_contrast:   # the panel's own High Contrast path (its palette); the window style must not change
+        probe = probe.replace("rp._update_check_disabled = lambda: False",
+                              "rp._update_check_disabled = lambda: False\n"
+                              "rp.read_high_contrast = lambda: (True, '#FFFFFF', '#000000')")
+    env = {k: v for k, v in os.environ.items() if k not in ("QT_QPA_PLATFORM", "QT_QPA_FONTDIR")}
+    env.update({"QT_QPA_PLATFORM": "windows", "APPDATA": str(tmp_path), "LOCALAPPDATA": str(tmp_path),
+                "PYTHONPATH": str(src), "PYTHONIOENCODING": "utf-8"})
+    proc = subprocess.run([sys.executable, "-c", probe], env=env, capture_output=True, text=True,
+                          encoding="utf-8", timeout=120)
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT")]
+    assert lines, f"probe failed ({proc.returncode}):\n{proc.stdout[-2000:]}\n{proc.stderr[-4000:]}"
+    style = json.loads(lines[-1][len("RESULT"):])["style"]
+    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_CAPTION = 0x10000, 0x20000, 0x80000, 0xC00000
+    assert not style & WS_MAXIMIZEBOX and not style & WS_MINIMIZEBOX, hex(style)
+    assert style & WS_SYSMENU and (style & WS_CAPTION) == WS_CAPTION, hex(style)   # title + Close stay
