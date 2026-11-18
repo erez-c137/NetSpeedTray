@@ -87,9 +87,26 @@ Read the database only read-only while the app runs. Schema, queries and how to 
 ## Start with Windows
 
 The app writes its own startup entry: the value `NetSpeedTray` under
-`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, pointing at the running exe. It's on by default
-(**Start with Windows** in Settings → General) and is rewritten if the exe moves. Setup never creates it.
-Turning the app off in Task Manager's Startup tab also stops it.
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Since 2.2.2 its exact format is
+
+```
+"C:\Program Files\NetSpeedTray\NetSpeedTray.exe" --autostart
+```
+
+(the running exe, quoted, then `--autostart`, which tells a second launch at sign-in apart from a user
+opening the app). It's on by default (**Start with Windows** in Settings → General). Setup never
+creates it. Turning the app off in Task Manager's Startup tab also stops it, and the app never undoes
+that on its own.
+
+- At each launch the app rewrites the value only when it names **this** exe in another format (an
+  older build's `"...\NetSpeedTray.exe"` without `--autostart`, other quoting), or names an exe that no
+  longer exists (the app moved). So a value IT pushed in the old format is rewritten once, at the
+  next launch, to the format above. A Group Policy Preferences **Replace** item should use the new
+  format, or it and the app keep rewriting each other.
+- A value that names a **different** NetSpeedTray exe that still exists (an installed copy while a
+  portable one runs, or the other way round) is left alone and logged. Only turning **Start with
+  Windows** off and on in that copy's Settings takes the entry over (also logged).
+- With **Start with Windows** off, the app removes a value that names its own exe, in either format.
 
 ## Updates
 
