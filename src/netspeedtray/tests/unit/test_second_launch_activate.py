@@ -240,7 +240,8 @@ def test_widget_routes_the_activate_message(monkeypatch):
     assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", addr) == (True, 0)
     assert len(scheduled) == 1
     scheduled[0]()
-    fake.show_from_second_launch.assert_called_once_with(sign_in_duplicate=False)
+    # wParam 0 (the user) opens the panel: no stand-down flyout beside it (C4).
+    fake.show_from_second_launch.assert_called_once_with(sign_in_duplicate=False, explain_yield=False)
     fake.fully_exit_application.assert_not_called()
     # wParam 1: the second process's sign-in verdict; anything else is a plain activate.
     for wparam, expected in ((1, True), (7, False)):
@@ -250,7 +251,7 @@ def test_widget_routes_the_activate_message(monkeypatch):
         ref.wParam = wparam
         assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", addr) == (True, 0)
         scheduled[0]()
-        fake.show_from_second_launch.assert_called_once_with(sign_in_duplicate=expected)
+        fake.show_from_second_launch.assert_called_once_with(sign_in_duplicate=expected, explain_yield=True)
 
 
 def _show_fake(*, visible, off_screen, buried=True, fullscreen=False, keep_visible=False):

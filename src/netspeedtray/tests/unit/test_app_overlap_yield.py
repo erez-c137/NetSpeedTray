@@ -1006,7 +1006,9 @@ def test_the_real_activate_message_runs_the_real_second_launch_path(layout, q_ap
         result = main_mod.NetworkSpeedWidget.nativeEvent(w, b"windows_generic_MSG", ctypes.addressof(msg))
     assert result == (True, 0)                     # #440 consumes its own message
     assert pm.is_yielding_to_apps() is False and pm._app_yield.suspended
-    assert order[0] == ("setVisible", True) and order[-1][0] == "flyout"
+    # wParam 0 is the user: the "running" panel is the one surface (C4), no stand-down flyout.
+    assert order[0] == ("setVisible", True) and not [o for o in order if o[0] == "flyout"]
+    w.show_running_panel.assert_called_once()
 
 
 def test_notices_say_how_to_get_the_widget_back_in_every_locale():
@@ -2192,3 +2194,20 @@ def test_hiding_on_an_unknown_text_reading_still_steps_aside_at_once(off_rig):
     r.y.note_foreground_change()
     r.probe(left_aligned(28, overflow=True), advance=1.0)
     assert not r.y.retreated and r.y.yielded         # unchanged: hiding beats colliding
+
+
+def test_a_launch_that_opens_the_panel_skips_the_stand_down_flyout(layout, q_app):
+    """Combined review C4: Start -> NetSpeedTray while the widget is yielded stands the yield down and
+    opens the "running" panel - exactly one surface, no stand-down flyout beside it (the once-ever
+    notice stays owed). A launch that opens no panel still gets the flyout."""
+    from netspeedtray.views.widget import main as main_mod
+    for wparam, panel, flyout in ((constants.app.ACTIVATE_WPARAM_USER, True, False),
+                                  (constants.app.ACTIVATE_WPARAM_BACKGROUND, False, True)):
+        pm, _tb = _yielded_pm(layout)
+        w, order = _second_launch_widget(pm)
+        with patch.object(main_mod.QTimer, "singleShot", side_effect=lambda ms, fn: fn()):
+            w.handle_activate_request(wparam)
+        assert pm._app_yield.suspended and pm.is_yielding_to_apps() is False
+        assert w.show_running_panel.called is panel
+        assert bool([o for o in order if o[0] == "flyout"]) is flyout
+        assert bool(w.config.get("second_launch_notice_shown", False)) is flyout

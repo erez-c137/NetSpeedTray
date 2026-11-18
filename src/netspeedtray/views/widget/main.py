@@ -2582,11 +2582,15 @@ class NetworkSpeedWidget(QWidget):
         explicit request for a window.
         """
         app = constants.app
+        # Combined review C4: a launch that opens the panel shows ONE surface - the yield's stand-down
+        # flyout is skipped (and its once-ever notice stays owed); the panel is what the user asked for.
+        opens_panel = wparam == app.ACTIVATE_WPARAM_USER and not self._app_is_quitting()
         try:
-            self.show_from_second_launch(sign_in_duplicate=(wparam == app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE))
+            self.show_from_second_launch(sign_in_duplicate=(wparam == app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE),
+                                         explain_yield=not opens_panel)
         except Exception as e:
             self.logger.error("Second launch: bringing the widget back failed: %s", e, exc_info=True)
-        if wparam != app.ACTIVATE_WPARAM_USER or self._app_is_quitting():
+        if not opens_panel or self._app_is_quitting():
             return
         self.show_running_panel(lparam)
 
@@ -2644,7 +2648,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Opening the connection check failed: %s", e, exc_info=True)
 
-    def show_from_second_launch(self, sign_in_duplicate: bool = False) -> None:
+    def show_from_second_launch(self, sign_in_duplicate: bool = False, explain_yield: bool = True) -> None:
         """
         The app was launched again while running (#234, rc.2 W14; the second process posts
         ACTIVATE_MESSAGE_NAME and exits). Bring the widget back however it was lost: hidden -> shown;
@@ -2664,6 +2668,8 @@ class NetworkSpeedWidget(QWidget):
         aside (no flash, no notice). Only the FIRST such activation of this instance is taken as the
         duplicate: any later one, even flagged, is the user starting it again within the sign-in window
         and stands down as usual. A user's launch right after Setup's Finish-page launch is NOT one.
+        ``explain_yield`` False (a launch that opens the "running" panel, combined review C4): the
+        stand-down happens, its flyout does not.
         """
         try:
             pm = getattr(self, "position_manager", None)
@@ -2708,7 +2714,7 @@ class NetworkSpeedWidget(QWidget):
             if pm.is_buried_behind_taskbar():
                 pm.reseat_above_taskbar()
             QTimer.singleShot(0, self._execute_refresh)
-            if was_yielded:
+            if was_yielded and explain_yield:
                 # Last: only when the yield had hidden it (never over a fullscreen app - returned above).
                 self._explain_app_yield_stand_down()
         except Exception as e:

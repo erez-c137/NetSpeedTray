@@ -317,7 +317,8 @@ def test_activate_request_routing(wparam, step1_dup, panel):
     from netspeedtray.views.widget.main import NetworkSpeedWidget
     fake, order = _receiver()
     NetworkSpeedWidget.handle_activate_request(fake, wparam, 1234)
-    expected = [("step1", {"sign_in_duplicate": step1_dup})]
+    # C4: a launch that opens the panel skips the stand-down flyout (the panel is the one surface).
+    expected = [("step1", {"sign_in_duplicate": step1_dup, "explain_yield": not panel})]
     if panel:
         expected.append(("panel", 1234))     # the launch monitor goes along
     assert order == expected
@@ -327,7 +328,7 @@ def test_no_panel_while_the_app_is_quitting():
     from netspeedtray.views.widget.main import NetworkSpeedWidget
     fake, order = _receiver(quitting=True)
     NetworkSpeedWidget.handle_activate_request(fake, APP.ACTIVATE_WPARAM_USER)
-    assert order == [("step1", {"sign_in_duplicate": False})]
+    assert order == [("step1", {"sign_in_duplicate": False, "explain_yield": True})]
 
 
 def test_a_failing_step_one_still_opens_the_panel():
