@@ -20,7 +20,7 @@ from typing import List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 from PyQt6.QtGui import (
-    QPainter, QColor, QPen, QPainterPath, QPolygonF, QLinearGradient, QFont, QFontMetrics,
+    QPainter, QColor, QPen, QPainterPath, QPolygonF, QLinearGradient, QFont, QFontMetrics, QRegion,
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QSizePolicy,
@@ -68,32 +68,38 @@ class Sparkline(QWidget):
         self._vmax: Optional[float] = None
         self._vmin: float = 0.0                  # bottom of the scale (non-zero = "zoom" to the data band)
         self._scale_label: str = ""              # optional top-of-scale readout (e.g. "16.9 Mbps")
+        self._soft_last: bool = False            # draw the segment into the last (still-filling) bin lighter
         self._curve: float = 1.0                 # 1.0 = linear; <1 (e.g. 0.5) warps the axis so a single
                                                  # spike doesn't flatten the baseline (sqrt-style)
         self.setMinimumHeight(36)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    def set_series(self, series: List[float], vmax: Optional[float] = None, vmin: float = 0.0,
-                   curve: float = 1.0) -> None:
+    def set_series(self, series: List[Optional[float]], vmax: Optional[float] = None, vmin: float = 0.0,
+                   curve: float = 1.0, soft_last: bool = False) -> None:
         """Replace the data. ``vmax`` fixes the top of the scale (None auto-scales to the data max);
         ``vmin`` is the bottom - pass a non-zero value to "zoom" the trend into its active band so a
         low-but-varying metric shows detail instead of a flat line near the floor. ``curve`` < 1 bends
-        the height axis (0.5 = square-root) so brief spikes don't squash the everyday band flat."""
+        the height axis (0.5 = square-root) so brief spikes don't squash the everyday band flat.
+        A None value is a bin nobody measured: the line and fill break there. ``soft_last`` draws the
+        segment into the last bin (the window's still-filling "now") lighter."""
         self._series = list(series)[-_SPARK_POINTS:]
+        self._soft_last = bool(soft_last)
         self._series2 = []
         self._vmax = vmax
         self._vmin = float(vmin or 0.0)
         self._curve = float(curve or 1.0)
         self.update()
 
-    def set_dual(self, primary: List[float], secondary: List[float], color2: str,
-                 vmax: Optional[float] = None, scale_label: str = "", curve: float = 1.0) -> None:
+    def set_dual(self, primary: List[Optional[float]], secondary: List[Optional[float]], color2: str,
+                 vmax: Optional[float] = None, scale_label: str = "", curve: float = 1.0,
+                 soft_last: bool = False) -> None:
         """Two traces sharing one scale - the primary gets the fill + line, the secondary a thinner
         line in ``color2``. Both auto-scale to their combined max unless ``vmax`` is fixed.
         ``scale_label`` (e.g. "16.9 Mbps") is drawn at the top-of-scale so the trend has magnitude.
         ``curve`` < 1 bends the axis (0.5 = sqrt) so an occasional peak doesn't flatten normal traffic."""
         self._series = list(primary)[-_SPARK_POINTS:]
         self._series2 = list(secondary)[-_SPARK_POINTS:]
+        self._soft_last = bool(soft_last)
         self._color2 = QColor(color2)
         self._vmax = vmax
         self._vmin = 0.0          # network reads from a true zero floor (a 0-baseline burst is meaningful)
@@ -109,8 +115,26 @@ class Sparkline(QWidget):
             t = t ** self._curve
         return t * gh
 
+    @staticmethod
+    def _runs(series: List[Optional[float]]) -> List[List[int]]:
+        """Indices of the consecutive non-None stretches of ``series``: a None is a bin nobody measured
+        (the app was off, the PC slept), drawn as a break in the line and fill - never as zero."""
+        runs: List[List[int]] = []
+        cur: List[int] = []
+        for i, v in enumerate(series):
+            if v is None:
+                if cur:
+                    runs.append(cur)
+                    cur = []
+            else:
+                cur.append(i)
+        if cur:
+            runs.append(cur)
+        return runs
+
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
         n = len(self._series)
+        values = [v for v in self._series if v is not None]
         pad = 2.0
         gw = self.width() - pad * 2
         gh = self.height() - pad * 2
@@ -118,10 +142,10 @@ class Sparkline(QWidget):
             return
         base_y = pad + gh
 
-        # Fewer than two points: draw a faint baseline rule so the tile keeps its visual weight
+        # Fewer than two values: draw a faint baseline rule so the tile keeps its visual weight
         # and reads as "collecting data" rather than half-drawn. RAM/VRAM accrue one sample per
         # tick, so this is what's on screen for the first second(s) after the tab opens.
-        if n < 2:
+        if n < 2 or not values:
             p = QPainter(self)
             try:
                 p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -129,10 +153,10 @@ class Sparkline(QWidget):
                 pen = QPen(ghost); pen.setWidthF(1.4); pen.setCapStyle(Qt.PenCapStyle.RoundCap)
                 p.setPen(pen)
                 y = base_y
-                if n == 1:
+                if n == 1 and values:
                     vmin = self._vmin
-                    vmax = self._vmax if (self._vmax and self._vmax > vmin) else max(self._series[0], vmin + 1.0)
-                    y = base_y - self._height_for(self._series[0], vmin, vmax, gh)
+                    vmax = self._vmax if (self._vmax and self._vmax > vmin) else max(values[0], vmin + 1.0)
+                    y = base_y - self._height_for(values[0], vmin, vmax, gh)
                 p.drawLine(QPointF(pad, y), QPointF(pad + gw, y))
             finally:
                 p.end()
@@ -140,61 +164,98 @@ class Sparkline(QWidget):
 
         # Both traces share one scale so up/down read at true relative magnitude. vmin lets a tile
         # "zoom" into a low band (e.g. CPU 5-20%) so the trend isn't a flat squiggle against 0-100.
-        data_max = max(max(self._series, default=0.0), max(self._series2, default=0.0))
+        data_max = max(max(values, default=0.0), max((v for v in self._series2 if v is not None), default=0.0))
         vmin = self._vmin
         vmax = self._vmax if (self._vmax and self._vmax > vmin) else data_max
         if vmax <= vmin:
             vmax = vmin + 1.0
-        step = gw / (n - 1)
-        pts = [
-            QPointF(pad + i * step, base_y - self._height_for(v, vmin, vmax, gh))
-            for i, v in enumerate(self._series)
-        ]
+
+        def points(series: List[Optional[float]]) -> List[Optional[QPointF]]:
+            step = gw / (len(series) - 1)
+            return [None if v is None else QPointF(pad + i * step, base_y - self._height_for(v, vmin, vmax, gh))
+                    for i, v in enumerate(series)]
+
+        def soft(color: QColor) -> QColor:
+            c = QColor(color); c.setAlpha(110)
+            return c
+
+        def draw_line(pts: List[Optional[QPointF]], color: QColor, width: float) -> None:
+            """Each measured stretch as its own polyline; a lone bin as a dot. With ``_soft_last`` the
+            segment into the last bin - still filling, the window's "now" - is drawn lighter."""
+            pen = QPen(color)
+            pen.setWidthF(width)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            last = len(pts) - 1
+            for run in self._runs(pts):
+                seg = [pts[i] for i in run]
+                if len(seg) == 1:
+                    p.setPen(QPen(soft(color) if (self._soft_last and run[0] == last) else color, width + 1.0,
+                                  Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                    p.drawPoint(seg[0])
+                    continue
+                split = self._soft_last and run[-1] == last
+                main = seg[:-1] if split else seg
+                if len(main) >= 2:
+                    p.setPen(pen)
+                    p.drawPolyline(QPolygonF(main))
+                if split:
+                    spen = QPen(pen)
+                    spen.setColor(soft(color))
+                    p.setPen(spen)
+                    p.drawLine(seg[-2], seg[-1])
+
+        pts = points(self._series)
+
+        # The scale labels' boxes (top-left max, bottom-left "0"): the trend is clipped out of them, so
+        # a spike never draws through the readout - whatever the surface colour behind the card.
+        labels = []
+        if self._scale_label:
+            f = QFont(); f.setPixelSize(9)
+            fm = QFontMetrics(f)
+            for text, rect, align in (
+                    (self._scale_label, QRectF(pad + 2, pad + 1.0, gw - 4, 12), Qt.AlignmentFlag.AlignTop),
+                    ("0", QRectF(pad + 2, base_y - 13, gw - 4, 12), Qt.AlignmentFlag.AlignBottom)):
+                labels.append((text, rect, align,
+                               QRectF(rect.x() - 2, rect.y(), fm.horizontalAdvance(text) + 6, rect.height())))
 
         p = QPainter(self)
         try:
             p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            if labels:
+                clip = QRegion(self.rect())
+                for *_x, box in labels:
+                    clip = clip.subtracted(QRegion(box.toAlignedRect()))
+                p.setClipRegion(clip)
 
-            # Soft fill under the line.
-            fill_path = QPainterPath()
-            fill_path.moveTo(pts[0].x(), base_y)
-            for pt in pts:
-                fill_path.lineTo(pt)
-            fill_path.lineTo(pts[-1].x(), base_y)
-            fill_path.closeSubpath()
+            # Soft fill under each measured stretch (none under a gap).
             grad = QLinearGradient(0.0, pad, 0.0, base_y)
             top = QColor(self._color); top.setAlpha(64)
             bot = QColor(self._color); bot.setAlpha(0)
             grad.setColorAt(0.0, top)
             grad.setColorAt(1.0, bot)
-            p.fillPath(fill_path, grad)
+            for run in self._runs(pts):
+                if len(run) < 2:
+                    continue
+                fill_path = QPainterPath()
+                fill_path.moveTo(pts[run[0]].x(), base_y)
+                for i in run:
+                    fill_path.lineTo(pts[i])
+                fill_path.lineTo(pts[run[-1]].x(), base_y)
+                fill_path.closeSubpath()
+                p.fillPath(fill_path, grad)
 
             # The trend line itself.
-            pen = QPen(self._color)
-            pen.setWidthF(1.6)
-            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            p.setPen(pen)
-            p.drawPolyline(QPolygonF(pts))
+            draw_line(pts, self._color, 1.6)
 
             # Optional second trace (upload), same scale, thinner line, no fill.
             if self._series2 and self._color2 is not None and len(self._series2) >= 2:
-                n2 = len(self._series2)
-                step2 = gw / (n2 - 1)
-                pts2 = [
-                    QPointF(pad + i * step2, base_y - self._height_for(v, vmin, vmax, gh))
-                    for i, v in enumerate(self._series2)
-                ]
-                pen2 = QPen(self._color2)
-                pen2.setWidthF(1.4)
-                pen2.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                pen2.setCapStyle(Qt.PenCapStyle.RoundCap)
-                p.setPen(pen2)
-                p.drawPolyline(QPolygonF(pts2))
+                draw_line(points(self._series2), self._color2, 1.4)
 
             # Scale readout: a faint top-of-scale rule + the max value at top-left, plus a "0" baseline
             # - so the hero trend has magnitude at a glance instead of a scaleless squiggle.
-            if self._scale_label:
+            if labels:
+                p.setClipping(False)
                 sc = su.semantic_colors()
                 gpen = QPen(QColor(sc["card_stroke"])); gpen.setWidthF(1.0)
                 p.setPen(gpen)
@@ -202,10 +263,8 @@ class Sparkline(QWidget):
                 f = QFont(); f.setPixelSize(9)
                 p.setFont(f)
                 p.setPen(QColor(sc["text_secondary"]))
-                p.drawText(QRectF(pad + 2, pad + 1.0, gw - 4, 12),
-                           int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), self._scale_label)
-                p.drawText(QRectF(pad + 2, base_y - 13, gw - 4, 12),
-                           int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom), "0")
+                for text, rect, align, _box in labels:
+                    p.drawText(rect, int(Qt.AlignmentFlag.AlignLeft | align), text)
         finally:
             p.end()
 
@@ -289,10 +348,11 @@ class StatTile(ClickableCard):
         lay.addWidget(self._spark, 1)
 
     def set(self, value_text: str, series: List[float],
-            vmax: Optional[float] = None, sub_text: str = "", vmin: float = 0.0) -> None:
+            vmax: Optional[float] = None, sub_text: str = "", vmin: float = 0.0,
+            soft_last: bool = False) -> None:
         self._value.setText(value_text)
         su.set_ui_text(self._sub, sub_text or " ")   # keep a blank line so the tile height never changes
-        self._spark.set_series(series, vmax, vmin)
+        self._spark.set_series(series, vmax, vmin, soft_last=soft_last)
 
     def set_label(self, text: str) -> None:
         self._label.setText(text)
@@ -387,13 +447,14 @@ class NetworkHero(ClickableCard):
         return val
 
     def set(self, down_text: str, up_text: str, down_series: List[float],
-            up_series: List[float], sub_text: str = "", scale_label: str = "") -> None:
+            up_series: List[float], sub_text: str = "", scale_label: str = "",
+            soft_last: bool = False) -> None:
         self._down_v.setText(down_text)
         self._up_v.setText(up_text)
         # curve=0.5 (sqrt): a brief 50 Mbps spike no longer squashes everyday sub-Mbps traffic flat -
         # the baseline keeps its detail while the peak still reaches the top of the scale.
         self._spark.set_dual(down_series, up_series, self._up_color, vmax=None,
-                             scale_label=scale_label, curve=0.5)
+                             scale_label=scale_label, curve=0.5, soft_last=soft_last)
         su.set_ui_text(self._sub, sub_text)   # "avg ↓ ... ↑ ...": arrows not in every UI face
         self._sub.setVisible(bool(sub_text))
 

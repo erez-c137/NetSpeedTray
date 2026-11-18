@@ -91,7 +91,7 @@ class _WS:
 def _events(reader, public: bool, key="TIMELINE_24_HOURS"):
     series = {"down": [], "up": [], "cpu": [], "gpu": [], "ram": []}
     kw = {"public_enabled": True} if public else {}
-    _s, _summ, events, _vol, _cov = _read_window(_WS(reader), key, NOW, None, series, 1.0, True, None, **kw)
+    _s, _summ, events, _vol, _cov = _read_window(_WS(reader), key, NOW, None, series, 1.0, True, None, **kw)[:5]
     return events
 
 
