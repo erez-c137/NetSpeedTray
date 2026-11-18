@@ -150,7 +150,8 @@ def _load_subjects(ws, subjects: List[Dict[str, Any]], start: datetime, end: dat
                 lat = constants.network.latency
                 stat = _LOSS_SERIES_FOR[key]
                 outage = S.outage_summary(ws.get_loss_history([stat], start, end).get(stat, []),
-                                          max_gap=lat.OUTAGE_GAP_SLACK_SEC)
+                                          max_gap=lat.OUTAGE_GAP_SLACK_SEC,
+                                          raw_cycle=lat.OUTAGE_CYCLE_SEC)
             except Exception:
                 outage = None
         out.append({"key": key, "label": label, "summ": summ, "pairs": pairs, "loss": loss,

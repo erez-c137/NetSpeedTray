@@ -125,8 +125,11 @@ def test_graphs_still_read_bin_averages_and_loss_rows_are_unbinned(make, which):
     s, e = NOW - timedelta(hours=24), NOW
     assert max(v for _, v in r.hardware_history(GW, s, e)) == pytest.approx(0.05)
     rows = r.loss_history([GW], s, e)[GW]
-    assert len(rows) == 1200 and all(x.span == 1 and x.down is None for x in rows)
-    assert max(x.peak for x in rows) == 1.0
+    assert all(x.span == 1 and x.down is None for x in rows) and max(x.peak for x in rows) == 1.0
+    if which == 1:   # v8 reads only the bad cycle and the clean cycles either side
+        assert [(int(x.ts.timestamp()) - t0, x.peak) for x in rows] == [(597, 0.0), (600, 1.0), (603, 0.0)]
+    else:            # v7 (an upgrade still deferred) reads every cycle
+        assert len(rows) == 1200
 
 
 @BOTH
@@ -191,8 +194,8 @@ def test_the_week_window_joins_a_drop_across_the_raw_minute_boundary(make, which
     r = make(which, hw_minute=mins, **_gw(raw))
     ev = _events(r, public=False, key="TIMELINE_WEEK")
     assert ev["count"] == 1
-    # two minutes estimated (2 x 20 cycles x 3 s, capped at 60 s each) + the raw run's 57 s
-    assert ev["total_down_seconds"] == pytest.approx(120.0 + 57.0)
+    # two minutes estimated (2 x 20 cycles x 3 s, capped at 60 s each) + the raw run's 20 cycles
+    assert ev["total_down_seconds"] == pytest.approx(120.0 + 60.0)
 
 
 @BOTH
@@ -261,7 +264,7 @@ def test_one_outage_seen_by_both_hops_is_counted_once(make, which):
     for key in ("TIMELINE_4_HOURS", "TIMELINE_24_HOURS"):
         ev = _events(r, public=True, key=key)
         assert ev["count"] == 1
-        assert ev["total_down_seconds"] == pytest.approx(118.0)   # [600, 657] u [601, 718]
+        assert ev["total_down_seconds"] == pytest.approx(121.0)   # [600, 660] u [601, 721]
 
 
 # --- cross-hop merge only (review MAJOR 1) ---------------------------------------------------------
@@ -321,3 +324,184 @@ def test_stats_sheet_router_drops_count_a_short_drop_in_24h(make, which):
     t0 = BASE - 20 * 3600
     r = make(which, **_gw(_cycles(t0, 60, drops=[(t0 + 600, t0 + 603)])))
     assert _sheet(r, NOW - timedelta(hours=24), NOW)["count"] == 1
+
+
+# --- native spans: rollups are never re-binned by window length (second review, MAJOR 1) ---------
+
+def _alternating_minutes(t0, n=60):
+    """A bad minute (one lost cycle), a clean minute, a bad minute ... - n minutes."""
+    return [(t0 + i * 60, GW, 0.05 if i % 2 == 0 else 0.0, 1.0 if i % 2 == 0 else 0.0, 20) for i in range(n)]
+
+
+@BOTH
+def test_the_all_window_keeps_minute_rows_at_their_own_span(make, which):
+    """Past 30 days the window bin is an hour: minute rows re-binned to hours chained every bad
+    minute of an hour into one drop (the owner's history: 327 drops read as 10, one of 55 h)."""
+    t0 = BASE - 20 * 86400
+    r = make(which, hw_minute=_alternating_minutes(t0))
+    ev = _sheet(r, NOW - timedelta(days=90), NOW)
+    assert ev["count"] == 30
+    assert ev["total_down_seconds"] == pytest.approx(30 * 3.0)
+
+
+@BOTH
+def test_a_month_window_of_30_days_and_an_hour_reads_like_29_days(make, which):
+    """Naive local 'now - 30 d' spans 30 d + 1 h across a DST change: past the 30-day bin switch."""
+    t0 = BASE - 20 * 86400
+    r = make(which, hw_minute=_alternating_minutes(t0))
+    a = _sheet(r, NOW - timedelta(days=29), NOW)
+    b = _sheet(r, NOW - timedelta(days=30, hours=1), NOW)
+    assert a["count"] == b["count"] == 30
+    assert a["total_down_seconds"] == b["total_down_seconds"]
+
+
+# --- downtime rules (second review: mutation gaps, raw/rollup consistency, cross-hop union) ------
+
+def _lr(sec, peak, down=None, span=1):
+    from netspeedtray.core.db.history_reader import LossRow
+    return LossRow(T0 + timedelta(seconds=sec), float(peak), down, span)
+
+
+@BOTH
+def test_a_rollup_rows_estimate_is_capped_at_its_span(make, which):
+    """21 cycles fit in a minute at a 3 s cadence: 21 x 3 s = 63 s must read as the minute's 60 s."""
+    t0 = BASE - 50 * 3600
+    mins = [(t0 - 60, GW, 0.0, 0.0, 20), (t0, GW, 1.0, 1.0, 21), (t0 + 60, GW, 0.0, 0.0, 20)]
+    r = make(which, hw_minute=mins)
+    rows = r.loss_history([GW], NOW - timedelta(days=7), NOW)[GW]
+    assert [x.down for x in rows] == [0.0, 60.0, 0.0]
+    assert _sheet(r, NOW - timedelta(days=7), NOW)["total_down_seconds"] == pytest.approx(60.0)
+
+
+def test_one_lost_raw_cycle_reads_like_one_rolled_up():
+    """Raw: first bad row to last plus one cycle - one lost cycle is 3 s, as in a rollup row."""
+    raw = [_lr(0, 0), _lr(3, 1), _lr(6, 0)]
+    assert S.outage_summary(raw, max_gap=GAP, raw_cycle=CYCLE)["total_down_seconds"] == 3.0
+    rolled = [_lr(0, 1.0, 3.0, 60)]
+    assert S.outage_summary(rolled, max_gap=GAP, raw_cycle=CYCLE)["total_down_seconds"] == 3.0
+    long = [_lr(0, 0)] + [_lr(3 * i, 1) for i in range(1, 21)] + [_lr(63, 0)]
+    assert S.outage_summary(long, max_gap=GAP, raw_cycle=CYCLE)["total_down_seconds"] == 60.0
+
+
+def test_both_hops_losing_the_same_minute_is_not_counted_twice():
+    gw = [_lr(0, 1.0, 3.0, 60)]
+    anchor = [_lr(0, 1.0, 3.0, 60)]
+    o = S.outage_summary(gw, anchor, max_gap=GAP, hop_join=JOIN, raw_cycle=CYCLE)
+    assert o["count"] == 1 and o["total_down_seconds"] == 3.0
+
+
+def test_a_rollup_run_joined_to_a_later_raw_run_of_the_other_hop_adds_both():
+    """Router lost 3 s in the minute at 0; the internet then lost two raw cycles at 65-68 s (inside
+    the minute's span + the 10 s join): one outage, 3 s + 6 s down - the union, not the larger."""
+    gw = [_lr(0, 1.0, 3.0, 60), _lr(60, 0.0, 0.0, 60)]
+    anchor = [_lr(62, 0), _lr(65, 1), _lr(68, 1), _lr(71, 0)]
+    o = S.outage_summary(gw, anchor, max_gap=GAP, hop_join=JOIN, raw_cycle=CYCLE)
+    assert o["count"] == 1
+    assert o["total_down_seconds"] == pytest.approx(9.0)
+
+
+def test_the_hop_join_includes_its_boundary():
+    """Router run ends at 3 s (1 s span): a drop on the other hop starting exactly at 3 + 1 + 10 s
+    is the same outage; one second later it is not."""
+    gw = [_lr(0, 0), _lr(3, 1), _lr(6, 0)]
+    anchor = [_lr(11, 0), _lr(14, 1), _lr(17, 0)]
+    assert S.outage_summary(gw, anchor, max_gap=GAP, hop_join=JOIN)["count"] == 1
+    late = [_lr(12, 0), _lr(15, 1), _lr(18, 0)]
+    assert S.outage_summary(gw, late, max_gap=GAP, hop_join=JOIN)["count"] == 2
+
+
+# --- the bad-rows read gives exactly the full read's outages (second review, MAJOR 2) ------------
+
+def _full_read(r, stats, start, end):
+    """Reference: EVERY row of every tier at its native span, inside the range that reader's own
+    tier rule gives the tier (v8: watermarks; v7: below each finer tier's earliest in-horizon row)."""
+    from netspeedtray.core.db.history_reader import LossRow, V8HistoryReader, _loss_down_sql
+    from netspeedtray.core.db import schema_v8 as S8
+    st, et = int(start.timestamp()), int(end.timestamp())
+    v8 = isinstance(r, V8HistoryReader)
+    if v8:
+        bounds, tables, ts = r._tier_bounds(r._HW, "h"), r._HW, "ts"
+        key = f"h.metric_id IN (SELECT metric_id FROM {S8.METRICS} WHERE name = ? AND entity = '')"
+    else:
+        bounds, tables, ts = r._bounds(r._HW_TIERS), r._HW_TIERS, "timestamp"
+        key = "h.stat_type = ?"
+    out = {}
+    for stat in stats:
+        rows = []
+        for k, native in enumerate((1, 60, 3600)):
+            peak = "h.value" if k == 0 else "h.max_value"
+            down = "NULL" if k == 0 else _loss_down_sql("h.avg_value", "h.sample_count", native)
+            q = (f"SELECT h.{ts}, {peak}, {down} FROM {tables[k]} h WHERE {key} "
+                 f"AND h.{ts} BETWEEN ? AND ?{bounds[k][0]}")
+            for t, p, d in r._conn().execute(q, (stat, st, et, *bounds[k][1])):
+                rows.append(LossRow(datetime.fromtimestamp(t), float(p), d, native))
+        out[stat] = sorted(rows, key=lambda x: x.ts.timestamp())   # naive times repeat at a DST fall-back
+    return out
+
+
+def _random_history(seed):
+    import random
+    rnd = random.Random(seed)
+    wm_raw, wm_min = BASE - 6 * 3600, BASE - 3 * 86400   # small tiers: the test stays fast
+    raw, mins, hours = [], [], []
+
+    def loss():
+        x = rnd.random()
+        return 1.0 if x < 0.06 else (0.5 if x < 0.08 else (0.25 if x < 0.12 else 0.0))
+
+    for hop in (GW, ANCHOR):
+        t = wm_raw - 900                      # strays below the raw watermark (not rolled up yet)
+        while t < NOW_TS - 5:
+            if rnd.random() < 0.002:
+                t += rnd.randint(60, 4000)    # the app was off
+            raw.append((t + (hop == ANCHOR), hop, loss()))
+            t += CYCLE
+        for m in range(wm_min - 7200, wm_raw + 120, 60):   # incl. strays past each tier's range
+            if rnd.random() < 0.03:
+                continue
+            bad = rnd.random() < 0.15
+            mins.append((m, hop, rnd.random() * 0.1 if bad else 0.0,
+                         1.0 if bad else rnd.choice([0.0, 0.25]), rnd.choice([19, 20, 21])))
+        for h in range(BASE - 80 * 86400, wm_min + 3600, 3600):
+            if rnd.random() < 0.05:
+                continue
+            bad = rnd.random() < 0.3
+            hours.append((h, hop, rnd.random() * 0.05 if bad else 0.0, 1.0 if bad else 0.25, 1200))
+    return dict(hw_raw=raw, hw_minute=mins, hw_hour=hours, wm_raw=wm_raw)
+
+
+def test_a_neighbour_is_looked_up_only_inside_its_tiers_range(make):
+    """A raw row below the raw watermark (rolled up, not deleted yet) is not part of the series:
+    it must not become the clean neighbour that splits a drop running from the last rolled-up
+    minute into the first raw cycle (v8 watermarks; the v7 file has none)."""
+    wm = WM_RAW_DEFAULT
+    mins = [(wm - 120, GW, 0.0, 0.0, 20), (wm - 60, GW, 1.0, 1.0, 20)]
+    raw = [(wm - 3, GW, 0.0), (wm, GW, 1.0), (wm + 3, GW, 0.0)]
+    r = make(1, hw_minute=mins, hw_raw=raw)
+    assert _sheet(r, NOW - timedelta(days=7), NOW)["count"] == 1
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_bad_rows_read_matches_the_full_read(tmp_path, seed):
+    r7, r8, conns = _db(tmp_path, **_random_history(seed))
+    try:
+        windows = [timedelta(hours=2), timedelta(hours=24), timedelta(days=7),
+                   timedelta(days=30, hours=1), timedelta(days=90)]
+        for w in windows:
+            s = NOW - w
+            for stats in ([GW], [GW, ANCHOR]):
+                for r in (r7, r8):
+                    ref = _full_read(r, stats, s, NOW)
+                    want = S.outage_summary(*(ref[x] for x in stats), max_gap=GAP, hop_join=JOIN,
+                                            raw_cycle=CYCLE)
+                    assert want["count"] > 0
+                    got_rows = r.loss_history(stats, s, NOW)
+                    got = S.outage_summary(*(got_rows[x] for x in stats), max_gap=GAP, hop_join=JOIN,
+                                           raw_cycle=CYCLE)
+                    assert (got["count"], got["runs"]) == (want["count"], want["runs"]), (w, stats, r)
+                    assert got["total_down_seconds"] == pytest.approx(want["total_down_seconds"])
+                    if r is r8:   # v8 reads only bad rows + neighbours; v7 reads in full
+                        assert sum(len(v) for v in got_rows.values()) < sum(len(v) for v in ref.values())
+    finally:
+        for c in conns:
+            c.close()

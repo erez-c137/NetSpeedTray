@@ -183,11 +183,19 @@ class HistoryReader(ABC):
     def loss_history(self, stat_types: Sequence[str], start_time: datetime,
                      end_time: datetime) -> Dict[str, List["LossRow"]]:
         """{stat: [LossRow, ...] in time order} for the latency loss series - the input of
-        ``summaries.outage_summary``. One query for every hop asked for. Raw-tier rows come back
-        UNBINNED (one per probe cycle, ``down`` None): binning them by window length chained one short
-        drop per minute into a single "29 min down" outage. Rollup rows are binned to
-        max(their own span, the window's bin) and carry the bin's PEAK (a minute's average hides a
-        one-cycle drop) plus an estimate of the time lost in it (see ``_loss_down_sql``)."""
+        ``summaries.outage_summary``. Every tier at its NATIVE span, never binned by window length:
+        raw rows one per probe cycle (``down`` None), minute rows 60 s, hour rows 3600 s, each with
+        its PEAK (a bin's average hides a one-cycle drop) and, for rollups, an estimate of the time
+        lost in it (``_loss_down_sql``). Binning chained adjacent bad bins into one long outage
+        (60 s bins: "1 drop, 29 min down"; hour bins past 30 days: 327 drops read as 10). History
+        that exists only at hour level (older than ~30 days) can still chain adjacent bad hours -
+        inherent to that tier.
+
+        The v8 reader reads only what ``outage_summary`` can tell apart: the BAD rows (peak >= 0.5)
+        plus, for each, its previous and next row in the same tier (a clean row there ends the run;
+        its timestamp keeps the "nothing recorded" gap split exact). That gives the same outages as
+        reading every row, at a fraction of the cost (most rows are clean). The v7 reader (an upgrade
+        still deferred) reads every row: its tiers can overlap."""
 
     @abstractmethod
     def summarize_hardware(self, stat_type: str, start_time: datetime, end_time: datetime,
@@ -277,17 +285,60 @@ class LossRow(NamedTuple):
     ts: datetime              # the row's (raw) or its bin's (rollup) start
     peak: float               # the worst cycle's lost fraction in it (0-1)
     down: Optional[float]     # rollup bins: estimated seconds lost; raw rows: None (outage_summary
-                              # measures a raw run from its first bad row to its last, as before)
-    span: int                 # seconds the row stands for (1 for raw rows)
+                              # measures a raw run: first bad row to last, plus one cycle)
+    span: int                 # seconds the row stands for (1 raw, 60 minute, 3600 hour)
 
 
 def _loss_down_sql(avg: str, count: str, native: int) -> str:
-    """SQL for a rollup bin's estimated lost time: each row's average loss x its sample count = the
-    cycles lost, at the probe's cadence - capped at the row's own span (rows from before 2.2 counted
-    samples differently). Never the bin's full length: a minute that lost one 3 s cycle was not down
-    for a minute."""
+    """SQL for a rollup row's estimated lost time: its average loss x its sample count = the cycles
+    lost, at the probe's cadence - capped at the row's own span (a minute can hold 21 cycles at a 3 s
+    cadence, and rows from before 2.2 counted samples differently). Never the bin's full length: a
+    minute that lost one 3 s cycle was not down for a minute."""
     cyc = float(constants.network.latency.OUTAGE_CYCLE_SEC)
-    return f"SUM(MIN(COALESCE({avg}, 0) * COALESCE({count}, 1) * {cyc}, {native}))"
+    return f"MIN(COALESCE({avg}, 0) * COALESCE({count}, 1) * {cyc}, {native})"
+
+
+_LOSS_NATIVE_SPANS = (1, 60, 3600)   # raw, minute, hour
+
+
+def _read_loss_rows(cur, stats: Sequence[str], st: int, et: int, tiers) -> Dict[str, List["LossRow"]]:
+    """``loss_history``'s shared core. ``tiers``: per tier (finest first)
+    (table, ts_col, key_col, {stat: key}, lo, hi_exclusive) - lo/hi None = unbounded. One statement
+    per hop per tier: the bad rows inside the tier's range, each with its previous / next row of the
+    same hop and tier (correlated MIN/MAX on the (key, ts) index - never ORDER BY .. LIMIT 1, which
+    measured 486 ms). The neighbour lookup takes ONE range bound so SQLite's MIN/MAX shortcut seeks
+    a single index entry (a second BETWEEN bound made it scan: 650 ms on a month of minutes); a
+    neighbour outside the tier's range is dropped here instead - the range is contiguous, so then
+    the tier has no row on that side inside it."""
+    per: Dict[str, Dict[int, tuple]] = {s_: {} for s_ in stats}
+    neighbours: Dict[str, list] = {s_: [] for s_ in stats}
+    for (table, ts, key_col, keys, lo, hi), native in zip(tiers, _LOSS_NATIVE_SPANS):
+        a = st if lo is None else max(st, int(lo))
+        b = et if hi is None else min(et, int(hi) - 1)
+        if a > b:
+            continue
+        peak = "h.value" if native == 1 else "h.max_value"
+        down = "NULL" if native == 1 else _loss_down_sql("h.avg_value", "h.sample_count", native)
+        nb = (f"(SELECT {{agg}}(n.{ts}) FROM {table} n WHERE n.{key_col} = h.{key_col} "
+              f"AND n.{ts} {{op}} h.{ts})")
+        sql = (f"SELECT h.{ts}, {peak}, {down}, {nb.format(agg='MAX', op='<')}, "
+               f"{nb.format(agg='MIN', op='>')} FROM {table} h "
+               f"WHERE h.{key_col} = ? AND h.{ts} BETWEEN {a} AND {b} AND {peak} >= 0.5")
+        for stat, key in keys.items():
+            for t, pk, dn, prev_ts, next_ts in cur.execute(sql, (key,)).fetchall():
+                per[stat][int(t)] = (float(pk), None if dn is None else float(dn), native)
+                for x in (prev_ts, next_ts):
+                    if x is not None and a <= x <= b:
+                        neighbours[stat].append((int(x), native))
+    out: Dict[str, List[LossRow]] = {}
+    for stat in stats:
+        rows = per[stat]
+        for x, native in neighbours[stat]:
+            if x not in rows:   # a clean row next to a bad one: it ends the run
+                rows[x] = (0.0, None if native == 1 else 0.0, native)
+        out[stat] = [LossRow(datetime.fromtimestamp(t), pk, dn, sp)
+                     for t, (pk, dn, sp) in sorted(rows.items())]
+    return out
 
 
 def hardware_history_bin_seconds(start_ts: int, end_ts: int) -> int:
@@ -954,34 +1005,33 @@ class V7HistoryReader(_ReaderBase):
 
     def loss_history(self, stat_types: Sequence[str], start_time: datetime,
                      end_time: datetime) -> Dict[str, List[LossRow]]:
-        stats = tuple(stat_types)
-        out: Dict[str, List[LossRow]] = {s: [] for s in stats}
+        stats = tuple(dict.fromkeys(stat_types))
         if not stats:
-            return out
+            return {}
+        # The v7 file (an upgrade still deferred) is read in FULL at native spans: its tiers have no
+        # lower bounds, so stray minute rows can overlap the hour tier, and a bad row's same-tier
+        # neighbours would no longer be its neighbours in the merged series. Rare and short-lived.
         st, et = int(start_time.timestamp()), int(end_time.timestamp())
-        interval = hardware_history_bin_seconds(st, et)
         qs = ", ".join("?" * len(stats))
-        _, (min_sql, min_params), (hour_sql, hour_params) = self._bounds(self._HW_TIERS)
-        parts = [f"SELECT stat_type, timestamp, value, NULL, 1 FROM {self._HW_TIERS[0]} "
-                 f"WHERE stat_type IN ({qs}) AND timestamp BETWEEN ? AND ?"]
-        params: List[Any] = [*stats, st, et]
-        for table, native, b_sql, b_params in ((self._HW_TIERS[1], 60, min_sql, min_params),
-                                               (self._HW_TIERS[2], 3600, hour_sql, hour_params)):
-            span = max(native, interval)
-            parts.append(f"SELECT stat_type AS n, {_local_bin_sql('timestamp', span)} AS b, MAX(max_value), "
-                         f"{_loss_down_sql('avg_value', 'sample_count', native)}, {span} FROM {table} "
-                         f"WHERE stat_type IN ({qs}) AND timestamp BETWEEN ? AND ?{b_sql} GROUP BY n, b")
-            params += [*stats, st, et, *b_params]
+        out: Dict[str, List[LossRow]] = {s_: [] for s_ in stats}
         try:
-            rows = self._conn().execute(f"{' UNION ALL '.join(parts)} ORDER BY 1, 2", params).fetchall()
+            cur = self._conn().cursor()
+            for (table, native), (b_sql, b_params) in zip(zip(self._HW_TIERS, _LOSS_NATIVE_SPANS),
+                                                          self._bounds(self._HW_TIERS)):
+                peak = "value" if native == 1 else "max_value"
+                down = "NULL" if native == 1 else _loss_down_sql("avg_value", "sample_count", native)
+                for name, t, pk, dn in cur.execute(
+                        f"SELECT stat_type, timestamp, {peak}, {down} FROM {table} WHERE stat_type IN ({qs}) "
+                        f"AND timestamp BETWEEN ? AND ?{b_sql}", (*stats, st, et, *b_params)):
+                    if pk is not None:
+                        out[name].append(LossRow(datetime.fromtimestamp(t), float(pk),
+                                                 None if dn is None else float(dn), native))
+            for rows in out.values():   # by epoch: naive local times repeat in a DST fall-back hour
+                rows.sort(key=lambda r: r.ts.timestamp())
+            return out
         except Exception as e:
             self._log_read_failure("Error fetching loss history", e)
-            return out
-        for n, b, peak, down, span in rows:
-            if peak is not None and n in out:
-                out[n].append(LossRow(datetime.fromtimestamp(_bin_start(b, int(span))), float(peak),
-                                      None if down is None else float(down), int(span)))
-        return out
+            return {s_: [] for s_ in stats}
 
     def hardware_history(self, stat_type: str, start_time: Optional[datetime] = None,
                          end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:
@@ -1175,8 +1225,10 @@ class V8HistoryReader(_ReaderBase):
                 f"AND value NOT GLOB '*[^0-9]*' AND CAST(value AS INTEGER) BETWEEN 1 AND ?)",
                 (key, now_ts + S8.WATERMARK_MAX_LEAD_SECONDS))
 
-    def _tier_bounds(self, tables: Tuple[str, str, str], alias: str) -> List[Tuple[str, tuple]]:
-        """Per tier (finest first): `` AND ...`` confining ``alias.ts`` to the range that tier answers.
+    def _tier_range_exprs(self, tables: Tuple[str, str, str]) -> List[Tuple[Optional[str], tuple,
+                                                                         Optional[str], tuple]]:
+        """Per tier (finest first): (lower SQL, params, upper-exclusive SQL, params) of the range that
+        tier answers - scalar expressions, None where unbounded.
 
         Lower bound (raw, minute): the tier's own watermark - rows below it were rolled up already.
         Upper bound (minute, hour): every finer tier's ceiling, which is that tier's watermark, or - only
@@ -1190,21 +1242,30 @@ class V8HistoryReader(_ReaderBase):
             return (f"COALESCE({w_sql}, (SELECT MIN(ts) FROM {tables[j]} WHERE ts >= ?), {self._NO_BOUND})",
                     w_p + (horizons[j],))
 
-        out: List[Tuple[str, tuple]] = []
+        out = []
         for k in range(3):
-            parts: List[str] = []
-            params: List[Any] = []
+            lo_sql, lo_p, hi_sql, hi_p = None, (), None, ()
             if k < 2:
                 w_sql, w_p = self._watermark(keys[k], now_ts)
-                parts.append(f"{alias}.ts >= COALESCE({w_sql}, -{self._NO_BOUND})")
-                params += w_p
+                lo_sql, lo_p = f"COALESCE({w_sql}, -{self._NO_BOUND})", tuple(w_p)
             if k > 0:
                 cs = [ceiling(j) for j in range(k)]
-                expr = cs[0][0] if k == 1 else f"MIN({', '.join(c[0] for c in cs)})"
-                parts.append(f"{alias}.ts < {expr}")
-                for c in cs:
-                    params += c[1]
-            out.append(("".join(f" AND {p}" for p in parts), tuple(params)))
+                hi_sql = cs[0][0] if k == 1 else f"MIN({', '.join(c[0] for c in cs)})"
+                hi_p = tuple(x for c in cs for x in c[1])
+            out.append((lo_sql, lo_p, hi_sql, hi_p))
+        return out
+
+    def _tier_bounds(self, tables: Tuple[str, str, str], alias: str) -> List[Tuple[str, tuple]]:
+        """Per tier (finest first): `` AND ...`` confining ``alias.ts`` to the range that tier answers
+        (``_tier_range_exprs``)."""
+        out: List[Tuple[str, tuple]] = []
+        for lo_sql, lo_p, hi_sql, hi_p in self._tier_range_exprs(tables):
+            parts: List[str] = []
+            if lo_sql:
+                parts.append(f"{alias}.ts >= {lo_sql}")
+            if hi_sql:
+                parts.append(f"{alias}.ts < {hi_sql}")
+            out.append(("".join(f" AND {p}" for p in parts), tuple(lo_p) + tuple(hi_p)))
         return out
 
     def _snapshot_call(self, fn, on_error):
@@ -1640,35 +1701,26 @@ class V8HistoryReader(_ReaderBase):
 
     def loss_history(self, stat_types: Sequence[str], start_time: datetime,
                      end_time: datetime) -> Dict[str, List[LossRow]]:
-        stats = tuple(stat_types)
-        out: Dict[str, List[LossRow]] = {s: [] for s in stats}
+        stats = tuple(dict.fromkeys(stat_types))
         if not stats:
-            return out
+            return {}
         st, et = int(start_time.timestamp()), int(end_time.timestamp())
-        interval = hardware_history_bin_seconds(st, et)
-        qs = ", ".join("?" * len(stats))
-        metric = f"h.metric_id IN (SELECT metric_id FROM {S8.METRICS} WHERE name IN ({qs}) AND entity = '')"
-        name = f"(SELECT m.name FROM {S8.METRICS} m WHERE m.metric_id = h.metric_id)"
-        bounds = self._tier_bounds(self._HW, "h")
-        parts = [f"SELECT {name}, h.ts, h.value, NULL, 1 FROM {self._HW[0]} h "
-                 f"WHERE {metric} AND h.ts BETWEEN ? AND ?{bounds[0][0]}"]
-        params: List[Any] = [*stats, st, et, *bounds[0][1]]
-        for k, native in ((1, 60), (2, 3600)):
-            span = max(native, interval)
-            parts.append(f"SELECT {name} AS n, {_local_bin_sql('h.ts', span)} AS b, MAX(h.max_value), "
-                         f"{_loss_down_sql('h.avg_value', 'h.sample_count', native)}, {span} FROM {self._HW[k]} h "
-                         f"WHERE {metric} AND h.ts BETWEEN ? AND ?{bounds[k][0]} GROUP BY n, b")
-            params += [*stats, st, et, *bounds[k][1]]
-        try:
-            rows = self._conn().execute(f"{' UNION ALL '.join(parts)} ORDER BY 1, 2", params).fetchall()
-        except Exception as e:
-            self._log_read_failure("Error fetching loss history", e)
-            return out
-        for n, b, peak, down, span in rows:
-            if peak is not None and n in out:
-                out[n].append(LossRow(datetime.fromtimestamp(_bin_start(b, int(span))), float(peak),
-                                      None if down is None else float(down), int(span)))
-        return out
+        exprs = self._tier_range_exprs(self._HW)
+
+        def run(cur):
+            qs = ", ".join("?" * len(stats))
+            keys = {name: mid for mid, name in cur.execute(
+                f"SELECT metric_id, name FROM {S8.METRICS} WHERE name IN ({qs}) AND entity = ''", stats)}
+            # The tier ranges, evaluated ONCE (the same expressions as _tier_bounds).
+            cols, params = [], []
+            for lo_sql, lo_p, hi_sql, hi_p in exprs:
+                cols += [lo_sql or "NULL", hi_sql or "NULL"]
+                params += [*lo_p, *hi_p]
+            bounds = cur.execute(f"SELECT {', '.join(cols)}", params).fetchone()
+            tiers = [(self._HW[k], "ts", "metric_id", keys, bounds[2 * k], bounds[2 * k + 1]) for k in range(3)]
+            return _read_loss_rows(cur, stats, st, et, tiers)
+
+        return self._snapshot_call(run, lambda: {s_: [] for s_ in stats})
 
     def hardware_history(self, stat_type: str, start_time: Optional[datetime] = None,
                          end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:

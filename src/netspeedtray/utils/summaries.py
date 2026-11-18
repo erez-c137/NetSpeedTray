@@ -20,7 +20,6 @@ from __future__ import annotations
 import math
 import operator
 from dataclasses import dataclass, asdict
-from datetime import timedelta
 from functools import reduce
 from typing import Dict, List, Optional, Sequence
 
@@ -188,14 +187,16 @@ def event_runs(pairs: Sequence, is_bad, max_gap: Optional[float] = None) -> List
     "internet went bad then good" events you'd otherwise only catch live. ``pairs`` is (timestamp,
     value) in time order; ``is_bad`` is a predicate on the value. With ``max_gap`` (seconds), two rows
     further apart than that never share a run: nothing was recorded between them."""
-    return [(r[0], r[1]) for r in _loss_runs(pairs, is_bad, max_gap)]
+    return [(r["start"], r["end"]) for r in _loss_runs(pairs, is_bad, max_gap, 0.0)]
+
+
+def _epoch(ts) -> float:
+    return ts.timestamp() if hasattr(ts, "timestamp") else float(ts)
 
 
 def _seconds_between(a, b) -> float:
     """``b - a`` in seconds, for datetime or epoch-number timestamps."""
-    if hasattr(a, "timestamp") and hasattr(b, "timestamp"):
-        return b.timestamp() - a.timestamp()
-    return float(b) - float(a)
+    return _epoch(b) - _epoch(a)
 
 
 def _row(r) -> tuple:
@@ -207,102 +208,112 @@ def _row(r) -> tuple:
     return r[0], r[1], None, 0
 
 
-def _loss_runs(rows: Sequence, is_bad, max_gap: Optional[float]) -> List[list]:
-    """Runs of bad rows as [start, end, end_span, raw_down_s, est_down_s]. A run breaks on a good row,
-    or where the next row starts more than ``max_gap`` after the previous row's span ended (nothing
-    was recorded in between). Downtime: consecutive raw rows/pairs add the time between them (a run's
-    first bad row to its last, as always); a rollup bin adds its own estimate - never its length."""
-    runs: List[list] = []
+def _loss_runs(rows: Sequence, is_bad, max_gap: Optional[float], raw_cycle: float) -> List[dict]:
+    """Runs of bad rows: {start, end, end_span, down: [(from_s, to_s) epoch intervals]}. A run breaks
+    on a good row, or where the next row starts more than ``max_gap`` after the previous row's span
+    ended (nothing was recorded in between).
+
+    Downtime, as intervals so hops can be unioned: consecutive raw rows / pairs make one segment,
+    first bad row to last plus ``raw_cycle`` (the last row's cycle was lost too - so one lost cycle
+    reads the same 3 s raw as rolled up); a rollup bin adds its estimated lost seconds from the bin's
+    start (where in the bin is unknown) - never the bin's length."""
+    runs: List[dict] = []
     cur = None
-    prev = None   # (ts, span, raw?)
+    seg = None    # the open raw segment [from, to]
+    prev = None   # (epoch ts, span)
     for r in rows:
         ts, v, down, span = _row(r)
-        if (cur is not None and max_gap is not None and prev is not None
-                and _seconds_between(prev[0], ts) > prev[1] + max_gap):
+        t = _epoch(ts)
+        if cur is not None and max_gap is not None and prev is not None and t - prev[0] > prev[1] + max_gap:
             runs.append(cur)
-            cur = None
+            cur = seg = None
         if bool(is_bad(v)):
             if cur is None:
-                cur = [ts, ts, span, 0.0, 0.0]
+                cur = {"start": ts, "end": ts, "end_span": span, "down": []}
+            cur["end"], cur["end_span"] = ts, span
+            if down is None:
+                if seg is None:
+                    seg = [t, t, True]
+                    cur["down"].append(seg)
+                seg[1] = t
             else:
-                if down is None and prev is not None and prev[2]:
-                    cur[3] += max(0.0, _seconds_between(prev[0], ts))
-                cur[1], cur[2] = ts, span
-            if down is not None:
-                cur[4] += max(0.0, float(down))
+                seg = None
+                cur["down"].append([t, t + max(0.0, float(down)), False])
         elif cur is not None:
             runs.append(cur)
-            cur = None
-        prev = (ts, span, down is None)
+            cur = seg = None
+        prev = (t, span)
     if cur is not None:
         runs.append(cur)
+    for run in runs:   # a raw segment's last cycle was lost too
+        run["down"] = [(x[0], x[1] + (raw_cycle if x[2] else 0.0)) for x in run["down"]]
     return runs
 
 
-def outage_summary(timeout_rows: Sequence, *more_series: Sequence,
-                   max_gap: Optional[float] = None, hop_join: float = 0.0) -> Dict[str, object]:
+def outage_summary(timeout_rows: Sequence, *more_series: Sequence, max_gap: Optional[float] = None,
+                   hop_join: float = 0.0, raw_cycle: float = 0.0) -> Dict[str, object]:
     """Connection-drop events from the hop-timeout series. A row >= 0.5 is a drop: half or more of
     that cycle's burst lost (2.2+ rows are the lost fraction, 0-1 in quarter steps), or the single lost
     ping of an older 0/1 row - so one unlucky packet in a burst (0.25) is not an outage. Returns
     {count, last_start, total_down_seconds, runs} - an honest outage log, not a fabricated SLA.
 
     Rows are (ts, value) pairs or loss rows (ts, peak, down, span) from ``loss_history`` - raw cycles
-    unbinned, rollup bins as their PEAK (an average hides a short drop) with an estimated lost time.
+    unbinned, rollup rows at their native span as their PEAK with an estimated lost time.
+
     ``max_gap``: a run also breaks where no row was recorded for longer than that beyond the previous
-    row's span (the app was off - never downtime). ``more_series``: other hops' loss series (the
-    internet anchor beside the router). Each hop's runs are built on its own; a run is merged only
-    with a DIFFERENT hop's run it overlaps or follows within ``hop_join`` seconds of that run's end -
-    the same outage seen on both hops. Runs of one hop are never merged, so adding an empty or clean
-    hop never changes the count."""
+    row's span (the app was off - never downtime). Bare pairs carry no span, so over BINNED pairs
+    (e.g. hour bins) ``max_gap`` must cover a whole bin or it splits every run at each bin - feed
+    loss rows instead (no live caller passes binned pairs).
+
+    ``more_series``: other hops' loss series (the internet anchor beside the router). Each hop's runs
+    are built on its own; a run is merged only with a DIFFERENT hop's run it overlaps or starts within
+    ``hop_join`` seconds of that run's end (+ its last row's span) - the same outage seen on both
+    hops. Runs of one hop are never merged, so adding an empty or clean hop never changes the count.
+    An outage's downtime is the UNION of its runs' down intervals across hops (see ``_loss_runs``;
+    ``raw_cycle`` = the probe's cadence, 0 keeps the old first-to-last measure of pairs)."""
     def bad(v):
         return v is not None and float(v) >= 0.5
 
     tagged = []
     for hop, series in enumerate((timeout_rows,) + tuple(more_series)):
-        for r in _loss_runs(series, bad, max_gap):
-            tagged.append((hop, r))
-    tagged.sort(key=lambda t: t[1][0].timestamp() if hasattr(t[1][0], "timestamp") else float(t[1][0]))
+        for run in _loss_runs(series, bad, max_gap, raw_cycle):
+            tagged.append((hop, run))
+    tagged.sort(key=lambda t: _epoch(t[1]["start"]))
 
     clusters: List[dict] = []
-    for hop, (s, e, e_span, raw_down, est) in tagged:
+    for hop, run in tagged:
+        s = _epoch(run["start"])
         c = clusters[-1] if clusters else None
-        joins = c is not None and any(
-            h != hop and _seconds_between(s, reach) >= 0 for h, reach in c["reach"].items())
+        joins = c is not None and any(h != hop and s <= reach for h, reach in c["reach"].items())
         if not joins:
-            c = {"start": s, "end": e, "reach": {}, "raw": [], "est": {}}
+            c = {"start": run["start"], "end": run["end"], "reach": {}, "down": []}
             clusters.append(c)
-        elif _seconds_between(c["end"], e) > 0:
-            c["end"] = e
-        reach = e + timedelta(seconds=e_span + hop_join) if hasattr(e, "timestamp") \
-            else float(e) + e_span + hop_join
-        old = c["reach"].get(hop)
-        c["reach"][hop] = reach if old is None or _seconds_between(old, reach) > 0 else old
-        if raw_down > 0:
-            c["raw"].append((s, raw_down))
-        c["est"][hop] = c["est"].get(hop, 0.0) + est
+        elif _seconds_between(c["end"], run["end"]) > 0:
+            c["end"] = run["end"]
+        reach = _epoch(run["end"]) + run["end_span"] + hop_join
+        c["reach"][hop] = max(reach, c["reach"].get(hop, reach))
+        c["down"].extend(run["down"])
 
     runs, total = [], 0.0
     for c in clusters:
         runs.append((c["start"], c["end"]))
-        total += _union_seconds(c["raw"]) + max(c["est"].values(), default=0.0)
+        total += _union_seconds(c["down"])
     return {"count": len(runs), "last_start": runs[-1][0] if runs else None,
             "total_down_seconds": total, "runs": runs}
 
 
-def _union_seconds(spans: List[tuple]) -> float:
-    """Length of the union of (start, seconds) spans - one outage seen on two hops counts once."""
-    if not spans:
-        return 0.0
-    base = spans[0][0]
-    iv = sorted((_seconds_between(base, st), _seconds_between(base, st) + d) for st, d in spans)
-    total, cs, ce = 0.0, iv[0][0], iv[0][1]
-    for a, b in iv[1:]:
-        if a > ce:
+def _union_seconds(intervals) -> float:
+    """Length of the union of [from, to] epoch intervals - one outage seen on two hops counts once."""
+    total, cs, ce = 0.0, None, None
+    for a, b in sorted(intervals):
+        if cs is None:
+            cs, ce = a, b
+        elif a > ce:
             total += ce - cs
             cs, ce = a, b
         else:
             ce = max(ce, b)
-    return total + (ce - cs)
+    return total + ((ce - cs) if cs is not None else 0.0)
 
 
 def peak_offpeak(pairs: Sequence) -> Optional[Dict[str, float]]:
