@@ -1098,3 +1098,37 @@ def test_a_modal_dialog_opening_reaches_the_check(qtbot, screen):
     qtbot.waitUntil(lambda: not _shown(n), timeout=2000)
     dlg.close()
     _close(n)
+
+
+def test_a_hover_card_already_open_when_the_tip_is_owed_uses_it_up(qtbot, screen):
+    """VM round 2: the pointer already rested where the widget appeared, so the hover card opened
+    before StartupNotices existed - that hover was never counted, and the tip showed ~32 s later,
+    after the user had already seen what it teaches. An open hover card at start() is the gesture."""
+    from PyQt6.QtWidgets import QWidget
+    w = _widget(dict(DEFAULTS))
+    w._hover_card = QWidget()
+    qtbot.addWidget(w._hover_card)
+    w._hover_card.show()
+    n = ui.StartupNotices(w, version="2.2.2")
+    n.start()
+    assert n._pending is None and not n._timer.isActive()
+    assert w.config["first_run_tip_shown"] is True and w.config["first_run_ever"] is False
+
+
+def test_a_hidden_hover_card_at_start_changes_nothing(qtbot, screen):
+    from PyQt6.QtWidgets import QWidget
+    w = _widget(dict(DEFAULTS))
+    w._hover_card = QWidget()                              # built earlier, not on screen now
+    qtbot.addWidget(w._hover_card)
+    n = ui.StartupNotices(w, version="2.2.2")
+    assert n.start() == TIP and n._pending == TIP
+
+
+def test_an_open_hover_card_never_uses_up_whats_new(qtbot, screen):
+    from PyQt6.QtWidgets import QWidget
+    w = _widget(dict(DEFAULTS, first_run_ever=False, first_run_v2_seen=True, last_seen_version="2.2.1"))
+    w._hover_card = QWidget()
+    qtbot.addWidget(w._hover_card)
+    w._hover_card.show()
+    n = ui.StartupNotices(w, version="2.2.2")
+    assert n.start() == ui.logic.NOTICE_WHATS_NEW and n._pending == ui.logic.NOTICE_WHATS_NEW

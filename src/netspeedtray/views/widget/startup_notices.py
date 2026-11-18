@@ -186,8 +186,21 @@ class StartupNotices(QObject):
         self._pending = plan.notice
         if plan.notice:
             logger.info("One-time notice owed this launch: %s.", plan.notice)
+            if plan.notice == logic.NOTICE_TIP and self._hover_card_open():
+                # VM round 2: the pointer rested where the widget appeared, so the hover card opened
+                # before this object existed and its gesture hook found nobody - the tip then showed
+                # ~30 s later, after the user had seen what it teaches. That hover counts.
+                self.on_gesture()
+                return plan.notice
             self._timer.start(constants.app.STARTUP_NOTICE_DELAY_MS)
         return plan.notice
+
+    def _hover_card_open(self) -> bool:
+        hover = getattr(self._w, "_hover_card", None)
+        try:
+            return bool(_alive(hover) and hover.isVisible())
+        except Exception:
+            return False
 
     def on_widget_shown(self) -> None:
         """The widget became visible: a waiting notice (or a card that stepped aside) gets its moment
