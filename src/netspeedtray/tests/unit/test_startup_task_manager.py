@@ -8,10 +8,11 @@ so Settings reported ON and the app never started. The reporter fixed it by enab
 - Turning it ON in Settings is an explicit request and must clear Task Manager's disable.
 - The launch-time sync must NOT silently undo a Task Manager disable - it only warns.
 
-Real HKCU values under a throwaway app name, removed afterwards.
+winreg is fully faked (fake_winreg.FakeReg): no test touches the real HKCU Run or StartupApproved
+keys. These used real values under a throwaway name; a crash mid-test or a parallel run could leave
+junk there, next to the owner's real NetSpeedTray value.
 """
 import logging
-import os
 import sys
 import winreg
 from unittest.mock import patch
@@ -20,73 +21,33 @@ import pytest
 
 from netspeedtray import constants
 from netspeedtray.core.startup_manager import StartupManager, get_startup_approved_state
+from netspeedtray.tests.unit import fake_winreg
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows registry")
 
 _RUN = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _APPROVED = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
-# One throwaway name per test process: the values live in the user's shared HKCU keys, so parallel
-# workers (pytest -n) and two suites run at once must never set or delete each other's entry.
-_PREFIX = "NST-Test-308-TaskManager-"
-_NAME = f"{_PREFIX}{os.getpid()}"
+_NAME = "NST-Test-308-TaskManager"
 _ENABLED = bytes([2] + [0] * 11)
 _DISABLED = bytes([3, 0, 0, 0, 0x6C, 0x2B, 0x01, 0xAA, 0x8D, 0xCB, 0xDA, 0x01])
+_REG = None
 
 
 def _set(path, name, kind, value):
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as k:
-        winreg.SetValueEx(k, name, 0, kind, value)
+    _REG.store[(path, name)] = (value, kind)
 
 
 def _get(path, name):
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
-            return winreg.QueryValueEx(k, name)[0]
-    except OSError:
-        return None
-
-
-def _delete(path, name):
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as k:
-            winreg.DeleteValue(k, name)
-    except OSError:
-        pass
-
-
-def _sweep_dead_runs_values():
-    """Remove this test's values left by a run that was killed before its cleanup (their pid is gone).
-    Only names with this test's prefix - never the real NetSpeedTray entries, never a live run's."""
-    import psutil
-    for path in (_RUN, _APPROVED):
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
-                names, i = [], 0
-                while True:
-                    try:
-                        names.append(winreg.EnumValue(k, i)[0])
-                    except OSError:
-                        break
-                    i += 1
-        except OSError:
-            continue
-        for name in names:
-            pid = name[len(_PREFIX):]
-            if name.startswith(_PREFIX) and pid.isdigit() and not psutil.pid_exists(int(pid)):
-                _delete(path, name)
+    return _REG.get(path, name)
 
 
 @pytest.fixture
-def mgr():
-    """A StartupManager whose app name is a throwaway, so the real NetSpeedTray entries are untouched."""
-    _sweep_dead_runs_values()
+def mgr(monkeypatch):
+    """A StartupManager over a fake registry (every winreg call goes to a dict)."""
+    global _REG
+    _REG = fake_winreg.install(monkeypatch)
     with patch.object(constants.app, "APP_NAME", _NAME):
-        m = StartupManager()
-        try:
-            yield m
-        finally:
-            _delete(_RUN, _NAME)
-            _delete(_APPROVED, _NAME)
+        yield StartupManager()
 
 
 def _register(m):

@@ -5,41 +5,35 @@ the unflagged control did, even with UAC set to elevate without prompting). Noth
 because the app never starts, so a launch that DID happen must say it, and the support bundle must
 carry the flags.
 
-These use a real HKCU compatibility value for a made-up exe path, removed afterwards.
+winreg is fully faked (fake_winreg.FakeReg): nothing touches the real registry - not the
+compatibility flags, and not the Run or Task Manager StartupApproved keys (the launch sync reads the
+latter, so the owner's real Task Manager state could change these tests' warnings).
 """
 import logging
-import os
 import sys
-import uuid
-import winreg
 from unittest.mock import patch
 
 import pytest
 
 from netspeedtray.core import startup_manager
 from netspeedtray.core.startup_manager import StartupManager, get_compat_layers
+from netspeedtray.tests.unit import fake_winreg
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows registry")
 
-_LAYERS = r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"
+_LAYERS = startup_manager._COMPAT_LAYERS_KEY
+_FLAGGED = r"C:\nst-test-308\flagged\NetSpeedTray.exe"
+
+
+@pytest.fixture(autouse=True)
+def fake_registry(monkeypatch):
+    return fake_winreg.install(monkeypatch)
 
 
 @pytest.fixture
-def flagged_exe():
-    # A made-up exe path unique to this process and test: the value lives in the shared HKCU key, so
-    # two suites running at once (parallel workers, an agent's run next to safe-merge) never set or
-    # delete each other's value. Only this AppCompatFlags\Layers value is touched - never the Run key.
-    fake_exe = rf"C:\nst-test-308-{os.getpid()}-{uuid.uuid4().hex[:8]}\NetSpeedTray.exe"
-    key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, _LAYERS)
-    try:
-        winreg.SetValueEx(key, fake_exe, 0, winreg.REG_SZ, "~ RUNASADMIN")
-    finally:
-        winreg.CloseKey(key)
-    try:
-        yield fake_exe
-    finally:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _LAYERS, 0, winreg.KEY_SET_VALUE) as key:
-            winreg.DeleteValue(key, fake_exe)
+def flagged_exe(fake_registry):
+    fake_registry.store[(_LAYERS, _FLAGGED)] = ("~ RUNASADMIN", 1)
+    return _FLAGGED
 
 
 def test_reads_the_run_as_admin_flag(flagged_exe):
