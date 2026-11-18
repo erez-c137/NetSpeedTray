@@ -636,7 +636,18 @@
     "ACCENT_TASKBAR_COLORS_NOTE": "작업 표시줄에 강조 색이 표시되어 있어서, 그 위에서 읽기 어려운 색은 읽기 쉬운 텍스트 색으로 그려집니다.",
     "RUNNING_PANEL_VERSION": "버전 {version}",
     "RUNNING_PANEL_RUNNING": "작업 표시줄에서 실행 중",
-    "RUNNING_PANEL_HINT": "작업 표시줄의 속도에 마우스를 올리면 자세한 정보를, 마우스 오른쪽 버튼으로 클릭하면 메뉴를 볼 수 있습니다.",
+    "RUNNING_PANEL_HINT": "자세한 내용은 작업 표시줄의 속도를 가리키세요. 더 많은 옵션은 마우스 오른쪽 버튼을 클릭하세요.",
     "RUNNING_PANEL_CHECK_UPDATES": "업데이트 확인",
-    "RUNNING_PANEL_QUIT": "NetSpeedTray 종료"
+    "RUNNING_PANEL_QUIT": "NetSpeedTray 종료",
+    "RUNNING_PANEL_CHECKING": "확인 중…",
+    "RUNNING_PANEL_UP_TO_DATE": "최신 버전입니다",
+    "RUNNING_PANEL_CHECK_FAILED": "업데이트를 확인할 수 없습니다",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} 사용 가능",
+    "RUNNING_PANEL_UPDATE_NOW": "업데이트",
+    "RUNNING_PANEL_BETA": "베타",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "실행 중 - 전체 화면 앱이 열려 있는 동안 숨겨짐",
+    "RUNNING_PANEL_HIDDEN_YIELD": "실행 중 - 작업 표시줄 앱 단추를 위해 비켜 있음",
+    "RUNNING_PANEL_HIDDEN": "실행 중 - 위젯이 지금 숨겨져 있음",
+    "RUNNING_PANEL_PAUSED_LINE": "속도가 일시정지되었습니다.",
+    "RUNNING_PANEL_QUIT_TIP": "NetSpeedTray를 종료합니다. 로그인하면 다시 시작됩니다."
 }

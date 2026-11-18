@@ -25,6 +25,9 @@ def _signed_in_long_ago(monkeypatch):
     """The sign-in verdict reads the REAL session: a test run within minutes of signing in would flip
     wParam. Pin it to "long ago" (tests of the verdict itself override this)."""
     monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 10_000.0)
+    # 2.2.2 D3: however pytest itself was started, no shortcut and no launch-monitor hint here.
+    monkeypatch.setattr(sc, "_startup_link_name", lambda: None)
+    monkeypatch.setattr(sc, "_startup_monitor_center", lambda: None)
 
 
 def _fake_desktop(monkeypatch, windows, own_pid=999):
@@ -230,7 +233,7 @@ def test_widget_routes_the_activate_message(monkeypatch):
                                  show_from_second_launch=MagicMock(), show_running_panel=MagicMock(),
                                  _app_is_quitting=MagicMock(return_value=False))
     # 2.2.2 D3: the message goes through handle_activate_request (step 1 = this, step 2 = the panel).
-    fake.handle_activate_request = lambda w: NetworkSpeedWidget.handle_activate_request(fake, w)
+    fake.handle_activate_request = lambda w, l=0: NetworkSpeedWidget.handle_activate_request(fake, w, l)
     _ref, addr = _msg(sc.activate_message_id())
     assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", addr) == (True, 0)
     assert len(scheduled) == 1

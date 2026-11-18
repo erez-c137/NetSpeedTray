@@ -636,7 +636,18 @@
     "ACCENT_TASKBAR_COLORS_NOTE": "Tu barra de tareas muestra un color de énfasis, así que los colores difíciles de leer sobre ella se dibujan en un color de texto legible.",
     "RUNNING_PANEL_VERSION": "Versión {version}",
     "RUNNING_PANEL_RUNNING": "Ejecutándose en la barra de tareas",
-    "RUNNING_PANEL_HINT": "Pasa el ratón sobre las velocidades de la barra de tareas para ver detalles, o haz clic derecho en ellas para abrir el menú.",
+    "RUNNING_PANEL_HINT": "Señala las velocidades de la barra de tareas para ver detalles. Haz clic derecho para más opciones.",
     "RUNNING_PANEL_CHECK_UPDATES": "Buscar actualizaciones",
-    "RUNNING_PANEL_QUIT": "Salir de NetSpeedTray"
+    "RUNNING_PANEL_QUIT": "Salir de NetSpeedTray",
+    "RUNNING_PANEL_CHECKING": "Comprobando…",
+    "RUNNING_PANEL_UP_TO_DATE": "Está actualizado",
+    "RUNNING_PANEL_CHECK_FAILED": "No se pudo buscar actualizaciones",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} está disponible",
+    "RUNNING_PANEL_UPDATE_NOW": "Actualizar",
+    "RUNNING_PANEL_BETA": "Beta",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "En ejecución - oculto mientras hay una app a pantalla completa",
+    "RUNNING_PANEL_HIDDEN_YIELD": "En ejecución - apartado para los botones de apps de la barra de tareas",
+    "RUNNING_PANEL_HIDDEN": "En ejecución - el widget está oculto ahora",
+    "RUNNING_PANEL_PAUSED_LINE": "Las velocidades están en pausa.",
+    "RUNNING_PANEL_QUIT_TIP": "Cierra NetSpeedTray. Se vuelve a iniciar al iniciar sesión."
 }

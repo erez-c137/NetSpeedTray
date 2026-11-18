@@ -636,7 +636,18 @@
     "ACCENT_TASKBAR_COLORS_NOTE": "Deine Taskleiste zeigt eine Akzentfarbe. Farben, die darauf schwer lesbar sind, werden deshalb in einer gut lesbaren Textfarbe dargestellt.",
     "RUNNING_PANEL_VERSION": "Version {version}",
     "RUNNING_PANEL_RUNNING": "Läuft in deiner Taskleiste",
-    "RUNNING_PANEL_HINT": "Zeige auf die Geschwindigkeiten in der Taskleiste für Details, oder klicke sie mit der rechten Maustaste an für das Menü.",
+    "RUNNING_PANEL_HINT": "Zeige auf die Geschwindigkeiten in der Taskleiste für Details. Rechtsklick für mehr Optionen.",
     "RUNNING_PANEL_CHECK_UPDATES": "Nach Updates suchen",
-    "RUNNING_PANEL_QUIT": "NetSpeedTray beenden"
+    "RUNNING_PANEL_QUIT": "NetSpeedTray beenden",
+    "RUNNING_PANEL_CHECKING": "Wird geprüft…",
+    "RUNNING_PANEL_UP_TO_DATE": "Du bist auf dem neuesten Stand",
+    "RUNNING_PANEL_CHECK_FAILED": "Suche nach Updates fehlgeschlagen",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} ist verfügbar",
+    "RUNNING_PANEL_UPDATE_NOW": "Aktualisieren",
+    "RUNNING_PANEL_BETA": "Beta",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "Läuft - ausgeblendet, solange eine Vollbild-App offen ist",
+    "RUNNING_PANEL_HIDDEN_YIELD": "Läuft - weicht den App-Schaltflächen der Taskleiste aus",
+    "RUNNING_PANEL_HIDDEN": "Läuft - das Widget ist gerade ausgeblendet",
+    "RUNNING_PANEL_PAUSED_LINE": "Die Geschwindigkeiten sind pausiert.",
+    "RUNNING_PANEL_QUIT_TIP": "Beendet NetSpeedTray. Bei der nächsten Anmeldung startet es wieder."
 }

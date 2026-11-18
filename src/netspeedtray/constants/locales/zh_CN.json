@@ -637,7 +637,18 @@
     "ACCENT_TASKBAR_COLORS_NOTE": "你的任务栏显示了主题色，因此在其上难以看清的颜色会以易读的文字颜色绘制。",
     "RUNNING_PANEL_VERSION": "版本 {version}",
     "RUNNING_PANEL_RUNNING": "正在任务栏中运行",
-    "RUNNING_PANEL_HINT": "将鼠标悬停在任务栏上的速度上可查看详情，右键单击可打开菜单。",
+    "RUNNING_PANEL_HINT": "将指针指向任务栏上的速度可查看详情。右键单击可查看更多选项。",
     "RUNNING_PANEL_CHECK_UPDATES": "检查更新",
-    "RUNNING_PANEL_QUIT": "退出 NetSpeedTray"
+    "RUNNING_PANEL_QUIT": "退出 NetSpeedTray",
+    "RUNNING_PANEL_CHECKING": "正在检查…",
+    "RUNNING_PANEL_UP_TO_DATE": "已是最新版本",
+    "RUNNING_PANEL_CHECK_FAILED": "无法检查更新",
+    "RUNNING_PANEL_UPDATE_AVAILABLE": "{version} 可用",
+    "RUNNING_PANEL_UPDATE_NOW": "更新",
+    "RUNNING_PANEL_BETA": "测试版",
+    "RUNNING_PANEL_HIDDEN_FULLSCREEN": "正在运行 - 全屏应用打开时隐藏",
+    "RUNNING_PANEL_HIDDEN_YIELD": "正在运行 - 已为任务栏应用按钮让位",
+    "RUNNING_PANEL_HIDDEN": "正在运行 - 小组件当前已隐藏",
+    "RUNNING_PANEL_PAUSED_LINE": "速度已暂停。",
+    "RUNNING_PANEL_QUIT_TIP": "退出 NetSpeedTray。下次登录时会再次启动。"
 }

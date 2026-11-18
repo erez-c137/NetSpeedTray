@@ -3,16 +3,17 @@
 panel (step 2), after the existing widget recovery (step 1). This file pins who counts as the user:
 
 - the SECOND process decides and says so in the activate message's wParam (shutdown_channel):
-  an updater relaunch (``--relaunch``) -> ACTIVATE_WPARAM_RELAUNCH; a launch from a shortcut that is
-  not in a Startup folder (Start menu, taskbar pin, desktop) -> ACTIVATE_WPARAM_USER, even right after
-  sign-in; otherwise the #373 sign-in rule -> ACTIVATE_WPARAM_SIGN_IN_DUPLICATE or USER;
+  an updater relaunch (``--relaunch``) -> ACTIVATE_WPARAM_RELAUNCH; a launch from a shortcut to
+  NetSpeedTray that is not in exactly the user's / all-users Startup folder (Start menu, taskbar pin,
+  desktop) -> ACTIVATE_WPARAM_USER, even right after sign-in; otherwise the #373 sign-in rule ->
+  ACTIVATE_WPARAM_SIGN_IN_DUPLICATE or USER;
 - before posting a USER request it calls AllowSetForegroundWindow(<running pid>), or Windows keeps
-  the panel behind the window the user was in;
-- the running widget does step 1 for every kind and opens the panel only for a user request.
+  the panel behind the window the user was in, and sends the launch monitor in lParam;
+- the running widget does step 1 for every kind and opens the panel only for wParam USER.
 """
 import ctypes
 import types
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,12 +21,15 @@ from netspeedtray import constants
 from netspeedtray.core import shutdown_channel as sc
 
 APP = constants.app
+USER_STARTUP = r"C:\Users\Bob\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+COMMON_STARTUP = r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+NST_EXE = r"C:\Program Files\NetSpeedTray\NetSpeedTray.exe"
 
 
 @pytest.fixture(autouse=True)
 def _quiet_desktop(monkeypatch):
-    """One running instance (hwnd 0x20, pid 200) of this user; signed in long ago; no .lnk; no real
-    AllowSetForegroundWindow."""
+    """One running instance (hwnd 0x20, pid 200) of this user; signed in long ago; no .lnk; no monitor
+    hint; shortcuts point at NetSpeedTray; no real AllowSetForegroundWindow."""
     monkeypatch.setattr(sc, "_enum_top_level_windows", lambda: [0x20])
     monkeypatch.setattr(sc, "_has_target_prop", lambda hwnd: True)
     monkeypatch.setattr(sc, "_window_pid", lambda hwnd: 200)
@@ -33,8 +37,9 @@ def _quiet_desktop(monkeypatch):
     monkeypatch.setattr(sc, "_other_user_pids", lambda: set())
     monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 10_000.0)
     monkeypatch.setattr(sc, "_startup_link_name", lambda: None)
-    monkeypatch.setattr(sc, "_startup_folders", lambda: [r"C:\Users\Bob\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup",
-                                                         r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"])
+    monkeypatch.setattr(sc, "_startup_monitor_center", lambda: None)
+    monkeypatch.setattr(sc, "_link_target", lambda link: NST_EXE)
+    monkeypatch.setattr(sc, "_startup_folders", lambda: [USER_STARTUP, COMMON_STARTUP])
 
 
 @pytest.fixture
@@ -42,7 +47,12 @@ def wire(monkeypatch):
     """Records AllowSetForegroundWindow and PostMessage calls, in order."""
     events = []
     monkeypatch.setattr(sc, "_allow_foreground", lambda pid: events.append(("allow", pid)) or True)
-    monkeypatch.setattr(sc, "_post", lambda hwnd, msg, wparam=0: events.append(("post", hwnd, wparam)) or True)
+
+    def post(hwnd, msg, wparam=0, lparam=None):
+        events.append(("post", hwnd, wparam) if lparam is None else ("post", hwnd, wparam, lparam))
+        return True
+
+    monkeypatch.setattr(sc, "_post", post)
     return events
 
 
@@ -68,8 +78,8 @@ def test_a_duplicate_start_at_sign_in_posts_the_flag_and_allows_nothing(monkeypa
 
 
 def test_a_start_menu_launch_right_after_sign_in_is_still_the_user(monkeypatch, wire):
-    """The #373 rule must never swallow an explicit launch: a shortcut outside the Startup folders
-    (Start menu, taskbar pin, desktop) is the user even inside the sign-in window."""
+    """The #373 rule must never swallow an explicit launch: a shortcut to NetSpeedTray outside the
+    Startup folders (Start menu, taskbar pin, desktop) is the user even inside the sign-in window."""
     monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 15.0)
     monkeypatch.setattr(sc, "_startup_link_name", lambda: (
         r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\NetSpeedTray.lnk"))
@@ -78,9 +88,8 @@ def test_a_start_menu_launch_right_after_sign_in_is_still_the_user(monkeypatch, 
 
 
 @pytest.mark.parametrize("link", [
-    r"C:\Users\Bob\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\NetSpeedTray.lnk",
-    r"c:\programdata\microsoft\windows\start menu\programs\startup\NetSpeedTray.lnk",   # any case
-    r"D:\Roaming\Elsewhere\Startup\NetSpeedTray.lnk",   # folder lookup failed: the name still counts
+    USER_STARTUP + r"\NetSpeedTray.lnk",
+    COMMON_STARTUP.lower() + r"\NetSpeedTray.lnk",   # any case
 ])
 def test_a_startup_folder_shortcut_at_sign_in_is_a_duplicate(monkeypatch, wire, link):
     monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 15.0)
@@ -89,12 +98,44 @@ def test_a_startup_folder_shortcut_at_sign_in_is_a_duplicate(monkeypatch, wire, 
     assert wire == [("post", 0x20, APP.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE)]
 
 
+def test_a_folder_merely_named_startup_is_not_an_autostart(monkeypatch, wire):
+    """Only exactly FOLDERID_Startup / FOLDERID_CommonStartup count - not any folder called Startup."""
+    monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 15.0)
+    monkeypatch.setattr(sc, "_startup_link_name", lambda: r"D:\Tools\Startup\NetSpeedTray.lnk")
+    assert sc.request_activate(argv=[]) is True
+    assert wire == [("allow", 200), ("post", 0x20, APP.ACTIVATE_WPARAM_USER)]
+
+
+@pytest.mark.parametrize("target,user", [
+    (NST_EXE, True),
+    (r"D:\Portable\NetSpeedTray\netspeedtray.exe", True),        # any case, any copy
+    (r"C:\Tools\launcher.exe", False),                           # someone else's shortcut
+    (None, False),                                               # an unreadable .lnk
+])
+def test_the_shortcut_must_start_netspeedtray(monkeypatch, wire, target, user):
+    monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 15.0)
+    monkeypatch.setattr(sc, "_startup_link_name", lambda: r"C:\Somewhere\Thing.lnk")
+    monkeypatch.setattr(sc, "_link_target", lambda link: target)
+    assert sc.request_activate(argv=[]) is True
+    want = APP.ACTIVATE_WPARAM_USER if user else APP.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE
+    assert wire[-1] == ("post", 0x20, want)
+
+
+def test_unreadable_startup_folders_never_make_a_user_launch(monkeypatch, wire):
+    monkeypatch.setattr(sc, "_session_seconds_since_logon", lambda: 15.0)
+    monkeypatch.setattr(sc, "_startup_link_name", lambda: r"C:\Somewhere\NetSpeedTray.lnk")
+    monkeypatch.setattr(sc, "_startup_folders", lambda: [])
+    assert sc.request_activate(argv=[]) is True
+    assert wire == [("post", 0x20, APP.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE)]
+
+
 def test_an_updater_relaunch_brings_the_widget_back_without_the_panel(monkeypatch, wire):
     """Normally the old instance is gone before the updater relaunches; if it is not, the relaunch is
     still not the user asking for a window."""
     monkeypatch.setattr(sc, "_startup_link_name", lambda: r"C:\Somewhere\NetSpeedTray.lnk")
+    monkeypatch.setattr(sc, "_startup_monitor_center", lambda: (2880, 540))
     assert sc.request_activate(argv=[sc.RELAUNCH_FLAG]) is True
-    assert wire == [("post", 0x20, APP.ACTIVATE_WPARAM_RELAUNCH)]
+    assert wire == [("post", 0x20, APP.ACTIVATE_WPARAM_RELAUNCH)]   # no allow, no monitor hint
 
 
 def test_request_activate_reads_the_process_argv_by_default(monkeypatch, wire):
@@ -106,9 +147,21 @@ def test_request_activate_reads_the_process_argv_by_default(monkeypatch, wire):
 def test_a_failed_allow_still_posts(monkeypatch):
     posts = []
     monkeypatch.setattr(sc, "_allow_foreground", MagicMock(side_effect=OSError("denied")))
-    monkeypatch.setattr(sc, "_post", lambda hwnd, msg, wparam=0: posts.append(wparam) or True)
+    monkeypatch.setattr(sc, "_post", lambda hwnd, msg, wparam=0, lparam=0: posts.append(wparam) or True)
     assert sc.request_activate(argv=[]) is True
     assert posts == [APP.ACTIVATE_WPARAM_USER]
+
+
+def test_a_user_launch_carries_the_launch_monitor_in_lparam(monkeypatch, wire):
+    monkeypatch.setattr(sc, "_startup_monitor_center", lambda: (2880, 540))
+    assert sc.request_activate(argv=[]) is True
+    assert wire == [("allow", 200), ("post", 0x20, APP.ACTIVATE_WPARAM_USER, sc.pack_point(2880, 540))]
+
+
+@pytest.mark.parametrize("pt", [(960, 540), (-960, 540), (2880, -300), (1, 1), (-32768, 32767)])
+def test_point_packing_round_trips(pt):
+    assert sc.unpack_point(sc.pack_point(*pt)) == pt
+    assert sc.unpack_point(0) is None
 
 
 def test_wparam_values_are_distinct_and_the_old_ones_unchanged():
@@ -125,12 +178,30 @@ def test_allow_foreground_calls_user32_with_the_pid(monkeypatch):
     fake.assert_called_once_with(4321)
 
 
+# --- the real Win32/COM reads (read-only) ----------------------------------------------------------
+
 def test_the_real_startup_info_reads_without_error():
-    """Read-only: whatever started pytest, the lookups return a str or None and never raise."""
-    link = sc._startup_link_name()
-    assert link is None or isinstance(link, str)
+    """Whatever started pytest, the STARTUPINFO read works (the autouse fixture patches only the
+    functions built on it)."""
+    si = sc._startup_info()
+    assert si.cb == ctypes.sizeof(sc._STARTUPINFOW)
+
+
+def test_the_real_known_startup_folders_and_link_reader(tmp_path, monkeypatch):
+    monkeypatch.undo()   # the real functions
     folders = sc._startup_folders()
-    assert isinstance(folders, list) and all(isinstance(f, str) for f in folders)
+    assert len(folders) == 2 and all(f.lower().endswith("startup") for f in folders)
+    assert sc._link_target(str(tmp_path / "missing.lnk")) is None
+    center = sc._startup_monitor_center()
+    assert center is None or (isinstance(center, tuple) and len(center) == 2)
+
+
+def test_the_real_monitor_lookup_names_a_display():
+    user32 = ctypes.windll.user32
+    w, h = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+    name = sc.monitor_device_at(w // 2, h // 2)
+    assert name is None or "DISPLAY" in name.upper()
+    assert sc.monitor_device_at(-30000, -30000) is None
 
 
 # --- the updater's relaunch says what it is ---------------------------------------------------------
@@ -147,27 +218,28 @@ def test_the_updater_relaunch_passes_the_relaunch_flag(monkeypatch, tmp_path):
 
 # --- the receiver: nativeEvent -> handle_activate_request -> step 1, then the panel -------------------
 
-def _msg(message: int, wparam: int = 0):
+def _msg(message: int, wparam: int = 0, lparam: int = 0):
     from netspeedtray.views.widget.main import _NativeMSG
     m = _NativeMSG()
     m.message = message
     m.wParam = wparam
+    m.lParam = lparam
     return m, ctypes.addressof(m)
 
 
-@pytest.mark.parametrize("wparam", [0, 1, 2, 7])
-def test_native_event_hands_the_wparam_to_the_activate_handler(monkeypatch, wparam):
+@pytest.mark.parametrize("wparam,lparam", [(0, 0), (1, 0), (2, 0), (7, 0), (0, 0x021C0B40)])
+def test_native_event_hands_wparam_and_lparam_to_the_activate_handler(monkeypatch, wparam, lparam):
     from netspeedtray.views.widget.main import NetworkSpeedWidget
     scheduled = []
     monkeypatch.setattr("netspeedtray.views.widget.main.QTimer.singleShot",
                         lambda _ms, fn: scheduled.append(fn))
     fake = types.SimpleNamespace(logger=MagicMock(), fully_exit_application=MagicMock(),
                                  handle_activate_request=MagicMock())
-    ref, addr = _msg(sc.activate_message_id(), wparam)
+    _ref, addr = _msg(sc.activate_message_id(), wparam, lparam)
     assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", addr) == (True, 0)
     assert len(scheduled) == 1
     scheduled[0]()
-    fake.handle_activate_request.assert_called_once_with(wparam)
+    fake.handle_activate_request.assert_called_once_with(wparam, lparam)
 
 
 def _receiver(quitting=False):
@@ -175,7 +247,7 @@ def _receiver(quitting=False):
     fake = types.SimpleNamespace(
         logger=MagicMock(),
         show_from_second_launch=MagicMock(side_effect=lambda **kw: order.append(("step1", kw))),
-        show_running_panel=MagicMock(side_effect=lambda: order.append(("panel",))),
+        show_running_panel=MagicMock(side_effect=lambda lparam=0: order.append(("panel", lparam))),
         _app_is_quitting=MagicMock(return_value=quitting))
     return fake, order
 
@@ -184,15 +256,15 @@ def _receiver(quitting=False):
     (APP.ACTIVATE_WPARAM_USER, False, True),
     (APP.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE, True, False),
     (APP.ACTIVATE_WPARAM_RELAUNCH, False, False),
-    (7, False, True),    # a newer build's request this one doesn't know: still the user asking
+    (7, False, False),   # a value this build doesn't know: step 1 only
 ])
 def test_activate_request_routing(wparam, step1_dup, panel):
     from netspeedtray.views.widget.main import NetworkSpeedWidget
     fake, order = _receiver()
-    NetworkSpeedWidget.handle_activate_request(fake, wparam)
+    NetworkSpeedWidget.handle_activate_request(fake, wparam, 1234)
     expected = [("step1", {"sign_in_duplicate": step1_dup})]
     if panel:
-        expected.append(("panel",))
+        expected.append(("panel", 1234))     # the launch monitor goes along
     assert order == expected
 
 
@@ -208,4 +280,4 @@ def test_a_failing_step_one_still_opens_the_panel():
     fake, order = _receiver()
     fake.show_from_second_launch.side_effect = RuntimeError("boom")
     NetworkSpeedWidget.handle_activate_request(fake, APP.ACTIVATE_WPARAM_USER)
-    assert order == [("panel",)]
+    assert order == [("panel", 0)]
