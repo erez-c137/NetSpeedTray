@@ -457,6 +457,28 @@ class SourceOutage:
             self.logger.debug("Hardware monitor: lost %s again (%s).", self.what, reason)
 
 
+def lhm_process_running() -> bool:
+    """True when a LibreHardwareMonitor process runs in this Windows session or any other (2.2.2 D6).
+
+    By image name through psutil (``constants.lhm.PROCESS_NAMES``): a local process list, no network
+    and no admin rights. LHM usually runs elevated; Windows still gives a standard user its image name
+    (PROCESS_QUERY_LIMITED_INFORMATION). A process whose name can't be read is skipped. Never raises:
+    an error is "not seen", which only means the notice it feeds stays hidden."""
+    try:
+        import psutil
+        names = constants.lhm.PROCESS_NAMES
+        for proc in psutil.process_iter(["name"]):
+            try:
+                name = (proc.info or {}).get("name")
+            except Exception:
+                continue
+            if name and str(name).casefold() in names:
+                return True
+    except Exception as e:
+        logger.debug("LibreHardwareMonitor process check failed: %s", e)
+    return False
+
+
 class LhmHttpClient:
     """Small client with a per-poll cache and a quiet failure backoff.
 
@@ -465,6 +487,11 @@ class LhmHttpClient:
     Optional HTTP Basic credentials (LHM's Options > Remote Web Server > Authentication) are sent only
     when ``host`` is loopback (``constants.lhm.AUTH_ALLOWED_HOSTS``), and are never logged. ``status``
     says what the last attempt found (``constants.lhm.STATUS_*``) for Settings > Hardware.
+
+    After an attempt that found nothing listening (``STATUS_NOT_FOUND``), ``process_probe`` (default
+    ``lhm_process_running``) says whether LibreHardwareMonitor itself is running: ``process_running``
+    is then True / False - None while unknown (no such failure yet, a success, or reconfigured). It runs
+    at the probe's own cadence, once per failed attempt - so once per backoff window - never per poll.
     """
 
     def __init__(
@@ -479,6 +506,7 @@ class LhmHttpClient:
         max_response_bytes: int = constants.lhm.MAX_RESPONSE_BYTES,
         username: str = "",
         password: str = "",
+        process_probe: Optional[Callable[[], bool]] = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -495,7 +523,15 @@ class LhmHttpClient:
         self._retry_after = 0.0
         self._last_failure: Optional[str] = None
         self.status: str = constants.lhm.STATUS_UNKNOWN
+        self._process_probe: Callable[[], bool] = process_probe or lhm_process_running
+        self.process_running: Optional[bool] = None
         self._outage = SourceOutage(logger, "the LibreHardwareMonitor web server")
+
+    @property
+    def server_off(self) -> bool:
+        """Nothing answers on the port, but LibreHardwareMonitor is running: its web server is off
+        (or on another port). Settings > Hardware explains how to turn it on (2.2.2 D6)."""
+        return self.status == constants.lhm.STATUS_NOT_FOUND and self.process_running is True
 
     @property
     def url(self) -> str:
@@ -518,6 +554,7 @@ class LhmHttpClient:
         self._cached = None
         self._retry_after = 0.0
         self.status = constants.lhm.STATUS_UNKNOWN
+        self.process_running = None
         # Another endpoint: its first good read is a "reading ... at <url>" line, not a recovery.
         self._outage = SourceOutage(logger, "the LibreHardwareMonitor web server")
 
@@ -570,6 +607,7 @@ class LhmHttpClient:
             self._retry_after = now + self.failure_backoff_seconds
             self._cached = None
             self.status = self._status_for(e)
+            self._check_process()
             # Port in the key: moving to another port that fails the same way is a new line in the log.
             reason = f"{type(e).__name__}: {e} ({self.status}, port {self.port})"
             if reason != self._last_failure:
@@ -586,7 +624,20 @@ class LhmHttpClient:
         self._cached_at = now
         self._retry_after = 0.0
         self.status = constants.lhm.STATUS_OK
+        self.process_running = None
         return snapshot
+
+    def _check_process(self) -> None:
+        """After a failed attempt: is LHM running at all? Only when nothing answered - an endpoint that
+        answers (401, not LHM) says more than the process list can. Never raises."""
+        if self.status != constants.lhm.STATUS_NOT_FOUND:
+            self.process_running = None
+            return
+        try:
+            self.process_running = bool(self._process_probe())
+        except Exception as e:
+            logger.debug("LibreHardwareMonitor process check failed: %s", e)
+            self.process_running = None
 
     def _status_for(self, e: BaseException) -> str:
         L = constants.lhm

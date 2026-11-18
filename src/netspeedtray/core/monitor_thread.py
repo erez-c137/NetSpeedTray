@@ -510,8 +510,17 @@ class StatsMonitorThread(QThread):
 
     @property
     def lhm_status(self) -> str:
-        """The LHM web-server client's last result (constants.lhm.STATUS_*), for Settings > Hardware."""
-        return self._lhm_http.status
+        """The LHM web-server client's last result (constants.lhm.STATUS_*), for Settings > Hardware.
+
+        ``STATUS_SERVER_OFF`` (2.2.2 D6) when nothing answered but LibreHardwareMonitor is running and
+        no LHM/OHM WMI source reads either: LHM v0.9.5+ needs its Remote Web Server turned on. A
+        v0.9.4 (or OpenHardwareMonitor) read over WMI needs no web server, so it never shows."""
+        client = self._lhm_http
+        status = client.status
+        if (status == constants.lhm.STATUS_NOT_FOUND and getattr(client, "process_running", None) is True
+                and self._wmi_ohm is None):
+            return constants.lhm.STATUS_SERVER_OFF
+        return status
 
     @property
     def lhm_port(self) -> int:

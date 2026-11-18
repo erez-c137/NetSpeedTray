@@ -104,6 +104,17 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - `CHECK_CONN_ALWAYS_NOTICE` - under the Check connection sheet's "Also check the internet" tick: "Want the internet measured all the time?" (followed by the button).
 > - Removed: `CHECK_CONN_HINT` ("To measure the internet all the time, turn on ... in Settings.") and `HARDWARE_HISTORY_OFF_MESSAGE` / `HARDWARE_HISTORY_RECORD_OFF_MESSAGE` (the old text drawn into the graph) - replaced by the keys above.
 
+> 🆕 **Pending native review for 2.2.2 (temperature setup, see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. Current LibreHardwareMonitor (v0.9.5+) only shares its readings through its web server, which is off by default - the old explainer said temperatures "appear automatically", so people got blank readings. The explainer is now two numbered steps. **Keep LibreHardwareMonitor's own menu names in English** (`Options → Remote Web Server`, as on its screen) and keep `{port}`.
+> - `TEMP_ONBOARDING_INTRO` - the short paragraph under the dialog title: why a second program is needed, and that NetSpeedTray never runs as admin. Replaces the long `TEMP_ONBOARDING_BODY`.
+> - `TEMP_ONBOARDING_STEP_1` - step 1: "Install LibreHardwareMonitor and run it as administrator." Your `TEMP_ONBOARDING_GET_LHM_BUTTON` sits under it as a link (unchanged).
+> - `TEMP_ONBOARDING_STEP_2` - step 2: "In LibreHardwareMonitor, turn on Options → Remote Web Server (port {port}). Temperatures appear within a minute."
+> - `TEMP_ONBOARDING_MORE_DETAILS` - a collapsed section under the steps: "More details".
+> - `TEMP_ONBOARDING_DETAILS` - its content, one line per point (each starts with "• "; keep the line breaks): NVIDIA needs no LibreHardwareMonitor, v0.9.4 needs no web server, the firewall advice for v0.9.6 and older, the user name / password, very new CPUs. A shorter rewrite of the old `LHM_WEB_SERVER_HINT`.
+> - `HARDWARE_TEMPS_LIMITATION_NOTE` - **changed text** (the note under Settings > Hardware's temperature switches): it now says LibreHardwareMonitor's Remote Web Server must be on, and no longer that NetSpeedTray "detects it automatically".
+> - `HARDWARE_TEMPS_SETUP_ACTION` - the link under that note that opens the two steps: "How to set it up".
+> - `LHM_SERVER_OFF_NOTICE` / `LHM_SERVER_OFF_ACTION` - a notice on Settings > Hardware when LibreHardwareMonitor is running but its web server doesn't answer: "LibreHardwareMonitor is running, but its web server is off." + the link "How to turn it on" (opens step 2). Use the same word for "web server" as in `TEMP_ONBOARDING_DETAILS`.
+> - Removed: `LHM_WEB_SERVER_HINT` (the ~600-character paragraph - its points moved to the steps and to `TEMP_ONBOARDING_DETAILS`), `TEMP_ONBOARDING_BODY` and `TEMP_ONBOARDING_NOT_NOW_BUTTON` (the dialog has one Close button now, your `CLOSE_BUTTON`).
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

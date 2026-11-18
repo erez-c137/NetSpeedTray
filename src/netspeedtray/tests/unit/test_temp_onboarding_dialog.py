@@ -14,9 +14,13 @@ def test_default_action_is_dismiss(dlg):
     assert dlg.action == TempOnboardingDialog.ACTION_DISMISS
 
 
-def test_get_lhm_button_sets_action(dlg):
-    dlg._choose(TempOnboardingDialog.ACTION_GET_LHM)
+def test_get_lhm_link_sets_action_and_opens_the_releases_page(q_app, qt_owned):
+    from netspeedtray.views.temp_onboarding_dialog import LHM_RELEASES_URL
+    opened = []
+    dlg = qt_owned(TempOnboardingDialog(I18nStrings("en_US"), open_url=opened.append))
+    dlg.get_lhm_link.click()
     assert dlg.action == TempOnboardingDialog.ACTION_GET_LHM
+    assert opened == [LHM_RELEASES_URL]
 
 
 def test_dont_remind_defaults_off_and_toggles(dlg):
@@ -36,9 +40,10 @@ def test_releases_url_is_the_current_release(dlg):
     assert LHM_RELEASES_URL.endswith("/releases/latest")
 
 
-def test_web_server_hint_names_the_lhm_option_and_port(dlg):
+def test_step_two_names_the_lhm_option_and_port(dlg):
+    """2.2.2 D6: the web server is a numbered step now, not a paragraph under the body."""
     from netspeedtray import constants
-    text = dlg.web_server_hint.text()
+    text = dlg.steps[1].text()
     assert "Remote Web Server" in text
     assert str(constants.lhm.HTTP_PORT) in text
     assert "{port}" not in text

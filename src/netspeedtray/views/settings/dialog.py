@@ -419,7 +419,8 @@ class SettingsDialog(QDialog):
         if name == "appearance":
             return AppearancePage(self.i18n, s, self._open_font_dialog, self._open_color_dialog)
         if name == "hardware":
-            return HardwarePage(self.i18n, s, self._open_color_dialog, lhm_status_provider=self._lhm_status)
+            return HardwarePage(self.i18n, s, self._open_color_dialog, lhm_status_provider=self._lhm_status,
+                                temp_setup_callback=self._open_temp_setup)
         if name == "interfaces":
             return InterfacesPage(self.i18n, self.available_interfaces, s,
                                   primary_interface=self.primary_interface)
@@ -793,6 +794,18 @@ class SettingsDialog(QDialog):
         mt = getattr(self.parent_widget, "monitor_thread", None)
         status, port = getattr(mt, "lhm_status", None), getattr(mt, "lhm_port", None)
         return (status, port) if isinstance(status, str) and isinstance(port, int) else None
+
+    def _open_temp_setup(self, step: int = 1) -> None:
+        """Settings > Hardware's "How to set it up" / "How to turn it on" (D6): the temperature setup
+        dialog, modal over Settings, at ``step``, for the port in the page's field. No "Don't remind me"
+        box here - the user asked for it."""
+        try:
+            from netspeedtray.views.temp_onboarding_dialog import TempOnboardingDialog
+            page = getattr(self, "hardware_page", None)
+            port = int(page.lhm_port.value()) if page is not None else constants.lhm.HTTP_PORT
+            TempOnboardingDialog(self.i18n, self, lhm_port=port, focus_step=step, show_remind=False).exec()
+        except Exception as e:
+            self.logger.error("Could not open the temperature setup: %s", e, exc_info=True)
 
     def _refresh_metrics_status(self) -> None:
         """Show the local metrics endpoint's live status (listening / port in use) under its address."""
