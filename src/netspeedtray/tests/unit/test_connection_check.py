@@ -487,8 +487,8 @@ class _HopWS:
             return [(self._t0, 0.0), (self._t0 + timedelta(seconds=3), 0.0)]
         return [(self._t0, 3.0)]
 
-    def get_hardware_history_peak(self, stat, start, end):   # the drops read (per-bin peaks)
-        return self.get_hardware_history(stat, start, end)
+    def get_loss_history(self, stats, start, end):   # the drops read
+        return {st: self.get_hardware_history(st, start, end) for st in stats}
 
 
 def _detail_copy(q_app, public: bool):
@@ -556,8 +556,8 @@ class _BlockedAnchorWS(_HopWS):
             return [(self._t0, 0.0), (self._t0 + timedelta(seconds=3), 0.0)]
         return []
 
-    def get_hardware_history_peak(self, stat, start, end):   # the drops read (per-bin peaks)
-        return self.get_hardware_history(stat, start, end)
+    def get_loss_history(self, stats, start, end):   # the drops read
+        return {st: self.get_hardware_history(st, start, end) for st in stats}
 
 
 def _detail_with(q_app, ws):

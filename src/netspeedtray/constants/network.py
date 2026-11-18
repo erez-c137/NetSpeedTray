@@ -204,6 +204,12 @@ class LatencyConstants:
     # apart than one bin plus this slack have nothing measured between them (app off, PC asleep), so
     # they are never one outage. Covers the 3 s cadence stretched by a burst of timed-out echoes.
     OUTAGE_GAP_SLACK_SEC: Final[int] = 30
+    # The probe's cadence (LatencyProbe._CADENCE_SEC): a rollup bin's lost time is its lost cycles x this.
+    OUTAGE_CYCLE_SEC: Final[float] = 3.0
+    # The router's and the internet anchor's rows of one cycle are written a moment apart: a drop on
+    # one hop that starts within this many seconds after the other hop's drop (past that row's own
+    # span) ended is the same outage. Runs of ONE hop are never joined this way.
+    OUTAGE_HOP_JOIN_SEC: Final[float] = 10.0
     # RTT series -> the loss series of the same hop (the exporter's loss_pct).
     LOSS_SERIES_FOR: Final[Dict[str, str]] = {
         "latency_gw": STAT_GW_TIMEOUT,

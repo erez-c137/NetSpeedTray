@@ -158,18 +158,16 @@ def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
     }
     # Connection-drop events over the window (from the persisted loss series), so a latency blip you
     # missed live is still counted. The router's series always; with the internet ping on, the
-    # anchor's too - the router answering while the internet is down is still an outage. Per-bin
-    # PEAKS: a bin's average hides a short drop in any window over 6 h.
+    # anchor's too - the router answering while the internet is down is still an outage. One query
+    # for both hops; raw cycles unbinned, rollup bins as peaks (an average hides a short drop).
     events: Dict[str, Any] = {}
     if latency_enabled:
         from netspeedtray.utils import summaries as S   # lazy (only this reader uses it)
-        from netspeedtray.core.db.history_reader import outage_gap_seconds
         lat = constants.network.latency
-        series_list = [ws.get_hardware_history_peak(lat.STAT_GW_TIMEOUT, start, end)]
-        if public_enabled:
-            series_list.append(ws.get_hardware_history_peak(lat.STAT_ANCHOR_TIMEOUT, start, end))
-        events = S.outage_summary(*series_list, max_gap=outage_gap_seconds(
-            int(start.timestamp()), int(end.timestamp())))
+        stats = [lat.STAT_GW_TIMEOUT] + ([lat.STAT_ANCHOR_TIMEOUT] if public_enabled else [])
+        loss = ws.get_loss_history(stats, start, end)
+        events = S.outage_summary(*(loss.get(st, []) for st in stats),
+                                  max_gap=lat.OUTAGE_GAP_SLACK_SEC, hop_join=lat.OUTAGE_HOP_JOIN_SEC)
     volume = None
     if session_start is not None:
         try:
