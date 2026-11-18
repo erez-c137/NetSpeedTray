@@ -519,6 +519,8 @@ class OverviewTab(QWidget):
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        # A Tab stop (arrow keys scroll the page): named, or Narrator says just "group" (VM round 2).
+        self._scroll.setAccessibleName(self._tr("MONITOR_TAB_OVERVIEW", "Overview"))
         content = QWidget()
         content.setStyleSheet("background: transparent;")
 
@@ -581,7 +583,9 @@ class OverviewTab(QWidget):
         self._context_r_lbl.setTextFormat(Qt.TextFormat.RichText)
         self._context_r_lbl.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         # Tab-reachable: after Turn on / Not now focus lands here, so Narrator reads the new status.
-        self._context_r_lbl.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        # Only while it says something (_render_health_strip): an empty line is no Tab stop - Narrator
+        # would read an unnamed "group"/"text" (VM round 2).
+        self._context_r_lbl.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         strip.addWidget(self._session_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
         strip.addStretch(1)
         strip.addWidget(self._context_r_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -1165,6 +1169,7 @@ class OverviewTab(QWidget):
         self._context_r_lbl.setToolTip(tip)
         self._context_r_lbl.setAccessibleName(_plain_text(right))
         self._context_r_lbl.setAccessibleDescription(tip)
+        self._context_r_lbl.setFocusPolicy(Qt.FocusPolicy.TabFocus if right else Qt.FocusPolicy.NoFocus)
         self._sync_internet_offer(hop, bool(right))
 
     def _system_power_text(self, mw) -> str:

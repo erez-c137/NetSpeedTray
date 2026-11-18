@@ -737,3 +737,36 @@ def test_the_card_comes_before_the_page_for_screen_readers(qtbot, world):
         assert btn.accessibleName() == btn.text().strip() or btn is card.close_button
         assert btn.accessibleName()
     assert card.accessibleName() == "A month with NetSpeedTray" and card.accessibleDescription()
+
+
+def _spoken_name(w) -> str:
+    """What a screen reader announces for a Tab stop: its accessible name, else its own text."""
+    name = (w.accessibleName() or "").strip()
+    if not name and hasattr(w, "text") and callable(w.text):
+        try:
+            name = (w.text() or "").replace("&", "").strip()
+        except TypeError:
+            name = ""
+    return name
+
+
+def test_every_tab_stop_in_the_monitor_has_a_name(qtbot, world):
+    """VM round 2: the stop right after the card's Dismiss was the page's scroll area, unnamed -
+    Narrator said just "group". Every Tab stop of the Monitor (card shown, each tab) is named."""
+    from PyQt6 import sip
+    win, card = _card_monitor(qtbot, world)
+    for i in range(len(win._descriptors)):
+        win._tab_bar.setCurrentIndex(i)
+        QApplication.processEvents()
+        start = win._tab_bar.current_button()
+        w, seen, unnamed = start, set(), []
+        for _ in range(400):
+            w = w.nextInFocusChain()
+            key = sip.unwrapinstance(w)          # the C++ object: Python ids are reused after GC
+            if w is start or key in seen:
+                break
+            seen.add(key)
+            if (w.focusPolicy() & Qt.FocusPolicy.TabFocus) and w.isVisibleTo(win) and w.isEnabled() \
+                    and w.window() is win and not _spoken_name(w):
+                unnamed.append(f"{type(w).__name__}#{w.objectName()}")
+        assert not unnamed, (win._descriptors[i].tab_id, unnamed)

@@ -140,6 +140,8 @@ class HardwareBarList(QWidget):
         # Transparent viewport + content: without this they paint the system (light) palette.
         self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         self._scroll.viewport().setAutoFillBackground(False)
+        # A Tab stop (arrow keys scroll the list): named, or Narrator says just "group" (VM round 2).
+        self._scroll.setAccessibleName(self._tr("APP_ACTIVITY_PROCESS_HEADER", "Process"))
         self._content = QWidget()
         self._content.setStyleSheet("background: transparent;")
         self._list_layout = QVBoxLayout(self._content)
