@@ -688,5 +688,12 @@
     "FIRST_RUN_TIP_BODY": "Mutasson a sebességekre a részletekért.\nDupla kattintással megnyílik a Monitor.\nJobb kattintás: menü és Beállítások.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Monitor megnyitása",
     "WHATS_NEW_TITLE": "Frissítve: NetSpeedTray {version}",
-    "WHATS_NEW_2_2_2": "Nyissa meg a Start menüből egy gyorspanelért. Az értesítések most közvetlenül a megfelelő beállításhoz visznek, és a Beállításokban is könnyebb eligazodni."
+    "WHATS_NEW_2_2_2": "Nyissa meg a Start menüből egy gyorspanelért. Az értesítések most közvetlenül a megfelelő beállításhoz visznek, és a Beállításokban is könnyebb eligazodni.",
+    "SUPPORT_PROMPT_TITLE": "Egy hónap a NetSpeedTrayjel",
+    "SUPPORT_PROMPT_BODY": "Ingyenes, és mindig az is marad. Ha kiérdemelte a helyét a tálcán, egy értékelés vagy egy csillag segít másoknak megtalálni.",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "Ingyenes, és mindig az is marad. Ha kiérdemelte a helyét a tálcán, egy csillag segít másoknak megtalálni.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Értékelés a Store-ban",
+    "SUPPORT_PROMPT_STAR_BUTTON": "Csillag a GitHubon",
+    "SUPPORT_PROMPT_SUPPORT_LINK": "A projekt támogatása",
+    "SUPPORT_PROMPT_DISMISS": "Elvetés"
 }

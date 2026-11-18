@@ -688,5 +688,12 @@
     "FIRST_RUN_TIP_BODY": "Wijs de snelheden aan voor details.\nDubbelklik om de Monitor te openen.\nRechtsklik voor het menu en Instellingen.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Monitor openen",
     "WHATS_NEW_TITLE": "Bijgewerkt naar NetSpeedTray {version}",
-    "WHATS_NEW_2_2_2": "Open het vanuit Start voor een snel paneel. Meldingen leiden nu direct naar de juiste instelling, en je vindt makkelijker je weg in Instellingen."
+    "WHATS_NEW_2_2_2": "Open het vanuit Start voor een snel paneel. Meldingen leiden nu direct naar de juiste instelling, en je vindt makkelijker je weg in Instellingen.",
+    "SUPPORT_PROMPT_TITLE": "Een maand met NetSpeedTray",
+    "SUPPORT_PROMPT_BODY": "Het is gratis en dat blijft altijd zo. Heeft het een plek op je taakbalk verdiend? Dan helpt een beoordeling of een ster anderen het te vinden.",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "Het is gratis en dat blijft altijd zo. Heeft het een plek op je taakbalk verdiend? Dan helpt een ster anderen het te vinden.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Beoordelen in de Store",
+    "SUPPORT_PROMPT_STAR_BUTTON": "Ster op GitHub",
+    "SUPPORT_PROMPT_SUPPORT_LINK": "Het project steunen",
+    "SUPPORT_PROMPT_DISMISS": "Sluiten"
 }

@@ -476,8 +476,10 @@ def test_widget_wires_the_notices_and_the_1x_welcome_records_the_version(monkeyp
         dlg.return_value.action = None
         W._maybe_show_welcome(one_x)
     assert len(started) == 1
-    one_x.update_config.assert_called_once_with({"first_run_v2_seen": True,
-                                                 "last_seen_version": constants.app.VERSION})
+    # 2.2.2 D8: the same launch also starts the support card's clock (first_seen_at), first.
+    calls = [c.args[0] for c in one_x.update_config.call_args_list]
+    assert len(calls) == 2 and set(calls[0]) == {"first_seen_at"}
+    assert calls[1] == {"first_run_v2_seen": True, "last_seen_version": constants.app.VERSION}
 
 
 # --- the card -------------------------------------------------------------------------------------

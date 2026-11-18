@@ -175,6 +175,14 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - **Removed:** `BEHAVIOR_GROUP_TITLE` ("Behavior") - the three pages that shared it have their own headers now (above).
 > - **Nothing new to translate:** the right-click menu's new "Check connection" item and its switch under Settings > General > Right-click menu items reuse your `CHECK_CONN_ACTION`; the plan-speed boxes' unit is your `MBITS_UNIT` (it was a hard-coded "Mbps").
 
+> 🆕 **Pending native review for 2.2.2 (the one-time "rate / star / support" card, see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. All 16 translated locales. The card shows **once, ever**, at the top of the Monitor, a month after the user started 2.2.2 - a warm thank-you, never a nag. Keep it short; in German the two buttons and the link must fit on one row of a 660 px window.
+> - `SUPPORT_PROMPT_TITLE` - the card's title: "A month with NetSpeedTray". A friendly milestone, not a question. **Hebrew:** "חודש עם NetSpeedTray" - owner review, please.
+> - `SUPPORT_PROMPT_BODY` - shown to Microsoft Store installs (they also get the Rate button): "It's free and always will be. If it's earned its spot on your taskbar, a rating or a star helps others find it." The first sentence is a promise (no paid version is coming).
+> - `SUPPORT_PROMPT_BODY_STAR_ONLY` - the same line for everyone else (no Rate button): "... a star helps others find it." Keep the two identical apart from "a rating or a star" / "a star".
+> - `SUPPORT_PROMPT_RATE_BUTTON` - "Rate it in the Store" (opens the Microsoft Store's review page). Keep "Store" as Windows names the Microsoft Store in your language.
+> - `SUPPORT_PROMPT_STAR_BUTTON` - "Star on GitHub" (a GitHub "star"). Your `SUPPORT_STAR_GITHUB` wording is fine.
+> - `SUPPORT_PROMPT_SUPPORT_LINK` - "Support the project": a link that opens the app's own Support dialog.
+> - `SUPPORT_PROMPT_DISMISS` - what a screen reader says for the card's X button (and its tooltip): "Dismiss". Use Windows' own word for closing a notification in your language. **Hebrew:** plural imperatives ("דרגו", "תמכו") like `WHATS_NEW_2_2_2`'s "פתחו" - owner review, please.
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

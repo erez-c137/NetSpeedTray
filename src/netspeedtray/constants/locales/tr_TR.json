@@ -688,5 +688,12 @@
     "FIRST_RUN_TIP_BODY": "Ayrıntılar için hızların üzerine gelin.\nİzleyiciyi açmak için çift tıklayın.\nMenü ve Ayarlar için sağ tıklayın.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "İzleyiciyi Aç",
     "WHATS_NEW_TITLE": "NetSpeedTray {version} sürümüne güncellendi",
-    "WHATS_NEW_2_2_2": "Hızlı bir panel için Başlat'tan açın. Bildirimler artık doğrudan ilgili ayara götürüyor ve Ayarlar'da yolunuzu bulmak daha kolay."
+    "WHATS_NEW_2_2_2": "Hızlı bir panel için Başlat'tan açın. Bildirimler artık doğrudan ilgili ayara götürüyor ve Ayarlar'da yolunuzu bulmak daha kolay.",
+    "SUPPORT_PROMPT_TITLE": "NetSpeedTray ile bir ay",
+    "SUPPORT_PROMPT_BODY": "Ücretsizdir ve her zaman öyle kalacak. Görev çubuğunuzdaki yerini hak ettiyse, bir puan ya da yıldız başkalarının onu bulmasına yardımcı olur.",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "Ücretsizdir ve her zaman öyle kalacak. Görev çubuğunuzdaki yerini hak ettiyse, bir yıldız başkalarının onu bulmasına yardımcı olur.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Store'da puan verin",
+    "SUPPORT_PROMPT_STAR_BUTTON": "GitHub'da yıldız",
+    "SUPPORT_PROMPT_SUPPORT_LINK": "Projeyi destekleyin",
+    "SUPPORT_PROMPT_DISMISS": "Kapat"
 }

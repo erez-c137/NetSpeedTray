@@ -34,7 +34,7 @@ class AppConstants:
     POLICY_REGISTRY_KEY: Final[str] = r"SOFTWARE\Policies\NetSpeedTray"
     POLICY_DISABLE_UPDATE_CHECK_VALUE: Final[str] = "DisableUpdateCheck"
     # Same key (2.2.2 D1/D2): nonzero = no first-run tip and no one-time "what's new" after an update
-    # (and the planned 2.2.2 rate/support card, D8) - for managed fleets. Only switches notices OFF;
+    # and no one-time "rate / star / support" card in the Monitor (D8) - for managed fleets. Only switches notices OFF;
     # nothing else changes. Documented in DEPLOYING.md - keep the two in sync.
     POLICY_DISABLE_TIPS_VALUE: Final[str] = "DisableTips"
     # Graceful-shutdown channel (core/shutdown_channel.py). The running app registers this window
@@ -102,6 +102,28 @@ class AppConstants:
     # this often - the notice is deferred, never lost.
     STARTUP_NOTICE_DELAY_MS: Final[int] = 5_000
     STARTUP_NOTICE_RETRY_MS: Final[int] = 30_000
+    # The one-time "rate / star / support" card in the Monitor (2.2.2 D8; core/support_prompt.py):
+    # offered on the first Monitor open at least this many days after first_seen_at (the first run
+    # of 2.2.2+), never in the first SUPPORT_PROMPT_MIN_UPTIME_S of the app's run ("never on launch"),
+    # and counted as shown once it was on screen this long while the Monitor was the active,
+    # un-minimized window (or any button was pressed). A clock below the floor (the feature's own
+    # birth) is wrong: nothing is written or due then, so a clock set back never shortens the wait.
+    SUPPORT_PROMPT_AFTER_DAYS: Final[int] = 30
+    SUPPORT_PROMPT_MIN_UPTIME_S: Final[float] = 120.0
+    SUPPORT_PROMPT_SEEN_MS: Final[int] = 4_500
+    SUPPORT_PROMPT_COLLAPSE_MS: Final[int] = 150
+    SUPPORT_PROMPT_CLOCK_FLOOR: Final[str] = "2026-11-01T00:00:00Z"
+    # Where Setup records a Microsoft Store install (setup.iss, when run with /STORE - the Store
+    # payload's installerParameters). Only then is "Rate it in the Store" offered: the Store lets
+    # only users who have the app in their library rate it. Keep in sync with setup.iss.
+    INSTALL_SOURCE_REGISTRY_KEY: Final[str] = r"SOFTWARE\NetSpeedTray"
+    INSTALL_SOURCE_VALUE: Final[str] = "InstalledFrom"
+    INSTALL_SOURCE_STORE: Final[str] = "Store"
+    # The Store listing (a Win32 EXE listing; CLAUDE.md): the Store app's review page, and its web
+    # page for Windows without the Store app (LTSC, Server, a removed Store).
+    STORE_PRODUCT_ID: Final[str] = "XP9MHWQZJPLQM8"
+    STORE_REVIEW_URL_TEMPLATE: Final[str] = "ms-windows-store://review/?ProductId={product_id}"
+    STORE_WEB_URL_TEMPLATE: Final[str] = "https://apps.microsoft.com/detail/{product_id}"
     # The GitHub release page of one exact version ("What's new" in the one-time notice).
     RELEASE_TAG_URL_TEMPLATE: Final[str] = "https://github.com/{owner}/{repo}/releases/tag/v{version}"
     # How long after the event loop starts the crash log's fault handler stays on (netspeedtray/

@@ -688,5 +688,12 @@
     "FIRST_RUN_TIP_BODY": "Señala las velocidades para ver detalles.\nHaz doble clic para abrir el Monitor.\nHaz clic derecho para el menú y la Configuración.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Abrir el Monitor",
     "WHATS_NEW_TITLE": "Actualizado a NetSpeedTray {version}",
-    "WHATS_NEW_2_2_2": "Ábrelo desde Inicio para ver un panel rápido. Los avisos ahora llevan directamente al ajuste correspondiente y es más fácil orientarse en la Configuración."
+    "WHATS_NEW_2_2_2": "Ábrelo desde Inicio para ver un panel rápido. Los avisos ahora llevan directamente al ajuste correspondiente y es más fácil orientarse en la Configuración.",
+    "SUPPORT_PROMPT_TITLE": "Un mes con NetSpeedTray",
+    "SUPPORT_PROMPT_BODY": "Es gratis y siempre lo será. Si se ha ganado su sitio en tu barra de tareas, una valoración o una estrella ayuda a que otros lo encuentren.",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "Es gratis y siempre lo será. Si se ha ganado su sitio en tu barra de tareas, una estrella ayuda a que otros lo encuentren.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Valorar en la Store",
+    "SUPPORT_PROMPT_STAR_BUTTON": "Estrella en GitHub",
+    "SUPPORT_PROMPT_SUPPORT_LINK": "Apoyar el proyecto",
+    "SUPPORT_PROMPT_DISMISS": "Descartar"
 }

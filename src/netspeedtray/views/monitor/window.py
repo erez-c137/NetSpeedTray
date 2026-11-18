@@ -156,6 +156,17 @@ class MonitorWindow(QWidget):
             first = next((i for i, d in enumerate(self._descriptors) if d.is_visible(self.config)), 0)
         self._tab_bar.setCurrentIndex(first)
 
+        # 2.2.2 D8: the one-time "rate / star / support" card, inline under the tabs - only on an open
+        # at least 30 days after the first 2.2.2 run, once ever (views/monitor/support_card.py).
+        self._support_prompt = None
+        try:
+            from netspeedtray.views.monitor.support_card import SupportPrompt
+            self._support_prompt = SupportPrompt(self, self._main_widget, self.i18n,
+                                                 focus_target=self._tab_bar.current_button)
+            self._support_prompt.attach(root, root.indexOf(self._stack))
+        except Exception as e:
+            self.logger.error("Support card not attached: %s", e, exc_info=True)
+
         # Apply the Win11 dark title bar + rounded corners BEFORE the caller's show(), so the window
         # never maps with the default light title bar and then flashes dark on the first frame. winId()
         # here forces the native handle to be realized early (it does NOT show the window). The showEvent

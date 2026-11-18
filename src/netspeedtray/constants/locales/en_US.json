@@ -688,5 +688,12 @@
     "FIRST_RUN_TIP_BODY": "Point to the speeds for details.\nDouble-click to open the Monitor.\nRight-click for the menu and Settings.",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "Open the Monitor",
     "WHATS_NEW_TITLE": "Updated to NetSpeedTray {version}",
-    "WHATS_NEW_2_2_2": "Open it from Start for a quick panel. Notices now link straight to the setting they mean, and Settings is easier to find your way around."
+    "WHATS_NEW_2_2_2": "Open it from Start for a quick panel. Notices now link straight to the setting they mean, and Settings is easier to find your way around.",
+    "SUPPORT_PROMPT_TITLE": "A month with NetSpeedTray",
+    "SUPPORT_PROMPT_BODY": "It's free and always will be. If it's earned its spot on your taskbar, a rating or a star helps others find it.",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "It's free and always will be. If it's earned its spot on your taskbar, a star helps others find it.",
+    "SUPPORT_PROMPT_RATE_BUTTON": "Rate it in the Store",
+    "SUPPORT_PROMPT_STAR_BUTTON": "Star on GitHub",
+    "SUPPORT_PROMPT_SUPPORT_LINK": "Support the project",
+    "SUPPORT_PROMPT_DISMISS": "Dismiss"
 }

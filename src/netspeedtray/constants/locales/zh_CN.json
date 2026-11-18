@@ -689,5 +689,12 @@
     "FIRST_RUN_TIP_BODY": "指向速度可查看详情。\n双击打开监控面板。\n右键打开菜单和设置。",
     "FIRST_RUN_TIP_OPEN_MONITOR_BUTTON": "打开监控面板",
     "WHATS_NEW_TITLE": "已更新到 NetSpeedTray {version}",
-    "WHATS_NEW_2_2_2": "从“开始”菜单打开可显示快捷面板。通知现在可直接跳转到对应设置，设置也更容易浏览。"
+    "WHATS_NEW_2_2_2": "从“开始”菜单打开可显示快捷面板。通知现在可直接跳转到对应设置，设置也更容易浏览。",
+    "SUPPORT_PROMPT_TITLE": "与 NetSpeedTray 相伴一个月",
+    "SUPPORT_PROMPT_BODY": "它是免费的，并将永远免费。如果它值得在你的任务栏上占有一席之地，一个评分或一颗星能帮助更多人发现它。",
+    "SUPPORT_PROMPT_BODY_STAR_ONLY": "它是免费的，并将永远免费。如果它值得在你的任务栏上占有一席之地，一颗星能帮助更多人发现它。",
+    "SUPPORT_PROMPT_RATE_BUTTON": "在应用商店中评分",
+    "SUPPORT_PROMPT_STAR_BUTTON": "在 GitHub 上点 Star",
+    "SUPPORT_PROMPT_SUPPORT_LINK": "支持这个项目",
+    "SUPPORT_PROMPT_DISMISS": "关闭"
 }

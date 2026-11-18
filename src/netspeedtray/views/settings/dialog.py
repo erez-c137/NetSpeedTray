@@ -83,7 +83,7 @@ class SettingsDialog(QDialog):
         "paused", "last_update_check", "skipped_version", "update_snooze", "usage_alert_state",
         "start_with_windows", "pin_hint_shown_count", "side_bar_no_room_notice_shown", "app_overlap_notice_shown",
         "app_overlap_drop_offset", "second_launch_notice_shown", "internet_offer_declines",
-        "first_run_tip_shown", "last_seen_version",
+        "first_run_tip_shown", "last_seen_version", "first_seen_at", "support_prompt_shown",
     )
 
     def __init__(
