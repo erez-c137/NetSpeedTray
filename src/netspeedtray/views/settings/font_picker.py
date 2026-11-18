@@ -249,12 +249,14 @@ class FontPickerDialog(QDialog):
         buttons.addStretch(1)
         self.ok_button = QPushButton(self.i18n.SELECT_FONT_BUTTON)
         self.ok_button.setStyleSheet(style_utils.button_style(accent=True))
-        self.ok_button.setDefault(True)
         self.cancel_button = QPushButton(self.i18n.CANCEL_BUTTON)
         self.cancel_button.setStyleSheet(style_utils.button_style())
         buttons.addWidget(self.ok_button)
         buttons.addWidget(self.cancel_button)
         root.addLayout(buttons)
+        # Only now, inside the dialog: set before, QDialog never records it (Settings' Save bug). Latent
+        # here only because Select is the first button, which QDialog's fallback picks anyway.
+        self.ok_button.setDefault(True)
 
         self.ok_button.clicked.connect(self.accept)
         self.cancel_button.clicked.connect(self.reject)

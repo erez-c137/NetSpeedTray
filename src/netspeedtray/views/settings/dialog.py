@@ -356,13 +356,10 @@ class SettingsDialog(QDialog):
             self.cancel_button.setStyleSheet(style_utils.button_style())
             self.save_button = QPushButton(self.i18n.SAVE_BUTTON)
             self.save_button.setStyleSheet(style_utils.button_style(accent=True))
-            # Enter presses Save and nothing else: every QPushButton in a QDialog is auto-default, and
-            # with no recorded default QDialog made the FIRST one - Export - the default on show.
-            # setDefault(True) is applied below, once the button is in the dialog: before that it has
-            # no QDialog ancestor and Qt never records it.
-            for btn in (self.export_log_button, self.cancel_button):
-                btn.setAutoDefault(False)
-                btn.setDefault(False)
+            # Save is the dialog's default (Enter on a switch saves). setDefault(True) is applied below,
+            # once the button is in the dialog: before that it has no QDialog ancestor, Qt never
+            # records it, and on show QDialog made the FIRST auto-default button - Export - the
+            # default. Export and Cancel stay auto-default: Enter on a FOCUSED one presses that one.
             button_layout.addWidget(self.cancel_button)
             button_layout.addWidget(self.save_button)
             content_layout.addLayout(button_layout)
