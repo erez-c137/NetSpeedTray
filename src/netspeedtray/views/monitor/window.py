@@ -268,6 +268,12 @@ class MonitorWindow(QWidget):
         fly.move(x, y)
         fly.show()
 
+    def current_tab_id(self) -> str:
+        """The shown tab's id ("overview" / "network" / "hardware"), "?" if none - for the GUI stall
+        log's context (#218)."""
+        idx = self._stack.currentIndex()
+        return self._descriptors[idx].tab_id if 0 <= idx < len(self._descriptors) else "?"
+
     def _on_settings_changed(self) -> None:
         # Live-apply. The active page may need more than a re-render - a graph-mode change re-resolves
         # which stat is shown - so delegate to its on_settings_changed when it has one. Otherwise just

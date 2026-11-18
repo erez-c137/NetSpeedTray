@@ -45,6 +45,29 @@ class TimeoutConstants:
     # System Event related intervals (milliseconds)
     TASKBAR_VALIDITY_CHECK_INTERVAL_MS: Final[int] = 3000
     STATE_WATCHER_INTERVAL_MS: Final[int] = 1000
+    # GUI-thread stall logger (#218, core/gui_stall_watch.py). The widget is an owned window of
+    # Shell_TrayWnd, so Windows attaches our GUI thread's input queue to the taskbar's: a stall here
+    # can delay the taskbar's own clicks. The STATE_WATCHER tick above is the heartbeat (no timer of
+    # its own); a tick this much later than its interval is logged as a stall. Qt's coarse timers
+    # wander ~5% (50 ms) and a steady-state message round trip is p99 2.8 ms, so 250 ms is a real
+    # stall - and one a user can feel on a right-click.
+    GUI_STALL_LATE_MS: Final[int] = 250
+    # A faulthandler watchdog re-armed on every tick dumps every thread's stack into the crash log
+    # when no tick has re-armed it for this long - i.e. the GUI thread has been stuck ~2 s past a
+    # due tick. Only the dump is written; the watchdog itself never wakes while ticks keep coming.
+    GUI_STALL_DUMP_TIMEOUT_SEC: Final[float] = 3.0
+    # A dump is a few KB (every thread's stack) and the crash log is rotated only at start: after
+    # this many dumps in one log window (below), or this many in a session, the watchdog is left
+    # disarmed (until the window rolls over / for the rest of the session). The log lines go on.
+    GUI_STALL_DUMP_MAX_PER_WINDOW: Final[int] = 3
+    GUI_STALL_DUMP_MAX_PER_SESSION: Final[int] = 20
+    # At most this many stall lines per window; the rest are counted and summarised in one line
+    # (with the worst) when the window rolls over or the app quits.
+    GUI_STALL_LOG_MAX_PER_WINDOW: Final[int] = 12
+    GUI_STALL_LOG_WINDOW_SEC: Final[int] = 3600
+    # Sleep (PBT_APMSUSPEND) pauses the watch until the resume notice - or, if that never comes,
+    # until this long after the suspend notice (ticks meanwhile only reset the baseline).
+    GUI_STALL_SUSPEND_HOLD_SEC: Final[int] = 60
     # Fast poll purely for the fullscreen-HIDE case: an app fullscreening while
     # already focused fires no foreground event, so without this the hide waits
     # for the 1s state-watcher tick (a visible ~1s lag). Cheap: short-circuits
