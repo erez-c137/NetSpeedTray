@@ -106,6 +106,10 @@ class AppConstants:
     # this often - the notice is deferred, never lost.
     STARTUP_NOTICE_DELAY_MS: Final[int] = 5_000
     STARTUP_NOTICE_RETRY_MS: Final[int] = 30_000
+    # Screen readers recognised by their process (lower-case image names) when SPI_GETSCREENREADER
+    # says none is running - Narrator on Windows 11 26300 leaves the flag at 0 (2.2.2 live test F5).
+    # Narrator, NVDA, JAWS. Read only when a focusable card is about to show.
+    SCREEN_READER_PROCESSES: Final[frozenset] = frozenset({"narrator.exe", "nvda.exe", "jfw.exe"})
     # The one-time "rate / star / support" card in the Monitor (2.2.2 D8; core/support_prompt.py):
     # offered on the first Monitor open at least this many days after first_seen_at (the first run
     # of 2.2.2+), never in the first SUPPORT_PROMPT_MIN_UPTIME_S of the app's run ("never on launch"),

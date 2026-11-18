@@ -895,6 +895,56 @@ def test_screen_reader_flag_is_read_from_spi(monkeypatch):
     assert seen == [0x0046]                                    # SPI_GETSCREENREADER
 
 
+def _spi(value):
+    def spi(action, param, pv, flags):
+        pv._obj.value = value
+        return 1
+    return spi
+
+
+@pytest.mark.parametrize("name", ["Narrator.exe", "nvda.exe", "NVDA.EXE", "jfw.exe"])
+def test_a_running_screen_reader_process_counts_when_spi_says_no(monkeypatch, name):
+    """The VM (Windows 11 26300): Narrator running and SPI_GETSCREENREADER still 0 - the tip never
+    came up activated for it (live test F5). A screen reader's own process counts too."""
+    import ctypes
+    import types
+    import psutil
+    from netspeedtray.views import flyout as fmod
+    monkeypatch.setattr(ctypes.windll.user32, "SystemParametersInfoW", _spi(0))
+    procs = [types.SimpleNamespace(info={"name": n}) for n in ("explorer.exe", None, name)]
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: iter(procs))
+    assert fmod.screen_reader_running() is True
+
+
+def test_no_screen_reader_when_neither_spi_nor_a_process_says_so(monkeypatch):
+    import ctypes
+    import types
+    import psutil
+    from netspeedtray.views import flyout as fmod
+    monkeypatch.setattr(ctypes.windll.user32, "SystemParametersInfoW", _spi(0))
+    procs = [types.SimpleNamespace(info={"name": n}) for n in ("explorer.exe", "narratorx.exe", "Code.exe")]
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: iter(procs))
+    assert fmod.screen_reader_running() is False
+
+
+def test_the_process_scan_is_skipped_when_spi_already_says_yes(monkeypatch):
+    import ctypes
+    import psutil
+    from netspeedtray.views import flyout as fmod
+    monkeypatch.setattr(ctypes.windll.user32, "SystemParametersInfoW", _spi(1))
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: (_ for _ in ()).throw(AssertionError("scanned")))
+    assert fmod.screen_reader_running() is True
+
+
+def test_a_failing_process_scan_reads_as_no_screen_reader(monkeypatch):
+    import ctypes
+    import psutil
+    from netspeedtray.views import flyout as fmod
+    monkeypatch.setattr(ctypes.windll.user32, "SystemParametersInfoW", _spi(0))
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: (_ for _ in ()).throw(OSError("denied")))
+    assert fmod.screen_reader_running() is False
+
+
 _AVAIL = {"BOTTOM": QRect(0, 0, 1920, 1032), "TOP": QRect(0, 48, 1920, 1032),
           "LEFT": QRect(72, 0, 1848, 1080), "RIGHT": QRect(0, 0, 1848, 1080)}
 

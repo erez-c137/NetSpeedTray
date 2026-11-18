@@ -38,12 +38,29 @@ _WA_INACTIVE = 0
 
 
 def screen_reader_running() -> bool:
-    """True while a screen reader (Narrator, NVDA, JAWS) says it is running (SPI_GETSCREENREADER).
-    Any failure reads as False."""
+    """True while a screen reader (Narrator, NVDA, JAWS) runs: SPI_GETSCREENREADER says so, or - since
+    Narrator on Windows 11 26300 leaves that flag at 0 (live test F5) - its process is running. The
+    process scan runs only when the flag says no, and only when a card is about to show. Any failure
+    reads as False."""
     try:
         flag = ctypes.c_int(0)
         if ctypes.windll.user32.SystemParametersInfoW(_SPI_GETSCREENREADER, 0, ctypes.byref(flag), 0):
-            return bool(flag.value)
+            if flag.value:
+                return True
+    except Exception:
+        pass
+    return _screen_reader_process_running()
+
+
+def _screen_reader_process_running() -> bool:
+    try:
+        import psutil
+        from netspeedtray import constants
+        names = constants.app.SCREEN_READER_PROCESSES
+        for proc in psutil.process_iter(["name"]):
+            name = (proc.info.get("name") or "").lower()
+            if name in names:
+                return True
     except Exception:
         pass
     return False
