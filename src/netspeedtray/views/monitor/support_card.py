@@ -13,7 +13,7 @@ core/support_prompt (pure); this owns the moment and the card.
 - **The card:** inline, at the top of the Monitor under the tabs (so it is there whichever tab the
   Monitor reopens on), shaped like a WinUI InfoBar: a neutral star glyph, the title "A month with
   NetSpeedTray", one line ("It's free and always will be. ... a rating or a star helps others find
-  it."), the actions [Rate it in the Store] [Star on GitHub] and a "Support the project" link, and
+  it."), the actions [Rate it in the Store] [Star it on GitHub] and a "Support the project" link, and
   the InfoBar's own close X ("Dismiss"). The two buttons are equal weight - neither is an accent
   button - and the X is the plain way out.
 - **Rate only where it works:** the Store accepts a rating only from a user who has the app in their
@@ -258,7 +258,7 @@ class SupportCard(QFrame):
             self.buttons[ACTION_RATE] = self._make_button(
                 _tr(i18n, "SUPPORT_PROMPT_RATE_BUTTON", "Rate it in the Store"), ACTION_RATE)
         self.buttons[ACTION_STAR] = self._make_button(
-            _tr(i18n, "SUPPORT_PROMPT_STAR_BUTTON", "Star on GitHub"), ACTION_STAR)
+            _tr(i18n, "SUPPORT_PROMPT_STAR_BUTTON", "Star it on GitHub"), ACTION_STAR)
         self.support_link = NoticeLink("", _tr(i18n, "SUPPORT_PROMPT_SUPPORT_LINK", "Support the project"),
                                        lambda: self._answer(ACTION_SUPPORT), font_token=tokens.TYPE_BODY,
                                        surface=c['subtle_fill'], parent=self)

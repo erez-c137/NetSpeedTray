@@ -540,7 +540,7 @@ def test_card_text_actions_and_accessibility(qtbot):
     assert card.accessibleName() == "A month with NetSpeedTray"
     assert card.accessibleDescription() == ("It's free and always will be. If it's earned its spot on your "
                                             "taskbar, a rating or a star helps others find it.")
-    assert [b.text() for b in card.buttons.values()] == ["Rate it in the Store", "Star on GitHub"]
+    assert [b.text() for b in card.buttons.values()] == ["Rate it in the Store", "Star it on GitHub"]
     assert card.support_link.action_text() == "Support the project"
     assert card.close_button.accessibleName() == "Dismiss"
     # Equal weight: one style for both buttons, no accent fill.

@@ -193,7 +193,7 @@ class UsageHistorySheet(QDialog):
             return self._tr(
                 "USAGE_HISTORY_FOOTNOTE_AUTO",
                 "Recorded while NetSpeedTray was running, for all physical adapters. Your data-cap count "
-                "can differ: in Auto mode it counts only the adapter in use, and it also counts traffic "
+                "can differ: with Network adapters set to Automatic it counts only the adapter in use, and it also counts traffic "
                 "while the app was closed.")
         return self._tr(
             "USAGE_HISTORY_FOOTNOTE",

@@ -15,7 +15,7 @@ House rule 3 (ROADMAP): at most one one-time moment, ever, dismissable forever. 
   Nothing is marked while the policy is on - it simply never shows.
 - **Rate only where it works:** the Store accepts a rating only from a user who has the app in their
   Store library, so "Rate it in the Store" shows only on a Store install (installed_from_store);
-  everyone else gets "Star on GitHub" alone.
+  everyone else gets "Star it on GitHub" alone.
 - **A sane clock:** below SUPPORT_PROMPT_CLOCK_FLOOR nothing is written or due, and first_seen_at is
   never moved once written, so setting the clock back never shortens the wait.
 - **Zero telemetry:** nothing records which button was pressed, and nothing is sent anywhere; a link

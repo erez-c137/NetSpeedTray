@@ -212,7 +212,7 @@ def test_pause_row_sits_in_the_list_after_show_monitor(page, i18n):
     from netspeedtray.utils.components import SettingCard
     assert page.context_menu_items.isAncestorOf(page.pause_in_menu)
     rows = [c._title_label.text() for c in page.context_menu_items.findChildren(SettingCard)]
-    assert rows == ["Show Monitor", "Check connection", i18n.CLICK_ACTION_PAUSE_LABEL, "Reset Position",
+    assert rows == ["Show Monitor", "Check connection", i18n.CLICK_ACTION_PAUSE_LABEL, "Reset position",
                     "Check for updates", "Support this project"]
     assert "pause" not in page.context_menu_toggles   # its own key, not a hidden-items id
     titles = [c._title_label.text() for c in page.findChildren(SettingCard)]

@@ -223,7 +223,7 @@ class Flyout(QWidget):
                     btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             if two:
                 # Equal widths, each wide enough for the longer label (a stretch split alone squeezed
-                # "Open the Monitor" under its own padding).
+                # "Open Monitor" under its own padding).
                 need = max(self._label_width(b) for b in (self._action_btn, self._secondary_btn))
                 for b in (self._action_btn, self._secondary_btn):
                     b.setMinimumWidth(max(_BUTTON_MIN_W, need))

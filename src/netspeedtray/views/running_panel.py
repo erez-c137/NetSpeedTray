@@ -13,7 +13,7 @@ shows in place ("Checking…" -> "You're up to date" / "2.2.3 is available - Upd
 the panel open. A status card says what is true right now (running / hidden for a full-screen app /
 stepped aside for app buttons / paused, with Resume), the live speeds and, when the latency probe has
 something to say, the connection in the Overview's words. Then three navigation rows - Monitor,
-Settings, Check connection - and a quiet "Quit NetSpeedTray". Every row is the widget's existing action:
+Settings, Check connection - and a quiet "Exit NetSpeedTray". Every row is the widget's existing action:
 the action runs first and the panel closes right after (no activation flash).
 
 Keyboard: the first row has focus, Tab / Up / Down move, Enter / Space press, Esc closes. The Fluent
@@ -476,7 +476,7 @@ class RunningPanel(QDialog):
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         mw = self._mw
-        self.quit_button = _Control(self._tr("RUNNING_PANEL_QUIT", "Quit NetSpeedTray"), "Quiet", self)
+        self.quit_button = _Control(self._tr("RUNNING_PANEL_QUIT", "Exit NetSpeedTray"), "Quiet", self)
         self.quit_button.clicked.connect(lambda: self._run(lambda: mw.fully_exit_application()))
         try:
             startup = getattr(mw, "is_startup_enabled", None)

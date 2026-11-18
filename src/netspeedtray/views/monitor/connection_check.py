@@ -413,7 +413,7 @@ class ConnectionCheckSheet(QDialog):
                 self._open_internet_confirm, stacked=True, surface=_sheet_surface)
         else:
             self._hint = NoticeLink(
-                self._tr("CHECK_CONN_ALWAYS_NOTICE", "Track internet latency all the time?"),
+                self._tr("CHECK_CONN_ALWAYS_NOTICE", "Check your internet all the time?"),
                 self._tr("NOTICE_TURN_ON_IN_SETTINGS", "Turn on in Settings"),
                 self._open_internet_setting, stacked=True, surface=_sheet_surface)   # narrow sheet: no side-by-side wrap
         # Built empty: its text is set when it opens (a typed host in another script loads its face then).

@@ -168,7 +168,7 @@ class HistoryOffNotice(QObject):
         "gpu": ("HW_HISTORY_GPU_OFF_NOTICE", "GPU usage is off."),
     }
     _MONITOR_ANCHOR = {None: "hardware_monitoring", "cpu": "monitor_cpu_enabled", "gpu": "monitor_gpu_enabled"}
-    _RECORD_TEXT = ("HW_HISTORY_RECORD_OFF_NOTICE", "Hardware history recording is off.")
+    _RECORD_TEXT = ("HW_HISTORY_RECORD_OFF_NOTICE", "Record hardware history is off.")
 
     def __init__(self, i18n, open_settings, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)

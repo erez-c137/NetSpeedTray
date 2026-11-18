@@ -176,7 +176,7 @@ class GeneralPage(QWidget):
                 (defaults.CONTEXT_MENU_ITEM_MONITOR, "SHOW_MONITOR_MENU_ITEM", "Show Monitor"),
                 (defaults.CONTEXT_MENU_ITEM_CHECK_CONNECTION, "CHECK_CONN_ACTION", "Check connection"),
                 (_PAUSE, "CLICK_ACTION_PAUSE_LABEL", "Pause / Resume"),
-                (defaults.CONTEXT_MENU_ITEM_RESET_POSITION, "RESET_POSITION_MENU_ITEM", "Reset P&osition"),
+                (defaults.CONTEXT_MENU_ITEM_RESET_POSITION, "RESET_POSITION_MENU_ITEM", "Reset p&osition"),
                 (defaults.CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES, "CHECK_FOR_UPDATES_MENU_ITEM", "Check for &Updates"),
                 (defaults.CONTEXT_MENU_ITEM_SUPPORT, "SUPPORT_MENU_ITEM", "Support this Pro&ject")):
             if item_id is _PAUSE:

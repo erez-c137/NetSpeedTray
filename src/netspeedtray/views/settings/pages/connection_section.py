@@ -94,8 +94,8 @@ class ConnectionSettings(QWidget):
     def _latency_description(self, public: bool) -> str:
         if public:
             return self._tr("CONN_LATENCY_SUB_PUBLIC", "Pings the internet test server and your router to "
-                                                       "track delay, packet loss and dropouts.")
-        return self._tr("CONN_LATENCY_SUB", "Pings your router to track delay, packet loss and dropouts.")
+                                                       "track delay, packet loss and drops.")
+        return self._tr("CONN_LATENCY_SUB", "Pings your router to track delay, packet loss and drops.")
 
     def _sync_description(self) -> None:
         self._lat.set_description(self._latency_description(self._public.isChecked()))
