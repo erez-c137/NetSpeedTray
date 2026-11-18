@@ -2759,6 +2759,28 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Error opening settings at %r / %r: %s", page, anchor_key, e, exc_info=True)
 
+    def turn_on_internet_check(self) -> None:
+        """The inline "Also watch the internet" confirm's Turn on (2.2.2 D5) - only ever called from that
+        click. Sets ``latency_public_enabled`` through the normal config path (saved to disk; the running
+        latency probe reads the shared config before every cycle, so the internet ping starts within one
+        3 s cycle), makes sure the probe is running, and keeps an open Settings dialog in step - its
+        switch shows On, and neither its Cancel nor its next live apply turns the check back off.
+        Reversible in Settings > Network."""
+        self.config_controller.update_config({"latency_public_enabled": True}, apply_and_repaint=False)
+        self.apply_latency_probe()
+        dialog = getattr(self, "settings_dialog", None)
+        if dialog is None:
+            return
+        try:
+            for snapshot in (getattr(dialog, "config", None), getattr(dialog, "original_config", None)):
+                if isinstance(snapshot, dict):
+                    snapshot["latency_public_enabled"] = True
+            section = getattr(getattr(dialog, "interfaces_page", None), "connection", None)
+            if section is not None and hasattr(section, "set_public_enabled"):
+                section.set_public_enabled(True)
+        except Exception as e:
+            self.logger.debug("Open Settings not synced to the internet check: %s", e)
+
     def open_data_usage_settings(self) -> None:
         """Open Settings straight on the Network page's 'Data usage' section - the Monitor's 'Set a
         monthly limit' hint's door (was dropping the user on General)."""

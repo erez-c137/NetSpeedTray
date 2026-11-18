@@ -224,6 +224,23 @@ class LatencyConstants:
     # one hop that starts within this many seconds after the other hop's drop (past that row's own
     # span) ended is the same outage. Runs of ONE hop are never joined this way.
     OUTAGE_HOP_JOIN_SEC: Final[float] = 10.0
+    # "Also watch the internet" (2.2.2 D5): the inline offer to turn the internet check on stops
+    # appearing after the user has said "Not now" this many times (one "Not now" already hides it for
+    # the rest of the session). Settings > Network keeps the switch either way.
+    INTERNET_OFFER_MAX_DECLINES: Final[int] = 2
+    # Who runs a well-known public test server, named beside its address in that offer ("1.1.1.1
+    # (Cloudflare)") - the confirm says who sees the pings. Keys are lower-case host names and
+    # canonical IP addresses (ipaddress' compressed form); any other host is shown on its own.
+    ANCHOR_PROVIDERS: Final[Dict[str, str]] = {
+        "1.1.1.1": "Cloudflare", "1.0.0.1": "Cloudflare",
+        "2606:4700:4700::1111": "Cloudflare", "2606:4700:4700::1001": "Cloudflare",
+        "one.one.one.one": "Cloudflare",
+        "8.8.8.8": "Google", "8.8.4.4": "Google",
+        "2001:4860:4860::8888": "Google", "2001:4860:4860::8844": "Google", "dns.google": "Google",
+        "9.9.9.9": "Quad9", "149.112.112.112": "Quad9", "2620:fe::fe": "Quad9", "2620:fe::9": "Quad9",
+        "dns.quad9.net": "Quad9",
+        "208.67.222.222": "OpenDNS", "208.67.220.220": "OpenDNS",
+    }
     # RTT series -> the loss series of the same hop (the exporter's loss_pct).
     LOSS_SERIES_FOR: Final[Dict[str, str]] = {
         "latency_gw": STAT_GW_TIMEOUT,

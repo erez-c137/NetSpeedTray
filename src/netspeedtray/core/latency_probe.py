@@ -2,7 +2,7 @@
 LatencyProbe - a small background thread that measures network latency.
 
 Privacy-first design (owner decision): it pings the **default gateway** by default - a LAN probe that
-never leaves your network - and ONLY pings a public anchor (e.g. 1.1.1.1, for true internet latency)
+never leaves your network - and ONLY pings a public anchor (e.g. 1.1.1.1, for latency to the internet)
 when the user explicitly opts in. ICMP uses the Windows ICMP helper API (IcmpSendEcho) via ctypes, so
 it needs NO admin and spawns no subprocess. Each 3 s cycle sends a BURST of BURST_SIZE (4) echoes per
 hop, BURST_SPACING_MS (100 ms) apart, each with its own 1000 ms timeout (~1.3 packets/s of ~80 bytes per

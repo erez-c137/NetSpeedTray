@@ -104,6 +104,16 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - `CHECK_CONN_ALWAYS_NOTICE` - under the Check connection sheet's "Also check the internet" tick: "Track internet latency all the time?" (the button is under it). It is about the internet check that runs in the background, not this one-off check.
 > - Removed: `CHECK_CONN_HINT` ("To measure the internet all the time, turn on ... in Settings.") and `HARDWARE_HISTORY_OFF_MESSAGE` / `HARDWARE_HISTORY_RECORD_OFF_MESSAGE` (the old text drawn into the graph) - replaced by the keys above.
 
+> 🆕 **Pending native review for 2.2.2 (Router vs Internet, see #364):** every non-English value below is machine-drafted (AI-assisted) and not yet checked by a native speaker. The Monitor now says which hop a health figure measured ("Router: steady" with the internet check off), and offers the internet check in one click with a short inline confirm.
+> - `INTERNET_WATCH_OFFER` - a link beside the Overview's "Router: ..." line, and the Settings switch's label (`CONN_PUBLIC_LABEL` now has the same text): "Also watch the internet". Short - it sits on one line after the health text.
+> - `INTERNET_WATCH_ALWAYS` - the same link in the Check connection sheet, under the one-off "Also check the internet" tick: "Watch the internet all the time". It must read as different from that tick (always, in the background - not this one check).
+> - `INTERNET_CONFIRM_TEXT` - the one line the link opens: what leaves the PC, to whom, how often. `{count}` is 4, `{seconds}` is 3, `{target}` is the server, e.g. "1.1.1.1 (Cloudflare)". Keep "sees your IP address" plain and honest.
+> - `INTERNET_CONFIRM_TURN_ON` / `INTERNET_CONFIRM_NOT_NOW` - its two buttons: "Turn on" / "Not now".
+> - `INTERNET_CONFIRM_DONE` - replaces that line after Turn on: "The internet check is on. You can turn it off in Settings." Use your word for Settings from `SETTINGS_MENU_ITEM`.
+> - `CONN_HEALTH_ROUTER_TOOLTIP` / `CONN_HEALTH_INTERNET_TOOLTIP` - the tooltip on the Overview's "Router: 3 drops" / "Internet: 3 drops" line: when a drop is counted (`{seconds}` is 6). Use your `CONN_HEALTH_DROPS` word.
+> - Changed: `CONN_PUBLIC_LABEL` (was "Also measure true internet latency" - "true" wrongly suggested the router figure is false) and `CONN_PUBLIC_SUB` (now says what is sent, to whom, how often; it has `{count}` and `{seconds}`).
+> - Removed: `CONN_HEALTH_LABEL` ("Connection") - the line now uses your `CHECK_CONN_ROUTER` ("Router") or `LATENCY_LABEL` ("Internet") word.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

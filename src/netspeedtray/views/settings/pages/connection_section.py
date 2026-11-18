@@ -4,8 +4,8 @@
 Surfaces three already-built-but-dormant features:
   • latency_enabled - ping + loss to the default gateway, and connection-drop events over time (on by
     default; LAN-only, never leaves the network).
-  • latency_public_enabled / latency_public_host - the OPT-IN public anchor that measures true internet
-    latency by pinging an external server (off by default - it's the one thing that leaves the LAN).
+  • latency_public_enabled / latency_public_host - the OPT-IN public anchor that measures latency to the
+    internet by pinging an external server (off by default - it's the one thing that leaves the LAN).
   • plan_down_mbps / plan_up_mbps - your advertised plan speeds, which drive the Statistics sheet's
     "% of time below the plan" figure (0 = off).
 """
@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSpinBox
 
 from netspeedtray.utils.components import SettingCard, SettingExpander, Win11Toggle, Win11ComboBox
+from netspeedtray import constants
 from netspeedtray.utils import styles as su
 
 
@@ -41,10 +42,15 @@ class ConnectionSettings(QWidget):
         self._public = Win11Toggle(initial_state=False)
         self._public.toggled.connect(lambda _v: self._sync_description())
         self._public.toggled.connect(lambda _v: self.on_change())
+        # Says exactly what leaves the PC, to whom, how often - the same facts as the Monitor's inline
+        # "Also watch the internet" confirm (D5), whose wording this switch's label shares.
+        lat = constants.network.latency
         body.addWidget(SettingCard(
-            self._tr("CONN_PUBLIC_LABEL", "Also measure true internet latency"),
+            self._tr("CONN_PUBLIC_LABEL", "Also watch the internet"),
             self._tr("CONN_PUBLIC_SUB",
-                     "Pings a public server - this leaves your local network, so it's off by default."),
+                     "Sends {count} tiny pings every {seconds} seconds to the internet test server below, "
+                     "which sees your IP address. Nothing else leaves your PC.").format(
+                count=lat.BURST_SIZE, seconds=f"{lat.OUTAGE_CYCLE_SEC:g}"),
             control=self._public))
 
         self._host = Win11ComboBox()
@@ -91,6 +97,16 @@ class ConnectionSettings(QWidget):
 
     def _sync_description(self) -> None:
         self._lat.set_description(self._latency_description(self._public.isChecked()))
+
+    def set_public_enabled(self, on: bool) -> None:
+        """Show the internet check's state when it changed outside this dialog (the Monitor's inline
+        "Also watch the internet" confirm, D5) - silently: this is not the user editing Settings."""
+        self._public.blockSignals(True)
+        try:
+            self._public.setChecked(bool(on))
+        finally:
+            self._public.blockSignals(False)
+        self._sync_description()
 
     def anchor_widgets(self, key: str) -> list:
         """Deep-link targets (D4). The internet check sits in the latency section's body: with latency
