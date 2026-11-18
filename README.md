@@ -123,7 +123,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
     <img src="screenshots/settings_appearance_2.0.png" alt="NetSpeedTray Settings - Appearance page" width="780" />
     <p><sub><b>Appearance</b> - fonts, colors, and arrow-style presets, with a live widget preview at the bottom that updates as you change things.</sub></p>
     <br/>
-    <img src="screenshots/settings_general_2.0.png" alt="NetSpeedTray Settings - General page" width="780" />
+    <img src="screenshots/settings_general_2.2.1.png" alt="NetSpeedTray Settings - General page" width="780" />
     <p><sub><b>General</b> - language, update rate, startup, automatic update checks, double-/middle-click actions and what the right-click menu shows. Six pages in all: General · Widget · Appearance · Hardware · Network interfaces · Advanced.</sub></p>
   </div>
 </details>
@@ -135,7 +135,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 Double-click the widget (or pick **Show Monitor** from the right-click menu) for the whole story behind the numbers: one window, three tabs - **Overview, Network, Hardware** - on one shared timeline.
 
 <div align="center">
-  <img src="screenshots/monitor_overview_2.0.png" alt="NetSpeedTray Monitor - Overview tab" width="860" />
+  <img src="screenshots/monitor_overview_2.2.1.png" alt="NetSpeedTray Monitor - Overview tab" width="860" />
   <p><sub><b>Overview.</b> Live tiles for network, CPU, GPU, RAM and VRAM with sparklines that span the whole time range and adapt their scale, a network hero with inline latency, a strip with session uptime, period totals and CPU + GPU power, a data-usage card, and the apps with the most connections - every card drills into detail. Its sparklines are drawn natively, so a quick glance never loads the plotting library.</sub></p>
 </div>
 
