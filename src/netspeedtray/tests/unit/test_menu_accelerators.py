@@ -26,6 +26,7 @@ _LOCALES = Path(__file__).parents[3] / "netspeedtray" / "constants" / "locales"
 _TRAY_MENU_KEYS = [
     "SETTINGS_MENU_ITEM",
     "SHOW_MONITOR_MENU_ITEM",
+    "CHECK_CONN_ACTION",          # 2.2.2 D7 (no accelerator today; caught here if one is added)
     "PAUSE_MENU_ITEM",
     "RESUME_MENU_ITEM",
     "RESET_POSITION_MENU_ITEM",

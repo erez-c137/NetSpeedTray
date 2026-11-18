@@ -62,6 +62,16 @@ class BusiestAppsCard(QFrame):
         head.addWidget(more)
         root.addLayout(head)
 
+        # One honest line under the title (2.2.2 D7): ranked by open connections, not speed - Windows
+        # reports no per-app speed without admin rights. Also the card's screen-reader description.
+        caption_text = self._tr("MONITOR_MOST_CONNECTIONS_CAPTION", "Ranked by open connections, not speed.")
+        self._caption = QLabel(caption_text)
+        self._caption.setWordWrap(True)
+        self._caption.setFont(su.font(tokens.TYPE_CAPTION))
+        self._caption.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        root.addWidget(self._caption)
+        self.setAccessibleDescription(caption_text)
+
         self._status = QLabel(self._tr("APP_ACTIVITY_LOADING_MESSAGE", "Loading application activity..."))
         self._status.setFont(su.font(tokens.TYPE_CAPTION))
         self._status.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")

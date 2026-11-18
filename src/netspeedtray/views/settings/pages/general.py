@@ -100,10 +100,10 @@ class GeneralPage(QWidget):
                                      description=self.i18n.UPDATE_INTERVAL_DESCRIPTION,
                                      control=self.update_rate))
 
-        # --- Behavior ---
+        # --- Startup and updates (2.2.2 D7: was "Behavior", a header three pages shared) ---
         # NOTE (2.0 IA): free-move, keep-visible-in-fullscreen and tray-offset moved to the new Widget
         # page (they're about the on-taskbar widget, not the app). General keeps app-level behavior.
-        layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
+        layout.addWidget(section_header(self.i18n.STARTUP_UPDATES_GROUP_TITLE))
         self.start_with_windows = Win11Toggle(label_text="")
         self.start_with_windows.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.START_WITH_WINDOWS_LABEL, control=self.start_with_windows))
@@ -123,7 +123,7 @@ class GeneralPage(QWidget):
         layout.addWidget(self._updates_card)
         self._apply_update_policy_lock()
 
-        # (Preferred Monitor moved to the Widget page's Behavior section, 2.2 IA pass: it decides which
+        # (Preferred Monitor moved to the Widget page's Placement section, 2.2 IA pass: it decides which
         # taskbar the widget docks to, and its dependent "Float on a display without a taskbar" is there.)
 
         # --- Interaction (community PR #165, @rami123) ---
@@ -174,6 +174,7 @@ class GeneralPage(QWidget):
         _PAUSE = object()   # the Pause / Resume row: its own key, not a hidden-items id
         for item_id, label_key, fallback in (
                 (defaults.CONTEXT_MENU_ITEM_MONITOR, "SHOW_MONITOR_MENU_ITEM", "Show Monitor"),
+                (defaults.CONTEXT_MENU_ITEM_CHECK_CONNECTION, "CHECK_CONN_ACTION", "Check connection"),
                 (_PAUSE, "CLICK_ACTION_PAUSE_LABEL", "Pause / Resume"),
                 (defaults.CONTEXT_MENU_ITEM_RESET_POSITION, "RESET_POSITION_MENU_ITEM", "Reset P&osition"),
                 (defaults.CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES, "CHECK_FOR_UPDATES_MENU_ITEM", "Check for &Updates"),

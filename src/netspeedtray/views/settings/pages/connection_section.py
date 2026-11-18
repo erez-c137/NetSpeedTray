@@ -81,7 +81,8 @@ class ConnectionSettings(QWidget):
         s = QSpinBox()
         s.setRange(0, 100000)
         s.setSingleStep(10)
-        s.setSuffix(" Mbps")
+        # The locale's own unit (Mbit/s, Мбит/с...); the value is always decimal megabits per second.
+        s.setSuffix(" " + self._tr("MBITS_UNIT", "Mbps"))
         s.setSpecialValueText(self._tr("CONN_PLAN_OFF", "Off"))   # 0 reads "Off", not "0 Mbps"
         s.valueChanged.connect(lambda _v: self.on_change())
         return s
@@ -92,9 +93,9 @@ class ConnectionSettings(QWidget):
 
     def _latency_description(self, public: bool) -> str:
         if public:
-            return self._tr("CONN_LATENCY_SUB_PUBLIC", "Ping + packet loss to the internet test server "
-                                                       "(and your router), and connection drops over time")
-        return self._tr("CONN_LATENCY_SUB", "Ping + packet loss to your router, and connection drops over time")
+            return self._tr("CONN_LATENCY_SUB_PUBLIC", "Pings the internet test server and your router to "
+                                                       "track delay, packet loss and dropouts.")
+        return self._tr("CONN_LATENCY_SUB", "Pings your router to track delay, packet loss and dropouts.")
 
     def _sync_description(self) -> None:
         self._lat.set_description(self._latency_description(self._public.isChecked()))
