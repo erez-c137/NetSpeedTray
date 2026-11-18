@@ -382,9 +382,9 @@ class ConnectionCheckSheet(QDialog):
         # The action is swappable (set_on_click): D5 makes it an inline confirm instead of a Settings trip.
         from netspeedtray.utils.components import NoticeLink
         self._hint = NoticeLink(
-            self._tr("CHECK_CONN_ALWAYS_NOTICE", "Want the internet measured all the time?"),
+            self._tr("CHECK_CONN_ALWAYS_NOTICE", "Track internet latency all the time?"),
             self._tr("NOTICE_TURN_ON_IN_SETTINGS", "Turn on in Settings"),
-            self._open_internet_setting, surface=_sheet_surface)
+            self._open_internet_setting, stacked=True, surface=_sheet_surface)   # narrow sheet: no side-by-side wrap
         root.addWidget(self._tick)
         root.addWidget(self._hint)
         self._tick.setVisible(not self._public_on)

@@ -162,12 +162,12 @@ class HistoryOffNotice(QObject):
     Qt-only (no matplotlib)."""
 
     _MONITOR_TEXT = {
-        None: ("HW_HISTORY_MONITOR_OFF_NOTICE", "Hardware history needs CPU, GPU or RAM monitoring."),
-        "cpu": ("HW_HISTORY_CPU_OFF_NOTICE", "CPU history needs CPU monitoring."),
-        "gpu": ("HW_HISTORY_GPU_OFF_NOTICE", "GPU history needs GPU monitoring."),
+        None: ("HW_HISTORY_MONITOR_OFF_NOTICE", "Hardware monitoring is off."),
+        "cpu": ("HW_HISTORY_CPU_OFF_NOTICE", "CPU monitoring is off."),
+        "gpu": ("HW_HISTORY_GPU_OFF_NOTICE", "GPU monitoring is off."),
     }
     _MONITOR_ANCHOR = {None: "hardware_monitoring", "cpu": "monitor_cpu_enabled", "gpu": "monitor_gpu_enabled"}
-    _RECORD_TEXT = ("HW_HISTORY_RECORD_OFF_NOTICE", "Hardware history isn't being recorded.")
+    _RECORD_TEXT = ("HW_HISTORY_RECORD_OFF_NOTICE", "Hardware history recording is off.")
 
     def __init__(self, i18n, open_settings, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -176,6 +176,7 @@ class HistoryOffNotice(QObject):
         self._widget = None
         self._canvas: Optional[QWidget] = None
         self._kind: Optional[Tuple[str, Optional[str]]] = None
+        self._area = None   # () -> (left, top, right, bottom) canvas fractions: the plot area
 
     @classmethod
     def normalize(cls, notice) -> Optional[Tuple[str, Optional[str]]]:
@@ -219,9 +220,12 @@ class HistoryOffNotice(QObject):
             self._canvas.removeEventFilter(self)
         self._canvas = None
 
-    def sync(self, canvas: Optional[QWidget], notice) -> None:
+    def sync(self, canvas: Optional[QWidget], notice, area=None) -> None:
         """Show the note for ``notice`` over ``canvas``, or hide it (None). The text and the action are
-        re-applied only when the note changes - this runs after every render, live updates included."""
+        re-applied only when the note changes - this runs after every render, live updates included.
+        ``area`` (GraphRenderer.plot_area_fraction) is where it is centred: the plot, not the canvas
+        with its axis margins."""
+        self._area = area
         kind = self.normalize(notice)
         if kind is None or not self._alive(canvas):
             self._kind = None
@@ -283,14 +287,24 @@ class HistoryOffNotice(QObject):
         if not (self._alive(w) and self._alive(canvas)):
             return
         from netspeedtray.constants.styles import styles as tokens
+        cw, ch = canvas.width(), canvas.height()
+        left, top, right, bottom = 0, 0, cw, ch
+        try:
+            frac = self._area() if callable(self._area) else None
+        except Exception:
+            frac = None
+        if frac:
+            left, top, right, bottom = (round(frac[0] * cw), round(frac[1] * ch),
+                                        round(frac[2] * cw), round(frac[3] * ch))
         width = max(tokens.NOTICE_OVERLAY_MIN_WIDTH,
-                    min(canvas.width() - 2 * tokens.SPACE_L, tokens.NOTICE_OVERLAY_MAX_WIDTH))
+                    min(right - left - 2 * tokens.SPACE_L, tokens.NOTICE_OVERLAY_MAX_WIDTH))
         w.setFixedWidth(width)
         height = w.heightForWidth(width) if w.hasHeightForWidth() else -1
         if height <= 0:
             height = w.sizeHint().height()
         w.setFixedSize(width, height)
-        w.move((canvas.width() - width) // 2, max(0, (canvas.height() - height) // 2))
+        cx, cy = (left + right) // 2, (top + bottom) // 2
+        w.move(max(0, cx - width // 2), max(0, cy - height // 2))
 
     def eventFilter(self, obj, event) -> bool:
         if obj is self._canvas and event.type() == QEvent.Type.Resize and self._kind is not None:
@@ -423,7 +437,8 @@ class GraphHost(QObject):
         if notice is None or self.renderer is None:
             return
         kind = None if self._current_stat == "network" else getattr(self.renderer, "history_off_notice", None)
-        notice.sync(getattr(self.renderer, "canvas", None), kind)
+        notice.sync(getattr(self.renderer, "canvas", None), kind,
+                    area=getattr(self.renderer, "plot_area_fraction", None))
 
     def _set_thread_ident(self, ident: int) -> None:
         self._thread_ident = ident   # runs on the worker thread (started, DirectConnection)

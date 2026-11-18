@@ -434,7 +434,10 @@ class GraphRenderer(QObject):
             period_key != self._last_period_key or
             stat_type != getattr(self, '_last_stat_type', 'network') or
             (stat_type != "overview" and self.line_download is None) # Overview handles its own lines
+            # the last render blanked the axes for the history-off notice: rebuild their grid and ticks
+            or getattr(self, "_axes_blanked", False)
         )
+        self._axes_blanked = False
         
         self._last_period_key = period_key
         self._last_stat_type = stat_type
@@ -911,10 +914,43 @@ class GraphRenderer(QObject):
         if not (period_key == "TIMELINE_SESSION" or not reasons or None in reasons):
             reason = "record" if "record" in reasons else "monitor"
             self.history_off_notice = (reason, roles[0] if len(roles) == 1 else None)
+            self._blank_axes_for_notice()
             return
         text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
         ax.text(0.5, 0.5, self._lbl(text), transform=ax.transAxes, ha="center", va="center",
                 multialignment="center", color=self._current_text_color, alpha=0.55, fontsize=10)
+
+    def _blank_axes_for_notice(self) -> None:
+        """The history-off state is EMPTY, so it reads empty (UX review): no gridlines through the notice,
+        no tick labels - an empty ranged view had no x limits and drew a meaningless 0.0-1.0 axis - and
+        no axis titles. The frame stays, so the notice still sits in a chart. The next render rebuilds
+        the axes (render: _axes_blanked)."""
+        for ax in self.figure.axes:
+            if not ax.get_visible():
+                continue
+            ax.grid(False)
+            ax.tick_params(axis="both", which="both", bottom=False, top=False, left=False, right=False,
+                           labelbottom=False, labeltop=False, labelleft=False, labelright=False)
+            ax.set_xlabel("")
+            ax.set_ylabel("")
+            legend = ax.get_legend()
+            if legend is not None:
+                legend.remove()
+        self._axes_blanked = True
+
+    def plot_area_fraction(self):
+        """The plot area - the union of the visible axes - as (left, top, right, bottom) fractions of the
+        canvas, top-left origin; None without axes. Fractions, not pixels, so a host placing a widget
+        over it can follow a resize before matplotlib has resized the figure."""
+        boxes = [ax.get_position() for ax in (self.figure.axes if self.figure is not None else [])
+                 if ax.get_visible()]
+        if not boxes:
+            return None
+        x0 = min(b.x0 for b in boxes)
+        x1 = max(b.x1 for b in boxes)
+        y0 = min(b.y0 for b in boxes)
+        y1 = max(b.y1 for b in boxes)
+        return x0, 1.0 - y1, x1, 1.0 - y0
 
     def _configure_hardware_axes(self, start_time, end_time, period_key, timestamps, values):
         """Sets limits and formatters for hardware stats."""

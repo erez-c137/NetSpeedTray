@@ -86,9 +86,21 @@ class UIStyleConstants:
     CONTENT_MAX_WIDTH: Final[int] = 640
 
     # --- NoticeLink + deep-link outline (2.2.2 D4, utils/components) -------
-    FOCUS_RING_WIDTH: Final[int] = 2              # the app's focus ring / the deep-link outline, px
-    NOTICE_LINK_PAD_V: Final[int] = 1             # the link button's padding inside its focus ring
-    NOTICE_LINK_PAD_H: Final[int] = 4
+    FOCUS_RING_WIDTH: Final[int] = 2              # the app's focus ring (2 px accent - the house style), px
+    # Fluent HyperlinkButton: padding inside the focus ring, a >= 24 px click target, a subtle fill on
+    # hover (SUBTLE_FILL_*) and a fainter one while pressed, the text at a secondary accent then.
+    NOTICE_LINK_PAD_V: Final[int] = 3
+    NOTICE_LINK_PAD_H: Final[int] = 8
+    NOTICE_LINK_MIN_HEIGHT: Final[int] = 24
+    NOTICE_LINK_PRESSED_FILL_LIGHT: Final[str] = "rgba(0, 0, 0, 0.024)"
+    NOTICE_LINK_PRESSED_FILL_DARK: Final[str] = "rgba(255, 255, 255, 0.042)"
+    NOTICE_LINK_PRESSED_TEXT_ALPHA: Final[float] = 0.8
+    NOTICE_LINK_CHEVRON_PX: Final[int] = 10       # the trailing Segoe Fluent Icons chevron
+    CHEVRON_RIGHT_CODEPOINT: Final[int] = 0xE76C  # ChevronRight (LTR)
+    CHEVRON_LEFT_CODEPOINT: Final[int] = 0xE76B   # ChevronLeft (RTL)
+    # Where a Settings deep link landed: an accent tint + a hairline accent stroke (not a focus ring).
+    ANCHOR_HIGHLIGHT_FILL_ALPHA: Final[float] = 0.11
+    ANCHOR_HIGHLIGHT_STROKE: Final[int] = 1
     MIN_TEXT_CONTRAST: Final[float] = 4.5         # WCAG AA for body text
     CONTRAST_BLEND_STEPS: Final[int] = 20         # readable_on: lightness steps toward white / black
     NOTICE_OVERLAY_MIN_WIDTH: Final[int] = 120    # the Hardware graph's history-off notice, px

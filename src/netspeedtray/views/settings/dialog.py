@@ -686,8 +686,10 @@ class SettingsDialog(QDialog):
         self._last_anchor = (anchor_key, targets)
         scroll = self._page_scrolls[index]
         from netspeedtray.utils.components import flash_highlight
-        for target in targets:
-            flash_highlight(target)
+        # One calm landing mark, on the first card only (the CPU switch, for "hardware_monitoring"): a
+        # tint on every card of a group read as three focus rings at once (UX review). The rest of the
+        # group sits right below it.
+        flash_highlight(targets[0])
         self._focus_anchor(targets[0], controls[0])
         self._scroll_to_anchor(scroll, targets[0])
         # Once more after the layout settles: a page built just now (or an expander just opened) has no
@@ -740,6 +742,12 @@ class SettingsDialog(QDialog):
         for w in [control] + control.findChildren(QWidget) + [target] + target.findChildren(QWidget):
             if (w.focusPolicy().value & tab) and w.isVisibleTo(w.window()) and w.isEnabled():
                 w.setFocus(Qt.FocusReason.OtherFocusReason)
+                # a switch shows its keyboard focus ring now (the window may not be active yet)
+                node = w
+                while node is not None and not hasattr(node, "show_keyboard_focus"):
+                    node = node.parentWidget()
+                if node is not None:
+                    node.show_keyboard_focus()
                 return
         node = target
         while node is not None and not node.isEnabled():

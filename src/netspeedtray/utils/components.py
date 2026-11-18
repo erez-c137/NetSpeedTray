@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QApplication, QScrollArea, QAbstractSlider, QAbstractSpinBox, QAbstractButton
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, QTimer, QObject, QEvent
-from PyQt6.QtGui import QFont, QPaintEvent, QPainter, QColor
+from PyQt6.QtGui import QFont, QPaintEvent, QPainter, QColor, QIcon
 from netspeedtray.utils.styles import (
     toggle_style, slider_style, font as token_font, semantic_colors, get_accent_color,
     prefers_reduced_motion, is_dark_mode, ui_font, ui_family_css, icon_font_family, symbol_face, set_ui_text, face_for_text, set_text_in_face, apply_text_face,
@@ -197,7 +197,9 @@ class Win11Toggle(QWidget):
         self.checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
         checkbox_qss = toggle_style(self._OUTER_TRACK_WIDTH, self._OUTER_TRACK_HEIGHT) 
         checkbox_qss += " QCheckBox { background-color: transparent; border: none; outline: none; padding: 0px; margin: 0px; }"
+        checkbox_qss += self._focus_ring_qss()
         self.checkbox.setStyleSheet(checkbox_qss)
+        self.checkbox.installEventFilter(self)
         if self.label_text.strip():
             # The visible label is a separate QLabel; the focusable checkbox carries the name.
             self.checkbox.setAccessibleName(self.label_text.strip())
@@ -266,13 +268,55 @@ class Win11Toggle(QWidget):
         self.toggled.emit(self._is_checked)
 
 
-    def keyPressEvent(self, event) -> None:
-        """Enter / Return on the focused switch flips it, like Space. The inner QCheckBox ignores Enter,
-        so it bubbled up to Settings, which pressed its default Save button: a Settings deep link (D4)
-        puts focus on a switch, and Enter there saved and closed the dialog with nothing turned on."""
-        if self.isEnabled() and _enter_activates(self.checkbox, event):
+    # --- keyboard focus visual (2.2.2 D4) -------------------------------------------------------------
+    # The track's sheet says outline:none, so a switch reached with Tab - or landed on by a Settings deep
+    # link - showed no focus at all. Space flips it (Windows' switch key); Enter is left to the dialog's
+    # default button, as everywhere else in Windows.
+    def _focus_ring_qss(self) -> str:
+        ring = tokens.FOCUS_RING_WIDTH
+        w = max(0, self._OUTER_TRACK_WIDTH - 2 * ring)
+        h = max(0, self._OUTER_TRACK_HEIGHT - 2 * ring)
+        c = semantic_colors()
+        return (f' QCheckBox[keyboardFocus="true"]::indicator {{ border: {ring}px solid {c["accent"]};'
+                f' width: {w}px; height: {h}px; }}'
+                # on: the track IS accent - the ring is drawn in the text colour so it still shows
+                f' QCheckBox[keyboardFocus="true"]::indicator:checked {{ border: {ring}px solid {c["text_primary"]};'
+                f' width: {w}px; height: {h}px; }}')
+
+    def _set_keyboard_focus(self, on: bool) -> None:
+        if bool(self.checkbox.property("keyboardFocus")) == on:
             return
-        super().keyPressEvent(event)
+        self.checkbox.setProperty("keyboardFocus", on)
+        st = self.checkbox.style()
+        st.unpolish(self.checkbox)
+        st.polish(self.checkbox)
+        self.checkbox.update()
+
+    _KEYBOARD_REASONS = (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+                         Qt.FocusReason.ShortcutFocusReason, Qt.FocusReason.OtherFocusReason)
+    # Focus lost or regained with the window (Alt+Tab away and back) keeps the ring as it was.
+    _WINDOW_REASONS = (Qt.FocusReason.ActiveWindowFocusReason, Qt.FocusReason.PopupFocusReason)
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is getattr(self, "checkbox", None):
+            kind = event.type()
+            if kind == QEvent.Type.FocusIn:
+                # Tab, Shift+Tab and a deep link's focus show the ring; a mouse click doesn't
+                if event.reason() in self._KEYBOARD_REASONS:
+                    self._set_keyboard_focus(True)
+                elif event.reason() == Qt.FocusReason.MouseFocusReason:
+                    self._set_keyboard_focus(False)
+            elif kind == QEvent.Type.FocusOut and event.reason() not in self._WINDOW_REASONS:
+                self._set_keyboard_focus(False)
+        return super().eventFilter(obj, event)
+
+    def show_keyboard_focus(self) -> None:
+        """Show the focus ring now - a Settings deep link focuses the switch before its window is
+        active, so Qt sends no FocusIn until the window activates (and then as an activation)."""
+        self._set_keyboard_focus(True)
+
+    def keyboardFocusShown(self) -> bool:
+        return bool(self.checkbox.property("keyboardFocus"))
 
     def isChecked(self) -> bool: return self._is_checked
 
@@ -1442,7 +1486,8 @@ def _enter_activates(button: QAbstractButton, event) -> bool:
 
 class _NoticeLinkButton(QPushButton):
     """A NoticeLink's action: a real push button - UI Automation sees a Button with Invoke, Tab reaches
-    it, Space (Qt's default) and Enter fire it - drawn as a link. Never a dialog's default button: Enter
+    it, Space (Qt's default) and Enter fire it - drawn as a Fluent HyperlinkButton. Tab focus only (as
+    _ExpanderHeader): a mouse click leaves no focus ring behind. Never a dialog's default button: Enter
     on it fires IT, never the dialog's Save / Check again."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -1451,9 +1496,10 @@ class _NoticeLinkButton(QPushButton):
         self.setAutoDefault(False)
         self.setDefault(False)
         self.setFlat(True)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(tokens.NOTICE_LINK_MIN_HEIGHT)
 
     def keyPressEvent(self, event) -> None:
         if not _enter_activates(self, event):
@@ -1461,24 +1507,27 @@ class _NoticeLinkButton(QPushButton):
 
 
 class NoticeLink(QFrame):
-    """A short notice with one link-style action: "Hardware history needs CPU, GPU or RAM monitoring.
-    Turn on in Settings ->". The pattern for every moment-of-need prompt that used to only SAY where to
-    go (2.2.2 D4); the data-cap tile's "Set a monthly limit" link is the original.
+    """A short notice with one link-style action: "Hardware monitoring is off.  Turn on in Settings >".
+    The pattern for every moment-of-need prompt that used to only SAY where to go (2.2.2 D4), and for
+    the Monitor's other in-card links ("Set a monthly limit", "Usage by day").
 
     ``on_click`` is any callable and can be swapped later (``set_on_click``) - Settings deep links pass
     ``lambda: main_widget.open_settings(page, anchor)``; an inline confirm (D5) or a help sheet (D6)
     pass their own. ``activated`` is emitted first, on every activation, for listeners that only need
     to know it happened.
 
-    Accessibility: the action's accessible name is its text (without the arrow), its description the
-    notice text, so a screen reader landing on the button hears both. Keyboard: Tab reaches the button,
-    Enter and Space activate it. Theme: Light/Dark tokens, contrast-checked against ``surface`` (a hex
-    or a callable returning one - the colour the host paints behind the notice; default a setting
-    card), and Windows High Contrast colours while that is on; re-read on every palette / style /
-    theme change. RTL: the box layout mirrors with the layout direction and the arrow flips.
+    Accessibility: the action's accessible name is its text, its description the notice text, so a
+    screen reader landing on the button hears both. Keyboard: Tab reaches the button, Enter and Space
+    activate it. Look: a Fluent HyperlinkButton - accent text, no underline (High Contrast: always
+    underlined), a subtle fill on hover and press, a 2 px accent focus ring (the app's house style,
+    on purpose - not Fluent's two-tone ring), a trailing Segoe Fluent Icons chevron (a pixmap, so no
+    font fallback search - the Unicode arrow made Qt load every installed font for Bengali). Colours
+    are contrast-checked against ``surface`` (a hex or a callable returning one - what the host
+    paints behind the notice; default a setting card) and re-read on every palette / style / theme
+    change. RTL: the layout mirrors and the chevron points the reading way.
 
     ``stacked`` puts the action under the text instead of after it; ``centered`` centres both (an
-    empty-state overlay on a chart). ``text`` may be empty: the action alone.
+    empty-state overlay on a chart), else both start-align. ``text`` may be empty: the action alone.
     """
 
     activated = pyqtSignal()
@@ -1491,6 +1540,8 @@ class NoticeLink(QFrame):
         self._on_click = on_click
         self._action_text = str(action_text or "")
         self._surface = surface
+        self._stacked = stacked
+        self._centered = centered
         self._colors: dict = {}
         self._theming = False   # refresh_theme's own setStyleSheet sends a StyleChange - not a theme change
 
@@ -1512,7 +1563,9 @@ class NoticeLink(QFrame):
 
         if stacked:
             # The label spans the full width (an alignment flag here would shrink it to its unwrapped
-            # size hint and clip the wrapped lines); its own text alignment does the centring.
+            # size hint and clip the wrapped lines); its own text alignment does the centring. The
+            # button keeps its padding off the text's edge: pulled back by it when start-aligned, so
+            # the link's words line up with the notice's.
             align = Qt.AlignmentFlag.AlignHCenter if centered else Qt.AlignmentFlag.AlignLeading
             lay.addWidget(self._label)
             lay.addWidget(self._button, 0, align)
@@ -1566,22 +1619,36 @@ class NoticeLink(QFrame):
             logger.error("NoticeLink action '%s' failed: %s", self._action_text, e, exc_info=True)
 
     def _sync_action_text(self) -> None:
-        arrow = "←" if self.isRightToLeft() else "→"   # points the reading way
-        # Decorative, so only where the UI face has it: Nirmala UI (Bengali) lacks the arrows, and a
-        # button can't take styles.ui_html's per-run face - Qt would search its fallback chain for the
-        # glyph, which loads every installed font family (test_font_files_per_language).
-        from netspeedtray.utils.font_runs import family_covers
-        from netspeedtray.utils.styles import ui_family
-        try:
-            with_arrow = family_covers(ui_family(), arrow)
-        except Exception:
-            with_arrow = False
-        shown = self._action_text
-        if shown and with_arrow:
-            shown = f"{shown} {arrow}"
-        self._button.setText(shown)
-        apply_text_face(self._button, shown)
+        self._button.setText(self._action_text)
+        apply_text_face(self._button, self._action_text)
         self._button.setAccessibleName(self._action_text)
+        # QPushButton draws its icon before the text; the chevron trails it, so the button lays out in
+        # the opposite direction of the notice (the action text is one run - its order doesn't change).
+        rtl = self.isRightToLeft()
+        self._button.setLayoutDirection(Qt.LayoutDirection.LeftToRight if rtl else Qt.LayoutDirection.RightToLeft)
+        if self._stacked and not self._centered:
+            # A box layout resolves AlignLeading with the ITEM's own direction - the button's, flipped
+            # above - so the start edge is given absolutely, from the notice's direction.
+            side = Qt.AlignmentFlag.AlignRight if rtl else Qt.AlignmentFlag.AlignLeft
+            self._layout.setAlignment(self._button, Qt.AlignmentFlag.AlignAbsolute | side)
+        self._sync_chevron()
+
+    def _sync_chevron(self) -> None:
+        link = self._colors.get("link")
+        if not link or not self._action_text:
+            self._button.setIcon(QIcon())
+            return
+        from netspeedtray.utils.styles import fluent_icon
+        cp = tokens.CHEVRON_LEFT_CODEPOINT if self.isRightToLeft() else tokens.CHEVRON_RIGHT_CODEPOINT
+        px = tokens.NOTICE_LINK_CHEVRON_PX
+        self._button.setIcon(fluent_icon(cp, px, link))
+        self._button.setIconSize(QSize(px, px))
+
+    def chevron_codepoint(self) -> Optional[int]:
+        """The chevron the action shows (tests): ChevronRight, or ChevronLeft in RTL; None without one."""
+        if self._button.icon().isNull():
+            return None
+        return tokens.CHEVRON_LEFT_CODEPOINT if self.isRightToLeft() else tokens.CHEVRON_RIGHT_CODEPOINT
 
     # Palette / style changes, and QEvent::ThemeChange (210 - a Windows light/dark or High Contrast
     # switch; PyQt6's QEvent.Type has no name for it), by value.
@@ -1610,9 +1677,18 @@ class NoticeLink(QFrame):
         if c == self._colors:
             return
         self._colors = c
-        under = "underline" if c["underline"] else "none"
         bg = c["background"]
+        hc = bg is not None
         ring = tokens.FOCUS_RING_WIDTH
+        dark = is_dark_mode()
+        hover_fill = "transparent" if hc else (tokens.SUBTLE_FILL_DARK if dark else tokens.SUBTLE_FILL_LIGHT)
+        pressed_fill = "transparent" if hc else (tokens.NOTICE_LINK_PRESSED_FILL_DARK if dark
+                                                 else tokens.NOTICE_LINK_PRESSED_FILL_LIGHT)
+        pressed = QColor(c["link"])
+        if not hc:
+            pressed.setAlphaF(tokens.NOTICE_LINK_PRESSED_TEXT_ALPHA)
+        pressed_text = f"rgba({pressed.red()}, {pressed.green()}, {pressed.blue()}, {pressed.alphaF():.2f})"
+        under = "underline" if c["underline"] else "none"
         frame_bg = (f"QFrame#noticeLink {{ background-color: {bg}; border-radius: {tokens.RADIUS_CONTROL}px; }}"
                     if bg else "QFrame#noticeLink { background: transparent; }")
         self._theming = True
@@ -1624,9 +1700,9 @@ class NoticeLink(QFrame):
                   f" border: {ring}px solid transparent; border-radius: {tokens.RADIUS_CONTROL}px;"
                   f" padding: {tokens.NOTICE_LINK_PAD_V}px {tokens.NOTICE_LINK_PAD_H}px;"
                   f" text-decoration: {under}; }}"
-                + " QPushButton#noticeLinkAction:hover { text-decoration: underline; }"
+                + f" QPushButton#noticeLinkAction:hover {{ background: {hover_fill}; }}"
+                + f" QPushButton#noticeLinkAction:pressed {{ background: {pressed_fill}; color: {pressed_text}; }}"
                 + f" QPushButton#noticeLinkAction:focus {{ border: {ring}px solid {c['focus']}; }}"
-                + " QPushButton#noticeLinkAction:pressed { text-decoration: underline; }"
             )
         finally:
             self._theming = False
@@ -1634,6 +1710,7 @@ class NoticeLink(QFrame):
             self._layout.setContentsMargins(tokens.SPACE_S, tokens.SPACE_XS, tokens.SPACE_S, tokens.SPACE_XS)
         else:
             self._layout.setContentsMargins(0, 0, 0, 0)
+        self._sync_chevron()
 
     def colors(self) -> dict:
         """The colours last applied (tests, and a host that wants to match them)."""
@@ -1641,52 +1718,109 @@ class NoticeLink(QFrame):
 
 
 class _AnchorHighlight(QWidget):
-    """The outline Settings draws round the control a deep link landed on (flash_highlight)."""
+    """Where a Settings deep link landed: an accent tint with a hairline accent stroke over the card -
+    deliberately NOT a focus ring (the focused switch shows its own). See flash_highlight."""
 
-    def __init__(self, target: QWidget, color: str) -> None:
+    _DISMISS_EVENTS = (QEvent.Type.MouseButtonPress, QEvent.Type.KeyPress, QEvent.Type.Wheel)
+
+    def __init__(self, target: QWidget, color: str, cap_ms: int) -> None:
         super().__init__(target)
         self.setObjectName("anchorHighlight")
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._color = QColor(color)
+        self._opacity = 1.0
+        self._cap_ms = int(cap_ms)
+        self._armed = False          # the cap timer starts at the first paint, not at open_page
+        self._dismissed = False
+        self._fade = None
+        self._cap = QTimer(self)
+        self._cap.setSingleShot(True)
+        self._cap.timeout.connect(self.dismiss)
         self.setGeometry(target.rect())
         target.installEventFilter(self)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)   # the user's first click / key / scroll in this window
         self.raise_()
 
+    def is_armed(self) -> bool:
+        return self._armed
+
+    def is_dismissed(self) -> bool:
+        return self._dismissed
+
+    def _release_app_filter(self) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+
     def eventFilter(self, obj, event) -> bool:
-        if obj is self.parentWidget() and event.type() == QEvent.Type.Resize:
+        kind = event.type()
+        if obj is self.parentWidget() and kind == QEvent.Type.Resize:
             self.setGeometry(obj.rect())
+        elif (kind in self._DISMISS_EVENTS and not self._dismissed and isinstance(obj, QWidget)
+              and obj.window() is self.window()):
+            self.dismiss()
         return False
 
+    def dismiss(self) -> None:
+        """Fade out (Reduce motion: just go)."""
+        if self._dismissed:
+            return
+        self._dismissed = True
+        self._cap.stop()
+        self._release_app_filter()
+        if prefers_reduced_motion():
+            self.hide()
+            self.deleteLater()
+            return
+        from PyQt6.QtCore import QVariantAnimation
+        anim = QVariantAnimation(self)
+        anim.setStartValue(1.0)
+        anim.setEndValue(0.0)
+        anim.setDuration(constants.timers.SETTINGS_ANCHOR_FADE_MS)
+        anim.valueChanged.connect(self._set_opacity)
+        anim.finished.connect(self.deleteLater)
+        self._fade = anim
+        anim.start()
+
+    def _set_opacity(self, value) -> None:
+        self._opacity = float(value)
+        self.update()
+
     def paintEvent(self, event) -> None:
+        if not self._armed:
+            self._armed = True
+            self._cap.start(self._cap_ms)
         from PyQt6.QtGui import QPen
-        ring = tokens.FOCUS_RING_WIDTH
+        stroke = tokens.ANCHOR_HIGHLIGHT_STROKE
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setOpacity(self._opacity)
+        fill = QColor(self._color)
+        fill.setAlphaF(tokens.ANCHOR_HIGHLIGHT_FILL_ALPHA)
         pen = QPen(self._color)
-        pen.setWidth(ring)
+        pen.setWidth(stroke)
         p.setPen(pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        half = ring // 2
-        p.drawRoundedRect(self.rect().adjusted(half, half, -half, -half), tokens.RADIUS_CARD, tokens.RADIUS_CARD)
+        p.setBrush(fill)
+        inset = stroke / 2.0
+        from PyQt6.QtCore import QRectF
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(inset, inset, -inset, -inset),
+                          tokens.RADIUS_CARD, tokens.RADIUS_CARD)
 
 
-def flash_highlight(target: QWidget, duration_ms: Optional[int] = None) -> Optional[QWidget]:
-    """Outline ``target`` (a setting card) for ``duration_ms`` - where a deep link landed. A static
-    outline that is simply removed, so there is nothing to animate under Reduce motion. The colour is
-    the (readable) accent; High Contrast: the theme's highlight colour. Returns the outline widget."""
+def flash_highlight(target: QWidget, cap_ms: Optional[int] = None) -> Optional[QWidget]:
+    """Tint ``target`` (a setting card) - where a deep link landed. It stays until the user's first
+    click, key press or scroll in that window, or ``cap_ms`` after the dialog first paints it, then fades
+    out (Reduce motion: removed at once). The colour is the (readable) accent; High Contrast: the
+    theme's highlight colour. Returns the highlight widget."""
     if target is None:
         return None
-    if duration_ms is None:
-        duration_ms = constants.timers.SETTINGS_ANCHOR_HIGHLIGHT_MS
+    if cap_ms is None:
+        cap_ms = constants.timers.SETTINGS_ANCHOR_HIGHLIGHT_MS
     for old in target.findChildren(QWidget, "anchorHighlight"):
-        old.hide()
-        old.deleteLater()
-    overlay = _AnchorHighlight(target, notice_link_colors()["focus"])
+        old.dismiss() if isinstance(old, _AnchorHighlight) else old.deleteLater()
+    overlay = _AnchorHighlight(target, notice_link_colors()["focus"], cap_ms)
     overlay.show()
-    # The timer is the overlay's child: if the card (and so the overlay) goes first, so does the timer.
-    timer = QTimer(overlay)
-    timer.setSingleShot(True)
-    timer.timeout.connect(overlay.deleteLater)
-    timer.start(int(duration_ms))
     return overlay

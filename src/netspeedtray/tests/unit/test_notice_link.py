@@ -78,11 +78,13 @@ def test_it_is_a_real_tab_stop_with_an_accessible_name(q_app, qt_owned):
     link = qt_owned(NoticeLink("Hardware history needs CPU or GPU monitoring.", "Turn on in Settings"))
     btn = link.button()
     assert isinstance(btn, QPushButton)                       # UIA: a Button with Invoke
-    assert btn.focusPolicy() & Qt.FocusPolicy.TabFocus
-    assert btn.accessibleName() == "Turn on in Settings"      # no arrow read out
+    # Tab only (house pattern, _ExpanderHeader): a mouse click leaves no focus ring behind
+    assert btn.focusPolicy() == Qt.FocusPolicy.TabFocus
+    assert btn.accessibleName() == "Turn on in Settings"      # no chevron read out
     assert btn.accessibleDescription() == "Hardware history needs CPU or GPU monitoring."
     assert not btn.autoDefault() and not btn.isDefault()      # never steals a dialog's Enter
-    assert "Turn on in Settings" in btn.text()
+    assert btn.text() == "Turn on in Settings"
+    assert btn.minimumHeight() >= 24                           # Fluent's click-target floor
     link.show()
     btn.setFocus()
     QApplication.processEvents()
@@ -120,24 +122,58 @@ def test_text_can_be_empty_and_changed(q_app, qt_owned):
     assert link.button().accessibleDescription() == "Now there is text"
 
 
-def test_no_arrow_where_the_ui_face_lacks_it(q_app, qt_owned, monkeypatch):
-    """Nirmala UI (Bengali) has no arrows, and a button can't take a per-run face: Qt would search its
-    fallback chain for the glyph and load every installed font (test_font_files_per_language). The
-    arrow is decorative, so it is left out there."""
-    from netspeedtray.utils import font_runs
-    monkeypatch.setattr(font_runs, "family_covers", lambda family, ch: False)
+def test_the_chevron_is_an_icon_never_a_text_glyph(q_app, qt_owned):
+    """A Unicode arrow in the button made Qt search its fallback chain for Bengali (Nirmala UI has no
+    arrows) - every installed font loaded. The chevron is a Segoe Fluent Icons pixmap instead."""
     link = qt_owned(NoticeLink("x", "Go"))
-    assert link.button().text() == "Go" and link.button().accessibleName() == "Go"
+    btn = link.button()
+    assert btn.text() == "Go" and not btn.icon().isNull()
+    assert not any(ch in btn.text() for ch in "\u2192\u2190\u203a")
+    assert link.chevron_codepoint() == constants.styles.CHEVRON_RIGHT_CODEPOINT
+    # QPushButton draws the icon first: the button lays out against the notice so it trails the text
+    assert btn.layoutDirection() == Qt.LayoutDirection.RightToLeft
 
 
-def test_rtl_flips_the_arrow(q_app, qt_owned, monkeypatch):
-    from netspeedtray.utils import font_runs
-    monkeypatch.setattr(font_runs, "family_covers", lambda family, ch: True)
+def test_rtl_flips_the_chevron(q_app, qt_owned):
     link = qt_owned(NoticeLink("x", "Go"))
-    assert link.button().text().endswith("→")
     link.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-    assert link.button().text().endswith("←")
+    assert link.chevron_codepoint() == constants.styles.CHEVRON_LEFT_CODEPOINT
+    assert link.button().layoutDirection() == Qt.LayoutDirection.LeftToRight
     assert link.button().accessibleName() == "Go"
+
+
+@pytest.mark.parametrize("rtl", [False, True])
+def test_stacked_start_aligned_link_sits_at_the_start_edge(q_app, qt_owned, rtl):
+    """The Check connection sheet's layout: the link under the text, at the reading start. (The button
+    lays out against the notice for its trailing chevron, and a box layout resolves "leading" with the
+    item's own direction - it landed at the far edge before.)"""
+    link = qt_owned(NoticeLink("Internet-Latenz dauerhaft messen?", "In den Einstellungen aktivieren",
+                               stacked=True))
+    if rtl:
+        link.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    link.resize(420, 80)
+    link.show()
+    QApplication.processEvents()
+    btn = link.button().geometry()
+    if rtl:
+        assert btn.right() >= link.width() - 2
+    else:
+        assert btn.left() <= 1
+
+
+def test_fluent_hyperlink_states(q_app, qt_owned, monkeypatch):
+    """No underline at rest or on hover (High Contrast aside), a subtle fill on hover and a fainter one
+    pressed with the text at a secondary accent, Fluent padding."""
+    from netspeedtray.utils import styles
+    monkeypatch.setattr(components, "is_dark_mode", lambda: False)
+    monkeypatch.setattr(styles, "is_dark_mode", lambda: False)
+    qss = qt_owned(NoticeLink("x", "Go")).styleSheet()
+    t = constants.styles
+    assert "underline" not in qss
+    assert f"padding: {t.NOTICE_LINK_PAD_V}px {t.NOTICE_LINK_PAD_H}px" in qss
+    assert (t.NOTICE_LINK_PAD_V, t.NOTICE_LINK_PAD_H) == (3, 8)
+    assert f":hover {{ background: {t.SUBTLE_FILL_LIGHT}; }}" in qss
+    assert f"background: {t.NOTICE_LINK_PRESSED_FILL_LIGHT}; color: rgba(" in qss
 
 
 @pytest.mark.parametrize("dark", [True, False])
@@ -210,16 +246,70 @@ def test_high_contrast_uses_the_theme_colours_and_underlines(q_app, qt_owned, mo
     assert "#FFFF00" in qss and "#000000" in qss and "text-decoration: underline" in qss
 
 
-def test_flash_highlight_outlines_then_goes_away(q_app, qt_owned):
-    card = qt_owned(QWidget())
+def _shown_card(qt_owned):
+    win = qt_owned(QWidget())
+    win.resize(300, 120)
+    card = QWidget(win)
     card.resize(200, 60)
-    overlay = flash_highlight(card, duration_ms=10)
-    assert overlay is not None and overlay.parentWidget() is card
-    assert overlay.geometry() == card.rect()
+    win.show()
+    QApplication.processEvents()
+    return win, card
+
+
+def test_the_landing_tint_waits_for_the_first_paint_then_the_cap(q_app, qt_owned, monkeypatch):
+    monkeypatch.setattr(components, "prefers_reduced_motion", lambda: True)
+    win, card = _shown_card(qt_owned)
+    overlay = flash_highlight(card, cap_ms=30)
+    assert overlay.parentWidget() is card and overlay.geometry() == card.rect()
     assert overlay.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-    QTest.qWait(40)
+    assert not overlay.is_armed()                              # not at open_page: at the first paint
+    overlay.repaint()
+    assert overlay.is_armed()
+    QTest.qWait(80)
     _drain()
     assert sip.isdeleted(overlay)
+
+
+@pytest.mark.parametrize("how", ["click", "key", "wheel"])
+def test_the_landing_tint_goes_at_the_first_user_input(q_app, qt_owned, monkeypatch, how):
+    from PyQt6.QtCore import QPointF, QPoint
+    from PyQt6.QtGui import QWheelEvent
+    monkeypatch.setattr(components, "prefers_reduced_motion", lambda: True)
+    win, card = _shown_card(qt_owned)
+    overlay = flash_highlight(card)                            # the 5 s cap: input comes first
+    overlay.repaint()
+    if how == "click":
+        QTest.mouseClick(win, Qt.MouseButton.LeftButton)
+    elif how == "key":
+        QTest.keyClick(win, Qt.Key.Key_Down)
+    else:
+        QApplication.sendEvent(win, QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, -120),
+                                                Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                                                Qt.ScrollPhase.NoScrollPhase, False))
+    assert overlay.is_dismissed()
+    _drain()
+    assert sip.isdeleted(overlay)                              # Reduce motion: gone at once
+
+
+def test_the_landing_tint_fades_out(q_app, qt_owned, monkeypatch):
+    monkeypatch.setattr(components, "prefers_reduced_motion", lambda: False)
+    win, card = _shown_card(qt_owned)
+    overlay = flash_highlight(card)
+    overlay.dismiss()
+    assert not sip.isdeleted(overlay)                          # fading, not cut
+    QTest.qWait(constants.timers.SETTINGS_ANCHOR_FADE_MS + 150)
+    _drain()
+    assert sip.isdeleted(overlay)
+
+
+def test_input_in_another_window_leaves_the_tint(q_app, qt_owned, monkeypatch):
+    monkeypatch.setattr(components, "prefers_reduced_motion", lambda: True)
+    win, card = _shown_card(qt_owned)
+    other = qt_owned(QWidget())
+    other.show()
+    overlay = flash_highlight(card)
+    QTest.keyClick(other, Qt.Key.Key_A)
+    assert not overlay.is_dismissed()
 
 
 # --- the router -----------------------------------------------------------------------------------------
@@ -327,10 +417,12 @@ def test_router_lands_on_the_hardware_monitoring_switches(make_host):
     assert [t.objectName() for t in targets] == ["settingCard"] * 3
     assert _inside(page.monitor_cpu, targets[0]) and _inside(page.monitor_gpu, targets[1])
     assert _inside(page.monitor_ram, targets[2])
-    # outlined, and keyboard focus is on the CPU switch (a screen reader says where it landed)
-    for t in targets:
-        assert t.findChildren(QWidget, "anchorHighlight")
+    # ONE calm landing mark - on the first card only - and keyboard focus on the CPU switch, which
+    # shows its keyboard focus ring (a screen reader and a sighted keyboard user both see where it is)
+    assert targets[0].findChildren(QWidget, "anchorHighlight")
+    assert not any(t.findChildren(QWidget, "anchorHighlight") for t in targets[1:])
     assert _inside(dlg.focusWidget(), page.monitor_cpu)
+    assert page.monitor_cpu.keyboardFocusShown()
     # landing never changes the setting
     assert page.monitor_cpu.isChecked() is False and page.monitor_gpu.isChecked() is False
     assert page.monitor_ram.isChecked() is False
@@ -451,23 +543,47 @@ def test_a_disabled_switch_still_moves_focus_into_the_page(make_host):
     assert _inside(page._record_card, focus)
 
 
-def test_enter_on_a_landed_switch_flips_it_and_never_saves(make_host):
-    """A link puts focus on a switch; Enter there used to bubble up to Settings' default Save button -
-    saved and closed with nothing turned on. Now Enter flips the switch, like Space, and Settings stays."""
+def test_enter_on_a_landed_switch_is_the_dialogs_enter(make_host):
+    """Windows switches toggle with Space; Enter is the dialog's default button (Save). A landed switch
+    keeps that: Enter saves and closes, Space flips it."""
     host = make_host(monitor_cpu_enabled=False)
-    saved = []
-    host.handle_settings_changed = lambda cfg, save_to_disk=True: saved.append(save_to_disk)
     host.open_settings("hardware", "monitor_cpu_enabled")
     dlg = host.settings_dialog
     page = dlg._built_pages["hardware"]
     focus = dlg.focusWidget()
     assert _inside(focus, page.monitor_cpu)
-    QTest.keyClick(focus, Qt.Key.Key_Return)
+    QTest.keyClick(focus, Qt.Key.Key_Space)
     assert page.monitor_cpu.isChecked() is True
-    assert True not in saved and dlg.isVisible() and host.settings_dialog is dlg
-    held = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier, "", True)
-    QApplication.sendEvent(focus, held)                        # an auto-repeat: swallowed, no flip
-    assert page.monitor_cpu.isChecked() is True and dlg.isVisible()
+    # Enter goes past the switch to the dialog, whose key handling presses the default button (Save
+    # on a live window; offscreen, an inactive window's focus bookkeeping can leave another button
+    # as the temporary default, so the test stops at "the dialog got it").
+    reached = []
+    dlg.keyPressEvent = lambda event: reached.append(event.key())
+    QTest.keyClick(focus, Qt.Key.Key_Return)
+    assert page.monitor_cpu.isChecked() is True                # Enter did not flip it
+    assert reached == [Qt.Key.Key_Return]
+
+
+def test_a_switch_shows_keyboard_focus_but_not_mouse_focus(q_app, qt_owned):
+    """The track's sheet said outline:none, so Tab onto a switch showed nothing. (Focus events are sent
+    by hand: an offscreen window is never active, so Qt delivers none.)"""
+    from PyQt6.QtGui import QFocusEvent
+    from netspeedtray.utils.components import Win11Toggle
+    win = qt_owned(QWidget())
+    toggle = Win11Toggle(parent=win)
+    box = toggle.checkbox
+
+    def focus(kind, reason):
+        QApplication.sendEvent(box, QFocusEvent(kind, reason))
+    focus(QEvent.Type.FocusIn, Qt.FocusReason.TabFocusReason)
+    assert toggle.keyboardFocusShown()
+    focus(QEvent.Type.FocusOut, Qt.FocusReason.ActiveWindowFocusReason)   # Alt+Tab away: kept
+    assert toggle.keyboardFocusShown()
+    focus(QEvent.Type.FocusOut, Qt.FocusReason.TabFocusReason)
+    assert not toggle.keyboardFocusShown()
+    focus(QEvent.Type.FocusIn, Qt.FocusReason.MouseFocusReason)            # a click: no ring
+    assert not toggle.keyboardFocusShown()
+    assert 'keyboardFocus="true"' in toggle.checkbox.styleSheet()
 
 
 def test_a_link_into_a_closed_dialog_opens_a_fresh_one(make_host):
@@ -487,7 +603,7 @@ def test_a_link_into_a_closed_dialog_opens_a_fresh_one(make_host):
 def test_the_outline_goes_with_its_card(q_app):
     card = QWidget()
     card.resize(100, 40)
-    overlay = flash_highlight(card, 20)
+    overlay = flash_highlight(card, cap_ms=20)
     sip.delete(card)
     QTest.qWait(60)
     _drain()
@@ -689,6 +805,47 @@ def test_hardware_chart_notice_has_a_working_settings_button(q_app, qt_owned, ki
     assert routed == [target]
     notice.sync(canvas, None)                                  # data arrived / network graph
     assert link.isHidden() and notice.kind is None
+
+
+def test_chart_notice_is_centred_on_the_plot_area(q_app, qt_owned):
+    """Centred on the axes, not on the canvas with its axis margins (~30 px off before)."""
+    from netspeedtray.views.monitor.graph_host import HistoryOffNotice
+    canvas = qt_owned(QWidget())
+    canvas.resize(800, 400)
+    canvas.show()
+    notice = HistoryOffNotice(EN, lambda *a: None)
+    area = (0.10, 0.05, 0.98, 0.85)                          # left, top, right, bottom fractions
+    notice.sync(canvas, ("monitor", None), area=lambda: area)
+    c = notice.widget.geometry().center()
+    assert abs(c.x() - (0.10 + 0.98) / 2 * 800) <= 2 and abs(c.y() - (0.05 + 0.85) / 2 * 400) <= 2
+    canvas.resize(600, 300)
+    QApplication.processEvents()
+    c = notice.widget.geometry().center()
+    assert abs(c.x() - (0.10 + 0.98) / 2 * 600) <= 2 and abs(c.y() - (0.05 + 0.85) / 2 * 300) <= 2
+
+
+def test_the_empty_state_hides_grid_and_ticks_until_data_arrives(monkeypatch):
+    """No gridline through the notice and no meaningless 0.0-1.0 axis on the empty view; the next render
+    with data gets its grid and ticks back."""
+    from datetime import datetime, timedelta
+    r = _bare_renderer(monkeypatch)
+    end = datetime.now()
+    start = end - timedelta(hours=24)
+    r.render({"cpu": [], "gpu": [], "ram": []}, start, end, "TIMELINE_24_HOURS", stat_type="hwcombined",
+             hw_styles={"history_off": MON})
+    ax = r.ax_download
+    assert r.history_off_notice == ("monitor", None)
+    assert not any(gl.get_visible() for gl in ax.get_xgridlines() + ax.get_ygridlines())
+    labels = [t for t in ax.get_xticklabels() + ax.get_yticklabels() if t.get_visible() and t.get_text()]
+    assert not any(tk.label1.get_visible() for tk in ax.xaxis.get_major_ticks() + ax.yaxis.get_major_ticks())
+    left, top, right, bottom = r.plot_area_fraction()
+    assert 0 <= left < right <= 1 and 0 <= top < bottom <= 1
+    rows = [(start + timedelta(hours=h), 10.0 + h) for h in range(0, 24)]
+    r.render({"cpu": rows, "gpu": [], "ram": []}, start, end, "TIMELINE_24_HOURS", stat_type="hwcombined",
+             hw_styles={"history_off": {"cpu": None, "gpu": "monitor", "ram": "monitor"}})
+    ax = r.ax_download
+    assert r.history_off_notice is None
+    assert any(tk.label1.get_visible() for tk in ax.yaxis.get_major_ticks())
 
 
 def test_chart_notice_reapplies_only_on_change_and_lets_go_of_the_canvas(q_app, qt_owned, monkeypatch):
