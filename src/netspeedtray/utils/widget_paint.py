@@ -47,6 +47,10 @@ class WidgetMetrics:
     gpu_temp: Optional[float] = None
     cpu_power: Optional[float] = None
     gpu_power: Optional[float] = None
+    # #609: can anything supply the device's temperature / power? False = no suffix at all (not a
+    # permanent "(N/A)"); None (unknown, and every preview) / True = as before.
+    cpu_sensor_source: Optional[bool] = None
+    gpu_sensor_source: Optional[bool] = None
     ram_used: Optional[float] = None
     ram_total: Optional[float] = None
     vram_used: Optional[float] = None
@@ -623,8 +627,10 @@ def _draw_hw(painter: QPainter, renderer: WidgetRenderer, width: int, height: in
     ram_on, vram_on = cpu and config.monitor_ram_enabled, gpu and config.monitor_vram_enabled
     if cpu_on:
         kwargs["cpu_power"] = metrics.cpu_power
+        kwargs["cpu_sensor_source"] = metrics.cpu_sensor_source
     if gpu_on:
         kwargs["gpu_power"] = metrics.gpu_power
+        kwargs["gpu_sensor_source"] = metrics.gpu_sensor_source
     if ram_on and not cpu_on:
         kwargs["ram_only"] = True
     if vram_on and not gpu_on:

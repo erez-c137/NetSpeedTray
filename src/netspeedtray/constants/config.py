@@ -469,6 +469,12 @@ class ConfigConstants:
         "internet_offer_declines": 0,      # "Not now"s on the "Also watch the internet" offer (D5)
         "history_upgrade_notice_shown": False,  # the one "history upgraded" flyout after v7 -> v8
         "temp_onboarding_dismissed": False,  # user opted out of the no-sensor temp explainer
+        # The monitor thread's last "can anything supply this device's temperature / power?" verdict
+        # (#609): None = not known yet. App state, not a setting - remembered so the widget is sized
+        # right from the first frame (no "(N/A)" column on a PC without a sensor source, no shrink and
+        # grow at every login) and so the thread gives a source that existed last time its full hold.
+        "cpu_sensor_source_last": None,
+        "gpu_sensor_source_last": None,
         "preferred_monitor": None,
         "show_on_all_taskbars": DEFAULT_SHOW_ON_ALL_TASKBARS,
         # --- Data-usage / data-cap ---
@@ -654,6 +660,8 @@ class ConfigConstants:
         "internet_offer_declines": {"type": int, "default": 0, "min": 0},
         "history_upgrade_notice_shown": {"type": bool, "default": False},
         "temp_onboarding_dismissed": {"type": bool, "default": False},
+        "cpu_sensor_source_last": {"type": (bool, type(None)), "default": None},
+        "gpu_sensor_source_last": {"type": (bool, type(None)), "default": None},
         # QScreen.name() identifier (e.g. "\\.\DISPLAY1"). None = use primary.
         # If the saved screen isn't found at runtime, fall back to primary.
         "preferred_monitor": {"type": (str, type(None)), "default": None},
