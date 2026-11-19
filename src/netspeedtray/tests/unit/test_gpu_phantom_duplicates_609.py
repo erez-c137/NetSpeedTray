@@ -45,11 +45,6 @@ def _eng(luid_low: int, pid: int) -> str:
     return f"pid_{pid}_luid_0x00000000_0x{luid_low:08X}_phys_0_eng_0_engtype_3D"
 
 
-@pytest.fixture(autouse=True)
-def _no_shared_pdh_set(monkeypatch):
-    monkeypatch.setattr(gpu_adapters, "_last_pdh_luids", None, raising=False)
-
-
 @pytest.fixture
 def thread(q_app, monkeypatch):
     monkeypatch.setattr(gpu_adapters, "enumerate_adapters", lambda: None)
@@ -112,12 +107,15 @@ def test_phantoms_beside_a_real_dgpu_leave_two_unnumbered_rows(thread):
 
 
 def test_the_picked_arc_is_the_one_pdh_reads(thread):
+    """The DXGI-first Arc is the phantom here: the picker's name match (first wins) must land on the
+    one PDH reads, not on an adapter with no load and no memory."""
     thread._gpu_adapters = [*ARC, RTX_A, BRD]
     thread.config = dict(thread.config, gpu_adapter=ARC_NAME)
-    r = _poll(thread, {_eng(0xA001, 10): 35.0, _eng(0xC001, 11): 5.0},
-              {_mem(0xA001): 0.0, _mem(0xC001): 2048 * MIB},
-              {_mem(0xA001): 3.0 * GIB, _mem(0xC001): 0.0})
+    r = _poll(thread, {_eng(0xA002, 10): 35.0, _eng(0xC001, 11): 5.0},
+              {_mem(0xA002): 0.0, _mem(0xC001): 2048 * MIB},
+              {_mem(0xA002): 3.0 * GIB, _mem(0xC001): 0.0})
     assert r.util == pytest.approx(35.0) and r.vram_is_shared
+    assert r.vram_used == pytest.approx(3.0 * 1024)
 
 
 def test_two_identical_discrete_cards_with_their_own_pdh_stay_two(thread):
@@ -174,13 +172,50 @@ def test_g4_reread_stays_collapsed_and_quiet(thread):
 
 def test_rule_keeps_whichever_duplicate_pdh_names_and_the_order():
     collapse = gpu_adapters.collapse_phantom_duplicates
-    assert collapse([BRD, *ARC], {(0, 0xA002)}) == [BRD, ARC[1]]
-    assert collapse([*ARC, BRD], {(0, 0xA001), (0, 0xA003)}) == [ARC[0], ARC[2], BRD]
+    assert collapse([BRD, *ARC], {(0, 0xA002)}) == [BRD, ARC[1]._replace(outputs=1)]   # ARC[0]'s display
+    assert collapse([*ARC, BRD], {(0, 0xA001), (0, 0xA003)}) == [ARC[0], ARC[2]._replace(outputs=1), BRD]
 
 
 @pytest.mark.parametrize("luids", [None, frozenset(), {(0, 0xDD11)}, {(0, 0x9999)}])
 def test_rule_without_evidence_for_the_group_drops_nothing(luids):
     assert gpu_adapters.collapse_phantom_duplicates([*ARC, BRD], luids) == [*ARC, BRD]
+
+
+def test_kept_member_inherits_the_groups_display_outputs():
+    """A dropped phantom that owned the display outputs must not take them with it: the hybrid check
+    (an NVIDIA card with outputs is awake, not Optimus) reads ``outputs``."""
+    a = RTX_A._replace(outputs=2)
+    b = RTX_A._replace(luid=(0, 0xC002), outputs=0)
+    assert gpu_adapters.collapse_phantom_duplicates([a, b, BRD], {(0, 0xC002)}) == [b._replace(outputs=2), BRD]
+
+
+def test_a_phantom_owning_the_outputs_does_not_turn_a_desktop_into_a_hybrid(thread):
+    nv_out = RTX_MOBILE._replace(outputs=1)
+    nv_real = RTX_MOBILE._replace(luid=(0, 0xAB02), outputs=0)
+    thread._gpu_adapters = [INTEL_IGPU, nv_out, nv_real, BRD]
+    thread._mobile_battery = True
+    _poll(thread, {}, {_mem(0xD9C1): 0.0, _mem(0xAB02): 0.0}, {_mem(0xD9C1): 0.0, _mem(0xAB02): 0.0})
+    assert [a.luid for a in gpu_adapters.hardware_adapters(thread._gpu_adapters)] == [(0, 0xD9C1), (0, 0xAB02)]
+    assert thread._is_hybrid_laptop() is False      # the display on the NVIDIA card keeps it awake
+
+
+def test_a_later_drop_logs_again_after_a_clean_set(thread):
+    thread._gpu_adapters = [*ARC, BRD]
+    _bober_poll(thread)
+    # PDH names every Arc (nothing dropped), then the phantoms return: logged again.
+    _poll(thread, {}, {_mem(l): 0.0 for l in ARC_LUIDS}, {_mem(l): 0.0 for l in ARC_LUIDS})
+    thread._gpu_adapters, thread._gpu_pdh_luids_checked = [*ARC, BRD], None
+    _bober_poll(thread)
+    assert len(_phantom_logs(thread)) == 2
+
+
+def test_gpu_query_cleanup_forgets_the_pdh_set(thread):
+    thread._gpu_adapters = [*ARC, BRD]
+    _bober_poll(thread)
+    assert gpu_adapters.last_pdh_luids()
+    with patch("win32pdh.CloseQuery"):
+        thread._cleanup_gpu_query()
+    assert gpu_adapters.last_pdh_luids() is None
 
 
 def test_rule_never_touches_different_names_or_makers():

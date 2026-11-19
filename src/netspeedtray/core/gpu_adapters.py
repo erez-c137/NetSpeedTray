@@ -90,10 +90,20 @@ def collapse_phantom_duplicates(adapters: Iterable[AdapterInfo],
     for a in hardware_adapters(adapters):
         groups.setdefault((a.vendor_id, a.name.strip().casefold()), []).append(a)
     drop = set()
+    outputs: dict = {}   # kept member -> the group's most display outputs
     for members in groups.values():
         if len(members) > 1 and any(a.luid in luids for a in members):
-            drop.update(id(a) for a in members if a.luid not in luids)
-    return [a for a in adapters if id(a) not in drop] if drop else adapters
+            gone = [a for a in members if a.luid not in luids]
+            if gone:
+                drop.update(id(a) for a in gone)
+                most = max(a.outputs for a in members)
+                outputs.update((id(a), most) for a in members if a.luid in luids)
+    if not drop:
+        return adapters
+    # A display wired to a dropped phantom still hangs off this GPU: the kept member carries the
+    # group's outputs, so the hybrid check (an NVIDIA card with a display is awake) cannot flip.
+    return [a._replace(outputs=max(a.outputs, outputs[id(a)])) if id(a) in outputs else a
+            for a in adapters if id(a) not in drop]
 
 
 # The adapter LUIDs PDH named on the GPU poll's last check (monitor thread), for the Settings page,

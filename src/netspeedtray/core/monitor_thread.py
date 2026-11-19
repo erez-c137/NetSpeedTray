@@ -642,6 +642,9 @@ class StatsMonitorThread(QThread):
             self._gpu_collect_at = None
             self._gpu_util_settling = False
             self._nvidia_gate_verdict = None   # a rebuilt query (resume) re-judges before it trusts
+            # GPU monitoring off: Settings must not collapse adapters by a PDH set no poll keeps fresh
+            # (#609); a rebuilt query records a new one on its first poll.
+            gpu_adapters.remember_pdh_luids(None)
             # _gpu_engine_seen is deliberately NOT reset: a settings change or a resume rebuilds
             # the query, and forgetting that this machine has a GPU would blink the Monitor's GPU
             # tiles out until the next non-idle tick.
@@ -1459,8 +1462,11 @@ class StatsMonitorThread(QThread):
         """``adapters`` with the phantom duplicates PDH does not name dropped (#609), logged once per
         change at INFO - count and maker only, never a name."""
         kept = gpu_adapters.collapse_phantom_duplicates(adapters, luids)
-        dropped = [a for a in adapters if a not in kept]
-        if dropped:
+        kept_luids = {a.luid for a in kept}
+        dropped = [a for a in adapters if a.luid not in kept_luids]
+        if not dropped:
+            self._gpu_phantoms_logged = None   # a later drop is news again
+        else:
             sig = (len(dropped), tuple(sorted({hex(a.vendor_id) for a in dropped})))
             if sig != self._gpu_phantoms_logged:
                 self._gpu_phantoms_logged = sig
