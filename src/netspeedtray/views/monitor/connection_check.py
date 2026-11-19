@@ -425,8 +425,10 @@ class ConnectionCheckSheet(QDialog):
         root.addWidget(self._hint)
         root.addWidget(self._internet_confirm)
         self._tick.setVisible(not self._public_on)
-        # The Settings trip only where no inline offer applies: a declined offer (Not now) stays gone.
-        settings_trip = self._offer_settings_link and (offer is None or not latency_on)
+        # The Settings trip only where no inline offer applies: a declined offer (Not now) stays gone, and
+        # DisableTips hides it like the inline offer (the one-off tick above stays: the user asked).
+        settings_trip = (self._offer_settings_link and (offer is None or not latency_on)
+                         and not IO.offers_disabled_by_policy())
         self._hint.setVisible(not self._public_on and (self._inline_offer or settings_trip))
 
         root.addSpacing(2)

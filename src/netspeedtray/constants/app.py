@@ -33,9 +33,11 @@ class AppConstants:
     # in DEPLOYING.md - keep the two in sync.
     POLICY_REGISTRY_KEY: Final[str] = r"SOFTWARE\Policies\NetSpeedTray"
     POLICY_DISABLE_UPDATE_CHECK_VALUE: Final[str] = "DisableUpdateCheck"
-    # Same key (2.2.2 D1/D2): nonzero = no first-run tip and no one-time "what's new" after an update
-    # and no one-time "rate / star / support" card in the Monitor (D8) - for managed fleets. Only switches notices OFF;
-    # nothing else changes. Documented in DEPLOYING.md - keep the two in sync.
+    # Same key (2.2.2 D1/D2): nonzero = no first-run tip, no one-time "what's new" after an update, no
+    # one-time "rate / star / support" card in the Monitor (D8), no "Also check your internet" offer in
+    # the Monitor (D5) and no temperature setup opening on its own (D6) - for managed fleets. Only
+    # switches unprompted notices and offers OFF; the features stay in Settings, nothing else changes.
+    # Documented in DEPLOYING.md - keep the two in sync.
     POLICY_DISABLE_TIPS_VALUE: Final[str] = "DisableTips"
     # Graceful-shutdown channel (core/shutdown_channel.py). The running app registers this window
     # message and quits through the same clean path as tray Exit when it arrives; the installer and

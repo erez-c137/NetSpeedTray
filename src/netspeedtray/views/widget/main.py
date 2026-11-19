@@ -3488,6 +3488,11 @@ class NetworkSpeedWidget(QWidget):
         "running" panel up, and one one-time moment per session). Blocked, it retries every
         STARTUP_NOTICE_RETRY_MS this session (another moment taken: next launch). After that only
         Settings > Hardware's link opens it.
+
+        Off by policy: ``DisableTips`` (DEPLOYING.md), re-read here and on every retry, drops it for the
+        session without using it up or retrying - lifted later, it can show from the next launch (the
+        monitor thread asks once per session) while still needed.
+        Settings > Hardware's link opens it regardless (the user asked).
         """
         try:
             if self.config.get("temp_onboarding_dismissed", False):
@@ -3499,6 +3504,10 @@ class NetworkSpeedWidget(QWidget):
             # for this session, its one showing NOT used up (C11 follow-up).
             if not NetworkSpeedWidget._temp_setup_still_needed(self):
                 self.logger.info("Temperature setup dropped: temperatures are off or a sensor reads now.")
+                return
+            from netspeedtray.core import startup_notices as notice_logic
+            if notice_logic.tips_disabled_by_policy():
+                self.logger.info("Temperature setup dropped: turned off by policy (DisableTips).")
                 return
             reason = NetworkSpeedWidget._temp_setup_blocked_reason(self)
             if reason:
