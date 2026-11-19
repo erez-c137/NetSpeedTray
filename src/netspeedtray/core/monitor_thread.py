@@ -460,6 +460,12 @@ class StatsMonitorThread(QThread):
         # that rebuilt the hardware queries), applied on this thread with the query reset.
         self._sources_reset_pending = False
         self._sources_refresh_pending = False
+        # Set from the GUI thread, taken on this one: swapped under a lock so neither side loses one.
+        self._sources_lock = threading.Lock()
+        # The source-deciding settings as last seen. A snapshot, not the dict: the app mutates its config
+        # in place and hands the thread the SAME dict on every Apply (ConfigController.apply_all_settings),
+        # so comparing the old dict with the new one would never see a change (#611 re-review M1).
+        self._source_settings = self._source_settings_of(_cfg)
         # RAPL PKG / PP1 counters exist on most Intel CPUs whether or not they ever read (#609 review):
         # they count as a source only once they gave a reading > 0. Cleared with the power query.
         self._rapl_pkg_read_ok = False
@@ -619,11 +625,13 @@ class StatsMonitorThread(QThread):
         mid-poll could free a handle the loop is actively using → a swallowed PDH error and a spurious
         circuit-breaker increment / "monitor degraded" notice. So just flag it; run() applies the
         cleanup + LHM re-probe on its own thread at the top of the next tick."""
-        old = self.config if isinstance(getattr(self, "config", None), dict) else {}
-        if any(old.get(k) != config.get(k) for k in _SENSOR_SOURCE_SETTINGS):
-            self._sources_reset_pending = True
-        else:
-            self._sources_refresh_pending = True
+        settings = self._source_settings_of(config)
+        with self._sources_lock:
+            if settings != self._source_settings:
+                self._sources_reset_pending = True
+            else:
+                self._sources_refresh_pending = True
+            self._source_settings = settings
         self.config = config
         self._hw_queries_dirty = True
 
@@ -636,8 +644,15 @@ class StatsMonitorThread(QThread):
         0.0 VRAM after every wake - #237). Safe to call from the GUI thread; run() does the actual
         cleanup on its own thread.
         """
-        self._sources_refresh_pending = True
+        with self._sources_lock:
+            self._sources_refresh_pending = True
         self._hw_queries_dirty = True
+
+    @staticmethod
+    def _source_settings_of(config: Any) -> Tuple[Any, ...]:
+        """The settings that decide what can supply temperatures / power (_SENSOR_SOURCE_SETTINGS)."""
+        cfg = config if isinstance(config, dict) else {}
+        return tuple(cfg.get(k) for k in _SENSOR_SOURCE_SETTINGS)
 
     def _init_gpu_query(self) -> bool:
         """Initializes Windows PDH query for universal GPU utilization and VRAM.
@@ -2172,8 +2187,9 @@ class StatsMonitorThread(QThread):
     def _apply_source_hold_changes(self, now: float) -> None:
         """The pending reset / refresh of the source verdicts (update_config,
         invalidate_hardware_queries), on this thread with the query rebuild. A reset wins."""
-        reset, refresh = self._sources_reset_pending, self._sources_refresh_pending
-        self._sources_reset_pending = self._sources_refresh_pending = False
+        with self._sources_lock:   # take and clear in one step: a flag set meanwhile is never lost
+            reset, refresh = self._sources_reset_pending, self._sources_refresh_pending
+            self._sources_reset_pending = self._sources_refresh_pending = False
         for hold in (self._cpu_source_hold, self._gpu_source_hold):
             if reset:
                 hold.reset()

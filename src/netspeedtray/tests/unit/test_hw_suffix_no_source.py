@@ -207,7 +207,8 @@ def test_an_unrelated_apply_or_a_resume_does_not_reset_the_verdict(q_app, clock)
     t.invalidate_hardware_queries()                        # resume
     _dirty_poll(t)
     assert _verdicts(t, clock, NO_READINGS)[0][1] is True     # a fresh hold, not False at once
-    t.update_config(dict(t.config, default_color_dark="#123456"))   # a colour: no fresh look
+    t.config["default_color_dark"] = "#123456"            # a colour: no fresh look. In place and the
+    t.update_config(t.config)                              # SAME dict, as apply_all_settings does
     assert t._sources_reset_pending is False
     _dirty_poll(t)
     assert _verdicts(t, clock, NO_READINGS)[0][1] is True
@@ -218,7 +219,10 @@ def test_an_unrelated_apply_or_a_resume_does_not_reset_the_verdict(q_app, clock)
 def test_a_source_setting_change_takes_a_fresh_look_with_a_grace(q_app, clock, key, value):
     t = _thread(q_app)
     assert _verdicts(t, clock, dict(NO_READINGS, gpu_temp=50.0))[0][1] is True
-    t.update_config(dict(t.config, **{key: value}))
+    # The app mutates the widget's config in place and passes the SAME dict the thread already holds
+    # (ConfigController.apply_all_settings) - comparing old and new dicts would see no change.
+    t.config[key] = value
+    t.update_config(t.config)
     assert t._sources_reset_pending is True
     _dirty_poll(t)
     seen = _verdicts(t, clock, {"gpu": 3.0, "gpu_temp": None}, polls=int(GRACE) + 2)
