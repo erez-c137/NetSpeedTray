@@ -85,6 +85,11 @@ class LhmConstants:
     # every FAILURE_BACKOFF_SEC while temperatures / power are polled; when polling stops (they were
     # turned off), the "web server is off" notice must not stay up on an old answer.
     PROCESS_RESULT_TTL_SEC: Final[float] = 2 * FAILURE_BACKOFF_SEC
+    # A temperature / power source that supplied a device (CPU / GPU) stays "available" this long after
+    # it last did (#609). Without a source the taskbar drops the "(N/A)" suffix and its width; the hold
+    # keeps one LHM blip (a FAILURE_BACKOFF_SEC window without a snapshot) from flapping the suffix
+    # and resizing the widget - it reads "(N/A)" meanwhile, as before.
+    SENSOR_SOURCE_HOLD_SEC: Final[float] = 2 * FAILURE_BACKOFF_SEC
 
     def __init__(self) -> None:
         self.validate()
@@ -116,6 +121,8 @@ class LhmConstants:
             raise ValueError("PROCESS_RESULT_TTL_SEC must outlast one FAILURE_BACKOFF_SEC window.")
         if self.NOT_DETECTED_GRACE_SEC <= 0:
             raise ValueError("NOT_DETECTED_GRACE_SEC must be positive.")
+        if self.SENSOR_SOURCE_HOLD_SEC <= self.FAILURE_BACKOFF_SEC:
+            raise ValueError("SENSOR_SOURCE_HOLD_SEC must outlast one LHM failure backoff.")
 
 
 # Singleton instance for easy access

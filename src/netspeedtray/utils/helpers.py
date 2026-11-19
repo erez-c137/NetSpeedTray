@@ -551,9 +551,16 @@ def temperature_reference(unit: str, hover: bool = False) -> str:
     return table.get(unit, table[t.CELSIUS]) + temperature_symbol(unit)
 
 
-def hw_suffix_reference(show_temps: bool, show_power: bool, unit: str) -> str:
+def hw_suffix_reference(show_temps: bool, show_power: bool, unit: str,
+                        source_available: Optional[bool] = None) -> str:
     """The widest "(temp, power)" suffix of a CPU/GPU row - the one string the renderer, the
-    side-bar fit and the layout all size from, so they cannot drift apart."""
+    side-bar fit and the layout all size from, so they cannot drift apart.
+
+    ``source_available`` is the monitor thread's verdict for the device (#609): ``False`` - nothing
+    can supply its temperature / power - means no suffix and no column; ``None`` (not known yet) and
+    ``True`` reserve as before."""
+    if source_available is False:
+        return ""
     if show_temps and show_power:
         return f"({temperature_reference(unit)}, 250.0W)"
     if show_power:

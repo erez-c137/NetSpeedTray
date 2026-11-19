@@ -64,6 +64,24 @@ _OHM_GUIDANCE_LOGGED: set = set()
 _SENSOR_STAT_KEYS = ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power')
 
 
+class _SourceHold:
+    """Whether a device's temperature / power source is available (#609), held for ``hold_sec`` after
+    it last was: one LHM blip must not drop the taskbar suffix (and resize the widget) for a poll."""
+
+    def __init__(self, hold_sec: float) -> None:
+        self.hold_sec = hold_sec
+        self._last_seen: Optional[float] = None
+
+    def update(self, now: float, seen: bool) -> bool:
+        if seen:
+            self._last_seen = now
+            return True
+        return self._last_seen is not None and now - self._last_seen < self.hold_sec
+
+    def reset(self) -> None:
+        self._last_seen = None
+
+
 def hardware_collection_gates(config: Dict[str, Any], force: bool) -> Tuple[bool, bool]:
     """(collect_cpu_ram, collect_gpu_vram) for one poll: the user's monitoring switches, or everything
     while the Monitor window forces collection for its live tiles. Recording is NOT a reason to poll -
@@ -388,6 +406,12 @@ class StatsMonitorThread(QThread):
         # Same latch for LHM: once its web server has shown a hardware-scoped GPU, the GPU exists -
         # an LHM backoff window or a GPU that is asleep this tick must not flap the tiles out.
         self._lhm_gpu_seen: bool = False
+        # What the last GPU poll found able to serve the shown GPU's temperature / power without a
+        # reading yet (#609): (nvidia-smi for an NVIDIA card, RAPL PP1 for an Intel iGPU's power).
+        self._gpu_source_serves: Tuple[bool, bool] = (False, False)
+        # Per-device "a temperature / power source exists" verdicts (#609, _update_sensor_sources).
+        self._cpu_source_hold = _SourceHold(constants.lhm.SENSOR_SOURCE_HOLD_SEC)
+        self._gpu_source_hold = _SourceHold(constants.lhm.SENSOR_SOURCE_HOLD_SEC)
         # What the last GPU poll read, kept for _gpu_cards (the hover card's per-GPU rows, #236) so the
         # list costs no extra PDH read and no subprocess: (util array, dedicated MiB by instance or
         # None, shared MiB by instance, LHM snapshot, picked adapter, its temp, its power).
@@ -1008,6 +1032,13 @@ class StatsMonitorThread(QThread):
                     if val is not None and val > 0:
                         power_w = rapl_w = val / 1000.0  # mW to W
             except: pass
+
+        # What could serve this GPU's temperature / power even without a reading this poll (#609): its
+        # nvidia-smi (asleep on a hybrid counts - a known source, N/A while it sleeps), or, for power,
+        # the Intel iGPU's RAPL PP1 counter. LHM/WMI groups count through their readings.
+        smi_serves = (bool(self._nvidia_smi_path) and smi_matches and not memory_only
+                      and (source_gpu is None or _is_nvidia_group(source_gpu)))
+        self._gpu_source_serves = (smi_serves, bool(rapl_matches and self._power_pp1_counter is not None))
 
         # Clamp utilization to [0, 100] - a per-engine sum can momentarily read >100%.
         util_pct = max(constants.gpu.UTIL_MIN_PERCENT, min(constants.gpu.UTIL_MAX_PERCENT, util_pct))
@@ -2071,6 +2102,37 @@ class StatsMonitorThread(QThread):
             self.logger.info("CPU temperature: %.1f°C via %s (sensor: %s).", celsius, source, sensor)
         return celsius
 
+    def _update_sensor_sources(self, stats: Dict[str, Any]) -> None:
+        """Add ``cpu_sensor_source`` / ``gpu_sensor_source`` to ``stats`` (#609): whether anything can
+        supply the device's temperature / power - the ones the user turned on - for the taskbar suffix.
+        False drops the suffix ("(N/A)" forever on an Intel / AMD GPU without LibreHardwareMonitor);
+        True keeps it, "(N/A)" while a sample is missing.
+
+        Available = a reading this poll (LHM web server, LHM/OHM WMI, an ACPI zone that is not a
+        placeholder, RAPL, nvidia-smi), or an attached source that has not answered yet: a connected
+        LHM/OHM WMI namespace or RAPL PKG (power) for the CPU; nvidia-smi for an NVIDIA GPU, RAPL PP1
+        (power) for an Intel iGPU. Held for SENSOR_SOURCE_HOLD_SEC (_SourceHold), so an LHM started
+        later brings the suffix back on its first reading and one closed for good drops it after the
+        hold. Only for a device whose temperature / power keys this poll carries; none at all when both
+        switches are off (a Monitor-forced poll is not the taskbar's business)."""
+        temps = bool(self.config.get('show_hardware_temps', False))
+        power = bool(self.config.get('show_hardware_power', False))
+        if not (temps or power):
+            return
+        now = time.monotonic()
+        if 'cpu_temp' in stats or 'cpu_power' in stats:
+            seen = ((temps and stats.get('cpu_temp') is not None)
+                    or (power and stats.get('cpu_power') is not None)
+                    or bool(self._wmi_ohm)
+                    or (power and self._power_pkg_counter is not None))
+            stats['cpu_sensor_source'] = self._cpu_source_hold.update(now, seen)
+        if 'gpu_temp' in stats or 'gpu_power' in stats:
+            smi_serves, rapl_serves = self._gpu_source_serves
+            seen = ((temps and stats.get('gpu_temp') is not None)
+                    or (power and stats.get('gpu_power') is not None)
+                    or smi_serves or (power and rapl_serves))
+            stats['gpu_sensor_source'] = self._gpu_source_hold.update(now, seen)
+
     def _update_lhm_notice(self, stats: Dict[str, Any], in_rdp: bool) -> None:
         """Emit ``lhm_not_detected`` once per session when temps/power are wanted but no sensor reads.
 
@@ -2155,6 +2217,8 @@ class StatsMonitorThread(QThread):
                     self._ohm_retry_at = 0.0   # now, not after a failed probe's backoff,
                     self._ohm_first_probe_at = None   # with a fresh every-poll grace
                     self._ohm_lost_probe_at = None
+                    self._cpu_source_hold.reset()   # a fresh look at what can supply readings
+                    self._gpu_source_hold.reset()
 
                 stats = {}
 
@@ -2256,6 +2320,9 @@ class StatsMonitorThread(QThread):
 
                 # Whole-system / battery power (see _collect_power_stats).
                 self._collect_power_stats(stats, _force_hw)
+
+                # Per device: can anything supply the taskbar's temperature / power suffix? (#609)
+                self._update_sensor_sources(stats)
 
                 if stats:
                     self.stats_ready.emit(stats)

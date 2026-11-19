@@ -379,6 +379,11 @@ class NetworkSpeedWidget(QWidget):
         self.gpu_temp: Optional[float] = None
         self.cpu_power: Optional[float] = None
         self.gpu_power: Optional[float] = None
+        # Can anything supply the device's temperature / power? (#609, the monitor thread's verdict.)
+        # None = not known yet (before the first poll): the "(N/A)" suffix and its width as before.
+        # False = no source at all: no suffix, and the layout gives its width back.
+        self.cpu_sensor_source: Optional[bool] = None
+        self.gpu_sensor_source: Optional[bool] = None
         self.system_power: Optional[float] = None   # true whole-system W (RAPL PSYS / battery), if available
         self.battery_power: Optional[float] = None  # signed battery draw: discharge +, charge - (display only)
         self.latency_probe = None                    # apply_latency_probe owns it (startup + every apply)
@@ -1190,6 +1195,24 @@ class NetworkSpeedWidget(QWidget):
                 pass
         self.update()
 
+    def update_sensor_source(self, device: str, available: bool) -> None:
+        """Whether ``device`` ("cpu" / "gpu") has a temperature / power source (#609). The suffix
+        column is reserved unless this is False, so the widget re-lays out only when the verdict
+        crosses False - a source found or lost for good, rare - never on a reading."""
+        if self.is_paused:
+            return
+        attr = f"{device}_sensor_source"
+        old = getattr(self, attr, None)
+        if old is available:
+            return
+        setattr(self, attr, available)
+        if (old is False) != (available is False):
+            try:
+                self.layout_manager.resize_widget_for_font()
+            except Exception:
+                pass
+        self.update()
+
     def update_cpu_temp(self, temp: Optional[float]) -> None:
         """Update CPU temperature and trigger repaint."""
         self._set_hw_metric("cpu_temp", temp, _CPU_BAR_MODES)
@@ -1482,6 +1505,8 @@ class NetworkSpeedWidget(QWidget):
             gpu_temp=self.gpu_temp,
             cpu_power=self.cpu_power,
             gpu_power=self.gpu_power,
+            cpu_sensor_source=self.cpu_sensor_source,
+            gpu_sensor_source=self.gpu_sensor_source,
             ram_used=self.ram_used,
             ram_total=self.ram_total,
             vram_used=self.vram_used,
