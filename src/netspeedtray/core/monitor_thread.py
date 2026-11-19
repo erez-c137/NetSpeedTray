@@ -372,6 +372,9 @@ class StatsMonitorThread(QThread):
         self._gpu_luids_pending: Optional[frozenset] = None
         self._gpu_luids_retry_at: float = 0.0
         self._gpu_luids_tries: int = 0
+        # (count, vendors) of phantom duplicate adapters last logged as collapsed (#609): logged once
+        # per change, not on every query rebuild.
+        self._gpu_phantoms_logged: Optional[tuple] = None
         # The picked adapter name last logged as missing (#236), so the fallback is logged once.
         self._gpu_missing_logged: Optional[str] = None
         # FALLBACK ONLY (no DXGI): True once any adapter has reported dedicated usage at or above
@@ -577,7 +580,9 @@ class StatsMonitorThread(QThread):
             self._gpu_luids_pending = None
             if self._gpu_adapters is not None:
                 self.logger.debug("DXGI adapters: %s", [
-                    (a.name, hex(a.vendor_id), round(a.dedicated_video_bytes / 2 ** 20), a.software)
+                    (a.name, hex(a.vendor_id), hex(a.device_id), hex(a.subsys_id), a.revision,
+                     round(a.dedicated_video_bytes / 2 ** 20), round(a.shared_system_bytes / 2 ** 20),
+                     a.outputs, a.software)
                     for a in self._gpu_adapters])
 
             self._gpu_query = win32pdh.OpenQuery()
@@ -1412,12 +1417,19 @@ class StatsMonitorThread(QThread):
         (shared-VRAM mode) until the next rebuild - or, unplugged, keep a stale dedicated one. A
         LUID in PDH the cache lacks, or a cached real GPU PDH no longer lists, triggers one re-read
         (~0.3 ms); the same LUID set is never checked twice, so a permanent mismatch costs nothing
-        per poll."""
+        per poll.
+
+        Each new PDH set also drops Windows' phantom duplicates of a real GPU from the cached list
+        (#609, gpu_adapters.collapse_phantom_duplicates): the hover list, the picker match and every
+        same-maker rule then see one GPU once."""
         if self._gpu_adapters is None:
             return   # DXGI unavailable: re-reading would not help, and the fallback latch applies
         luids = frozenset(x for x in (gpu_adapters.pdh_instance_luid(i) for i in pdh_instances) if x)
+        if luids:
+            gpu_adapters.remember_pdh_luids(luids)   # the Settings page's view of the same set
         if not luids or luids == self._gpu_pdh_luids_checked:
             return
+        self._gpu_adapters = self._without_phantoms(self._gpu_adapters, luids)
         if self._adapters_cover(luids):
             self._gpu_pdh_luids_checked = luids
             self._gpu_luids_pending = None
@@ -1431,6 +1443,8 @@ class StatsMonitorThread(QThread):
         self._gpu_luids_tries += 1
         self._gpu_luids_retry_at = now + g.ADAPTER_RECHECK_SEC
         fresh = gpu_adapters.enumerate_adapters()
+        if fresh is not None:
+            fresh = self._without_phantoms(fresh, luids)
         if fresh is not None and fresh != self._gpu_adapters:
             self._gpu_adapters = fresh
             self.logger.info("GPU adapters changed: %s", [a.name for a in gpu_adapters.hardware_adapters(fresh)])
@@ -1439,6 +1453,20 @@ class StatsMonitorThread(QThread):
         if (fresh is not None and self._adapters_cover(luids)) or self._gpu_luids_tries >= g.ADAPTER_RECHECK_MAX:
             self._gpu_pdh_luids_checked = luids
             self._gpu_luids_pending = None
+
+    def _without_phantoms(self, adapters: List[gpu_adapters.AdapterInfo],
+                          luids: frozenset) -> List[gpu_adapters.AdapterInfo]:
+        """``adapters`` with the phantom duplicates PDH does not name dropped (#609), logged once per
+        change at INFO - count and maker only, never a name."""
+        kept = gpu_adapters.collapse_phantom_duplicates(adapters, luids)
+        dropped = [a for a in adapters if a not in kept]
+        if dropped:
+            sig = (len(dropped), tuple(sorted({hex(a.vendor_id) for a in dropped})))
+            if sig != self._gpu_phantoms_logged:
+                self._gpu_phantoms_logged = sig
+                self.logger.info("GPU list: %d duplicate adapter(s) (%s) without performance counters "
+                                 "ignored - each GPU is listed once.", sig[0], ", ".join(sig[1]))
+        return kept
 
     def _adapters_cover(self, luids: frozenset) -> bool:
         """The cached DXGI list knows every LUID PDH names, and PDH still lists every real GPU."""

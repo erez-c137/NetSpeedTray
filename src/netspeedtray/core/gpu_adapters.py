@@ -45,6 +45,11 @@ class AdapterInfo(NamedTuple):
     # Displays attached to this adapter's own outputs (IDXGIAdapter::EnumOutputs) when the list was
     # read. On a hybrid laptop, a monitor wired to the dGPU's port keeps it awake (2.2.1 Optimus gate).
     outputs: int = 0
+    # PCI identity from the same descriptor (0 when unknown, e.g. a hand-built test adapter). Logged at
+    # debug level to tell Windows' phantom duplicate adapters (#609) from real twins.
+    device_id: int = 0
+    subsys_id: int = 0
+    revision: int = 0
 
 
 def pdh_instance_luid(instance: object) -> Optional[Tuple[int, int]]:
@@ -56,6 +61,53 @@ def pdh_instance_luid(instance: object) -> Optional[Tuple[int, int]]:
 def hardware_adapters(adapters: Iterable[AdapterInfo]) -> List[AdapterInfo]:
     """Real GPUs only: drops the Basic Render Driver / WARP (software flag or Microsoft vendor id)."""
     return [a for a in adapters if not a.software and a.vendor_id != MICROSOFT_VENDOR_ID]
+
+
+def collapse_phantom_duplicates(adapters: Iterable[AdapterInfo],
+                                pdh_luids: Optional[Iterable[Tuple[int, int]]]) -> List[AdapterInfo]:
+    """``adapters`` without Windows' phantom duplicates of a real GPU (#609), in the same order.
+
+    Some machines (a Core Ultra X7 358H laptop with one Arc B390) list the SAME GPU several times in
+    DXGI - same maker, same Description, a different LUID each - but only one of those LUIDs has
+    ``GPU Adapter Memory`` instances in PDH; the hover card then listed "#1 35 %" and two empty
+    "#2" / "#3" rows of 0 % with no memory.
+
+    Among real adapters sharing a maker and a Description, the ones PDH does not name are dropped -
+    but only when PDH names at least one of them. Everything else is kept as it is:
+    - two identical real cards (2x RTX 4090): each has its own PDH instances, so both stay (#1 / #2);
+    - a sleeping Optimus dGPU: another maker and name, never grouped with the iGPU (and PDH lists an
+      idle adapter anyway - it never wakes it);
+    - no PDH data (``pdh_luids`` None or empty), or PDH naming none of a group: nothing is dropped;
+    - software adapters (Basic Render / WARP): untouched.
+    Grouped by maker and name, not by PCI device id: the device ids of the phantoms are unknown, and a
+    real GPU missing from PDH while its namesake is listed has not been seen (a twin eGPU hot-plugged
+    before PDH lists it comes back with the next PDH set - G4 re-reads DXGI for an unknown LUID)."""
+    adapters = list(adapters)
+    luids = frozenset(pdh_luids or ())
+    if not luids:
+        return adapters
+    groups: dict = {}
+    for a in hardware_adapters(adapters):
+        groups.setdefault((a.vendor_id, a.name.strip().casefold()), []).append(a)
+    drop = set()
+    for members in groups.values():
+        if len(members) > 1 and any(a.luid in luids for a in members):
+            drop.update(id(a) for a in members if a.luid not in luids)
+    return [a for a in adapters if id(a) not in drop] if drop else adapters
+
+
+# The adapter LUIDs PDH named on the GPU poll's last check (monitor thread), for the Settings page,
+# which reads DXGI itself but has no PDH query of its own. None until a poll has seen PDH GPU data.
+_last_pdh_luids: Optional[frozenset] = None
+
+
+def remember_pdh_luids(luids: Optional[Iterable[Tuple[int, int]]]) -> None:
+    global _last_pdh_luids
+    _last_pdh_luids = frozenset(luids) if luids else None
+
+
+def last_pdh_luids() -> Optional[frozenset]:
+    return _last_pdh_luids
 
 
 def find_adapter(adapters: Optional[Iterable[AdapterInfo]], name: object) -> Optional[AdapterInfo]:
@@ -221,7 +273,9 @@ def enumerate_adapters() -> Optional[List[AdapterInfo]]:
                     dedicated_video_bytes=int(desc.DedicatedVideoMemory),
                     shared_system_bytes=int(desc.SharedSystemMemory),
                     software=bool(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE),
-                    outputs=_count_outputs(adapter)))
+                    outputs=_count_outputs(adapter),
+                    device_id=int(desc.DeviceId), subsys_id=int(desc.SubSysId),
+                    revision=int(desc.Revision)))
             finally:
                 _release(adapter)
         return out
