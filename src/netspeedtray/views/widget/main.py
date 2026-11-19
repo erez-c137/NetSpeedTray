@@ -3490,7 +3490,8 @@ class NetworkSpeedWidget(QWidget):
         Settings > Hardware's link opens it.
 
         Off by policy: ``DisableTips`` (DEPLOYING.md), re-read here and on every retry, drops it for the
-        session without using it up or retrying - lifted later, it is still owed while still needed.
+        session without using it up or retrying - lifted later, it can show from the next launch (the
+        monitor thread asks once per session) while still needed.
         Settings > Hardware's link opens it regardless (the user asked).
         """
         try:

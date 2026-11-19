@@ -217,7 +217,8 @@ cards above; afterwards only from Settings > Hardware.
   "first_run_v2_seen": true, "first_run_tip_shown": true` and `"last_seen_version": "<the version you
   deploy>"` before the first launch, plus `"support_prompt_shown": true` for the rate / star / support
   card, `"internet_offer_declines": 2` for the internet offer, and `"temp_onboarding_dismissed": true`
-  for the temperature setup.
+  for the temperature setup. Pre-seeding does not hide the Check connection sheet's "Turn on in
+  Settings" link, shown while the latency check is off; only the policy hides it.
 
 **Launching NetSpeedTray while it runs (2.2.2):** the widget comes back; a launch the user made - a
 Start menu, taskbar or desktop shortcut, or an exe double-clicked in Explorer - also opens the small

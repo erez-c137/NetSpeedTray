@@ -77,6 +77,17 @@ def qt_owned(q_app):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_disable_tips_policy(monkeypatch):
+    """Never read the machine's real ``DisableTips`` policy (HKLM/HKCU): since 2.2.2 it also hides the
+    Monitor's internet offer and the automatic temperature setup, so a PC (or CI runner) with the policy
+    set would fail every test of those. Patches the reader ``startup_notices`` imported by name, not
+    ``tips_disabled_by_policy`` itself: a test's own policy fixture still overrides this, and
+    test_startup_notices' ``fake_policy`` puts the real reader back over a faked winreg."""
+    from netspeedtray.core import startup_notices
+    monkeypatch.setattr(startup_notices, "policy_value_set", lambda name: False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_update_marker(tmp_path, monkeypatch):
     """No test may read or write the real %APPDATA%/NetSpeedTray/staged_update.json or stage into
     the real %LOCALAPPDATA%/NetSpeedTray/updates (#260): ``apply_update`` records its outcome

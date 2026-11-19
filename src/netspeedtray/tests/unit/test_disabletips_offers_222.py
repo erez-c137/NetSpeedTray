@@ -116,6 +116,8 @@ def test_a_policy_pushed_while_the_setup_waits_drops_it(q_app, nag_world, policy
 def test_deploying_md_lists_what_disabletips_covers():
     text = (Path(startup_notices.__file__).parents[3] / "DEPLOYING.md").read_text(encoding="utf-8")
     assert "Not covered by `DisableTips`" not in text
-    section = text[text.index("DisableTips"):]
+    start = text.index("**Turning all of them off for everyone:**")
+    section = text[start:text.index("- **Per user, without a policy:**", start)]
+    assert r"HKLM\SOFTWARE\Policies\NetSpeedTray DisableTips" in section
     for phrase in ("Also check your internet", "temperature setup"):
         assert phrase in section, phrase

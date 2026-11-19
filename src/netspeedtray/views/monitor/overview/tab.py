@@ -1309,11 +1309,15 @@ class OverviewTab(QWidget):
         (turned on in Settings meanwhile)."""
         from netspeedtray.core.latency_probe import HOP_GATEWAY
         offer = self._internet_offer
-        available = offer is not None and offer.available()
+        wanted = bool(shown and hop == HOP_GATEWAY)
         tip = self._internet_tip
-        if tip is not None and tip.isVisible() and not available:
+        tip_open = tip is not None and tip.isVisible()
+        # Ask the offer (it reads the DisableTips policy) only when the link could show or a tip is
+        # open - not on every 1 Hz render of an Internet line or an empty strip.
+        available = (wanted or tip_open) and offer is not None and offer.available()
+        if tip_open and not available:
             tip.close_for_action()
-        self._internet_link.setVisible(bool(available and shown and hop == HOP_GATEWAY))
+        self._internet_link.setVisible(bool(available and wanted))
 
     # --- the internet offer's TeachingTip ------------------------------------------------------------
     def _open_internet_tip(self) -> None:

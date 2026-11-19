@@ -215,6 +215,9 @@ def fake_policy(monkeypatch):
 
         monkeypatch.setattr(winreg, "OpenKey", open_key)
         monkeypatch.setattr(winreg, "QueryValueEx", query)
+        # The real reader over the faked winreg (conftest's autouse fixture stubs it out elsewhere).
+        from netspeedtray.core import update_checker
+        monkeypatch.setattr(logic, "policy_value_set", update_checker.policy_value_set)
     return install
 
 
