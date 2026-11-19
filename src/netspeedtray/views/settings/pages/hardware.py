@@ -98,7 +98,8 @@ class HardwarePage(QWidget):
     def __init__(self, i18n, on_change: Callable[[], None],
                  color_dialog_callback: Optional[Callable[[str], None]] = None,
                  lhm_status_provider: Optional[Callable[[], Optional[Tuple[str, int]]]] = None,
-                 temp_setup_callback: Optional[Callable[[int], None]] = None):
+                 temp_setup_callback: Optional[Callable[[int], None]] = None,
+                 sensor_source_provider: Optional[Callable[[], Tuple[Optional[bool], Optional[bool]]]] = None):
         super().__init__()
         self.i18n = i18n
         self.on_change = on_change
@@ -109,6 +110,9 @@ class HardwarePage(QWidget):
         self.lhm_status_provider = lhm_status_provider or (lambda: None)
         # step -> opens the temperature setup dialog at that step (SettingsDialog._open_temp_setup, D6).
         self.open_temp_setup = temp_setup_callback or (lambda _step: None)
+        # () -> (cpu, gpu) "has a temperature / power source" verdicts of the running app (#609;
+        # None = not known). Polled with the LHM status while this page is visible.
+        self.sensor_source_provider = sensor_source_provider or (lambda: (None, None))
         # The LHM password as config stores it (a DPAPI blob) and the plain text it was made from, so an
         # unchanged field never re-encrypts (DPAPI output differs on every call).
         self._lhm_password_blob = ""
@@ -217,8 +221,19 @@ class HardwarePage(QWidget):
             self.i18n.LHM_SERVER_OFF_ACTION, lambda: self.open_temp_setup(2))
         self.lhm_server_off_notice.setVisible(False)
         layout.addWidget(self.lhm_server_off_notice)
+        # #609: temperatures / power are on, but nothing can supply them for a monitored CPU / GPU (an
+        # Intel / AMD GPU without LibreHardwareMonitor) - so the taskbar shows no suffix for it. The
+        # same words as the static note below, raised to a status bar while it is true, with the setup
+        # link (step 1). The note and its link hide meanwhile, as they do for the server-off bar,
+        # which wins when both are true (it is the more precise next step). No new strings.
+        self.no_source_notice = _InfoBar(
+            self.i18n.HARDWARE_TEMPS_SETUP_ACTION, lambda: self.open_temp_setup(1))
+        self.no_source_notice.set_text(self.i18n.HARDWARE_TEMPS_LIMITATION_NOTE)
+        self.no_source_notice.setVisible(False)
+        layout.addWidget(self.no_source_notice)
 
         temps_note = su.ui_label(self.i18n.HARDWARE_TEMPS_LIMITATION_NOTE)   # RTL: isolates LHM's menu path
+        self.temps_note = temps_note
         temps_note.setWordWrap(True)
         temps_note.setStyleSheet(
             f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
@@ -473,10 +488,32 @@ class HardwarePage(QWidget):
                     else self.i18n.LHM_SERVER_NO_ANSWER_NOTICE.format(port=port))
             if text != self.lhm_server_off_notice.text():
                 self.lhm_server_off_notice.set_text(text)
-        if want == self.lhm_server_off_notice.isHidden():
+        changed = want == self.lhm_server_off_notice.isHidden()
+        if changed:
             self.lhm_server_off_notice.setVisible(want)
-            self.temps_setup_link.setVisible(not want)
+        if self._sync_no_source_notice(server_off=want) or changed:
             self.layout_changed.emit()
+
+    def _sync_no_source_notice(self, server_off: bool) -> bool:
+        """Show the "no sensor source" InfoBar (#609) while temperatures or power are on and a
+        monitored CPU / GPU has none (the app's verdict is False) - unless the server-off bar shows.
+        Then sets the static note and its link: the note hides under this bar, the link under either.
+        True if anything changed (the caller re-lays out once)."""
+        try:
+            cpu_src, gpu_src = self.sensor_source_provider() or (None, None)
+        except Exception:
+            cpu_src = gpu_src = None
+        readings_on = self.show_temps.isChecked() or self.show_power.isChecked()
+        no_source = ((cpu_src is False and self.monitor_cpu.isChecked())
+                     or (gpu_src is False and self.monitor_gpu.isChecked()))
+        want = readings_on and no_source and not server_off
+        changed = False
+        for w, visible in ((self.no_source_notice, want), (self.temps_note, not want),
+                           (self.temps_setup_link, not (want or server_off))):
+            if w.isHidden() == visible:
+                w.setVisible(visible)
+                changed = True
+        return changed
 
     def _lhm_password_setting(self) -> str:
         """The password field as config stores it: a DPAPI blob, re-made only when the text changed.

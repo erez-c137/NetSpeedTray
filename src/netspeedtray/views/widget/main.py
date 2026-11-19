@@ -57,6 +57,12 @@ from netspeedtray.utils.helpers import effective_display_mode, hardware_in_hover
 _CPU_BAR_MODES = ("cpu_only", "combined", "side_by_side", "cycle")
 _GPU_BAR_MODES = ("gpu_only", "combined", "side_by_side", "cycle")
 
+
+def _remembered_source(config: Dict[str, Any], device: str) -> Optional[bool]:
+    """The last session's "has a temperature / power source" verdict for ``device`` (#609), or None."""
+    value = config.get(f"{device}_sensor_source_last") if isinstance(config, dict) else None
+    return value if isinstance(value, bool) else None
+
 # --- Type Checking ---
 if TYPE_CHECKING:
     from netspeedtray.constants.i18n import I18nStrings
@@ -382,8 +388,10 @@ class NetworkSpeedWidget(QWidget):
         # Can anything supply the device's temperature / power? (#609, the monitor thread's verdict.)
         # None = not known yet (before the first poll): the "(N/A)" suffix and its width as before.
         # False = no source at all: no suffix, and the layout gives its width back.
-        self.cpu_sensor_source: Optional[bool] = None
-        self.gpu_sensor_source: Optional[bool] = None
+        # Seeded from the last session's verdict (config), before the first resize_widget_for_font():
+        # a PC without a source is sized without the column from the first frame.
+        self.cpu_sensor_source: Optional[bool] = _remembered_source(self.config, "cpu")
+        self.gpu_sensor_source: Optional[bool] = _remembered_source(self.config, "gpu")
         self.system_power: Optional[float] = None   # true whole-system W (RAPL PSYS / battery), if available
         self.battery_power: Optional[float] = None  # signed battery draw: discharge +, charge - (display only)
         self.latency_probe = None                    # apply_latency_probe owns it (startup + every apply)
@@ -1198,7 +1206,10 @@ class NetworkSpeedWidget(QWidget):
     def update_sensor_source(self, device: str, available: bool) -> None:
         """Whether ``device`` ("cpu" / "gpu") has a temperature / power source (#609). The suffix
         column is reserved unless this is False, so the widget re-lays out only when the verdict
-        crosses False - a source found or lost for good, rare - never on a reading."""
+        crosses False - a source found or lost for good, rare - never on a reading; and only when the
+        bar shows that device (a mode change re-lays out anyway). The verdict is remembered in config
+        (``*_sensor_source_last``) on a change, so the next launch is sized right from its first frame.
+        Mirrors follow on their next tick (their layout signature includes the verdicts)."""
         if self.is_paused:
             return
         attr = f"{device}_sensor_source"
@@ -1206,6 +1217,14 @@ class NetworkSpeedWidget(QWidget):
         if old is available:
             return
         setattr(self, attr, available)
+        key = f"{device}_sensor_source_last"
+        if self.config.get(key) is not available:
+            try:
+                self.save_config_keys({key: available})
+            except Exception as e:
+                self.logger.debug("Could not remember %s: %s", key, e)
+        if not self._bar_shows(_CPU_BAR_MODES if device == "cpu" else _GPU_BAR_MODES):
+            return
         if (old is False) != (available is False):
             try:
                 self.layout_manager.resize_widget_for_font()

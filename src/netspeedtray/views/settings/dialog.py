@@ -84,6 +84,7 @@ class SettingsDialog(QDialog):
         "start_with_windows", "pin_hint_shown_count", "side_bar_no_room_notice_shown", "app_overlap_notice_shown",
         "app_overlap_drop_offset", "second_launch_notice_shown", "internet_offer_declines",
         "first_run_tip_shown", "last_seen_version", "first_seen_at", "support_prompt_shown",
+        "cpu_sensor_source_last", "gpu_sensor_source_last",
     )
 
     def __init__(
@@ -425,7 +426,8 @@ class SettingsDialog(QDialog):
             return AppearancePage(self.i18n, s, self._open_font_dialog, self._open_color_dialog)
         if name == "hardware":
             return HardwarePage(self.i18n, s, self._open_color_dialog, lhm_status_provider=self._lhm_status,
-                                temp_setup_callback=self._open_temp_setup)
+                                temp_setup_callback=self._open_temp_setup,
+                                sensor_source_provider=self._sensor_sources)
         if name == "interfaces":
             return InterfacesPage(self.i18n, self.available_interfaces, s,
                                   primary_interface=self.primary_interface)
@@ -807,6 +809,13 @@ class SettingsDialog(QDialog):
         mt = getattr(self.parent_widget, "monitor_thread", None)
         status, port = getattr(mt, "lhm_status", None), getattr(mt, "lhm_port", None)
         return (status, port) if isinstance(status, str) and isinstance(port, int) else None
+
+    def _sensor_sources(self):
+        """(cpu, gpu): can anything supply each device's temperature / power? (#609, the widget's
+        verdicts; None = not known yet) - for Settings > Hardware's "no sensor source" bar."""
+        w = self.parent_widget
+        return tuple(v if isinstance(v, bool) else None
+                     for v in (getattr(w, "cpu_sensor_source", None), getattr(w, "gpu_sensor_source", None)))
 
     def _open_temp_setup(self, step: int = 1) -> None:
         """Settings > Hardware's "How to set it up" / "How to turn it on" (D6): the temperature setup
