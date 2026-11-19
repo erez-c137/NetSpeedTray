@@ -11,7 +11,8 @@ House rule 3 (ROADMAP): at most one one-time moment, ever, dismissable forever. 
 - **Once, ever.** ``support_prompt_shown`` turns True when any of its buttons is pressed, or once the
   card has been on screen for ``SUPPORT_PROMPT_SEEN_MS`` while the Monitor was the active,
   un-minimized window (a user who closes the Monitor without answering has still seen it). A Monitor closed before that owes it to the next open.
-- **Off by policy:** the same ``DisableTips`` policy as the first-run tip and "what's new" (DEPLOYING.md).
+- **Off by policy:** the same ``DisableTips`` policy as the first-run tip, "what's new", the internet
+  offer and the automatic temperature setup (DEPLOYING.md).
   Nothing is marked while the policy is on - it simply never shows.
 - **Rate only where it works:** the Store accepts a rating only from a user who has the app in their
   Store library, so "Rate it in the Store" shows only on a Store install (installed_from_store);

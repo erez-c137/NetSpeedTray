@@ -49,7 +49,10 @@ class StartupPlan:
 
 
 def tips_disabled_by_policy() -> bool:
-    """IT turned the one-time tips off (``DisableTips``, a nonzero DWORD; DEPLOYING.md)."""
+    """IT turned the app's unprompted notices off (``DisableTips``, a nonzero DWORD; DEPLOYING.md): the
+    first-run tip and "what's new" (here), the rate / star / support card (D8, support_card.py), the
+    Monitor's "Also check your internet" offer (D5, internet_offer.py) and the temperature setup that
+    opens on its own (D6, widget ``_on_lhm_not_detected``). Every caller reads it at show time."""
     return policy_value_set(constants.app.POLICY_DISABLE_TIPS_VALUE)
 
 

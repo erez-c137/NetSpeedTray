@@ -14,6 +14,10 @@ internet check. On the Overview it opens a small Fluent TeachingTip-style popup 
                them it is never offered again (the last one reads "No thanks"). Settings keeps the switch.
   * Esc / a click outside the popup only closes it - that is not a decline.
 
+Off by policy: the IT policy ``DisableTips`` (DEPLOYING.md) hides the offer - the link, the tip and
+the sheet's inline confirm - re-read at every ``available()``; "Router: steady" (a fact) stays, and the
+internet check stays in Settings.
+
 Nothing is turned on without the Turn on click. The body text is set when the confirm OPENS, never at
 construction: a host name in another script must not make Qt load faces for a confirm nobody opened.
 """
@@ -147,8 +151,9 @@ class InternetOffer:
     """The offer's state and its two outcomes, for one main widget (the app's config owner).
 
     ``available()`` - offer it now? Only while the internet check is off, the latency probe is on (the
-    router line it sits beside exists), the main widget can turn it on, and the user has not declined it
-    this session or ``INTERNET_OFFER_MAX_DECLINES`` times in all."""
+    router line it sits beside exists), the main widget can turn it on, the user has not declined it
+    this session or ``INTERNET_OFFER_MAX_DECLINES`` times in all, and IT has not turned the app's
+    unprompted suggestions off (``DisableTips``, re-read on every ask)."""
 
     def __init__(self, main_widget, config: Dict[str, Any]) -> None:
         self._mw = main_widget
@@ -168,7 +173,9 @@ class InternetOffer:
             return False
         if self._declines() >= constants.network.latency.INTERNET_OFFER_MAX_DECLINES:
             return False
-        return callable(getattr(self._mw, "turn_on_internet_check", None))
+        if not callable(getattr(self._mw, "turn_on_internet_check", None)):
+            return False
+        return not offers_disabled_by_policy()   # last: the cheap checks above skip the registry read
 
     def ends_offer(self) -> bool:
         """This "Not now" is the last one: the button says "No thanks"."""
@@ -205,6 +212,13 @@ class InternetOffer:
         except Exception as e:
             logger.debug("Could not save the internet offer's Not now: %s", e)
         self._config.update(updates)   # at least this session remembers
+
+
+def offers_disabled_by_policy() -> bool:
+    """IT turned the app's unprompted suggestions off (``DisableTips``; DEPLOYING.md). Looked up at
+    call time so a policy pushed while the Monitor is open applies on its next refresh."""
+    from netspeedtray.core import startup_notices
+    return startup_notices.tips_disabled_by_policy()
 
 
 def offer_for(main_widget, config: Dict[str, Any]) -> Optional[InternetOffer]:

@@ -188,25 +188,36 @@ choice, and nothing is sent anywhere (a link opens only on a click). The state i
 (UTC) and `support_prompt_shown` in the config; Settings > Reset all keeps both. A PC clock set before
 November 2026 never starts or advances the wait. The same `DisableTips` policy below turns it off.
 
-- **Turning all three off for everyone:** set the policy value
+**Two unprompted suggestions (2.2.2):** the Monitor offers the internet check beside a "Router" health
+line ("Also check your internet", a small confirm that says what leaves the PC; the Check connection
+sheet has the same offer inline, or a "Turn on in Settings" link when the latency probe is off), until
+the user turns it on or declines it twice. And the temperature setup dialog opens on its own at most
+once ever - when temperatures or power are turned on but no sensor reads - behind the same gates as the
+cards above; afterwards only from Settings > Hardware.
+
+- **Turning all of them off for everyone:** set the policy value
   `HKLM\SOFTWARE\Policies\NetSpeedTray DisableTips` (a DWORD; any nonzero value turns them off; the same
   value under `HKCU\SOFTWARE\Policies\NetSpeedTray` is honored too, OR-ed, like `DisableUpdateCheck`).
-  The app then never shows any of the three cards, and still records the version, so lifting the
-  policy later never brings back a stale tip or "what's new". (The rate / star / support card is not
-  used up by the policy: lifted, it can still show once, on a later Monitor open.) A Store or silent
-  install is not "managed" by itself: set the policy.
+  It covers everything above: the first-run tip, "what's new", the rate / star / support card, the
+  Monitor's "Also check your internet" offer (the Overview link and its confirm, and the Check
+  connection sheet's "Check your internet all the time" / "Turn on in Settings" link), and the
+  temperature setup that opens on its own. It is read again each time one would show, so a policy
+  pushed while the app runs applies without a restart. The app still records the version, so lifting
+  the policy later never brings back a stale tip or "what's new". (The support card and the temperature
+  setup are not used up by the policy: lifted, each can still show once, if it still applies.) Facts
+  stay - the health line still says "Router" or "Internet", and the Check connection sheet keeps its
+  one-off "Include the internet this time" tick - and both features stay in Settings (Settings >
+  Network's internet check, Settings > Hardware's temperature setup link). A Store or silent install
+  is not "managed" by itself: set the policy.
 
   ```
   reg add "HKLM\SOFTWARE\Policies\NetSpeedTray" /v DisableTips /t REG_DWORD /d 1 /f
   ```
 - **Per user, without a policy:** pre-seed the config with `"first_run_ever": false,
   "first_run_v2_seen": true, "first_run_tip_shown": true` and `"last_seen_version": "<the version you
-  deploy>"` before the first launch, plus `"support_prompt_shown": true` for the rate / star / support card.
-- **Not covered by `DisableTips`:** the Monitor's one-click offer to add the internet check ("Router"
-  only -> "Also check the internet?", 2.2.2) and the temperature setup dialog. The temperature setup
-  opens on its own at most once ever - when temperatures or power are turned on but no sensor reads -
-  behind the same gates as the cards above, and afterwards only from Settings > Hardware; pre-seed
-  `"temp_onboarding_dismissed": true` to skip it.
+  deploy>"` before the first launch, plus `"support_prompt_shown": true` for the rate / star / support
+  card, `"internet_offer_declines": 2` for the internet offer, and `"temp_onboarding_dismissed": true`
+  for the temperature setup.
 
 **Launching NetSpeedTray while it runs (2.2.2):** the widget comes back; a launch the user made - a
 Start menu, taskbar or desktop shortcut, or an exe double-clicked in Explorer - also opens the small
