@@ -345,7 +345,7 @@
     "ADVANCED_KEEP_HISTORY_LABEL": "Előzmények megőrzése eddig",
     "RECORD_HARDWARE_HISTORY_LABEL": "Hardverelőzmények rögzítése",
     "RECORD_HARDWARE_HISTORY_SUB": "Csak a bekapcsolt hardveradatokhoz",
-    "RECORD_HARDWARE_HISTORY_NEEDS_MONITOR_SUB": "Ehhez kapcsold be a Hardver oldalon a CPU-, GPU- vagy RAM-használat megjelenítését, illetve az akkumulátor-teljesítmény megjelenítését a felugró kártyán.",
+    "RECORD_HARDWARE_HISTORY_NEEDS_MONITOR_SUB": "Ehhez kapcsold be a Hardver oldalon a CPU-, GPU- vagy RAM-használat megjelenítését, illetve az akkumulátor-teljesítmény megjelenítését a felugró kártyán",
     "DELETE_HISTORY_LABEL": "Összes előzmény törlése",
     "DELETE_HISTORY_SUB": "Sebesség-, hardver- és kapcsolatelőzmények. A beállítások megmaradnak.",
     "DELETE_HISTORY_BUTTON": "Törlés…",
