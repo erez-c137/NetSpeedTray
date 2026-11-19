@@ -682,7 +682,7 @@ def test_hebrew_keeps_the_english_menu_name_for_the_web_server():
     for k in ("LHM_SERVER_OFF_NOTICE", "TEMP_ONBOARDING_STEP_2", "TEMP_ONBOARDING_DETAILS"):
         assert "שרת האינטרנט" not in he[k], k
     assert "Remote Web Server" in he["TEMP_ONBOARDING_STEP_2"]
-    assert he["TEMP_ONBOARDING_GET_LHM_BUTTON"].startswith("הורידו")
+    assert he["TEMP_ONBOARDING_GET_LHM_BUTTON"].startswith("הורד ")
     assert "herunterladen" in _locale("de_DE")["TEMP_ONBOARDING_GET_LHM_BUTTON"]
 
 
