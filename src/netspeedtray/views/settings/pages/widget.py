@@ -106,8 +106,28 @@ class WidgetPage(QWidget):
                                      description=self.i18n.SHOW_ON_ALL_TASKBARS_DESC,
                                      control=self.show_on_all_taskbars))
 
+        # Left-anchor pin (the reworked PR #554): anchor the widget to the FIRST shell thing on the
+        # LEFT of a top/bottom taskbar - the Widgets/weather button's right edge when one is there,
+        # else the bar's left edge - and keep it a fixed gap off it. Dragging still works (it saves
+        # the offset FROM the anchor; Reset position clears it). It lives right next to "Show on
+        # all taskbars" - both decide where the widget sits on the bar(s), ahead of the
+        # free-move / float escape hatches below. Side bars and bars whose left end is busy (a
+        # left-aligned Win11 bar, a Win10-style task list), and Free Move while it is on, grey the
+        # card out with a reason (_sync_pin_card, re-checked on load, on show and on a Free Move
+        # flip); the placement ignores the pin in those cases.
+        self.pin_left_edge = Win11Toggle(label_text="")
+        self.pin_left_edge.toggled.connect(self.on_change)
+        self._pin_card = SettingCard(
+            getattr(self.i18n, "PIN_LEFT_EDGE_LABEL", "Dock at the left end of the taskbar"),
+            description=getattr(self.i18n, "PIN_LEFT_EDGE_DESC",
+                                "Keep the widget beside the Widgets button or the bar's left edge, "
+                                "8 px in. Falls back to the tray spot where the left end is busy."),
+            control=self.pin_left_edge)
+        layout.addWidget(self._pin_card)
+
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
+        self.free_move.toggled.connect(lambda _checked: self._sync_pin_card())
         layout.addWidget(SettingCard(self.i18n.FREE_MOVE_LABEL, control=self.free_move))
 
         # #188: float the widget on a preferred monitor that has no taskbar of its own.
@@ -135,19 +155,8 @@ class WidgetPage(QWidget):
                                      description=self.i18n.HIDE_WHEN_APPS_COVER_DESC,
                                      control=self.hide_when_apps_cover))
 
-        # Left-anchor pin (the reworked PR #554): anchor the widget to the FIRST shell thing on the
-        # LEFT of a top/bottom taskbar - the Widgets/weather button's right edge when one is there,
-        # else the bar's left edge - and keep it a fixed gap off it. Dragging still works (it saves
-        # the offset FROM the anchor; Reset position clears it). Side bars are out of scope: the
-        # placement ignores the pin there, so the card greys out while the widget's taskbar sits on
-        # the left or right edge (_sync_pin_card, re-checked on load and on show).
-        self.pin_left_edge = Win11Toggle(label_text="")
-        self.pin_left_edge.toggled.connect(self.on_change)
-        self._pin_card = SettingCard(
-            getattr(self.i18n, "PIN_LEFT_EDGE_LABEL",
-                    "Anchor the widget to the left end of the taskbar"),
-            control=self.pin_left_edge)
-        layout.addWidget(self._pin_card)
+        # Every toggle the pin card's grey-out reads now exists: sync it once here (then on load,
+        # on show and on a Free Move flip).
         self._sync_pin_card()
 
         # NOTE: there is intentionally no tray-offset slider. Free Move (drag the widget anywhere) is the
@@ -295,24 +304,62 @@ class WidgetPage(QWidget):
             self.layout_changed.emit()
 
     def _sync_pin_card(self) -> None:
-        """Grey the left-anchor pin out on a SIDE taskbar: the placement ignores the pin there
-        (out of scope), so the switch must not pretend it does anything. Reads the same taskbar
-        the widget docks to (preferred monitor honoured, like _sync_monitor_note); re-checked on
-        every load and each time the page shows. A horizontal bar - or a moment where the taskbar
-        can't be read - leaves the card enabled."""
-        side = False
+        """Grey the left-anchor pin out where it would silently do nothing, and say why on the
+        card (a disabled widget's tooltip - the rc.2 G6 precedent the Hardware page uses):
+
+        * "free_move" - Free Move is on: the pin steps aside while the widget floats, so the
+          switch does nothing until Free Move is off;
+        * "side" - a SIDE taskbar: the placement ignores the pin there (out of scope);
+        * "left_busy" - a horizontal bar whose LEFT end is busy: a left-aligned Win11 bar
+          (TaskbarAl = 0) or a Win10-style task list at the left end - the pin falls back to the
+          tray spot, so the widget stays next to the clock either way.
+
+        Reads the same taskbar the widget docks to (preferred monitor honoured, like
+        _sync_monitor_note); re-checked on every load, each time the page shows and on a Free
+        Move flip. A horizontal bar - or a moment where the taskbar can't be read - leaves the
+        card enabled."""
+        reasons = {
+            "free_move": getattr(self.i18n, "PIN_LEFT_EDGE_GREY_FREE_MOVE",
+                                 "Turn off Free move to use this."),
+            "side": getattr(self.i18n, "PIN_LEFT_EDGE_GREY_SIDE",
+                            "Only for taskbars at the top or bottom of the screen."),
+            "left_busy": getattr(self.i18n, "PIN_LEFT_EDGE_GREY_LEFT_ALIGNED",
+                                 "Your taskbar's icons start at the left end, so the widget "
+                                 "stays next to the clock."),
+        }
+        kind: Optional[str] = None
         try:
             from netspeedtray.utils.taskbar_utils import get_taskbar_info
             info = get_taskbar_info(
                 preferred_screen_name=getattr(self, "_saved_monitor", None))
             edge = info.get_edge_position() if info is not None else None
             side = edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT)
+            free_move_on = bool(self.free_move.isChecked()) if hasattr(self, "free_move") else False
+            if free_move_on:
+                kind = "free_move"
+            elif side:
+                kind = "side"
+            elif info is not None:
+                # The left end busy: a Win10-style task list there, or a left-aligned Win11 bar -
+                # the same two tests left_end_is_free applies for placement.
+                from netspeedtray.utils import taskbar_utils as tbu
+                if tbu.valid_rect(getattr(info, "tasklist_rect", None)) is not None:
+                    kind = "left_busy"
+                else:
+                    try:
+                        from netspeedtray.core.system_events import read_taskbar_alignment
+                        if read_taskbar_alignment() == 0:
+                            kind = "left_busy"
+                    except Exception:
+                        pass   # registry unreadable: leave the card enabled (the probe decides)
         except Exception:
-            side = False
+            kind = None
         card = getattr(self, "_pin_card", None)
         if card is not None:
-            MiniGraphSection._set_card_enabled(card, not side)
-        self._pin_side_greyed = side
+            MiniGraphSection._set_card_enabled(card, kind is None)
+            # A greyed card says why; an enabled card carries no stale tooltip.
+            card.setToolTip("" if kind is None else reasons[kind])
+        self._pin_grey_kind = kind
 
     def showEvent(self, event):  # type: ignore[override]
         """Refresh the monitor dropdown whenever the page becomes visible.

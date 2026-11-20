@@ -429,8 +429,9 @@ def left_end_is_free(taskbar_info: Any, screen: Any,
                      align: Optional[int]) -> Tuple[bool, Optional[Tuple[float, float]]]:
     """Whether the LEFT end of a top/bottom taskbar is free for the left-anchor pin, and the
     Widgets/weather button's x span (logical px) when one is there. ``(False, None)`` when the left
-    end is not free: a Win10-style bar with a task list at the left end, or a left-aligned Win11
-    bar (TaskbarAl = 0; Start + apps grow from the left) - the pin then falls back to the normal
+    end is not free: a Win10-style bar with a task list at the left end, a left-aligned Win11
+    bar (TaskbarAl = 0; Start + apps grow from the left), or a mirrored (right-to-left Windows)
+    bar whose tray/clock sits in the bar's LEFT half - the pin then falls back to the normal
     tray spot. A Widgets button in the bar's RIGHT half belongs to the tray end (a left-aligned bar
     puts it beside the tray), which says the same thing when the registry read failed."""
     if taskbar_utils.valid_rect(getattr(taskbar_info, "tasklist_rect", None)) is not None:
@@ -442,7 +443,22 @@ def left_end_is_free(taskbar_info: Any, screen: Any,
     if geo is None:
         return True, None
     dpi = taskbar_info.dpi_scale if taskbar_info.dpi_scale and taskbar_info.dpi_scale > 0 else 1.0
-    span = widgets_button_span_x(taskbar_info, dpi, taskbar_utils.screen_origin(taskbar_info)[0])
+    x_origin = taskbar_utils.screen_origin(taskbar_info)[0]
+    # A mirrored (right-to-left Windows) taskbar keeps the clock at the LEFT end: the left end is
+    # the tray end there, exactly as on a left-aligned bar. The tray rect's centre in the bar's
+    # left half is the same "the tray side owns this end" test the Widgets button's span makes
+    # below for the button beside the tray - with Widgets off, the tray is the only tell. A
+    # degenerate rect (a just-restarted Explorer reports (0,1032,0,1032) for seconds) is no
+    # answer: valid_rect drops it and the pin keeps its bar-edge / last-good anchor meanwhile.
+    try:
+        tray = taskbar_utils.valid_rect(taskbar_info.get_tray_rect())
+    except Exception:
+        tray = None
+    if tray is not None:
+        tray_mid = taskbar_utils.physical_to_logical((tray[0] + tray[2]) / 2.0, x_origin, dpi)
+        if tray_mid < geo.left() + geo.width() / 2.0:
+            return False, None
+    span = widgets_button_span_x(taskbar_info, dpi, x_origin)
     if span is not None and (span[0] + span[1]) / 2.0 > geo.left() + geo.width() / 2.0:
         # The button beside the tray is the tray end's, not the left end's (the same test
         # _calculate_horizontal_position applies before stepping left of it).
@@ -1095,6 +1111,12 @@ class PositionManager(QObject):
         # probe for, and when (_refresh_left_anchor_layout - same shape as the tray-less refresh).
         self._left_anchor_probe_key: Optional[tuple] = None
         self._left_anchor_probe_at: float = 0.0
+        # The last GOOD anchor (taskbar HWND, base x in logical px) the pin computed for a bar,
+        # while the Widgets button is enabled but its span is still unknown (startup, an Explorer
+        # restart: the probe is pending). _left_anchor_base_x keeps this anchor instead of falling
+        # back to the bar's left edge, which would sit the widget on the weather button until the
+        # probe lands. Bar-keyed so an Explorer restart's fresh HWND cannot inherit the old bar's.
+        self._left_anchor_last_good: Optional[Tuple[int, int]] = None
         # The Widgets re-enable (widgets_toggle_generation's on_at) the primary's follow-up probe ran for.
         self._primary_interim_probe_for: Optional[float] = None
         from netspeedtray.core.app_overlap_yield import AppOverlapYield
@@ -1418,10 +1440,13 @@ class PositionManager(QObject):
     # The pin anchors the widget to the FIRST shell thing on the LEFT of a top/bottom taskbar -
     # the Widgets/weather button's right edge when one is there, else the bar's left edge -
     # LEFT_ANCHOR_GAP_PX off it. When the bar's left end is not free (a Win10-style bar with its
-    # task list there, or a left-aligned Win11 bar: Start + apps right at the left end) the pin
-    # falls back to the normal tray spot, and on a side bar it does not apply at all (the setting
-    # is greyed out there). A drag while pinned saves `left_anchor_drag_dx` - measured FROM the
-    # anchor, never from tray_offset_x - and Reset position clears it.
+    # task list there, a left-aligned Win11 bar: Start + apps right at the left end, or a mirrored
+    # RTL bar with the clock at the left end) the pin falls back to the normal tray spot, and on a
+    # side bar it does not apply at all (the setting is greyed out there). While the widget floats
+    # (Free Move, or free-float on a taskbar-less display) the pin steps aside entirely - the user
+    # is placing it by hand (the Widget page's card greys out with the reason while Free Move is
+    # on). A drag while pinned saves `left_anchor_drag_dx` - measured FROM the anchor, never from
+    # tray_offset_x - and Reset position clears it.
 
     def _left_anchor_base_x(self, taskbar_info: Optional[TaskbarInfo],
                             screen: Any = None) -> Optional[int]:
@@ -1441,19 +1466,32 @@ class PositionManager(QObject):
         if not free:
             return None
         if span is not None:
-            return int(round(span[1]))
-        # No Widgets button known (there is none, Widgets is off, or no probe has landed yet): the
-        # first shell thing on the left is the bar's left edge itself. The layout refresh keeps
-        # this bar's probe current, so a button that appears (or moves) re-anchors off its edge.
+            base = int(round(span[1]))
+            self._left_anchor_last_good = (int(taskbar_info.hwnd), base)
+            return base
+        # No Widgets button known. There may be none (or Widgets is off) - the first shell thing on
+        # the left is then the bar's left edge itself. But while the button is ENABLED and its span
+        # is merely UNKNOWN (startup, an Explorer restart: the probe is pending), falling back to
+        # the bar edge would sit the widget ON the weather button until the probe lands: keep the
+        # LAST GOOD anchor for this bar instead. The layout refresh keeps this bar's probe current,
+        # so the real button's edge re-anchors the widget the moment the probe answers; a button
+        # that appears, moves or changes width re-anchors off its edge the same way.
+        if taskbar_utils.widgets_button_enabled():
+            cached = self._left_anchor_last_good
+            if cached is not None and cached[0] == int(taskbar_info.hwnd):
+                return cached[1]
         return int(screen.geometry().left())
 
     def left_anchor_spot_x(self, taskbar_info: Optional[TaskbarInfo] = None,
                            screen: Any = None) -> Optional[int]:
         """Where a left-anchored widget is placed: anchor + LEFT_ANCHOR_GAP_PX, WITHOUT the user's
-        drag offset (``left_anchor_drag_dx``). None when the pin does not apply to this bar - the
-        drag path and the #24 yield use that to fall back to the normal tray-side behaviour.
-        ``screen``: the target screen (the incoming position's probe in _apply_geometry); defaults
-        to the widget's own."""
+        drag offset (``left_anchor_drag_dx``). None when the pin does not apply - while the widget
+        floats (Free Move / free-float: the user is placing it by hand, the same test
+        _app_overlap_context makes) or on a bar the pin cannot serve - the drag path and the #24
+        yield use that to fall back to the normal tray-side behaviour. ``screen``: the target
+        screen (the incoming position's probe in _apply_geometry); defaults to the widget's own."""
+        if self.is_floating():
+            return None   # Free Move / free-float: the pin steps aside while the widget floats
         info = taskbar_info if taskbar_info is not None else self._state.taskbar_info
         if screen is None:
             try:
@@ -1472,6 +1510,25 @@ class PositionManager(QObject):
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             return 0
         return value
+
+    def _left_anchor_drag_x(self, spot: int, screen: Any = None) -> int:
+        """The anchored spot plus the user's drag offset (``left_anchor_drag_dx``), clamped so the
+        widget's right edge stays inside the bar's screen: a wide-offset saved on one monitor (say a
+        2560 px bar) must not end up off-screen on a narrower one (a 1920 px bar) - the off-screen
+        recovery cannot clear it, because the offset is measured FROM the anchor and would only be
+        re-saved by another drag. Mirrors the clamp the drop path saves with (input_handler)."""
+        x = spot + self._left_anchor_drag_dx()
+        try:
+            if screen is None:
+                info = self._state.taskbar_info
+                screen = info.get_screen() if info is not None else None
+            geo = screen.geometry() if screen is not None else None
+            if geo is not None:
+                width = max(int(self._state.widget.width()), 0)
+                x = min(x, geo.left() + geo.width() - width)
+        except Exception as e:  # noqa: BLE001 - a clamped position is best-effort
+            self._logger.debug("left-anchor drag-offset clamp skipped: %s", e)
+        return x
 
     def _refresh_left_anchor_layout(self, taskbar_info: Optional[TaskbarInfo]) -> None:
         """Keep THIS bar's Widgets/weather button box current for a left-anchored widget (the pin):
@@ -1547,7 +1604,7 @@ class PositionManager(QObject):
                     screen = self._state.widget.screen() or QApplication.primaryScreen()
                 spot = self.left_anchor_spot_x(screen=screen)
                 if spot is not None:
-                    x = spot + self._left_anchor_drag_dx()
+                    x = self._left_anchor_drag_x(spot, screen)
             except Exception:
                 self._logger.debug("Left-anchor pin could not resolve an anchor; keeping x=%s", x)
         new_rect = QRect(x, y, self._state.widget.width(), self._state.widget.height())
@@ -1882,8 +1939,13 @@ class PositionManager(QObject):
         # left-anchored widget yields (hides) there and returns when room comes back (#24). When
         # the pin is on but does NOT apply to this bar (side bar, left-aligned / Win10 fallback:
         # the widget sits at the normal tray spot), the pinned context is None and the tray-side
-        # judgement below runs as before.
+        # judgement below runs as before. With hiding OFF the pinned path stands down like the tray
+        # side does when there is no second spot: the pinned context has no stepped / tray-spot pair
+        # for the full-bar fallback to weigh, so a context would keep the yield attached - and
+        # probing - for nothing.
         if self._state.config.get('pin_left_edge', False):
+            if not may_hide:
+                return "the 'Hide while app buttons cover the widget' setting is off"
             pinned = self._pinned_overlap_context(info, may_hide, OverlapContext, BUSY)
             if pinned is not None:
                 return pinned
@@ -1987,7 +2049,7 @@ class PositionManager(QObject):
         current = taskbar_utils.current_dpi_for_hwnd(int(info.hwnd))
         if current is not None and abs(current - dpi) > 1e-3:
             return BUSY
-        anchored_x = spot + self._left_anchor_drag_dx()
+        anchored_x = self._left_anchor_drag_x(spot)
         # The screen's Qt x origin: the UIA group is converted around it, the same space the
         # anchored span is judged in (taskbar_utils.physical_to_logical, #373).
         x_origin = taskbar_utils.screen_origin(info)[0]
@@ -2517,61 +2579,13 @@ class PositionManager(QObject):
                 self._log_deferral(
                     "tb-band", "Re-seat deferred: the taskbar is in Z-band %s (Start / Task View).", raised)
                 return False
-            # Left-anchor pin (the reworked PR): the widget sits ON the bar at its left end, so the
-            # #327 seat ("directly above the taskbar") is not the recovery it needs - and the
-            # recovery must not leave it anywhere but at its anchor. Re-assert HWND_TOPMOST on the
-            # widget's OWN window (event-driven: only here, on a detected burial - never periodic,
-            # #200) and re-run the placement pass: the pin block re-derives the anchored spot from
-            # the current bar layout. The same guards above apply: a fullscreen app that took the
-            # taskbar out of the topmost band (following it down would sink the widget under it)
-            # and a Start / Task View raised band both defer, as on the Z-order path.
-            if (self._state.config.get('pin_left_edge', False)
-                    and not self.is_floating()
-                    and self.left_anchor_spot_x() is not None):
-                try:
-                    win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
-                                          win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
-                                          | win32con.SWP_NOACTIVATE)
-                except Exception as e:
-                    self._logger.debug("Left-anchor re-seat: topmost re-assert failed: %s", e)
-                    return False
-                self.update_position()
-                self._last_acted_reseat_ts = now
-                if foreground[0]:
-                    self._reseat_foreground = foreground   # a failed read keeps the last good one
-                self._burial_fresh = None
-                self._deferral_logged = None
-                if exempt:
-                    if shell_switch:
-                        self._switch_grace_ts = now
-                        self._switch_grace_left = _SHOW_DESKTOP_GRACE_REBURIALS
-                    else:
-                        self._switch_grace_left -= 1
-                    self._log_recovery(now, "Left-anchored widget re-asserted on top at its anchor after a "
-                                       "switch to / from the desktop or taskbar (no backoff charged).",
-                                       info_msg="Widget recovered from taskbar burial - re-asserted topmost "
-                                                "at its left anchor.")
-                    return True
-                if band_return:
-                    self._band_return_pending_ts = 0.0   # consumed; the backoff is untouched
-                    self._logger.debug("Left-anchored widget re-asserted on top at its anchor after Start / "
-                                "Task View closed (no backoff charged).")
-                    return True
-                if fresh:
-                    self._fresh_reseat_times.append(now)
-                    self._log_recovery(now, "Left-anchored widget re-asserted on top at its anchor after a "
-                                       "fresh burial (no backoff charged).",
-                                       info_msg="Widget recovered from taskbar burial - re-asserted topmost "
-                                                "at its left anchor.")
-                    return True
-                self._last_reseat_ts = now
-                self._reseat_attempts = min(self._reseat_attempts + 1, _RESEAT_BACKOFF_EXP_CAP + 1)
-                self._deferral_logged = None
-                self._log_recovery(now, "Left-anchored widget re-asserted on top at its anchor (attempt %d).",
-                                   self._reseat_attempts,
-                                   info_msg="Widget recovered from taskbar burial - re-asserted topmost "
-                                            "at its left anchor.")
-                return True
+            # The left-anchor pin gets NO special case here (2.2.2 review): a bare
+            # SetWindowPos(HWND_TOPMOST) without SWP_NOOWNERZORDER on a taskbar-owned window pulls
+            # the owner cluster above open menus / jump lists - the #200 bug - and it skipped the
+            # band checks. Z-order does not depend on x, so the #327 seat below is already right
+            # for a pinned widget too; the regular placement pass (the 1 s refresh, every
+            # re-placement) re-derives the anchored spot from the current bar layout and puts the
+            # widget back AT its anchor afterwards.
             own_band, tb_band = _window_band(hwnd), _window_band(tb)
             if own_band is not None and tb_band is not None and own_band != tb_band:
                 self._log_deferral(

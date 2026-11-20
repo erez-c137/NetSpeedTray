@@ -72,8 +72,11 @@ def test_widget_reset_persists_every_cleared_key():
     ({"tray_offset_x": 3}, False),
     ({"tray_offset_x": 4}, True),
     ({"tray_offset_x": 10, "tray_offset_y": 709}, True),
-    # The left-anchor pin's drag offset is a move the user made (Reset clears it).
-    ({"left_anchor_drag_dx": 40}, True),
+    # The left-anchor pin's drag offset is a move the user made - while the pin is ON (Reset
+    # clears it). With the pin OFF the offset is inert and must not offer Reset position by
+    # itself (2.2.2 review).
+    ({"pin_left_edge": True, "left_anchor_drag_dx": 40}, True),
+    ({"pin_left_edge": False, "left_anchor_drag_dx": 40}, False),
 ])
 def test_has_custom_position(config, moved):
     assert _reset_fake(config).has_custom_position() is moved

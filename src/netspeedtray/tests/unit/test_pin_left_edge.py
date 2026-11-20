@@ -1,18 +1,23 @@
-"""Settings > Widget > "Anchor the widget to the left end of the taskbar" (`pin_left_edge`).
+"""Settings > Widget > "Dock at the left end of the taskbar" (`pin_left_edge`).
 
-The reworked pin (maintainer spec on PR #554): anchor the widget to the FIRST shell thing on the
-LEFT of a top/bottom taskbar - the Widgets/weather button's right edge when one is there, else the
-bar's left edge - and keep LEFT_ANCHOR_GAP_PX off it (never abut a shell button; its own constant,
-so tuning the tray side doesn't move this one). When the bar's left end is not free - a Win10-style
-bar with its task list there, or a left-aligned Win11 bar - the pin falls back to the normal tray
-spot; on a side bar it does not apply at all (the setting is greyed out there).
+The reworked pin (maintainer spec on PR #554, second-round review on #604): anchor the widget to
+the FIRST shell thing on the LEFT of a top/bottom taskbar - the Widgets/weather button's right
+edge when one is there, else the bar's left edge - and keep LEFT_ANCHOR_GAP_PX off it (never abut
+a shell button; its own constant, so tuning the tray side doesn't move this one). When the bar's
+left end is not free - a Win10-style bar with its task list there, a left-aligned Win11 bar, or a
+mirrored (RTL) bar with the clock/tray at the left end - the pin falls back to the normal tray
+spot; on a side bar it does not apply at all (the setting is greyed out there, with a reason, as
+is Free Move while it is on: the pin steps aside while the widget floats).
 
 Enforced in PositionManager._apply_geometry - the single funnel every placement path ends in
 (saved free-move spot, free-float, calculated, substitute-tray) - so it works at any resolution
 (the anchor is re-derived from the CURRENT bar layout on each placement) and outranks a dragged
 spot while it applies. A drag while pinned adjusts `left_anchor_drag_dx` (from the anchor, not
-tray_offset_x); Reset position clears it. Burial recovery in pin mode re-asserts topmost AT the
-anchor instead of the #327 seat above the taskbar. Event-driven only - no timers (#200).
+tray_offset_x), clamped to the bar on save and on use; Reset position clears it. While the
+Widgets button is enabled but its span is unknown (probe pending), the bar's LAST GOOD anchor
+stands instead of the bar edge. Burial recovery has NO pinned special case: the plain #327 seat
+serves a pinned widget too (a bare HWND_TOPMOST re-assert is the #200 bug), and the regular
+placement pass re-places the widget at its anchor. Event-driven only - no timers (#200).
 """
 import types
 from contextlib import contextmanager
@@ -169,6 +174,51 @@ def test_pin_is_ignored_on_a_side_bar(monkeypatch):
     widget.move.assert_called_once_with(1500, 600)
 
 
+# --- the last good anchor while the Widgets probe is pending (2.2.2 review, should-fix 4) -------
+
+def test_probe_pending_keeps_the_last_good_anchor(monkeypatch):
+    """Widgets on but the button's span unknown (startup, an Explorer restart: the probe is
+    pending) - the widget keeps the LAST GOOD anchor for this bar instead of flashing onto the
+    weather button from the bar edge until the probe lands."""
+    _pin_alignment(monkeypatch, 1)
+    monkeypatch.setattr(taskbar_utils, "widgets_button_enabled", lambda: True)
+    scr = _screen(0, 1920)
+    tb = _taskbar(scr, widgets_extent=(6, 1032, 158, 1080))
+    pm, widget = _manager({"pin_left_edge": True}, scr, taskbar=tb)
+    with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
+        pm._apply_geometry(1500, 600)
+    widget.move.assert_called_once_with(158 + GAP, 600)
+    tb.widgets_extent = None   # the bar re-laid: no button box until the probe answers
+    with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
+        pm._apply_geometry(1500, 600)
+    widget.move.assert_called_with(158 + GAP, 600)   # still at the anchor - NOT on the button
+
+
+def test_probe_pending_without_a_last_good_anchor_uses_the_bar_edge(monkeypatch):
+    """Nothing seen yet (first placement, probe still pending): the bar edge stands - there is no
+    better spot to keep."""
+    _pin_alignment(monkeypatch, 1)
+    monkeypatch.setattr(taskbar_utils, "widgets_button_enabled", lambda: True)
+    scr = _screen(0, 1920)
+    pm, widget = _manager({"pin_left_edge": True}, scr)
+    with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
+        pm._apply_geometry(1500, 600)
+    widget.move.assert_called_once_with(scr.geometry().left() + GAP, 600)
+
+
+def test_probe_pending_keeps_the_anchor_per_bar(monkeypatch):
+    """The last good anchor belongs to ITS bar (hwnd): another bar (an Explorer restart's fresh
+    HWND, another monitor's) must not inherit it."""
+    _pin_alignment(monkeypatch, 1)
+    monkeypatch.setattr(taskbar_utils, "widgets_button_enabled", lambda: True)
+    scr = _screen(0, 1920)
+    tb = _taskbar(scr, hwnd=111, widgets_extent=(6, 1032, 158, 1080))
+    pm, _widget = _manager({"pin_left_edge": True}, scr, taskbar=tb)
+    assert pm.left_anchor_spot_x(tb) == 158 + GAP   # caches (111, 158)
+    tb2 = _taskbar(scr, hwnd=222)                   # a fresh bar, no button known
+    assert pm.left_anchor_spot_x(tb2) == scr.geometry().left() + GAP
+
+
 def test_pin_adds_the_drag_offset_from_the_anchor(monkeypatch):
     """A pinned drag stores `left_anchor_drag_dx` (from the anchor, not tray_offset_x); the
     placement adds it to the anchored spot."""
@@ -179,6 +229,19 @@ def test_pin_adds_the_drag_offset_from_the_anchor(monkeypatch):
     with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
         pm._apply_geometry(1500, 600)
     widget.move.assert_called_once_with(158 + GAP + 40, 600)
+
+
+def test_drag_offset_is_clamped_to_the_bar(monkeypatch):
+    """A big offset (saved on a 2560 px screen) cannot push the widget off a narrower bar: the
+    placement clamps so the widget's right edge stays inside the bar's screen - off-screen the
+    recovery could not clear it, the offset is measured FROM the anchor."""
+    _pin_alignment(monkeypatch, 1)
+    scr = _screen(0, 1920)
+    tb = _taskbar(scr, widgets_extent=(6, 1032, 158, 1080))
+    pm, widget = _manager({"pin_left_edge": True, "left_anchor_drag_dx": 4000}, scr, taskbar=tb)
+    with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
+        pm._apply_geometry(1500, 600)
+    widget.move.assert_called_once_with(1920 - 85, 600)   # right edge flush with the screen end
 
 
 def test_pin_follows_the_widgets_button_width(monkeypatch):
@@ -202,7 +265,8 @@ def test_pin_repins_when_the_resolution_changes(monkeypatch):
     CURRENT screen geometry, never from a stored pixel value."""
     _pin_alignment(monkeypatch, 1)
     scr = _screen(1920, 2560, 1440)
-    pm, widget = _manager({"pin_left_edge": True}, scr)
+    tb = _taskbar(scr, tray=(4350, 1392, 4480, 1440))   # a tray rect on THIS screen's right end
+    pm, widget = _manager({"pin_left_edge": True}, scr, taskbar=tb)
     with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
         pm._apply_geometry(4000, 300)
     widget.move.assert_called_once_with(1920 + GAP, 300)
@@ -226,22 +290,63 @@ def test_pin_resolves_the_screen_from_the_unclamped_probe(monkeypatch):
                 return scr
         return None
 
-    pm, widget = _manager({"pin_left_edge": True}, above)
+    tb = _taskbar(above, tray=(4200, -2112, 4700, -2080))   # this screen's tray is at its right end
+    pm, widget = _manager({"pin_left_edge": True}, above, taskbar=tb)
     with patch("netspeedtray.core.position_manager.QApplication.screenAt",
                side_effect=fake_screen_at):
         pm._apply_geometry(1000, -2100)   # the widget sits on the upper display
     widget.move.assert_called_once_with(960 + GAP, -2100)
 
 
-def test_pin_overrides_a_saved_free_move_spot(monkeypatch):
-    """A dragged spot stays saved, but while the pin applies the widget is placed at the anchor."""
+def test_pin_steps_aside_while_free_move_is_on(monkeypatch):
+    """Free Move on: the pin does NOT apply - the saved free-move spot stands (x AND y). The old
+    behaviour let the pin win over x while the saved y stayed, leaving the widget floating
+    mid-screen at the anchor's x (2.2.2 review)."""
     _pin_alignment(monkeypatch, 1)
     scr = _screen(0, 1920)
     cfg = {"pin_left_edge": True, "free_move": True, "position_x": 1700, "position_y": 990}
     pm, widget = _manager(cfg, scr)
     with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
         assert pm._apply_saved_position() is True
-    widget.move.assert_called_once_with(GAP, 990)
+    widget.move.assert_called_once_with(1700, 990)
+
+
+def test_left_anchor_spot_x_is_none_while_floating(monkeypatch):
+    """The pin's spot is None whenever the widget floats - Free Move or a free-float (#188): the
+    drag path, the yield and the probe refresh all read that and stand aside with it. Turn Free
+    Move off and the pin applies again."""
+    _pin_alignment(monkeypatch, 1)
+    scr = _screen(0, 1920)
+    pm, _widget = _manager({"pin_left_edge": True, "free_move": True}, scr)
+    assert pm.left_anchor_spot_x() is None
+    pm._state.config["free_move"] = False
+    assert pm.left_anchor_spot_x() is not None
+    pm._free_float_active = True   # the #188 runtime float floats the same way
+    assert pm.left_anchor_spot_x() is None
+
+
+# --- mirrored (RTL) taskbars: the tray in the LEFT half owns the left end ------------------------
+
+def test_pin_falls_back_when_the_tray_sits_in_the_left_half(monkeypatch):
+    """A mirrored (right-to-left Windows) taskbar keeps the clock at the LEFT end - with Widgets
+    off, the tray rect's centre in the bar's left half is the only tell that the left end is the
+    tray end: the pin does not apply (it would land the widget on the tray)."""
+    _pin_alignment(monkeypatch, 1)
+    scr = _screen(0, 1920)
+    tb = _taskbar(scr, tray=(60, 1040, 190, 1080), widgets_extent=None)
+    assert pm_mod.left_end_is_free(tb, scr, 1) == (False, None)
+    pm, widget = _manager({"pin_left_edge": True}, scr, taskbar=tb)
+    with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
+        pm._apply_geometry(1500, 600)
+    widget.move.assert_called_once_with(1500, 600)
+
+
+def test_left_end_is_free_with_a_tray_on_the_right_half():
+    """The normal (LTR) bar: the clock sits in the RIGHT half, so the left end stays free - the
+    tray test mirrors the Widgets-button one instead of replacing it."""
+    scr = _screen(0, 1920)
+    tb = _taskbar(scr)   # the default stand-in's tray is at (1790..1920), the right end
+    assert pm_mod.left_end_is_free(tb, scr, 1) == (True, None)
 
 
 def test_pin_off_leaves_every_path_untouched():
@@ -414,17 +519,19 @@ def test_pinned_widget_yields_and_returns(monkeypatch):
         pm._app_yield.detach()
 
 
-def test_pinned_widget_with_hiding_off_never_hides(monkeypatch):
-    """'Hide while app buttons cover the widget' off (may_hide=False): the context is still built
-    (so the tray-side fallback machinery stays available), and the yield never hides."""
+def test_pinned_widget_with_hiding_off_never_probes(monkeypatch):
+    """'Hide while app buttons cover the widget' off: the pinned context is NOT built - the yield
+    stays detached (and probe-free). It has no stepped / tray-spot pair for the full-bar fallback
+    to weigh, so a context would only have made the yield run its probes for nothing (2.2.2
+    review)."""
     _pin_alignment(monkeypatch, 1)
     scr = _screen(0, 1920)
     pm, _widget = _manager({"pin_left_edge": True, "hide_when_apps_cover": False}, scr,
                            taskbar=_overlap_info(scr))
     pm._app_overlap_info = pm._state.taskbar_info
     ctx = pm._app_overlap_context()
-    assert isinstance(ctx, OverlapContext)
-    assert ctx.may_hide is False and ctx.widget[0] == 158 + GAP
+    assert not isinstance(ctx, OverlapContext)
+    assert "setting is off" in str(ctx)
 
 
 # --- dragging while pinned ---------------------------------------------------------------------
@@ -509,6 +616,25 @@ def test_pinned_drag_clamps_the_offset_to_zero():
     w.update_config.assert_called_once_with({"left_anchor_drag_dx": 0})
 
 
+def test_pinned_drag_save_clamps_the_offset_to_the_bar():
+    """A drop past the bar's end (a lost drag, or a race with a resolution change) saves a CLAMPED
+    offset: the widget's right edge stays on the anchor screen (anchor + gap + dx + width <= bar
+    right) - a 2560-screen offset must not land off-screen on a 1920 one."""
+    w = _DragWidget({"pin_left_edge": True})
+    w.pos = MagicMock(return_value=QPoint(5000, 600))
+    w.width = MagicMock(return_value=85)
+    w.update_config = MagicMock()
+    pm = MagicMock()
+    pm.is_floating.return_value = False
+    pm.left_anchor_spot_x.return_value = 100
+    handler = InputHandler(widget=w, position_manager=pm, tray_manager=MagicMock())
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info",
+               return_value=_taskbar(_screen(0, 1920))):
+        handler._save_dragged_position()
+    # anchor 100, widget 85 wide: dx may reach 1920 - 85 - 100 = 1735, not 4900.
+    w.update_config.assert_called_once_with({"left_anchor_drag_dx": 1920 - 85 - 100})
+
+
 def test_pinned_fallback_drag_still_saves_tray_offset_x():
     """Pin on but not applying (left-aligned / Win10 fallback, side bars): the widget sits at the
     normal tray spot, so the drop saves tray_offset_x as before."""
@@ -570,7 +696,9 @@ def test_reset_clears_left_anchor_drag_dx(monkeypatch):
 
 
 def test_has_custom_position_counts_a_pinned_drag():
-    """Reset position must be OFFERED after a pinned drag (the tray menu reads this)."""
+    """Reset position must be OFFERED after a pinned drag (the tray menu reads this) - but only
+    while the pin is ON: with the pin off the offset is inert and must not keep offering Reset
+    position for a widget that sits where the app put it (2.2.2 review)."""
     defaults = constants.config.defaults
     from netspeedtray.views.widget.main import NetworkSpeedWidget
     widget = NetworkSpeedWidget.__new__(NetworkSpeedWidget)   # only the pure helper is under test
@@ -578,9 +706,17 @@ def test_has_custom_position_counts_a_pinned_drag():
     assert widget.has_custom_position() is True
     widget.config = {"pin_left_edge": True, "left_anchor_drag_dx": 0}
     assert widget.has_custom_position() is False
+    widget.config = {"pin_left_edge": False, "left_anchor_drag_dx": 40}
+    assert widget.has_custom_position() is False
 
 
-# --- burial recovery in pin mode: topmost AT the anchor (event-driven, #200) --------------------
+# --- burial recovery (no pinned special case any more, per the 2.2.2 review) ---------------------
+#
+# The pin-mode branch is GONE: a bare SetWindowPos(HWND_TOPMOST) on a taskbar-owned window is the
+# #200 bug (it pulls the owner cluster above open menus / jump lists), and Z-order does not depend
+# on x - the #327 seat below is already right for a pinned widget, and the regular placement pass
+# re-places it at the anchor. The two pin-mode tests were removed with it: the _ZOrder fake never
+# actually reorders, so it could not catch the real bug anyway.
 
 class _ZOrder:
     """A fake top-level Z-order (index 0 is the top); SetWindowPos really reorders it."""
@@ -645,37 +781,15 @@ def _burial_env(config):
         yield pm, z
 
 
-def test_burial_recovery_in_pin_mode_reasserts_topmost_at_the_anchor():
-    """Pinned: the widget sits ON the bar - the #327 seat "directly above the taskbar" is not the
-    recovery it needs. It re-asserts HWND_TOPMOST on its own window and re-runs the placement
-    pass (the pin block re-derives the spot); it never inserts above the taskbar."""
+def test_burial_recovery_with_the_pin_still_seats_above_the_taskbar():
+    """Sanity: the plain #327 recovery serves a PINNED widget too now (2.2.2 review) - inserted
+    directly above the taskbar, no bare HWND_TOPMOST re-assert; the regular placement pass puts
+    it back at its anchor afterwards."""
     with _burial_env({"pin_left_edge": True}) as (pm, z):
-        pm.update_position = MagicMock()
-        assert pm.reseat_above_taskbar() is True
-        assert z.set_calls == [(W, win32con.HWND_TOPMOST,
-                                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)]
-        pm.update_position.assert_called_once()   # a placement pass: the pin block re-derives
-
-
-def test_burial_recovery_in_pin_mode_still_respects_the_backoff():
-    """The same fight protection as the Z-order seat: a burial found inside the backoff window of
-    our own re-seat is deferred, so a shell that re-buries instantly cannot turn the topmost
-    re-assert into a fight (#200)."""
-    with _burial_env({"pin_left_edge": True}) as (pm, z):
-        pm.update_position = MagicMock()
-        assert pm.reseat_above_taskbar() is True   # first recovery: immediate, charged
-        assert pm.reseat_above_taskbar() is False  # inside the 1 s backoff window
-        assert len(z.set_calls) == 1
-
-
-def test_burial_recovery_without_the_pin_still_seats_above_the_taskbar():
-    """Sanity: without the pin the #327 recovery is unchanged - inserted directly above the
-    taskbar, no placement pass."""
-    with _burial_env({}) as (pm, z):
         pm.update_position = MagicMock()
         assert pm.reseat_above_taskbar() is True
         assert z.set_calls == [(W, TIP, EXPECTED_ABOVE_FLAGS)]
-        pm.update_position.assert_not_called()
+        assert pm.update_position.called is False
 
 
 def test_redock_seats_the_pinned_widget_at_the_anchor():
@@ -718,6 +832,14 @@ def test_pin_card_loads_and_saves_the_same_key():
     assert page.pin_left_edge.isChecked() is False
 
 
+def test_pin_card_shows_the_new_copy():
+    """2.2.2 review (copy): 'Dock at the left end of the taskbar' with a one-line description."""
+    page = _page()
+    assert page._pin_card._title_label.text() == page.i18n.PIN_LEFT_EDGE_LABEL
+    assert page.i18n.PIN_LEFT_EDGE_LABEL == "Dock at the left end of the taskbar"
+    assert page._pin_card._desc_label.text() == page.i18n.PIN_LEFT_EDGE_DESC
+
+
 def test_pin_card_greys_out_on_a_side_bar():
     page = _page()
     tb = MagicMock()
@@ -725,19 +847,61 @@ def test_pin_card_greys_out_on_a_side_bar():
     with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb):
         page._sync_pin_card()
         assert page._pin_card.isEnabled() is False
+        assert page._pin_card.toolTip() == page.i18n.PIN_LEFT_EDGE_GREY_SIDE
         # The saved choice stays underneath the greyed-out card (load re-syncs with the same bar).
         page.load_settings({"pin_left_edge": True})
         assert page.pin_left_edge.isChecked() is True
         assert page._pin_card.isEnabled() is False
 
 
+def test_pin_card_greys_out_while_free_move_is_on():
+    """Free Move on: the pin steps aside while the widget floats, so the switch does nothing -
+    the card greys out and says so (2.2.2 review). Turning Free Move off re-enables it, and the
+    grey-out follows the flip live."""
+    page = _page()
+    tb = MagicMock()
+    tb.get_edge_position.return_value = BOTTOM
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb), \
+            patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=1):
+        page.free_move.setChecked(True)   # fires the toggled hook that re-syncs the card
+        assert page._pin_card.isEnabled() is False
+        assert page._pin_card.toolTip() == page.i18n.PIN_LEFT_EDGE_GREY_FREE_MOVE
+        page.free_move.setChecked(False)
+        assert page._pin_card.isEnabled() is True
+        assert page._pin_card.toolTip() == ""
+
+
+def test_pin_card_greys_out_on_a_left_aligned_bar():
+    """A left-aligned Win11 bar (TaskbarAl = 0) or a Win10-style task list: the pin falls back to
+    the tray spot, so the toggle silently did nothing - grey it out and say why (2.2.2 review)."""
+    page = _page()
+    tb = MagicMock()
+    tb.get_edge_position.return_value = BOTTOM
+    tb.tasklist_rect = None
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb), \
+            patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=0):
+        page._sync_pin_card()
+        assert page._pin_card.isEnabled() is False
+        assert page._pin_card.toolTip() == page.i18n.PIN_LEFT_EDGE_GREY_LEFT_ALIGNED
+    # The Win10-style variant (a real task list at the left end) reads the same way.
+    tb.tasklist_rect = (40, 1032, 900, 1080)
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb), \
+            patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=None):
+        page._sync_pin_card()
+        assert page._pin_card.isEnabled() is False
+        assert page._pin_card.toolTip() == page.i18n.PIN_LEFT_EDGE_GREY_LEFT_ALIGNED
+
+
 def test_pin_card_enabled_on_a_bottom_bar():
     page = _page()
     tb = MagicMock()
     tb.get_edge_position.return_value = BOTTOM
-    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb):
+    tb.tasklist_rect = None
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb), \
+            patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=1):
         page._sync_pin_card()
     assert page._pin_card.isEnabled() is True
+    assert page._pin_card.toolTip() == ""
 
 
 def test_pin_lives_on_the_widget_page_only():

@@ -327,6 +327,21 @@ class InputHandler(QObject):
                     # left of the anchored spot snaps the offset to 0 (the drag constraint already
                     # keeps the widget there; a lost drag can still land one short).
                     new_dx = max(0, int(self.widget.pos().x()) - anchor_spot)
+                    # Clamp the offset to the bar (2.2.2 review): the widget's right edge stays
+                    # inside the anchor screen - a big offset saved on a wide monitor must not
+                    # land the widget off-screen on a narrower one, where the off-screen recovery
+                    # cannot clear it (the offset is measured FROM the anchor and only a new drag
+                    # would re-save it). The placement re-clamps the same way when it consumes
+                    # the offset (_left_anchor_drag_x).
+                    try:
+                        anchor_screen = tb_info.get_screen()
+                        geo = anchor_screen.geometry() if anchor_screen is not None else None
+                        if geo is not None:
+                            max_x = geo.left() + geo.width() - max(int(self.widget.width()), 0)
+                            if anchor_spot + new_dx > max_x:
+                                new_dx = max(0, max_x - anchor_spot)
+                    except Exception as clamp_err:
+                        self.logger.debug(f"left-anchor offset clamp skipped: {clamp_err}")
                     updates["left_anchor_drag_dx"] = new_dx
                     self.logger.debug(f"Saved left-anchor drag offset: {new_dx} (anchor spot={anchor_spot}, "
                                       f"X={self.widget.pos().x()})")

@@ -2587,17 +2587,21 @@ class NetworkSpeedWidget(QWidget):
     def has_custom_position(self) -> bool:
         """Whether the widget sits where the user put it (a drag, or a saved free-move spot) - the
         tray menu offers Reset position only then. A left-anchored widget's drag counts too: it
-        saves `left_anchor_drag_dx`, which Reset position clears."""
+        saves `left_anchor_drag_dx`, which Reset position clears - but only while the pin is on:
+        with the pin off the offset is inert (the widget sits at the tray spot), so a stale one
+        must not keep offering Reset position."""
         defaults = constants.config.defaults
         cfg = self.config or {}
         offset_x = cfg.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X)
         # An older release's default offset (10 / 1 / 3) is not a move the user made (rc.2 W6).
         default_x = offset_x == defaults.DEFAULT_TRAY_OFFSET_X or offset_x in defaults.LEGACY_DEFAULT_TRAY_OFFSETS_X
+        pinned_offset = (bool(cfg.get('pin_left_edge', False))
+                         and cfg.get('left_anchor_drag_dx', defaults.DEFAULT_LEFT_ANCHOR_DRAG_DX)
+                         != defaults.DEFAULT_LEFT_ANCHOR_DRAG_DX)
         return (cfg.get('position_x') is not None or cfg.get('position_y') is not None
                 or not default_x
                 or cfg.get('tray_offset_y', defaults.DEFAULT_TRAY_OFFSET_Y) != defaults.DEFAULT_TRAY_OFFSET_Y
-                or cfg.get('left_anchor_drag_dx', defaults.DEFAULT_LEFT_ANCHOR_DRAG_DX)
-                != defaults.DEFAULT_LEFT_ANCHOR_DRAG_DX)
+                or pinned_offset)
 
     def _maybe_show_side_no_room_notice(self) -> None:
         """One-time heads-up (ever): a side taskbar's app buttons leave no free spot, so the widget sits
@@ -3299,9 +3303,12 @@ class NetworkSpeedWidget(QWidget):
         once, ever (session flag + persisted config flag)."""
         try:
             if self._widgets_nudge_shown or self.config.get("widgets_overlap_nudge_shown", False):
-                # Nothing else reads the Widgets rect: stop probing for it (taskbar_utils).
+                # Nothing else needs the #200 probe once its nudge has been shown - except the
+                # left-anchor pin: its anchor is the Widgets/weather button's right edge when one
+                # is there, and it reads the probe's rect (the layout probe's extent ages off the
+                # primary), so with the pin on the probe stays alive even after the nudge.
                 from netspeedtray.utils.taskbar_utils import set_widgets_probe_enabled
-                set_widgets_probe_enabled(False)
+                set_widgets_probe_enabled(bool(self.config.get("pin_left_edge", False)))
                 return
             from netspeedtray.utils import taskbar_utils as tbu
             widgets_rect = getattr(taskbar_info, "widgets_rect", None)
@@ -3354,7 +3361,10 @@ class NetworkSpeedWidget(QWidget):
             self._widgets_nudge_shown = True
             self.update_config({"widgets_overlap_nudge_shown": True})
             from netspeedtray.utils.taskbar_utils import set_widgets_probe_enabled
-            set_widgets_probe_enabled(False)
+            # The nudge's job is done - but the left-anchor pin's anchor is the Widgets button's
+            # right edge when one is there, so with the pin on the probe stays alive (the latch
+            # path above keeps it that way on every later refresh).
+            set_widgets_probe_enabled(bool(self.config.get("pin_left_edge", False)))
             title = getattr(self.i18n, "WIDGETS_OVERLAP_NUDGE_TITLE", "NetSpeedTray overlaps the Widgets panel")
             body = getattr(
                 self.i18n, "WIDGETS_OVERLAP_NUDGE_BODY",

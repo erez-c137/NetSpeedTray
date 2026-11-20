@@ -88,7 +88,8 @@ def _manager(taskbars, main_dock=(100, "PRIMARY"), fg=0, window_class=_classes):
 class TestOverlay:
     def test_pinned_keys_win_and_the_rest_falls_through(self):
         main = {"preferred_monitor": None, "free_move": True, "free_float": True, "position_x": 5,
-                "position_y": 6, "tray_offset_x": -200, "tray_offset_y": 40, "font_size": 11}
+                "position_y": 6, "tray_offset_x": -200, "tray_offset_y": 40,
+                "left_anchor_drag_dx": 40, "font_size": 11}
         cfg = _MirrorConfig(lambda: main, "DISPLAY2")
         d = constants.config.defaults
         assert cfg["preferred_monitor"] == "DISPLAY2"
@@ -96,6 +97,9 @@ class TestOverlay:
         assert cfg.get("position_x") is None and cfg.get("position_y") is None
         assert cfg.get("tray_offset_x") == d.DEFAULT_TRAY_OFFSET_X
         assert cfg.get("tray_offset_y") == d.DEFAULT_TRAY_OFFSET_Y
+        # The pin's drag offset joins the pinned keys (2.2.2 review): a copy is never dragged, so
+        # the main widget's offset must not drag the mirror off its own anchor.
+        assert cfg.get("left_anchor_drag_dx") == d.DEFAULT_LEFT_ANCHOR_DRAG_DX
         assert cfg.get("font_size") == 11
         assert cfg.get("missing", "dflt") == "dflt"
         assert "font_size" in cfg and set(main) <= set(cfg)

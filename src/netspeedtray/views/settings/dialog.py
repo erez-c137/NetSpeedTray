@@ -63,12 +63,15 @@ class SettingsDialog(QDialog):
     PAGE_NETWORK: int = 4   # Network Interfaces - hosts the "Data usage" / data-cap section
 
     # Reset all (Advanced). Settings no page shows - legacy / hand-edited / Monitor-flyout display
-    # options - that Reset all still returns to factory, as 2.1.7 did:
+    # options - that Reset all still returns to factory, as 2.1.7 did. Includes the left-anchor
+    # pin's drag offset: no page shows it, and "Reset all settings" clearing the widget's dragged
+    # spot means clearing this too (the pin's Reset-position menu item clears the same key).
     RESET_ALL_HIDDEN = (
         "text_alignment", "force_decimals", "dynamic_update_enabled", "dark_mode", "show_legend",
         "legend_position", "excluded_interfaces", "widget_cycle_interval", "secondary_clock_reserve_px",
         "monitor_graph_legend", "monitor_graph_smoothing", "monitor_graph_fixed_axis",
         "monitor_hw_graph_mode", "monitor_cpu_graph_color", "monitor_gpu_graph_color",
+        "left_anchor_drag_dx",
     )
     # ...and the app's STATE, which Reset all keeps: where windows and the widget sit, onboarding /
     # nudge / notice flags, the Monitor's remembered tab and period, pause, update bookkeeping, the
@@ -76,7 +79,6 @@ class SettingsDialog(QDialog):
     # (General page shows the live state).
     RESET_ALL_KEEPS = (
         "config_version", "position_x", "position_y", "tray_offset_x", "tray_offset_y",
-        "left_anchor_drag_dx",
         "settings_window_pos", "graph_window_pos", "app_activity_window_pos", "monitor_window_pos",
         "first_run_ever", "first_run_v2_seen", "tooltip_hint_shown_count", "temp_onboarding_dismissed",
         "widgets_overlap_nudge_shown", "history_upgrade_notice_shown",

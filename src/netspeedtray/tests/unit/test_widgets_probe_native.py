@@ -94,3 +94,18 @@ def test_widget_turns_the_probe_off_once_the_nudge_was_shown():
                                  config={"widgets_overlap_nudge_shown": True})
     NetworkSpeedWidget._maybe_nudge_widgets_overlap(fake, None)
     assert tu._widgets_probe_enabled is False
+
+
+def test_pin_keeps_the_probe_alive_after_the_nudge_was_shown():
+    """The left-anchor pin's anchor is the Widgets button's right edge when one is there, so with
+    the pin on the nudge no longer turns the probe off (2.2.2 review) - and the latch path
+    re-enables it even if it was off before the pin went on."""
+    import types
+    from unittest.mock import MagicMock
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    tu.set_widgets_probe_enabled(False)   # off: the nudge shown while the pin was off
+    fake = types.SimpleNamespace(_widgets_nudge_shown=False, logger=MagicMock(),
+                                 config={"widgets_overlap_nudge_shown": True,
+                                         "pin_left_edge": True})
+    NetworkSpeedWidget._maybe_nudge_widgets_overlap(fake, None)
+    assert tu._widgets_probe_enabled is True
