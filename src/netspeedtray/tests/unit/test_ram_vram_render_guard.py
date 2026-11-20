@@ -18,6 +18,11 @@ guard for this repo's machines and CI, not a font test).
 Regenerate ONLY for a deliberate, reviewed change to these layouts, on the commit BEFORE the change,
 from inside pytest (its conftest sets the platform up): write
 {"font": font_fingerprint(), "entries": run_all()} with json.dumps(indent=0, sort_keys=True).
+
+Regenerated 2.2.2 (fix/combined-reserves-only-shown-rows) for one reviewed change: a hardware row alone
+in its segment paints its memory BELOW the percent, and the width now reserves it there instead of
+inline - 32 horizontal entries got narrower (sbs_cpu_ram / sbs_gpu_vram / sbs_cpu_ram_text, cycle_*),
+every other entry is byte-identical. test_hw_suffix_no_source.py proves each new width still fits.
 """
 import hashlib
 import json
