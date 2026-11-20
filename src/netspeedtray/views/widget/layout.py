@@ -360,10 +360,13 @@ class WidgetLayoutManager:
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
                         cpu_width += cpu_suffix_w
                         if monitor_ram and mem_ref:
-                            if stack_hw: # inline
+                            # Inline only beside another stacked row: a row alone in its segment paints its
+                            # memory below (draw_hardware_stats: not compact) - 2.2.2, was a blank strip.
+                            if mem_stacked:
                                 cpu_width += self.metrics.horizontalAdvance(f" | {mem_ref}") + mem_label_w
-                            else: # row
-                                cpu_width = max(cpu_width, self.metrics.horizontalAdvance(mem_ref) + mem_label_w)
+                            else: # row below, under the label column like the renderer's (was clipping)
+                                cpu_width = max(cpu_width, label_offset + mem_label_w
+                                                  + self.metrics.horizontalAdvance(mem_ref))
                         cpu_width += margin # Reclaim Left Margin offset budget from draw_hardware_stats
 
                     gpu_width = 0
@@ -374,10 +377,13 @@ class WidgetLayoutManager:
                         gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
                         gpu_width += gpu_suffix_w
                         if monitor_vram and mem_ref:
-                            if stack_hw: # inline
+                            # Inline only beside another stacked row: a row alone in its segment paints its
+                            # memory below (draw_hardware_stats: not compact) - 2.2.2, was a blank strip.
+                            if mem_stacked:
                                 gpu_width += self.metrics.horizontalAdvance(f" | {mem_ref}") + mem_label_w
-                            else: # row
-                                gpu_width = max(gpu_width, self.metrics.horizontalAdvance(mem_ref) + mem_label_w)
+                            else: # row below, under the label column like the renderer's (was clipping)
+                                gpu_width = max(gpu_width, label_offset + mem_label_w
+                                                  + self.metrics.horizontalAdvance(mem_ref))
                         gpu_width += margin # Reclaim Left Margin offset budget
                             
                     if stack_hw and cpu_slot and gpu_slot:
@@ -403,10 +409,6 @@ class WidgetLayoutManager:
                         # Combined stacks both usage rows: one suffix column, kept while either needs it.
                         cpu_suffix_w = gpu_suffix_w = max(cpu_suffix_w, gpu_suffix_w)
 
-                    def mem_only_w(lone_label):   # combined stacks both slots: the shared label cell
-                        return (memory_only_row_width(self.metrics, self.metrics.horizontalAdvance(inline_mem_ref),
-                                                      None if display_mode == "combined" else lone_label)
-                                + 2 * margin)
                     # Combined paints only the slots that exist (draw_hardware_stats drops an empty one), so
                     # only those get width - a fully-off GPU (or CPU) side used to reserve its whole row,
                     # suffix included (2.2.2). With neither slot on, both keep their width: never 0 px.
@@ -414,6 +416,21 @@ class WidgetLayoutManager:
                                                               and (cpu_slot or not gpu_slot))
                     size_gpu = display_mode == "gpu_only" or (display_mode == "combined"
                                                               and (gpu_slot or not cpu_slot))
+                    # One row alone (draw_hardware_stats: not compact) paints its RAM/VRAM BELOW the
+                    # percent, not inline, and a lone memory-only row sizes its label cell for its own
+                    # word; stacked rows keep the inline memory and the shared cell (2.2.2).
+                    lone_row = (int(size_cpu and cpu_slot) + int(size_gpu and gpu_slot)) == 1
+
+                    def mem_only_w(lone_label):
+                        return (memory_only_row_width(self.metrics, self.metrics.horizontalAdvance(inline_mem_ref),
+                                                      lone_label if lone_row else None)
+                                + 2 * margin)
+
+                    def with_mem(row_w):   # a usage row plus its memory: inline, or below when alone
+                        if lone_row:
+                            return max(row_w, label_offset + mem_label_w
+                                       + self.metrics.horizontalAdvance(inline_mem_ref))
+                        return row_w + self.metrics.horizontalAdvance(f" | {inline_mem_ref}") + mem_label_w
                     if size_cpu and cpu_slot and not self.widget.config.get(
                             "monitor_cpu_enabled", False):
                         calculated_width = max(calculated_width, mem_only_w(constants.renderer.MEMORY_LABEL_RAM))
@@ -421,7 +438,7 @@ class WidgetLayoutManager:
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
                         cpu_width += cpu_suffix_w
                         if monitor_ram:
-                            cpu_width += self.metrics.horizontalAdvance(f" | {inline_mem_ref}") + mem_label_w
+                            cpu_width = with_mem(cpu_width)
                         calculated_width = max(calculated_width, cpu_width)
 
                     if size_gpu and gpu_slot and not self.widget.config.get(
@@ -431,7 +448,7 @@ class WidgetLayoutManager:
                         gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
                         gpu_width += gpu_suffix_w
                         if monitor_vram:
-                            gpu_width += self.metrics.horizontalAdvance(f" | {inline_mem_ref}") + mem_label_w
+                            gpu_width = with_mem(gpu_width)
                         calculated_width = max(calculated_width, gpu_width)
                 elif display_mode == "cycle":
                     # Cycle shows one metric at a time (network, then each enabled HW
@@ -444,13 +461,15 @@ class WidgetLayoutManager:
                     cpu_suffix_w, gpu_suffix_w = self._hw_suffix_widths(show_temps, show_power)   # #609
                     if monitor_cpu:
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%") + cpu_suffix_w
-                        if monitor_ram:
-                            cpu_width += self.metrics.horizontalAdvance(f" | {inline_mem_ref}") + mem_label_w
+                        if monitor_ram:   # one row per phase: memory paints below it (2.2.2, was inline)
+                            cpu_width = max(cpu_width, label_offset + mem_label_w
+                                              + self.metrics.horizontalAdvance(inline_mem_ref))
                         calculated_width = max(calculated_width, cpu_width)
                     if monitor_gpu:
                         gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%") + gpu_suffix_w
-                        if monitor_vram:
-                            gpu_width += self.metrics.horizontalAdvance(f" | {inline_mem_ref}") + mem_label_w
+                        if monitor_vram:   # one row per phase: memory paints below it (2.2.2, was inline)
+                            gpu_width = max(gpu_width, label_offset + mem_label_w
+                                              + self.metrics.horizontalAdvance(inline_mem_ref))
                         calculated_width = max(calculated_width, gpu_width)
                     # A memory-only phase (RAM / VRAM without its usage monitor, 2.2.1): one row alone,
                     # its label cell sized for its own word.

@@ -638,3 +638,82 @@ def test_combined_with_both_sides_off_keeps_a_width(q_app):
     """Nothing to show (Settings shouldn't allow it, but a hand-edited config can): never a 0-px widget."""
     cfg = _config(widget_display_mode="combined", monitor_cpu_enabled=False, monitor_gpu_enabled=False)
     assert _width(cfg, None, None)[0] > 0
+
+
+@pytest.mark.parametrize("over", [dict(widget_display_mode="cpu_only", monitor_ram_enabled=True),
+                                  dict(widget_display_mode="combined", monitor_ram_enabled=True,
+                                       monitor_gpu_enabled=False),
+                                  dict(widget_display_mode="gpu_only", monitor_cpu_enabled=False,
+                                       monitor_vram_enabled=True),
+                                  dict(widget_display_mode="combined", monitor_cpu_enabled=False,
+                                       monitor_vram_enabled=True),
+                                  dict(widget_display_mode="combined", monitor_cpu_enabled=False,
+                                       monitor_ram_enabled=True, monitor_gpu_enabled=False),
+                                  dict(widget_display_mode="cpu_only", monitor_cpu_enabled=False,
+                                       monitor_ram_enabled=True, monitor_gpu_enabled=False)],
+                         ids=["cpu_ram", "combined_cpu_ram", "gpu_vram", "combined_gpu_vram",
+                              "combined_ram_only", "cpu_only_ram_only"])
+@pytest.mark.parametrize("src", [False, True], ids=["no_source", "source"])
+def test_a_lone_hardware_row_leaves_no_blank_strip(q_app, over, src):
+    """One row alone paints its memory BELOW the percent (draw_hardware_stats: not compact), and a lone
+    memory-only row sizes its label cell for its own word - the width reserved for either must not
+    leave a blank strip on the right (it used to reserve the memory inline: ~40 px)."""
+    cfg = _config(**over)
+    w, h, nw = _width(cfg, src, src)
+    live = WidgetMetrics(upload_mbps=12.4, download_mbps=88.6, cpu_usage=100.0, gpu_usage=100.0,
+                         cpu_temp=99.0 if src else None, gpu_temp=99.0 if src else None,
+                         cpu_power=250.0 if src else None, gpu_power=250.0 if src else None,
+                         ram_used=15.9, ram_total=16.0, vram_used=15.9, vram_total=16.0,
+                         cpu_sensor_source=src, gpu_sensor_source=src)
+    left, right = _ink_right(cfg, w, h, nw, live)
+    assert left >= 0 and right < w, (left, right, w)
+    usage_row = cfg["monitor_cpu_enabled"] or cfg["monitor_gpu_enabled"]
+    if src and usage_row:
+        # The suffix column reserves the worst-case "(temp, 250.0W)" - wider than these readings - and
+        # the memory under it is narrower: the row is exactly as wide as without the memory.
+        assert w == _width(dict(cfg, monitor_ram_enabled=False, monitor_vram_enabled=False), src, src)[0]
+    else:
+        assert w - 1 - right <= 2 * constants.renderer.TEXT_MARGIN + 2, (left, right, w)
+
+
+
+@pytest.mark.parametrize("stack", [True, False], ids=["stacked", "unstacked"])
+@pytest.mark.parametrize("over", [dict(monitor_ram_enabled=True, monitor_gpu_enabled=False),
+                                  dict(monitor_cpu_enabled=False, monitor_vram_enabled=True)],
+                         ids=["cpu_ram_alone", "gpu_vram_alone"])
+@pytest.mark.parametrize("src", [False, True], ids=["no_source", "source"])
+def test_side_by_side_one_hardware_row_fits_with_no_blank_strip(q_app, stack, over, src):
+    """side_by_side (stacked is the default) with one hardware slot: its memory paints BELOW the percent,
+    under the label column. Stacked used to reserve it inline (96-156 px blank - right-aligned, so on
+    the left); both forgot the label column for the row below, clipping "15.9/16.0G" by ~7 px."""
+    cfg = _config(widget_display_mode="side_by_side", stack_hardware_stats=stack, **over)
+    w, h, nw = _width(cfg, src, src)
+    live = WidgetMetrics(upload_mbps=12.4, download_mbps=88.6, cpu_usage=100.0, gpu_usage=100.0,
+                         cpu_temp=99.0 if src else None, gpu_temp=99.0 if src else None,
+                         cpu_power=250.0 if src else None, gpu_power=250.0 if src else None,
+                         ram_used=15.9, ram_total=16.0, vram_used=15.9, vram_total=16.0,
+                         cpu_sensor_source=src, gpu_sensor_source=src)
+    left, right = _ink_right(cfg, w, h, nw, live)
+    assert left >= 0 and right < w, (left, right, w)
+    assert w - (right - left) <= 40, (left, right, w)     # only margins and gaps, no dead strip
+
+
+@pytest.mark.parametrize("src", [False, True], ids=["no_source", "source"])
+def test_cycle_hardware_phases_fit_with_no_blank_strip(q_app, src):
+    """Cycle shows one row per phase, so RAM/VRAM paint below the percent; the width used to reserve
+    them inline (90-160 px blank on the left of every phase)."""
+    cfg = _config(widget_display_mode="cycle", monitor_ram_enabled=True, monitor_vram_enabled=True)
+    w, h, nw = _width(cfg, src, src)
+    live = WidgetMetrics(upload_mbps=12.4, download_mbps=88.6, cpu_usage=100.0, gpu_usage=100.0,
+                         cpu_temp=99.0 if src else None, gpu_temp=99.0 if src else None,
+                         cpu_power=250.0 if src else None, gpu_power=250.0 if src else None,
+                         ram_used=15.9, ram_total=16.0, vram_used=15.9, vram_total=16.0,
+                         cpu_sensor_source=src, gpu_sensor_source=src)
+    spans = []
+    for phase in ("network_only", "cpu_only", "gpu_only"):
+        with patch("netspeedtray.tests.unit.test_hw_suffix_no_source.render_widget",
+                   lambda *a, _ph=phase, _real=render_widget, **k: _real(*a, **dict(k, cycle_mode=_ph))):
+            spans.append(_ink_right(cfg, w, h, nw, live))
+    assert all(left >= 0 and right < w for left, right in spans), (spans, w)
+    widest = max(right - left for left, right in spans)
+    assert w - widest <= 24, (spans, w)          # the widest phase fills it, margins aside
