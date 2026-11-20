@@ -605,3 +605,36 @@ def test_an_intermittent_rapl_pp1_keeps_the_suffix_as_na(q_app, clock):
     assert serves == (False, True)                          # latched: still serving at 0 W
     assert True in verdicts
     assert all(v is True for v in verdicts[verdicts.index(True):])   # never False after the first read
+
+
+# --- combined: only the rows that exist get width (2.2.2) ----------------------------------------
+
+@pytest.mark.parametrize("shown,hidden", [("cpu", "gpu"), ("gpu", "cpu")])
+@pytest.mark.parametrize("src", [None, True, False], ids=["unknown", "source", "no_source"])
+def test_combined_with_one_side_off_is_as_wide_as_that_side_alone(q_app, shown, hidden, src):
+    """CPU + GPU mode with the GPU fully off (no GPU monitoring, no VRAM) paints the CPU row alone, so
+    it must not reserve the GPU row's width - before 2.2.2 a GPU suffix ("· 99°C · 250W") the CPU row
+    didn't have left a blank strip. And the other way round."""
+    off = {f"monitor_{hidden}_enabled": False, f"monitor_{'ram' if hidden == 'cpu' else 'vram'}_enabled": False}
+    alone = _width(_config(widget_display_mode=f"{shown}_only", **off),
+                   *((False, src) if shown == "gpu" else (src, False)))[0]
+    # The hidden device "has" a source: today that made its phantom row the widest.
+    combined = _width(_config(widget_display_mode="combined", **off),
+                      *((True, src) if shown == "gpu" else (src, True)))[0]
+    assert combined == alone
+
+
+def test_combined_with_one_side_off_still_fits_its_worst_case(q_app):
+    cfg = _config(widget_display_mode="combined", monitor_gpu_enabled=False, monitor_ram_enabled=True)
+    w, h, nw = _width(cfg, True, True)
+    live = WidgetMetrics(upload_mbps=12.4, download_mbps=88.6, cpu_usage=100.0, cpu_temp=99.0,
+                         cpu_power=250.0, ram_used=15.9, ram_total=16.0,
+                         cpu_sensor_source=True, gpu_sensor_source=True)
+    left, right = _ink_right(cfg, w, h, nw, live)
+    assert left >= 0 and right < w, (left, right, w)
+
+
+def test_combined_with_both_sides_off_keeps_a_width(q_app):
+    """Nothing to show (Settings shouldn't allow it, but a hand-edited config can): never a 0-px widget."""
+    cfg = _config(widget_display_mode="combined", monitor_cpu_enabled=False, monitor_gpu_enabled=False)
+    assert _width(cfg, None, None)[0] > 0

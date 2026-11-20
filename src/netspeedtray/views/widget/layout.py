@@ -407,20 +407,27 @@ class WidgetLayoutManager:
                         return (memory_only_row_width(self.metrics, self.metrics.horizontalAdvance(inline_mem_ref),
                                                       None if display_mode == "combined" else lone_label)
                                 + 2 * margin)
-                    if display_mode in ["cpu_only", "combined"] and cpu_slot and not self.widget.config.get(
+                    # Combined paints only the slots that exist (draw_hardware_stats drops an empty one), so
+                    # only those get width - a fully-off GPU (or CPU) side used to reserve its whole row,
+                    # suffix included (2.2.2). With neither slot on, both keep their width: never 0 px.
+                    size_cpu = display_mode == "cpu_only" or (display_mode == "combined"
+                                                              and (cpu_slot or not gpu_slot))
+                    size_gpu = display_mode == "gpu_only" or (display_mode == "combined"
+                                                              and (gpu_slot or not cpu_slot))
+                    if size_cpu and cpu_slot and not self.widget.config.get(
                             "monitor_cpu_enabled", False):
                         calculated_width = max(calculated_width, mem_only_w(constants.renderer.MEMORY_LABEL_RAM))
-                    elif display_mode in ["cpu_only", "combined"]:
+                    elif size_cpu:
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
                         cpu_width += cpu_suffix_w
                         if monitor_ram:
                             cpu_width += self.metrics.horizontalAdvance(f" | {inline_mem_ref}") + mem_label_w
                         calculated_width = max(calculated_width, cpu_width)
 
-                    if display_mode in ["gpu_only", "combined"] and gpu_slot and not self.widget.config.get(
+                    if size_gpu and gpu_slot and not self.widget.config.get(
                             "monitor_gpu_enabled", False):
                         calculated_width = max(calculated_width, mem_only_w(constants.renderer.MEMORY_LABEL_VRAM))
-                    elif display_mode in ["gpu_only", "combined"]:
+                    elif size_gpu:
                         gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
                         gpu_width += gpu_suffix_w
                         if monitor_vram:
