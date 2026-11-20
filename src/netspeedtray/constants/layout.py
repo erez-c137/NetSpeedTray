@@ -75,6 +75,11 @@ class LayoutConstants:
     # Minimum gap (logical px) kept between the widget's tray-side edge and the tray boundary /
     # the "^" show-hidden-icons chevron, so the widget never abuts it and steals its clicks (#161 pt1).
     TRAY_EDGE_MIN_GAP_PX: Final[int] = 8
+    # Left-edge pin (Settings > General > Behavior): fixes the widget 15px from its screen's left
+    # edge at any resolution. Logical px, so DPI scaling keeps the same visual inset on every
+    # display; the PositionManager re-derives it from the CURRENT screen geometry on every
+    # re-placement, so a resolution or monitor change re-pins to the new edge automatically.
+    PIN_LEFT_EDGE_OFFSET_PX: Final[int] = 15
     # Minimum gap (logical px) kept between the widget and the Win11 Widgets/weather button when that
     # button sits between the widget's default spot and the tray (a LEFT-aligned bar puts it right
     # beside the tray). The same rule as the tray gap: never abut a shell button and steal its clicks

@@ -397,6 +397,7 @@
     "DECIMAL_SEPARATOR": ",",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "Mostra utilizzo dati passando sul widget",
+    "PIN_LEFT_EDGE_LABEL": "Ancora il widget al bordo sinistro",
     "SETTINGS_PREVIEW_LABEL": "Anteprima",
     "HOVER_TIPS_LABEL": "Mostra suggerimenti per clic destro / doppio clic",
     "ARROW_PRESET_OUTLINE_COMPACT": "Contorno compatto",

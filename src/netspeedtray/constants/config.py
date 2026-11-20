@@ -327,6 +327,7 @@ class ConfigConstants:
         "power_display_enabled": False,    # opt-in: the hover card's battery rows (live draw / projected)
         "show_hover_tips": True,           # the hover card's right-click/double-click gesture hint
         "pause_in_menu": False,            # opt-in: surface Pause/Resume in the right-click menu
+        "pin_left_edge": False,            # opt-in: fix the widget 15px from the screen's left edge (General > Behavior)
         "context_menu_hidden_items": list(DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS),  # ids from CONTEXT_MENU_HIDEABLE_ITEMS
         "dark_mode": DEFAULT_DARK_MODE,
         "history_period": data.history_period.DEFAULT_PERIOD,
@@ -511,6 +512,7 @@ class ConfigConstants:
         "power_display_enabled": {"type": bool, "default": False},
         "show_hover_tips": {"type": bool, "default": True},
         "pause_in_menu": {"type": bool, "default": False},
+        "pin_left_edge": {"type": bool, "default": False},
         # "item_choices": unknown ids (incl. "settings"/"exit", which always show) are dropped one by
         # one and duplicates collapsed - a bad entry never costs the user the rest of the list. The default
         # is its own list (as in DEFAULT_CONFIG), never the shared constant.

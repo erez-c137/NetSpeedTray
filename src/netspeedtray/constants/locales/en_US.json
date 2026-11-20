@@ -397,6 +397,7 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "Show data usage when hovering the widget",
+    "PIN_LEFT_EDGE_LABEL": "Anchor the widget to the left edge",
     "SETTINGS_PREVIEW_LABEL": "Preview",
     "HOVER_TIPS_LABEL": "Show right-click / double-click tips",
     "ARROW_PRESET_OUTLINE_COMPACT": "Outline Compact",

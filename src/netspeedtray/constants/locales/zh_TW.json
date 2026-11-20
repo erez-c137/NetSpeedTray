@@ -397,6 +397,7 @@
     "DECIMAL_SEPARATOR": ".",
     "PERCENT_TEMPLATE": "{value}%",
     "HOVER_USAGE_CARD_LABEL": "滑鼠移到小工具上時顯示資料使用量",
+    "PIN_LEFT_EDGE_LABEL": "將小工具固定在左邊緣",
     "SETTINGS_PREVIEW_LABEL": "預覽",
     "HOVER_TIPS_LABEL": "顯示右鍵/雙擊操作提示",
     "ARROW_PRESET_OUTLINE_COMPACT": "外框精簡",

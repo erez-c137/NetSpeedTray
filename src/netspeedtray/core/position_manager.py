@@ -1382,6 +1382,27 @@ class PositionManager(QObject):
 
     def _apply_geometry(self, x: int, y: int) -> None:
         """Moves the widget to (x, y) unless it is already there (no redundant OS calls)."""
+        # Left-edge pin (Settings > General > Behavior, `pin_left_edge`): fixes the widget
+        # PIN_LEFT_EDGE_OFFSET_PX (15) from its screen's left edge at any resolution. Applied
+        # HERE - the single funnel every placement path ends in (saved free-move spot,
+        # free-float, calculated, substitute-tray) - so the pin outranks them all while it is
+        # on, and each re-placement re-derives the edge from the CURRENT screen geometry: a
+        # resolution or monitor change re-pins automatically. The screen is picked from the
+        # incoming position, so a "Show on all taskbars" mirror pins to its own screen's edge.
+        if self._state.config.get('pin_left_edge', False):
+            try:
+                widget_w = self._state.widget.width()
+                # Probe the incoming position itself - never clamp y to 0: a monitor arranged
+                # fully above the primary has a negative y-range, and a clamped probe would
+                # land in the primary and re-pin the widget to the wrong screen's edge.
+                probe = QPoint(int(x) + max(int(widget_w) // 2, 0), int(y))
+                screen = QApplication.screenAt(probe)
+                if screen is None:
+                    screen = self._state.widget.screen() or QApplication.primaryScreen()
+                if screen is not None:
+                    x = int(screen.geometry().left()) + constants.layout.PIN_LEFT_EDGE_OFFSET_PX
+            except Exception:
+                self._logger.debug("Left-edge pin could not resolve a screen; keeping x=%s", x)
         new_rect = QRect(x, y, self._state.widget.width(), self._state.widget.height())
 
         # A drag owns the position until its drop saves the new spot. Not every reposition path checks
@@ -1681,10 +1702,11 @@ class PositionManager(QObject):
     def _app_overlap_context(self):
         """The yield's view of the widget. A string when it must not yield (the reason, for the log):
         not a native Win11 TOP/BOTTOM bar (side bars, ExplorerPatcher / Win10 bars with a real task
-        list), floating, or the user turned the setting off and the bar has no second default spot
-        (with one, the context carries ``may_hide=False``: the full-bar fallback only); NO_TASKBAR with no taskbar at all (only
-        reached once holding_for_taskbar's own hold has run out - _execute_refresh returns before it);
-        BUSY while the widget is dragged or its menu is open."""
+        list), floating, pinned to the left edge, or the user turned the setting off and the bar has
+        no second default spot (with one, the context carries ``may_hide=False``: the full-bar
+        fallback only); NO_TASKBAR with no taskbar at all (only reached once holding_for_taskbar's
+        own hold has run out - _execute_refresh returns before it); BUSY while the widget is dragged
+        or its menu is open."""
         from netspeedtray.core.app_overlap_yield import BUSY, NO_TASKBAR, OverlapContext
         # Off (2.2.1 item 6): no hiding, but the full-bar fallback still keeps the widget off the app
         # buttons when the tray spot is clear - so a context (may_hide=False) is built while there IS a
@@ -1694,6 +1716,12 @@ class PositionManager(QObject):
                                                constants.config.defaults.DEFAULT_HIDE_WHEN_APPS_COVER))
         if self.is_floating():
             return "the widget is floating (Free Move or a display without a taskbar)"
+        # The left-edge pin parks the widget at the screen edge by the user's explicit request -
+        # exactly where a left-aligned bar's app buttons live. Yielding there would hide the
+        # widget the user just anchored, judge the would-be (tray-side) spot as clear, and flap
+        # hide/show every refresh: never yield while the pin is on.
+        if self._state.config.get('pin_left_edge', False):
+            return "the widget is pinned to the left edge (`pin_left_edge`)"
         info = self._app_overlap_info or self._state.taskbar_info
         if info is None or not getattr(info, "hwnd", 0):
             return NO_TASKBAR
