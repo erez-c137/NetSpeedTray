@@ -738,21 +738,26 @@ _LONE_MODES = {
 def real_font(q_app):
     """The app's real default font, loaded from its file: the offscreen platform's fallback font has
     near-uniform digits and hid every 1-4 px clip the review measured on the real Windows platform.
-    Segoe UI Variable (Windows 11), else Segoe UI (Windows 10 / Server runners); skip without either."""
+    Segoe UI Variable (Windows 11), else Segoe UI (Windows 10 / Server runners); skip without either.
+    Removed again on teardown: left loaded, it changes the default font every later test in the process
+    sees, and the font-fingerprinted render goldens (RAM/VRAM, colour scheme) silently skip."""
     import os
     from PyQt6.QtGui import QFontDatabase
     fonts = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
     for file, family in (("SegUIVar.ttf", "Segoe UI Variable"), ("segoeui.ttf", "Segoe UI")):
         path = os.path.join(fonts, file)
-        if os.path.exists(path) and QFontDatabase.addApplicationFont(path) >= 0:
-            return family
+        font_id = QFontDatabase.addApplicationFont(path) if os.path.exists(path) else -1
+        if font_id >= 0:
+            yield family
+            QFontDatabase.removeApplicationFont(font_id)
+            return
     pytest.skip("no Segoe UI font file on this machine")
 
 
 @pytest.mark.parametrize("font_size", [9, 14])
 @pytest.mark.parametrize("temps", [False, True], ids=["no_temps", "temps"])
 @pytest.mark.parametrize("mem_labels", [False, True], ids=["no_mem_labels", "mem_labels"])
-@pytest.mark.parametrize("style", ["icon", "text"])
+@pytest.mark.parametrize("style", ["icons", "text"])
 @pytest.mark.parametrize("mode", list(_LONE_MODES))
 def test_memory_below_a_lone_row_never_clips(q_app, real_font, mode, style, mem_labels, temps, font_size):
     """Review of the lone-row fix: the row below needs the renderer's left margin and its real label
