@@ -113,6 +113,8 @@ class SettingsDialog(QDialog):
         self.startup_enabled_initial_state = is_startup_enabled
 
         self._ui_setup_done = False
+        # The last deep link's landing: (anchor_key, outlined widgets) - open_page (D4).
+        self._last_anchor: tuple = (None, [])
         self._closing_via_save = False   # Save's accept() is under way (closeEvent must not revert)
         
         # Timer for throttling live setting updates
@@ -643,6 +645,128 @@ class SettingsDialog(QDialog):
                 self.sidebar.setCurrentRow(index)
         except Exception as e:
             self.logger.debug("navigate_to_page(%s) failed: %s", index, e)
+
+    # --- Deep links (2.2.2 D4): a page + the control to land on ------------------------------------------
+    # Page ids are the stable internal names (_PAGE_NAMES), not the sidebar labels, so a renamed page
+    # ("Network interfaces" -> "Network", D7) keeps every link working. "network" is the user-facing alias.
+    _PAGE_ALIASES = {"network": "interfaces"}
+
+    def page_index(self, page) -> int:
+        """Sidebar index for ``page`` - an index, or a page id ("hardware", "network", ...). -1 if unknown."""
+        if isinstance(page, int):
+            return page if 0 <= page < len(self._PAGE_NAMES) else -1
+        name = self._PAGE_ALIASES.get(str(page), str(page))
+        return self._PAGE_NAMES.index(name) if name in self._PAGE_NAMES else -1
+
+    def open_page(self, page, anchor_key: Optional[str] = None) -> bool:
+        """Show ``page`` and, with ``anchor_key``, scroll to, outline and focus the control(s) the page
+        names for it (each page's ``anchor_widgets(key)``). A collapsed expander on the way is opened -
+        unless its header is the feature's own on/off switch: opening it would turn that feature ON,
+        and a deep link never changes a setting, so the header is the landing spot then. Returns True
+        when the anchor was found (the page is shown either way)."""
+        index = self.page_index(page)
+        if index < 0:
+            self.logger.debug("open_page: unknown page %r", page)
+            return False
+        self.navigate_to_page(index)
+        self._last_anchor = (None, [])
+        if not anchor_key:
+            return False
+        try:
+            built = self._ensure_page(self._PAGE_NAMES[index])
+            finder = getattr(built, "anchor_widgets", None)
+            controls = [w for w in (finder(anchor_key) if finder else []) if w is not None]
+        except Exception as e:
+            self.logger.debug("open_page: anchor %r on %r failed: %s", anchor_key, page, e)
+            controls = []
+        if not controls:
+            self.logger.debug("open_page: no anchor %r on page %r", anchor_key, page)
+            return False
+        targets = []
+        for control in controls:
+            target = self._anchor_target(control)
+            if target not in targets:
+                targets.append(target)
+        self._last_anchor = (anchor_key, targets)
+        scroll = self._page_scrolls[index]
+        from netspeedtray.utils.components import flash_highlight
+        # One calm landing mark, on the first card only (the CPU switch, for "hardware_monitoring"): a
+        # tint on every card of a group read as three focus rings at once (UX review). The rest of the
+        # group sits right below it.
+        flash_highlight(targets[0])
+        self._focus_anchor(targets[0], controls[0])
+        self._scroll_to_anchor(scroll, targets[0])
+        # Once more after the layout settles: a page built just now (or an expander just opened) has no
+        # final geometry until the event loop has run. The timer is the dialog's child, so a dialog
+        # closed (and destroyed) first takes it along.
+        settle = QTimer(self)
+        settle.setSingleShot(True)
+        settle.timeout.connect(lambda s=scroll, t=targets[0]: self._scroll_to_anchor(s, t))
+        settle.timeout.connect(settle.deleteLater)
+        settle.start(0)
+        return True
+
+    @staticmethod
+    def _anchor_target(control: QWidget) -> QWidget:
+        """What to outline for ``control``: its setting card, or the header of an expander anchor.
+
+        Collapsed expanders on the way - ``control`` itself included - are opened, so the control is on
+        screen. Except one whose header is the feature's own on/off switch: its body shows only while
+        the feature is ON, so opening it would change a setting. Then the outermost such header is the
+        landing spot, and nothing is opened."""
+        from netspeedtray.utils.components import SettingExpander
+        chain = []
+        node = control
+        while node is not None:
+            if isinstance(node, SettingExpander):
+                chain.append(node)
+            node = node.parentWidget()
+        switched_off = [e for e in chain if e.hasHeaderToggle() and not e.isExpanded()]
+        if switched_off:
+            return switched_off[-1].header()
+        for expander in chain:
+            if not expander.isExpanded():
+                expander.setExpanded(True)
+        node = control
+        while node is not None:
+            if node.objectName() in ("settingCard", "expanderHeader"):
+                return node
+            if isinstance(node, SettingExpander):
+                return node.header()
+            node = node.parentWidget()
+        return control
+
+    @staticmethod
+    def _focus_anchor(target: QWidget, control: QWidget) -> None:
+        """Keyboard focus on the control (a screen reader announces the setting it landed on); the
+        target's first Tab stop when the control itself is hidden, disabled or takes no focus; and when
+        the whole card is disabled (a grayed switch), its nearest enabled container - the page - so focus
+        leaves the sidebar and the next Tab goes into the page, at the card."""
+        tab = Qt.FocusPolicy.TabFocus.value
+        for w in [control] + control.findChildren(QWidget) + [target] + target.findChildren(QWidget):
+            if (w.focusPolicy().value & tab) and w.isVisibleTo(w.window()) and w.isEnabled():
+                w.setFocus(Qt.FocusReason.OtherFocusReason)
+                # a switch shows its keyboard focus ring now (the window may not be active yet)
+                node = w
+                while node is not None and not hasattr(node, "show_keyboard_focus"):
+                    node = node.parentWidget()
+                if node is not None:
+                    node.show_keyboard_focus()
+                return
+        node = target
+        while node is not None and not node.isEnabled():
+            node = node.parentWidget()
+        if node is not None:
+            node.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _scroll_to_anchor(self, scroll: QScrollArea, target: QWidget) -> None:
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(scroll) or sip.isdeleted(target):
+                return
+            scroll.ensureWidgetVisible(target, 0, constants.styles.SPACE_L)
+        except Exception as e:
+            self.logger.debug("scroll to anchor failed: %s", e)
 
     def _adjust_size_and_reposition(self) -> None:
         """Ensures dialog stays within screen bounds after layout changes."""

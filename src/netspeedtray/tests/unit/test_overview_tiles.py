@@ -651,7 +651,7 @@ def test_usage_tile_hint_requests_cap(q_app):
     u = UsageTile(I18nStrings("en_US"))
     fired = []
     u.set_cap_requested.connect(lambda: fired.append(True))
-    u._cap_hint.linkActivated.emit("#")   # simulate clicking the link
+    u._cap_hint.click()   # the NoticeLink's button, as a user clicks it
     assert fired == [True]
 
 

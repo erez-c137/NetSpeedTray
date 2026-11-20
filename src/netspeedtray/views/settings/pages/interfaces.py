@@ -225,6 +225,14 @@ class InterfacesPage(QWidget):
         self._populate_interface_list()
         # Note: calling code needs to re-apply selection state (load_settings) after update if needed
 
+    def anchor_widgets(self, key: str) -> list:
+        """The control(s) a Settings deep link for ``key`` lands on (SettingsDialog.open_page, D4)."""
+        for section in (self.datacap, self.connection):
+            found = section.anchor_widgets(key)
+            if found:
+                return found
+        return []
+
     def load_settings(self, config: Dict[str, Any]):
         exclusions = list(config.get("excluded_interfaces", constants.network.interface.DEFAULT_EXCLUSIONS) or [])
         if exclusions != self._exclusions:

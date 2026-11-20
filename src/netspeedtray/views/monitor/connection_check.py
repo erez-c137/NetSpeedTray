@@ -301,8 +301,14 @@ class ConnectionCheckSheet(QDialog):
 
     def __init__(self, config: Dict[str, Any], i18n, gateway_ip: Optional[str] = None,
                  app_version: str = "", autostart: bool = True, parent=None,
-                 gateway_answered: bool = False) -> None:
+                 gateway_answered: bool = False, offer_settings_link: bool = False) -> None:
         super().__init__(parent)
+        # D4: the "measure the internet all the time?" notice, offered only when the caller can open
+        # Settings (open_connection_check, with the widget's router). Its click closes the sheet and
+        # leaves the trip in settings_request; the caller routes once exec() has returned - routing from
+        # inside the sheet's own event loop let the Monitor's re-activation bury Settings.
+        self._offer_settings_link = bool(offer_settings_link)
+        self.settings_request: Optional[Tuple[str, str]] = None
         self._config = config
         self._i18n = i18n
         self._app_version = app_version
@@ -372,16 +378,17 @@ class ConnectionCheckSheet(QDialog):
                                                  "Also check the internet (sends pings to {host})").format(host=host))
         self._tick.setChecked(False)
         self._tick.toggled.connect(self._on_tick)
-        self._hint = QLabel(self._tr(
-            "CHECK_CONN_HINT", "To measure the internet all the time, turn on “{setting}” in Settings."
-        ).format(setting=self._tr("CONN_PUBLIC_LABEL", "Also measure true internet latency")))
-        self._hint.setFont(su.font(tokens.TYPE_CAPTION))
-        self._hint.setWordWrap(True)
-        self._hint.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        # "Measure it all the time?" with a one-click way there (D4) - it used to only name the setting.
+        # The action is swappable (set_on_click): D5 makes it an inline confirm instead of a Settings trip.
+        from netspeedtray.utils.components import NoticeLink
+        self._hint = NoticeLink(
+            self._tr("CHECK_CONN_ALWAYS_NOTICE", "Track internet latency all the time?"),
+            self._tr("NOTICE_TURN_ON_IN_SETTINGS", "Turn on in Settings"),
+            self._open_internet_setting, stacked=True, surface=_sheet_surface)   # narrow sheet: no side-by-side wrap
         root.addWidget(self._tick)
         root.addWidget(self._hint)
         self._tick.setVisible(not self._public_on)
-        self._hint.setVisible(not self._public_on)
+        self._hint.setVisible(not self._public_on and self._offer_settings_link)
 
         root.addSpacing(2)
         row = QHBoxLayout()
@@ -460,6 +467,15 @@ class ConnectionCheckSheet(QDialog):
             self.stop_check()
         else:
             self.start_check()
+
+    def _open_internet_setting(self) -> None:
+        """The notice's action: close this (modal) sheet - Settings could not be used behind it - and
+        ask for Settings at the internet-check switch (open_connection_check opens it after exec()).
+        Only the click opens it; nothing is turned on."""
+        if not self._offer_settings_link:
+            return
+        self.settings_request = ("network", "latency_public_enabled")
+        self.reject()
 
     def _on_tick(self, checked: bool) -> None:
         self._include_internet = bool(checked)
@@ -722,6 +738,12 @@ def make_check_button(i18n) -> QToolButton:
     return btn
 
 
+def _sheet_surface() -> str:
+    """The Check connection sheet's background (dialog_style's QDialog colour) - NoticeLink measures its
+    link contrast against it."""
+    return tokens.DIALOG_SIDEBAR_BG_DARK if su.is_dark_mode() else tokens.DIALOG_SIDEBAR_BG_LIGHT
+
+
 def open_connection_check(main_widget, config: Dict[str, Any], i18n, parent=None) -> None:
     """Open the sheet modally - the one entry point the Overview hero and the Network header share.
     The router address comes from the standing probe when it has one (no second WMI lookup)."""
@@ -733,9 +755,17 @@ def open_connection_check(main_widget, config: Dict[str, Any], i18n, parent=None
     except Exception:
         __version__ = ""
     try:
+        router = getattr(main_widget, "open_settings", None)
+        router = router if callable(router) else None
         sheet = ConnectionCheckSheet(config, i18n, gateway_ip=gateway, app_version=__version__,
-                                     parent=parent, gateway_answered=answered)
+                                     parent=parent, gateway_answered=answered,
+                                     offer_settings_link=router is not None)
         sheet.exec()
+        # After the modal loop has ended and the sheet is gone: Settings opens on top (D4).
+        request = getattr(sheet, "settings_request", None)   # a Python attribute: safe after close
     except Exception as e:
         logging.getLogger("NetSpeedTray.ConnectionCheck").error(
             "Could not open the connection check: %s", e, exc_info=True)
+        return
+    if request and router is not None:
+        router(*request)
