@@ -1,26 +1,30 @@
 """Settings > Widget > "Dock at the left end of the taskbar" (`pin_left_edge`).
 
-The reworked pin (maintainer spec on PR #554, second-round review on #604): anchor the widget to
-the FIRST shell thing on the LEFT of a top/bottom taskbar - the Widgets/weather button's right
-edge when one is there, else the bar's left edge - and keep LEFT_ANCHOR_GAP_PX off it (never abut
-a shell button; its own constant, so tuning the tray side doesn't move this one). When the bar's
-left end is not free - a Win10-style bar with its task list there, a left-aligned Win11 bar, or a
-mirrored (RTL) bar with the clock/tray at the left end - the pin falls back to the normal tray
-spot; on a side bar it does not apply at all (the setting is greyed out there, with a reason, as
-is Free Move while it is on: the pin steps aside while the widget floats).
+The reworked pin (maintainer spec on PR #554; second- and third-round reviews on #604): anchor the
+widget to the FIRST shell thing on the LEFT of a top/bottom taskbar - the Widgets/weather button's
+right edge when one is there, else the bar's left edge - and keep LEFT_ANCHOR_GAP_PX off it (never
+abut a shell button; its own constant, so tuning the tray side doesn't move this one). When the
+bar's left end is not free - a Win10-style bar with its task list there, a left-aligned Win11 bar,
+or a mirrored (RTL) bar with the clock/tray at the left end - the pin falls back to the normal
+tray spot; on a side bar it does not apply at all (the setting is greyed out there, with a reason
+said on a visible line under the card as well, as is Free Move while it is on: the pin steps
+aside while the widget floats).
 
 Enforced in PositionManager._apply_geometry - the single funnel every placement path ends in
 (saved free-move spot, free-float, calculated, substitute-tray) - so it works at any resolution
 (the anchor is re-derived from the CURRENT bar layout on each placement) and outranks a dragged
 spot while it applies. A drag while pinned adjusts `left_anchor_drag_dx` (from the anchor, not
-tray_offset_x), clamped to the bar on save and on use; Reset position clears it. While the
-Widgets button is enabled but its span is unknown (probe pending), the bar's LAST GOOD anchor
-stands instead of the bar edge. Burial recovery has NO pinned special case: the plain #327 seat
-serves a pinned widget too (a bare HWND_TOPMOST re-assert is the #200 bug), and the regular
-placement pass re-places the widget at its anchor. Event-driven only - no timers (#200).
+tray_offset_x), clamped to the TRAY edge (the drag's own right limit) on save and on use; Reset
+position clears it. While the Widgets button is enabled but its span is unknown (probe pending),
+the bar's screen's LAST GOOD anchor stands instead of the bar edge - keyed by SCREEN, not HWND,
+so an Explorer restart keeps it, and dropped on a DPI / geometry change (PR #604 third-round
+review). Burial recovery has NO pinned special case: the plain #327 seat serves a pinned widget
+too (a bare HWND_TOPMOST re-assert is the #200 bug), and the regular placement pass re-places
+the widget at its anchor. Event-driven only - no timers (#200).
 """
 import types
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -39,6 +43,7 @@ from netspeedtray.utils import taskbar_utils
 from netspeedtray.views.settings.pages.widget import WidgetPage
 
 GAP = constants.layout.LEFT_ANCHOR_GAP_PX
+TGAP = constants.layout.TRAY_EDGE_MIN_GAP_PX
 BOTTOM = constants.taskbar.edge.BOTTOM
 LEFT = constants.taskbar.edge.LEFT
 TB = 0xABC          # the taskbar (Shell_TrayWnd)
@@ -206,17 +211,59 @@ def test_probe_pending_without_a_last_good_anchor_uses_the_bar_edge(monkeypatch)
     widget.move.assert_called_once_with(scr.geometry().left() + GAP, 600)
 
 
-def test_probe_pending_keeps_the_anchor_per_bar(monkeypatch):
-    """The last good anchor belongs to ITS bar (hwnd): another bar (an Explorer restart's fresh
-    HWND, another monitor's) must not inherit it."""
+def test_probe_pending_keeps_the_anchor_across_an_explorer_restart(monkeypatch):
+    """The last good anchor is keyed by the bar's SCREEN, not the taskbar HWND (PR #604
+    third-round review): an Explorer restart's fresh HWND on the same screen still hits - that
+    restart is exactly when the anchor is needed, and the old HWND key lost it (the widget
+    flashed onto the weather button from the bar edge until the fresh bar's probe answered)."""
     _pin_alignment(monkeypatch, 1)
     monkeypatch.setattr(taskbar_utils, "widgets_button_enabled", lambda: True)
     scr = _screen(0, 1920)
     tb = _taskbar(scr, hwnd=111, widgets_extent=(6, 1032, 158, 1080))
     pm, _widget = _manager({"pin_left_edge": True}, scr, taskbar=tb)
-    assert pm.left_anchor_spot_x(tb) == 158 + GAP   # caches (111, 158)
-    tb2 = _taskbar(scr, hwnd=222)                   # a fresh bar, no button known
+    assert pm.left_anchor_spot_x(tb) == 158 + GAP    # caches (screen, 158)
+    tb2 = _taskbar(scr, hwnd=222)                    # the restart's fresh bar, no button known
+    assert pm.left_anchor_spot_x(tb2) == 158 + GAP   # the screen's last good anchor stands
+
+
+def test_probe_pending_does_not_cross_screens(monkeypatch):
+    """A bar on ANOTHER screen must not inherit the first screen's anchor: the key is the
+    screen's device name."""
+    _pin_alignment(monkeypatch, 1)
+    monkeypatch.setattr(taskbar_utils, "widgets_button_enabled", lambda: True)
+    scr = _screen(0, 1920)
+    tb = _taskbar(scr, hwnd=111, widgets_extent=(6, 1032, 158, 1080))
+    pm, _widget = _manager({"pin_left_edge": True}, scr, taskbar=tb)
+    assert pm.left_anchor_spot_x(tb) == 158 + GAP    # caches (screen, 158)
+    other = _screen(1920, 2560)                      # a different screen -> a different key
+    tb2 = _taskbar(other, hwnd=222, tray=(4350, 1040, 4480, 1080))   # its tray at its right end
+    assert pm.left_anchor_spot_x(tb2, screen=other) == 1920 + GAP
+
+
+def test_last_good_anchor_drops_on_a_dpi_change(monkeypatch):
+    """A display-scale change invalidates the cached LOGICAL x: the anchor is dropped and the
+    bar edge stands until the re-scaled bar's probe answers again (PR #604 third-round review)."""
+    _pin_alignment(monkeypatch, 1)
+    monkeypatch.setattr(taskbar_utils, "widgets_button_enabled", lambda: True)
+    scr = _screen(0, 1920)
+    tb = _taskbar(scr, hwnd=111, widgets_extent=(6, 1032, 158, 1080))
+    pm, _widget = _manager({"pin_left_edge": True}, scr, taskbar=tb)
+    assert pm.left_anchor_spot_x(tb) == 158 + GAP
+    tb2 = _taskbar(scr, hwnd=111, dpi=1.5)           # the same bar after a scale change
     assert pm.left_anchor_spot_x(tb2) == scr.geometry().left() + GAP
+
+
+def test_last_good_anchor_drops_on_a_geometry_change(monkeypatch):
+    """A resolution / arrangement change invalidates the cached anchor the same way."""
+    _pin_alignment(monkeypatch, 1)
+    monkeypatch.setattr(taskbar_utils, "widgets_button_enabled", lambda: True)
+    scr = _screen(0, 1920)
+    tb = _taskbar(scr, hwnd=111, widgets_extent=(6, 1032, 158, 1080))
+    pm, _widget = _manager({"pin_left_edge": True}, scr, taskbar=tb)
+    assert pm.left_anchor_spot_x(tb) == 158 + GAP
+    scr.geometry.return_value = QRect(0, 0, 2560, 1080)   # the resolution changed
+    tb2 = _taskbar(scr, hwnd=111)
+    assert pm.left_anchor_spot_x(tb2) == GAP
 
 
 def test_pin_adds_the_drag_offset_from_the_anchor(monkeypatch):
@@ -231,13 +278,28 @@ def test_pin_adds_the_drag_offset_from_the_anchor(monkeypatch):
     widget.move.assert_called_once_with(158 + GAP + 40, 600)
 
 
-def test_drag_offset_is_clamped_to_the_bar(monkeypatch):
-    """A big offset (saved on a 2560 px screen) cannot push the widget off a narrower bar: the
-    placement clamps so the widget's right edge stays inside the bar's screen - off-screen the
-    recovery could not clear it, the offset is measured FROM the anchor."""
+def test_drag_offset_is_clamped_to_the_tray_limit(monkeypatch):
+    """A big offset (saved on a 2560 px screen) cannot push the widget past the TRAY: the right
+    limit is the same one the drag uses - the tray's left edge minus the widget width and
+    TRAY_EDGE_MIN_GAP_PX - not the screen edge, so an offset saved near the tray cannot land on
+    the clock after a monitor change or when the tray grows (a new tray icon, an IME indicator)
+    (PR #604 third-round review). Off-screen the recovery could not clear it either: the offset
+    is measured FROM the anchor."""
     _pin_alignment(monkeypatch, 1)
     scr = _screen(0, 1920)
-    tb = _taskbar(scr, widgets_extent=(6, 1032, 158, 1080))
+    tb = _taskbar(scr, widgets_extent=(6, 1032, 158, 1080))   # the tray at (1790..1920)
+    pm, widget = _manager({"pin_left_edge": True, "left_anchor_drag_dx": 4000}, scr, taskbar=tb)
+    with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
+        pm._apply_geometry(1500, 600)
+    widget.move.assert_called_once_with(1790 - 85 - TGAP, 600)   # 8 px clear of the tray's edge
+
+
+def test_drag_offset_clamp_falls_back_to_the_screen_edge_without_a_tray(monkeypatch):
+    """A mirrored SECONDARY bar has no tray to check (a known limit, per the review): the bar's
+    screen edge stands as the right limit there."""
+    _pin_alignment(monkeypatch, 1)
+    scr = _screen(0, 1920)
+    tb = _taskbar(scr, widgets_extent=(6, 1032, 158, 1080), tray=None)
     pm, widget = _manager({"pin_left_edge": True, "left_anchor_drag_dx": 4000}, scr, taskbar=tb)
     with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
         pm._apply_geometry(1500, 600)
@@ -520,10 +582,10 @@ def test_pinned_widget_yields_and_returns(monkeypatch):
 
 
 def test_pinned_widget_with_hiding_off_never_probes(monkeypatch):
-    """'Hide while app buttons cover the widget' off: the pinned context is NOT built - the yield
-    stays detached (and probe-free). It has no stepped / tray-spot pair for the full-bar fallback
-    to weigh, so a context would only have made the yield run its probes for nothing (2.2.2
-    review)."""
+    """'Hide while app buttons cover the widget' off, and the pin APPLIES: the pinned context is
+    NOT built - the yield stays detached (and probe-free). It has no stepped / tray-spot pair for
+    the full-bar fallback to weigh, so a context would only have made the yield run its probes
+    for nothing (2.2.2 review)."""
     _pin_alignment(monkeypatch, 1)
     scr = _screen(0, 1920)
     pm, _widget = _manager({"pin_left_edge": True, "hide_when_apps_cover": False}, scr,
@@ -532,6 +594,22 @@ def test_pinned_widget_with_hiding_off_never_probes(monkeypatch):
     ctx = pm._app_overlap_context()
     assert not isinstance(ctx, OverlapContext)
     assert "setting is off" in str(ctx)
+
+
+def test_pinned_fallback_with_hiding_off_still_reaches_the_tray_side_watch(monkeypatch):
+    """Pin on but NOT applying (a left-aligned bar here) with 'Hide while app buttons cover' off:
+    the old early 'setting is off' return skipped the tray side's watch probe - the not-applying
+    fallback now behaves exactly like the normal tray spot (PR #604 third-round review): a
+    context (may_hide=False) is built, so the yield stays attached and watches the bar."""
+    _pin_alignment(monkeypatch, 0)
+    monkeypatch.setattr(taskbar_utils, "widgets_button_enabled", lambda: True)
+    scr = _screen(0, 1920)
+    pm, widget = _manager({"pin_left_edge": True, "hide_when_apps_cover": False}, scr)
+    widget.pos.return_value = QPoint(1500, 600)
+    pm._app_overlap_info = pm._state.taskbar_info
+    ctx = pm._app_overlap_context()
+    assert isinstance(ctx, OverlapContext)
+    assert ctx.may_hide is False
 
 
 # --- dragging while pinned ---------------------------------------------------------------------
@@ -618,8 +696,9 @@ def test_pinned_drag_clamps_the_offset_to_zero():
 
 def test_pinned_drag_save_clamps_the_offset_to_the_bar():
     """A drop past the bar's end (a lost drag, or a race with a resolution change) saves a CLAMPED
-    offset: the widget's right edge stays on the anchor screen (anchor + gap + dx + width <= bar
-    right) - a 2560-screen offset must not land off-screen on a 1920 one."""
+    offset - to the TRAY limit, the same right limit the drag uses: tray left - width -
+    TRAY_EDGE_MIN_GAP_PX - so an offset saved near the tray cannot land on the clock after a
+    monitor change or when the tray grows (PR #604 third-round review)."""
     w = _DragWidget({"pin_left_edge": True})
     w.pos = MagicMock(return_value=QPoint(5000, 600))
     w.width = MagicMock(return_value=85)
@@ -631,8 +710,8 @@ def test_pinned_drag_save_clamps_the_offset_to_the_bar():
     with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info",
                return_value=_taskbar(_screen(0, 1920))):
         handler._save_dragged_position()
-    # anchor 100, widget 85 wide: dx may reach 1920 - 85 - 100 = 1735, not 4900.
-    w.update_config.assert_called_once_with({"left_anchor_drag_dx": 1920 - 85 - 100})
+    # anchor 100, widget 85 wide: dx may reach 1790 (tray left) - 85 - 8 (tray gap) - 100, not 4900.
+    w.update_config.assert_called_once_with({"left_anchor_drag_dx": 1790 - 85 - TGAP - 100})
 
 
 def test_pinned_fallback_drag_still_saves_tray_offset_x():
@@ -902,6 +981,80 @@ def test_pin_card_enabled_on_a_bottom_bar():
         page._sync_pin_card()
     assert page._pin_card.isEnabled() is True
     assert page._pin_card.toolTip() == ""
+
+
+def test_pin_card_grey_reason_is_also_a_visible_note():
+    """The grey-out reason is said OUTSIDE the card too - a small secondary-text line under it,
+    the monitor_note pattern (a disabled card can't be reached by Tab or touch, and Narrator only
+    reads a greyed switch, while the cause here is a Windows setting the user can't see) - with
+    the tooltip kept as a bonus (PR #604 third-round review). An enabled card hides the line."""
+    page = _page()
+    assert page.pin_note.isVisibleTo(page) is False
+    tb = MagicMock()
+    tb.get_edge_position.return_value = LEFT
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb):
+        page._sync_pin_card()
+        assert page.pin_note.isVisibleTo(page) is True
+        assert page.pin_note.text() == page.i18n.PIN_LEFT_EDGE_GREY_SIDE
+        assert page._pin_card.toolTip() == page.i18n.PIN_LEFT_EDGE_GREY_SIDE   # the tooltip stays
+    tb.get_edge_position.return_value = BOTTOM
+    tb.tasklist_rect = None
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb), \
+            patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=1):
+        page._sync_pin_card()
+    assert page.pin_note.isVisibleTo(page) is False
+    assert page._pin_card.isEnabled() is True
+
+
+def test_settings_and_placement_agree_on_a_mirrored_bar(monkeypatch):
+    """A mirrored (RTL) bar keeps the clock at the LEFT end: the placement's left_end_is_free
+    falls back to the tray spot there - and Settings now asks that SAME function instead of
+    repeating its own checks, so the card greys out with the left-busy reason too. The old local
+    checks missed the tray half: the card stayed enabled while the widget sat by the clock
+    (PR #604 third-round review)."""
+    _pin_alignment(monkeypatch, 1)
+    scr = _screen(0, 1920)
+    tb = _taskbar(scr, tray=(60, 1040, 190, 1080), widgets_extent=None)   # the clock at the left
+    # The placement side: the pin does not apply - the widget stays at the tray spot.
+    pm, widget = _manager({"pin_left_edge": True}, scr, taskbar=tb)
+    with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
+        pm._apply_geometry(1500, 600)
+    widget.move.assert_called_once_with(1500, 600)
+    # The Settings side: the same verdict, from the same test (PositionManager.left_end_is_free).
+    page = _page()
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb), \
+            patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=1):
+        page._sync_pin_card()
+    assert page._pin_card.isEnabled() is False
+    assert page._pin_card.toolTip() == page.i18n.PIN_LEFT_EDGE_GREY_LEFT_ALIGNED
+    assert page.pin_note.text() == page.i18n.PIN_LEFT_EDGE_GREY_LEFT_ALIGNED
+
+
+def test_pin_card_uses_the_review_copy():
+    """2.2.2 third-round review (copy): no '8 px in', no 'tray spot' - and no 'falls back' claim
+    (a centred bar that fills up hides the widget, it does not fall back) - the maintainer's
+    exact suggested sentence instead."""
+    page = _page()
+    assert page.i18n.PIN_LEFT_EDGE_DESC == (
+        "Sits beside the Widgets button, or at the far left when it's off. "
+        "Drag it along the bar to move it; Reset position brings it back.")
+    assert page._pin_card._desc_label.text() == page.i18n.PIN_LEFT_EDGE_DESC
+
+
+def test_pin_description_copy_mirrored_to_every_locale():
+    """The review's description sentence is mirrored to all 17 locales (they go to the
+    translators with 2.2.2). It carries no digits, so the fixed-text digits scan (bn_BD's native
+    numerals) has nothing to convert."""
+    import json
+    expected = ("Sits beside the Widgets button, or at the far left when it's off. "
+                "Drag it along the bar to move it; Reset position brings it back.")
+    locales = Path(__file__).parents[3] / "netspeedtray" / "constants" / "locales"
+    checked = 0
+    for p in sorted(locales.glob("*.json")):
+        data = json.loads(p.read_bytes().decode("utf-8"))
+        assert data["PIN_LEFT_EDGE_DESC"] == expected, p.name
+        checked += 1
+    assert checked == 17
 
 
 def test_pin_lives_on_the_widget_page_only():

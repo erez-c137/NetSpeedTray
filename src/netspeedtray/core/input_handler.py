@@ -96,7 +96,6 @@ class InputHandler(QObject):
         # slides it along the bar FROM its anchor (PositionManager.constrain_drag keeps it right
         # of anchor + LEFT_ANCHOR_GAP_PX), and the drop saves `left_anchor_drag_dx`
         # (_save_dragged_position), not tray_offset_x. Reset position clears the offset again.
-
         # Check for minimum drag distance to prevent accidental moves (Fix for sticky Free Move)
         if (event.globalPosition().toPoint() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
             return
@@ -327,19 +326,29 @@ class InputHandler(QObject):
                     # left of the anchored spot snaps the offset to 0 (the drag constraint already
                     # keeps the widget there; a lost drag can still land one short).
                     new_dx = max(0, int(self.widget.pos().x()) - anchor_spot)
-                    # Clamp the offset to the bar (2.2.2 review): the widget's right edge stays
-                    # inside the anchor screen - a big offset saved on a wide monitor must not
-                    # land the widget off-screen on a narrower one, where the off-screen recovery
-                    # cannot clear it (the offset is measured FROM the anchor and only a new drag
-                    # would re-save it). The placement re-clamps the same way when it consumes
-                    # the offset (_left_anchor_drag_x).
+                    # Clamp the offset to the SAME right limit the drag uses (2.2.2 review; PR
+                    # #604 third-round review): the TRAY's left edge minus the widget width and
+                    # TRAY_EDGE_MIN_GAP_PX - not the screen edge - so an offset saved near the
+                    # tray cannot land on the clock after a monitor change, or when the tray
+                    # grows (a new tray icon, an IME indicator). With no tray rect known (a
+                    # secondary bar has none - a known limit) the anchor screen's edge stands.
+                    # The placement re-clamps the same way when it consumes the offset
+                    # (_left_anchor_drag_x).
                     try:
+                        width = max(int(self.widget.width()), 0)
                         anchor_screen = tb_info.get_screen()
                         geo = anchor_screen.geometry() if anchor_screen is not None else None
-                        if geo is not None:
-                            max_x = geo.left() + geo.width() - max(int(self.widget.width()), 0)
-                            if anchor_spot + new_dx > max_x:
-                                new_dx = max(0, max_x - anchor_spot)
+                        max_x = geo.left() + geo.width() - width if geo is not None else None
+                        tray_rect = tb_info.get_tray_rect()
+                        if tray_rect and max_x is not None:
+                            tray_left = round(tray_rect[0] / dpi_scale)
+                            tray_limit = tray_left - width - constants.layout.TRAY_EDGE_MIN_GAP_PX
+                            # Never below the anchored spot: a degenerate tray rect (a
+                            # just-restarted Explorer reports (0, 1032, 0, 1032) for seconds)
+                            # must not pull the widget left of its anchor.
+                            max_x = min(max_x, max(tray_limit, anchor_spot))
+                        if max_x is not None and anchor_spot + new_dx > max_x:
+                            new_dx = max(0, max_x - anchor_spot)
                     except Exception as clamp_err:
                         self.logger.debug(f"left-anchor offset clamp skipped: {clamp_err}")
                     updates["left_anchor_drag_dx"] = new_dx

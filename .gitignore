@@ -121,4 +121,10 @@ layout_debug.txt
 src/netspeedtray/tests/debug_layout.py
 src/netspeedtray/utils/layout_logger.py
 
-
+# Local review artifacts (PR #604 review rounds: never commit these again).
+# One pattern per line - a comma-separated line is a single (useless) literal.
+REVIEW.md
+rework.patch
+_diffstat.txt
+_full_unit_run.txt
+failures-*.txt

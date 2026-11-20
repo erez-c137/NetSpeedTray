@@ -112,18 +112,29 @@ class WidgetPage(QWidget):
         # the offset FROM the anchor; Reset position clears it). It lives right next to "Show on
         # all taskbars" - both decide where the widget sits on the bar(s), ahead of the
         # free-move / float escape hatches below. Side bars and bars whose left end is busy (a
-        # left-aligned Win11 bar, a Win10-style task list), and Free Move while it is on, grey the
-        # card out with a reason (_sync_pin_card, re-checked on load, on show and on a Free Move
-        # flip); the placement ignores the pin in those cases.
+        # left-aligned Win11 bar, a Win10-style task list, a mirrored RTL bar with the clock at the
+        # left end), and Free Move while it is on, grey the card out with a reason (_sync_pin_card,
+        # re-checked on load, on show and on a Free Move flip); the placement ignores the pin in
+        # those cases. The reason is said OUTSIDE the card too - a small secondary-text line under
+        # it, the monitor_note pattern: a disabled card can't be reached by Tab or touch and
+        # Narrator only reads a greyed switch, while the cause here is a Windows setting the user
+        # can't see (the tooltip stays as a bonus).
         self.pin_left_edge = Win11Toggle(label_text="")
         self.pin_left_edge.toggled.connect(self.on_change)
         self._pin_card = SettingCard(
             getattr(self.i18n, "PIN_LEFT_EDGE_LABEL", "Dock at the left end of the taskbar"),
             description=getattr(self.i18n, "PIN_LEFT_EDGE_DESC",
-                                "Keep the widget beside the Widgets button or the bar's left edge, "
-                                "8 px in. Falls back to the tray spot where the left end is busy."),
+                                "Sits beside the Widgets button, or at the far left when it's off. "
+                                "Drag it along the bar to move it; Reset position brings it back."),
             control=self.pin_left_edge)
         layout.addWidget(self._pin_card)
+        # The grey-out reason's visible line (set together with the card in _sync_pin_card).
+        self.pin_note = QLabel("")
+        self.pin_note.setWordWrap(True)
+        self.pin_note.setStyleSheet(
+            f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
+        self.pin_note.setVisible(False)
+        layout.addWidget(self.pin_note)
 
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
@@ -304,15 +315,22 @@ class WidgetPage(QWidget):
             self.layout_changed.emit()
 
     def _sync_pin_card(self) -> None:
-        """Grey the left-anchor pin out where it would silently do nothing, and say why on the
-        card (a disabled widget's tooltip - the rc.2 G6 precedent the Hardware page uses):
+        """Grey the left-anchor pin out where it would silently do nothing, and say why - on the
+        card (tooltip, the rc.2 G6 precedent the Hardware page uses) AND in a small visible line
+        under it, the monitor_note pattern: a disabled card can't be reached by Tab or touch and
+        Narrator only reads a greyed switch, while the cause here is a Windows setting the user
+        can't see:
 
         * "free_move" - Free Move is on: the pin steps aside while the widget floats, so the
           switch does nothing until Free Move is off;
         * "side" - a SIDE taskbar: the placement ignores the pin there (out of scope);
-        * "left_busy" - a horizontal bar whose LEFT end is busy: a left-aligned Win11 bar
-          (TaskbarAl = 0) or a Win10-style task list at the left end - the pin falls back to the
-          tray spot, so the widget stays next to the clock either way.
+        * "left_busy" - a horizontal bar whose LEFT end is busy - the same test the placement
+          makes: the pin falls back to the normal tray spot, so the widget stays next to the
+          clock either way. Asked from PositionManager.left_end_is_free (the placement's own
+          single source of truth, PR #604 third-round review) instead of repeating its checks
+          here - a Win10-style task list at the left end, a left-aligned Win11 bar (TaskbarAl = 0)
+          and a mirrored (RTL) bar with the clock at the left end all read the same in Settings
+          as they do on the bar.
 
         Reads the same taskbar the widget docks to (preferred monitor honoured, like
         _sync_monitor_note); re-checked on every load, each time the page shows and on a Free
@@ -332,33 +350,49 @@ class WidgetPage(QWidget):
             from netspeedtray.utils.taskbar_utils import get_taskbar_info
             info = get_taskbar_info(
                 preferred_screen_name=getattr(self, "_saved_monitor", None))
-            edge = info.get_edge_position() if info is not None else None
-            side = edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT)
-            free_move_on = bool(self.free_move.isChecked()) if hasattr(self, "free_move") else False
-            if free_move_on:
-                kind = "free_move"
-            elif side:
-                kind = "side"
-            elif info is not None:
-                # The left end busy: a Win10-style task list there, or a left-aligned Win11 bar -
-                # the same two tests left_end_is_free applies for placement.
-                from netspeedtray.utils import taskbar_utils as tbu
-                if tbu.valid_rect(getattr(info, "tasklist_rect", None)) is not None:
-                    kind = "left_busy"
+        except Exception:
+            info = None
+        free_move_on = bool(self.free_move.isChecked()) if hasattr(self, "free_move") else False
+        if free_move_on:
+            kind = "free_move"
+        elif info is not None:
+            try:
+                edge = info.get_edge_position()
+                if edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
+                    kind = "side"
                 else:
+                    # The placement's own test (PositionManager.left_end_is_free): a Win10-style
+                    # task list at the left end, a left-aligned Win11 bar, or a mirrored bar with
+                    # the clock/tray in the left half - exactly when the pin falls back to the
+                    # tray spot, so the card must say so (the mirrored case the old local checks
+                    # missed: the card stayed enabled while the widget sat by the clock).
+                    from netspeedtray.core.position_manager import left_end_is_free
                     try:
                         from netspeedtray.core.system_events import read_taskbar_alignment
-                        if read_taskbar_alignment() == 0:
-                            kind = "left_busy"
+                        align = read_taskbar_alignment()
                     except Exception:
-                        pass   # registry unreadable: leave the card enabled (the probe decides)
-        except Exception:
-            kind = None
+                        align = None   # registry unreadable: left_end_is_free still decides
+                    free, _span = left_end_is_free(info, info.get_screen(), align)
+                    if not free:
+                        kind = "left_busy"
+            except Exception:
+                kind = None   # an unreadable bar: leave the card enabled (the probe decides)
         card = getattr(self, "_pin_card", None)
         if card is not None:
             MiniGraphSection._set_card_enabled(card, kind is None)
             # A greyed card says why; an enabled card carries no stale tooltip.
             card.setToolTip("" if kind is None else reasons[kind])
+        # The same reason as a VISIBLE line under the card (PR #604 third-round review) - the
+        # monitor_note pattern: text only when it shows, visibility flips emit layout_changed so
+        # the dialog re-flows.
+        note = getattr(self, "pin_note", None)
+        if note is not None:
+            show = kind is not None
+            if show:
+                note.setText(reasons[kind])
+            if note.isVisibleTo(self) != show:
+                note.setVisible(show)
+                self.layout_changed.emit()
         self._pin_grey_kind = kind
 
     def showEvent(self, event):  # type: ignore[override]
