@@ -717,3 +717,60 @@ def test_cycle_hardware_phases_fit_with_no_blank_strip(q_app, src):
     assert all(left >= 0 and right < w for left, right in spans), (spans, w)
     widest = max(right - left for left, right in spans)
     assert w - widest <= 24, (spans, w)          # the widest phase fills it, margins aside
+
+
+_LONE_MODES = {
+    "cycle": dict(widget_display_mode="cycle"),
+    "sbs_unstacked": dict(widget_display_mode="side_by_side", stack_hardware_stats=False),
+    "sbs_stacked_cpu_alone": dict(widget_display_mode="side_by_side", stack_hardware_stats=True,
+                                  monitor_gpu_enabled=False, monitor_vram_enabled=False),
+    "cpu_only": dict(widget_display_mode="cpu_only"),
+    "combined_cpu_alone": dict(widget_display_mode="combined", monitor_gpu_enabled=False,
+                               monitor_vram_enabled=False),
+    "gpu_only_no_memory": dict(widget_display_mode="gpu_only", monitor_cpu_enabled=False,
+                               monitor_ram_enabled=False, monitor_vram_enabled=False),
+    "combined_no_memory": dict(widget_display_mode="combined", monitor_ram_enabled=False,
+                               monitor_vram_enabled=False),
+}
+
+
+@pytest.fixture(scope="module")
+def real_font(q_app):
+    """The app's real default font, loaded from its file: the offscreen platform's fallback font has
+    near-uniform digits and hid every 1-4 px clip the review measured on the real Windows platform.
+    Segoe UI Variable (Windows 11), else Segoe UI (Windows 10 / Server runners); skip without either."""
+    import os
+    from PyQt6.QtGui import QFontDatabase
+    fonts = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+    for file, family in (("SegUIVar.ttf", "Segoe UI Variable"), ("segoeui.ttf", "Segoe UI")):
+        path = os.path.join(fonts, file)
+        if os.path.exists(path) and QFontDatabase.addApplicationFont(path) >= 0:
+            return family
+    pytest.skip("no Segoe UI font file on this machine")
+
+
+@pytest.mark.parametrize("font_size", [9, 14])
+@pytest.mark.parametrize("temps", [False, True], ids=["no_temps", "temps"])
+@pytest.mark.parametrize("mem_labels", [False, True], ids=["no_mem_labels", "mem_labels"])
+@pytest.mark.parametrize("style", ["icon", "text"])
+@pytest.mark.parametrize("mode", list(_LONE_MODES))
+def test_memory_below_a_lone_row_never_clips(q_app, real_font, mode, style, mem_labels, temps, font_size):
+    """Review of the lone-row fix: the row below needs the renderer's left margin and its real label
+    column (text: the label + 4, not "CPU "), and its memory reference must be the stable worst case -
+    a 24 GB VRAM total is wider than the RAM total it used to be sized from (proportional digits)."""
+    cfg = _config(**{**dict(monitor_ram_enabled=True, monitor_vram_enabled=True, hardware_label_style=style,
+                            show_memory_labels=mem_labels, show_hardware_temps=temps,
+                            show_hardware_power=temps, font_size=font_size, font_family=real_font),
+                     **_LONE_MODES[mode]})
+    src = None if temps else False      # no source: no suffix column to hide a tight memory row behind
+    w, h, nw = _width(cfg, src, src)
+    live = WidgetMetrics(upload_mbps=888.8, download_mbps=888.8, cpu_usage=100.0, gpu_usage=100.0,
+                         cpu_temp=99.0, gpu_temp=99.0, cpu_power=250.0, gpu_power=250.0,
+                         ram_used=15.9, ram_total=16.0, vram_used=23.9, vram_total=24.0,
+                         cpu_sensor_source=src, gpu_sensor_source=src)
+    phases = ("network_only", "cpu_only", "gpu_only") if mode == "cycle" else ("network_only",)
+    for phase in phases:
+        with patch("netspeedtray.tests.unit.test_hw_suffix_no_source.render_widget",
+                   lambda *a, _ph=phase, _real=render_widget, **k: _real(*a, **dict(k, cycle_mode=_ph))):
+            left, right = _ink_right(cfg, w, h, nw, live)
+        assert left >= 0 and right < w, (phase, left, right, w)
