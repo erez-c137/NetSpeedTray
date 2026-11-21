@@ -30,7 +30,9 @@ def test_position_manager_reset_clears_the_free_spot_and_the_docked_offsets():
         pm.reset_to_default()
     assert cfg == {"tray_offset_y": DEFAULTS.DEFAULT_TRAY_OFFSET_Y,
                    "tray_offset_x": DEFAULTS.DEFAULT_TRAY_OFFSET_X,
-                   "position_x": None, "position_y": None}
+                   "position_x": None, "position_y": None,
+                   # The left-anchor pin's drag offset is cleared with the tray drag offsets.
+                   "left_anchor_drag_dx": DEFAULTS.DEFAULT_LEFT_ANCHOR_DRAG_DX}
     # The widget was dragged away from the last applied rect: without dropping the debounce the
     # re-placement onto that same rect would be skipped and the widget would stay where it was.
     assert pm._last_applied_geometry is None
@@ -53,7 +55,8 @@ def test_widget_reset_persists_every_cleared_key():
     (updates,), _ = fake.update_config.call_args
     assert updates == {"position_x": None, "position_y": None,
                        "tray_offset_x": DEFAULTS.DEFAULT_TRAY_OFFSET_X,
-                       "tray_offset_y": DEFAULTS.DEFAULT_TRAY_OFFSET_Y}
+                       "tray_offset_y": DEFAULTS.DEFAULT_TRAY_OFFSET_Y,
+                       "left_anchor_drag_dx": DEFAULTS.DEFAULT_LEFT_ANCHOR_DRAG_DX}
 
 
 @pytest.mark.parametrize("config,moved", [
@@ -69,6 +72,11 @@ def test_widget_reset_persists_every_cleared_key():
     ({"tray_offset_x": 3}, False),
     ({"tray_offset_x": 4}, True),
     ({"tray_offset_x": 10, "tray_offset_y": 709}, True),
+    # The left-anchor pin's drag offset is a move the user made - while the pin is ON (Reset
+    # clears it). With the pin OFF the offset is inert and must not offer Reset position by
+    # itself (2.2.2 review).
+    ({"pin_left_edge": True, "left_anchor_drag_dx": 40}, True),
+    ({"pin_left_edge": False, "left_anchor_drag_dx": 40}, False),
 ])
 def test_has_custom_position(config, moved):
     assert _reset_fake(config).has_custom_position() is moved

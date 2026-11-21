@@ -74,7 +74,9 @@ class _MirrorConfig(collections.abc.MutableMapping):
 
     Pinned: ``preferred_monitor`` = this mirror's screen (so every ``get_taskbar_info(preferred)``
     inside the position and layout managers finds ITS taskbar), docked (no free move, no #188 float,
-    no saved spot) and the default tray offsets (the main widget's drag offset is the main widget's).
+    no saved spot) and the default tray offsets (the main widget's drag offset is the main widget's)
+    plus the left-anchor pin's drag offset - mirrors inherit the pin, but a copy is never dragged,
+    so it stays at its own anchor (2.2.2 review).
     Only the pinned keys can be written (PositionManager.reset_to_default writes them); any other
     write is dropped with a warning, so a stray write can neither reach the main config / the disk
     nor hide a main-config value from the mirror for good.
@@ -91,6 +93,7 @@ class _MirrorConfig(collections.abc.MutableMapping):
             "position_y": None,
             "tray_offset_x": defaults.DEFAULT_TRAY_OFFSET_X,
             "tray_offset_y": defaults.DEFAULT_TRAY_OFFSET_Y,
+            "left_anchor_drag_dx": defaults.DEFAULT_LEFT_ANCHOR_DRAG_DX,
         }
 
     def _main(self) -> Any:

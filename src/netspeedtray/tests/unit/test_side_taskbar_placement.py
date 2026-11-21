@@ -528,7 +528,9 @@ def test_position_manager_reset_clears_offsets_and_re_decides():
         pm.get_calculated_position()
         pm.reset_to_default()
     assert cfg == {"tray_offset_y": DEFAULT_Y, "tray_offset_x": constants.config.defaults.DEFAULT_TRAY_OFFSET_X,
-                   "position_x": None, "position_y": None}
+                   "position_x": None, "position_y": None,
+                   # The left-anchor pin's drag offset is cleared with the tray drag offsets.
+                   "left_anchor_drag_dx": constants.config.defaults.DEFAULT_LEFT_ANCHOR_DRAG_DX}
     assert ctl.requests == 2                                 # decided afresh after the reset
     y = pm._state.widget.move.call_args[0][1]
     assert y == round(120 + (300 - 120 - H) / 2)             # back to the automatic (top-gap) spot
@@ -551,7 +553,8 @@ def test_widget_reset_persists_every_cleared_key():
     (updates,), _ = fake.update_config.call_args
     assert updates == {"position_x": None, "position_y": None,
                        "tray_offset_x": constants.config.defaults.DEFAULT_TRAY_OFFSET_X,
-                       "tray_offset_y": DEFAULT_Y}
+                       "tray_offset_y": DEFAULT_Y,
+                       "left_anchor_drag_dx": constants.config.defaults.DEFAULT_LEFT_ANCHOR_DRAG_DX}
 
 
 @pytest.mark.parametrize("config,moved", [

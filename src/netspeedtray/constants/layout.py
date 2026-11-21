@@ -75,6 +75,14 @@ class LayoutConstants:
     # Minimum gap (logical px) kept between the widget's tray-side edge and the tray boundary /
     # the "^" show-hidden-icons chevron, so the widget never abuts it and steals its clicks (#161 pt1).
     TRAY_EDGE_MIN_GAP_PX: Final[int] = 8
+    # Left-anchor pin (Settings > Widget): the widget is anchored to the FIRST shell thing on the
+    # LEFT of a top/bottom taskbar - the Widgets/weather button's right edge when one is there,
+    # else the bar's left edge - and kept this many logical px off it (so DPI scaling keeps the
+    # same visual gap on every display; the PositionManager re-derives the anchor from the CURRENT
+    # bar layout on every re-placement). Same rule as TRAY_EDGE_MIN_GAP_PX - never abut a shell
+    # button and steal its clicks - but a separate constant, so tuning the tray side does not
+    # move this one.
+    LEFT_ANCHOR_GAP_PX: Final[int] = 8
     # Minimum gap (logical px) kept between the widget and the Win11 Widgets/weather button when that
     # button sits between the widget's default spot and the tray (a LEFT-aligned bar puts it right
     # beside the tray). The same rule as the tray gap: never abut a shell button and steal its clicks

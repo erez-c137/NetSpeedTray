@@ -123,6 +123,9 @@ class GeneralPage(QWidget):
         layout.addWidget(self._updates_card)
         self._apply_update_policy_lock()
 
+        # (The left-anchor toggle moved to the Widget page's Behavior section - it is about the
+        # on-taskbar widget's position, like free-move and the tray offsets. 2.2.1 IA.)
+
         # (Preferred Monitor moved to the Widget page's Behavior section, 2.2 IA pass: it decides which
         # taskbar the widget docks to, and its dependent "Float on a display without a taskbar" is there.)
 
@@ -248,6 +251,7 @@ class GeneralPage(QWidget):
         self._select_click_action(
             self.middle_click_action, config.get("middle_click_action", defaults.DEFAULT_MIDDLE_CLICK_ACTION))
         self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
+        # pin_left_edge is loaded by the Widget page now (the left-anchor pin lives there).
         hidden = config.get("context_menu_hidden_items",
                             constants.config.defaults.DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS)
         if not isinstance(hidden, (list, tuple)):
@@ -294,6 +298,7 @@ class GeneralPage(QWidget):
             "double_click_action": self.double_click_action.currentData(),
             "middle_click_action": self.middle_click_action.currentData(),
             "pause_in_menu": self.pause_in_menu.isChecked(),
+            # pin_left_edge is saved by the Widget page now (the left-anchor pin lives there).
             # In the order of CONTEXT_MENU_HIDEABLE_ITEMS, so an unchanged page saves an equal list.
             "context_menu_hidden_items": [item_id for item_id, toggle in self.context_menu_toggles.items()
                                           if not toggle.isChecked()],

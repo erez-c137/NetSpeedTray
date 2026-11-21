@@ -92,6 +92,10 @@ class InputHandler(QObject):
         if not self._drag_start_pos:
             return
 
+        # Left-anchor pin (`pin_left_edge`): the widget CAN be dragged while pinned - the drag
+        # slides it along the bar FROM its anchor (PositionManager.constrain_drag keeps it right
+        # of anchor + LEFT_ANCHOR_GAP_PX), and the drop saves `left_anchor_drag_dx`
+        # (_save_dragged_position), not tray_offset_x. Reset position clears the offset again.
         # Check for minimum drag distance to prevent accidental moves (Fix for sticky Free Move)
         if (event.globalPosition().toPoint() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
             return
@@ -287,6 +291,10 @@ class InputHandler(QObject):
         """
         Saves the final position based on the current mode:
         - Floating (Free Move, or #188 free-float on a taskbar-less display): absolute X/Y.
+        - Docked with the left-anchor pin on (and applying): `left_anchor_drag_dx`, the offset
+          FROM the left anchor (clamped >= 0) - never tray_offset_x, so the anchored x stays
+          derived from the shell layout (the Widgets/weather button's right edge, or the bar's
+          left edge) and only the user's distance from it is stored.
         - Docked: the offset relative to the tray/edge.
         """
         try:
@@ -301,16 +309,57 @@ class InputHandler(QObject):
             else:
                 # Calculate constrained offset
                 # We need to know WHICH offset to update (x or y) based on taskbar orientation
-                from netspeedtray.utils.taskbar_utils import get_taskbar_info
+                from netspeedtray.utils.taskbar_utils import get_taskbar_info, valid_rect
                 from netspeedtray import constants
-                
+
                 # Resolve against the PREFERRED taskbar (a secondary drag must not measure its offset
                 # against the primary taskbar's geometry) (#186).
                 tb_info = get_taskbar_info(preferred_screen_name=config.get("preferred_monitor"))
                 edge = tb_info.get_edge_position()
                 dpi_scale = tb_info.dpi_scale if tb_info.dpi_scale > 0 else 1.0
-                
-                if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
+
+                spot_fn = getattr(self.position_manager, "left_anchor_spot_x", None)
+                anchor_spot = (spot_fn(tb_info) if config.get("pin_left_edge", False)
+                               and callable(spot_fn) else None)
+                if anchor_spot is not None:
+                    # Left-anchor pin: measure the drop from the ANCHOR, not from the tray. A drop
+                    # left of the anchored spot snaps the offset to 0 (the drag constraint already
+                    # keeps the widget there; a lost drag can still land one short).
+                    new_dx = max(0, int(self.widget.pos().x()) - anchor_spot)
+                    # Clamp the offset to the SAME right limit the drag uses (2.2.2 review; PR
+                    # #604 third-round review): the TRAY's left edge minus the widget width and
+                    # TRAY_EDGE_MIN_GAP_PX - not the screen edge - so an offset saved near the
+                    # tray cannot land on the clock after a monitor change, or when the tray
+                    # grows (a new tray icon, an IME indicator). With no tray rect known (a
+                    # secondary bar has none - a known limit) the anchor screen's edge stands.
+                    # The rect goes through valid_rect first, like the use path does
+                    # (_left_anchor_drag_x): a just-restarted Explorer reports a phantom
+                    # (0, 1032, 0, 1032) tray rect for seconds, and its negative limit would
+                    # zero a drop's offset (round-4 review). The placement re-clamps the same
+                    # way when it consumes the offset (_left_anchor_drag_x).
+                    try:
+                        width = max(int(self.widget.width()), 0)
+                        anchor_screen = tb_info.get_screen()
+                        geo = anchor_screen.geometry() if anchor_screen is not None else None
+                        max_x = geo.left() + geo.width() - width if geo is not None else None
+                        tray_rect = valid_rect(tb_info.get_tray_rect())
+                        if tray_rect and max_x is not None:
+                            tray_left = round(tray_rect[0] / dpi_scale)
+                            tray_limit = tray_left - width - constants.layout.TRAY_EDGE_MIN_GAP_PX
+                            # Never below the anchored spot: a REAL tray rect whose limit lands
+                            # left of the anchor (a wide widget) must not pull the saved offset
+                            # below it - a drop at or right of the anchor keeps its offset (the
+                            # round-4 floor test covers this). A phantom rect is already gone
+                            # (valid_rect above).
+                            max_x = min(max_x, max(tray_limit, anchor_spot))
+                        if max_x is not None and anchor_spot + new_dx > max_x:
+                            new_dx = max(0, max_x - anchor_spot)
+                    except Exception as clamp_err:
+                        self.logger.debug(f"left-anchor offset clamp skipped: {clamp_err}")
+                    updates["left_anchor_drag_dx"] = new_dx
+                    self.logger.debug(f"Saved left-anchor drag offset: {new_dx} (anchor spot={anchor_spot}, "
+                                      f"X={self.widget.pos().x()})")
+                elif edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
                     # Horizontal Taskbar: Variable is X offset from RIGHT side
                     # Offset = RightBoundary - WidgetRight
                     # Logic matches PositionCalculator: x = right_boundary - widget_width - offset
