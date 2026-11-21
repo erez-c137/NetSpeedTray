@@ -116,16 +116,19 @@ class WidgetPage(QWidget):
         # left end), and Free Move while it is on, grey the card out with a reason (_sync_pin_card,
         # re-checked on load, on show and on a Free Move flip); the placement ignores the pin in
         # those cases. The reason is said OUTSIDE the card too - a small secondary-text line under
-        # it, the monitor_note pattern: a disabled card can't be reached by Tab or touch and
-        # Narrator only reads a greyed switch, while the cause here is a Windows setting the user
-        # can't see (the tooltip stays as a bonus).
+        # it, the monitor_note pattern: a disabled card can't be reached by Tab or touch, and
+        # Narrator lands on the greyed switch, so the switch's accessible description carries the
+        # reason too (round-4 review; restored to the card description when the card enables),
+        # while the cause here is a Windows setting the user can't see (the tooltip stays as a
+        # bonus).
         self.pin_left_edge = Win11Toggle(label_text="")
         self.pin_left_edge.toggled.connect(self.on_change)
         self._pin_card = SettingCard(
             getattr(self.i18n, "PIN_LEFT_EDGE_LABEL", "Dock at the left end of the taskbar"),
             description=getattr(self.i18n, "PIN_LEFT_EDGE_DESC",
-                                "Sits beside the Widgets button, or at the far left when it's off. "
-                                "Drag it along the bar to move it; Reset position brings it back."),
+                                "Sits beside the Widgets button, or at the far left if Widgets is "
+                                "turned off. Drag it along the bar to move it; Reset position "
+                                "brings it back."),
             control=self.pin_left_edge)
         layout.addWidget(self._pin_card)
         # The grey-out reason's visible line (set together with the card in _sync_pin_card).
@@ -316,10 +319,10 @@ class WidgetPage(QWidget):
 
     def _sync_pin_card(self) -> None:
         """Grey the left-anchor pin out where it would silently do nothing, and say why - on the
-        card (tooltip, the rc.2 G6 precedent the Hardware page uses) AND in a small visible line
-        under it, the monitor_note pattern: a disabled card can't be reached by Tab or touch and
-        Narrator only reads a greyed switch, while the cause here is a Windows setting the user
-        can't see:
+        card (tooltip, the rc.2 G6 precedent the Hardware page uses), on the switch's accessible
+        description for Narrator (round-4 review), AND in a small visible line under it, the
+        monitor_note pattern: a disabled card can't be reached by Tab or touch and Narrator only
+        lands on the greyed switch, while the cause here is a Windows setting the user can't see:
 
         * "free_move" - Free Move is on: the pin steps aside while the widget floats, so the
           switch does nothing until Free Move is off;
@@ -338,11 +341,11 @@ class WidgetPage(QWidget):
         card enabled."""
         reasons = {
             "free_move": getattr(self.i18n, "PIN_LEFT_EDGE_GREY_FREE_MOVE",
-                                 "Turn off Free move to use this."),
+                                 "Turn off Free move to dock the widget at the left end."),
             "side": getattr(self.i18n, "PIN_LEFT_EDGE_GREY_SIDE",
                             "Only for taskbars at the top or bottom of the screen."),
             "left_busy": getattr(self.i18n, "PIN_LEFT_EDGE_GREY_LEFT_ALIGNED",
-                                 "Your taskbar's icons start at the left end, so the widget "
+                                 "The left end of your taskbar is already in use, so the widget "
                                  "stays next to the clock."),
         }
         kind: Optional[str] = None
@@ -382,6 +385,13 @@ class WidgetPage(QWidget):
             MiniGraphSection._set_card_enabled(card, kind is None)
             # A greyed card says why; an enabled card carries no stale tooltip.
             card.setToolTip("" if kind is None else reasons[kind])
+            # Narrator (round-4 review): while the card is greyed, the reason goes into the
+            # switch's accessible description too (the widgets the card named); an enabled card
+            # restores its own description - the setDescriptionVisible pattern.
+            desc = getattr(card, "_desc_label", None)
+            restore = desc.text() if (desc is not None and desc.isVisibleTo(card)) else ""
+            for w in getattr(card, "_named", []):
+                w.setAccessibleDescription(restore if kind is None else reasons[kind])
         # The same reason as a VISIBLE line under the card (PR #604 third-round review) - the
         # monitor_note pattern: text only when it shows, visibility flips emit layout_changed so
         # the dialog re-flows.

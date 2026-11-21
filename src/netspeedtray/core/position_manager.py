@@ -1113,13 +1113,16 @@ class PositionManager(QObject):
         self._left_anchor_probe_at: float = 0.0
         # The last GOOD anchor the pin computed for a bar: (the bar SCREEN's device name, base x in
         # logical px, the taskbar's DPI scale, the screen geometry it was read at) - kept while the
-        # Widgets button is enabled but its span is still unknown (startup, an Explorer restart: the
-        # probe is pending). _left_anchor_base_x keeps this anchor instead of falling back to the
-        # bar's left edge, which would sit the widget on the weather button until the probe lands.
-        # Keyed by SCREEN, not the taskbar HWND (PR #604 third-round review): an Explorer restart's
-        # fresh HWND is exactly when the anchor is needed, and a HWND key lost it - the screen
-        # keeps it across the restart. Stored with the scale and geometry it was read at: a DPI or
-        # geometry change (see _left_anchor_last_good_get) invalidates the stored logical x.
+        # Widgets button is enabled but its span is still unknown (an Explorer restart, or a
+        # re-probe on the same screen: the probe is pending). In memory only - it covers a restart
+        # or a re-probe within this run, not a fresh app start, which has nothing cached and falls
+        # back to the bar edge until its first probe answers (round-4 review). _left_anchor_base_x
+        # keeps this anchor instead of falling back to the bar's left edge, which would sit the
+        # widget on the weather button until the probe lands. Keyed by SCREEN, not the taskbar HWND
+        # (PR #604 third-round review): an Explorer restart's fresh HWND is exactly when the anchor
+        # is needed, and a HWND key lost it - the screen keeps it across the restart. Stored with
+        # the scale and geometry it was read at: a DPI or geometry change (see
+        # _left_anchor_last_good_get) invalidates the stored logical x.
         self._left_anchor_last_good: Optional[Tuple[str, int, float, Tuple[int, int, int, int]]] = None
         # The Widgets re-enable (widgets_toggle_generation's on_at) the primary's follow-up probe ran for.
         self._primary_interim_probe_for: Optional[float] = None
@@ -1475,11 +1478,14 @@ class PositionManager(QObject):
             return base
         # No Widgets button known. There may be none (or Widgets is off) - the first shell thing on
         # the left is then the bar's left edge itself. But while the button is ENABLED and its span
-        # is merely UNKNOWN (startup, an Explorer restart: the probe is pending), falling back to
-        # the bar edge would sit the widget ON the weather button until the probe lands: keep the
-        # LAST GOOD anchor for this bar's SCREEN instead. The layout refresh keeps this bar's probe
-        # current, so the real button's edge re-anchors the widget the moment the probe answers; a
-        # button that appears, moves or changes width re-anchors off its edge the same way.
+        # is merely UNKNOWN (an Explorer restart, or a re-probe on the same screen: the probe is
+        # pending), falling back to the bar edge would sit the widget ON the weather button until
+        # the probe lands: keep the LAST GOOD anchor for this bar's SCREEN instead - in memory
+        # only, so it covers a restart or a re-probe within this run, not a fresh app start (that
+        # has nothing cached; the bar edge stands until its first probe answers) (round-4 review).
+        # The layout refresh keeps this bar's probe current, so the real button's edge re-anchors
+        # the widget the moment the probe answers; a button that appears, moves or changes width
+        # re-anchors off its edge the same way.
         if taskbar_utils.widgets_button_enabled():
             base = self._left_anchor_last_good_get(taskbar_info, screen)
             if base is not None:

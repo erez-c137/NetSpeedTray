@@ -1,6 +1,6 @@
 """Settings > Widget > "Dock at the left end of the taskbar" (`pin_left_edge`).
 
-The reworked pin (maintainer spec on PR #554; second- and third-round reviews on #604): anchor the
+The reworked pin (maintainer spec on PR #554; second-, third- and fourth-round reviews on #604): anchor the
 widget to the FIRST shell thing on the LEFT of a top/bottom taskbar - the Widgets/weather button's
 right edge when one is there, else the bar's left edge - and keep LEFT_ANCHOR_GAP_PX off it (never
 abut a shell button; its own constant, so tuning the tray side doesn't move this one). When the
@@ -182,9 +182,9 @@ def test_pin_is_ignored_on_a_side_bar(monkeypatch):
 # --- the last good anchor while the Widgets probe is pending (2.2.2 review, should-fix 4) -------
 
 def test_probe_pending_keeps_the_last_good_anchor(monkeypatch):
-    """Widgets on but the button's span unknown (startup, an Explorer restart: the probe is
-    pending) - the widget keeps the LAST GOOD anchor for this bar instead of flashing onto the
-    weather button from the bar edge until the probe lands."""
+    """Widgets on but the button's span unknown (an Explorer restart, or a re-probe on the same
+    screen: the probe is pending) - the widget keeps the LAST GOOD anchor for this bar instead of
+    flashing onto the weather button from the bar edge until the probe lands."""
     _pin_alignment(monkeypatch, 1)
     monkeypatch.setattr(taskbar_utils, "widgets_button_enabled", lambda: True)
     scr = _screen(0, 1920)
@@ -304,6 +304,23 @@ def test_drag_offset_clamp_falls_back_to_the_screen_edge_without_a_tray(monkeypa
     with patch("netspeedtray.core.position_manager.QApplication.screenAt", return_value=scr):
         pm._apply_geometry(1500, 600)
     widget.move.assert_called_once_with(1920 - 85, 600)   # right edge flush with the screen end
+
+
+def test_pinned_drag_x_never_lands_left_of_the_anchor(monkeypatch):
+    """The clamp's 'never left of the anchor' floor (round-4 review): a tray rect whose right
+    limit lands LEFT of the anchored spot - a very wide widget here - must not pull the widget
+    left of anchor + LEFT_ANCHOR_GAP_PX. The clamp only caps how far RIGHT the offset reaches;
+    without the floor the widget would be re-anchored onto the tray side of the bar."""
+    _pin_alignment(monkeypatch, 1)
+    scr = _screen(0, 1920)
+    tb = _taskbar(scr, widgets_extent=(6, 1032, 158, 1080))   # the tray at (1790..1920)
+    pm, widget = _manager({"pin_left_edge": True}, scr, taskbar=tb)
+    widget.width.return_value = 1700   # the tray limit: 1790 - 1700 - 8 = 82, LEFT of the anchor
+    spot = pm.left_anchor_spot_x(tb)
+    assert spot == 158 + GAP           # anchor = button right edge 158 + gap
+    assert pm._left_anchor_drag_x(spot, scr) == spot     # dx 0: AT the anchor, never left of it
+    pm._state.config["left_anchor_drag_dx"] = 40
+    assert pm._left_anchor_drag_x(spot, scr) == spot     # dx 40: clamped back to the anchor
 
 
 def test_pin_follows_the_widgets_button_width(monkeypatch):
@@ -714,6 +731,26 @@ def test_pinned_drag_save_clamps_the_offset_to_the_bar():
     w.update_config.assert_called_once_with({"left_anchor_drag_dx": 1790 - 85 - TGAP - 100})
 
 
+def test_pinned_drag_save_keeps_the_offset_through_a_phantom_tray_rect():
+    """A drag dropped during an Explorer restart must not lose the offset (round-4 review): the
+    save path reads the tray rect through valid_rect, like the use path does - the phantom
+    (0, 1032, 0, 1032) rect a restarting Explorer reports is rejected, so its negative limit
+    cannot zero the drop's dx (the old code saved 0 and the widget snapped back to the anchor
+    on the next placement)."""
+    w = _DragWidget({"pin_left_edge": True})
+    w.pos = MagicMock(return_value=QPoint(300, 600))   # 200 px right of the anchor
+    w.width = MagicMock(return_value=85)
+    w.update_config = MagicMock()
+    pm = MagicMock()
+    pm.is_floating.return_value = False
+    pm.left_anchor_spot_x.return_value = 100
+    tb = _taskbar(_screen(0, 1920), tray=(0, 1032, 0, 1032))   # the restarting Explorer's phantom
+    handler = InputHandler(widget=w, position_manager=pm, tray_manager=MagicMock())
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb):
+        handler._save_dragged_position()
+    w.update_config.assert_called_once_with({"left_anchor_drag_dx": 200})   # KEPT, not zeroed
+
+
 def test_pinned_fallback_drag_still_saves_tray_offset_x():
     """Pin on but not applying (left-aligned / Win10 fallback, side bars): the widget sits at the
     normal tray spot, so the drop saves tray_offset_x as before."""
@@ -986,8 +1023,9 @@ def test_pin_card_enabled_on_a_bottom_bar():
 def test_pin_card_grey_reason_is_also_a_visible_note():
     """The grey-out reason is said OUTSIDE the card too - a small secondary-text line under it,
     the monitor_note pattern (a disabled card can't be reached by Tab or touch, and Narrator only
-    reads a greyed switch, while the cause here is a Windows setting the user can't see) - with
-    the tooltip kept as a bonus (PR #604 third-round review). An enabled card hides the line."""
+    lands on a greyed switch - which now also carries the reason as its accessible description,
+    round-4 review; the cause here is a Windows setting the user can't see) - with the tooltip
+    kept as a bonus (PR #604 third-round review). An enabled card hides the line."""
     page = _page()
     assert page.pin_note.isVisibleTo(page) is False
     tb = MagicMock()
@@ -1031,12 +1069,12 @@ def test_settings_and_placement_agree_on_a_mirrored_bar(monkeypatch):
 
 
 def test_pin_card_uses_the_review_copy():
-    """2.2.2 third-round review (copy): no '8 px in', no 'tray spot' - and no 'falls back' claim
-    (a centred bar that fills up hides the widget, it does not fall back) - the maintainer's
-    exact suggested sentence instead."""
+    """2.2.2 third-round review (copy), reworded by the fourth-round review: no '8 px in', no
+    'tray spot', no 'falls back' claim - and 'if Widgets is turned off' (the old 'when it's off'
+    read as 'when this option is off') - the maintainer's exact suggested sentence."""
     page = _page()
     assert page.i18n.PIN_LEFT_EDGE_DESC == (
-        "Sits beside the Widgets button, or at the far left when it's off. "
+        "Sits beside the Widgets button, or at the far left if Widgets is turned off. "
         "Drag it along the bar to move it; Reset position brings it back.")
     assert page._pin_card._desc_label.text() == page.i18n.PIN_LEFT_EDGE_DESC
 
@@ -1046,7 +1084,7 @@ def test_pin_description_copy_mirrored_to_every_locale():
     translators with 2.2.2). It carries no digits, so the fixed-text digits scan (bn_BD's native
     numerals) has nothing to convert."""
     import json
-    expected = ("Sits beside the Widgets button, or at the far left when it's off. "
+    expected = ("Sits beside the Widgets button, or at the far left if Widgets is turned off. "
                 "Drag it along the bar to move it; Reset position brings it back.")
     locales = Path(__file__).parents[3] / "netspeedtray" / "constants" / "locales"
     checked = 0
@@ -1055,6 +1093,37 @@ def test_pin_description_copy_mirrored_to_every_locale():
         assert data["PIN_LEFT_EDGE_DESC"] == expected, p.name
         checked += 1
     assert checked == 17
+
+
+def test_pin_grey_reason_copy_uses_the_fourth_round_wording():
+    """The fourth-round review's exact sentences: the left-busy reason no longer claims the
+    taskbar's icons start at the left end (mirrored bars keep the clock there), and the Free
+    Move one names what to dock instead of an ambiguous 'this'."""
+    page = _page()
+    assert page.i18n.PIN_LEFT_EDGE_GREY_LEFT_ALIGNED == (
+        "The left end of your taskbar is already in use, so the widget stays next to the clock.")
+    assert page.i18n.PIN_LEFT_EDGE_GREY_FREE_MOVE == (
+        "Turn off Free move to dock the widget at the left end.")
+
+
+def test_pin_card_grey_reason_reaches_the_switch_for_narrator():
+    """While the card is greyed, the reason goes into the switch's accessible description too
+    (round-4 review: Narrator lands on the greyed switch, and the card itself is out of Tab /
+    touch reach); an enabled card restores its own description."""
+    page = _page()
+    tb = MagicMock()
+    tb.get_edge_position.return_value = BOTTOM
+    tb.tasklist_rect = None
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb), \
+            patch("netspeedtray.core.system_events.read_taskbar_alignment", return_value=1):
+        page._sync_pin_card()
+        assert page._pin_card.isEnabled() is True
+        assert page.pin_left_edge.accessibleDescription() == page._pin_card._desc_label.text()
+    tb.get_edge_position.return_value = LEFT
+    with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb):
+        page._sync_pin_card()
+        assert page._pin_card.isEnabled() is False
+        assert page.pin_left_edge.accessibleDescription() == page.i18n.PIN_LEFT_EDGE_GREY_SIDE
 
 
 def test_pin_lives_on_the_widget_page_only():

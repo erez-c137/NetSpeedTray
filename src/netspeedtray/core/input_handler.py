@@ -309,7 +309,7 @@ class InputHandler(QObject):
             else:
                 # Calculate constrained offset
                 # We need to know WHICH offset to update (x or y) based on taskbar orientation
-                from netspeedtray.utils.taskbar_utils import get_taskbar_info
+                from netspeedtray.utils.taskbar_utils import get_taskbar_info, valid_rect
                 from netspeedtray import constants
 
                 # Resolve against the PREFERRED taskbar (a secondary drag must not measure its offset
@@ -332,20 +332,25 @@ class InputHandler(QObject):
                     # tray cannot land on the clock after a monitor change, or when the tray
                     # grows (a new tray icon, an IME indicator). With no tray rect known (a
                     # secondary bar has none - a known limit) the anchor screen's edge stands.
-                    # The placement re-clamps the same way when it consumes the offset
-                    # (_left_anchor_drag_x).
+                    # The rect goes through valid_rect first, like the use path does
+                    # (_left_anchor_drag_x): a just-restarted Explorer reports a phantom
+                    # (0, 1032, 0, 1032) tray rect for seconds, and its negative limit would
+                    # zero a drop's offset (round-4 review). The placement re-clamps the same
+                    # way when it consumes the offset (_left_anchor_drag_x).
                     try:
                         width = max(int(self.widget.width()), 0)
                         anchor_screen = tb_info.get_screen()
                         geo = anchor_screen.geometry() if anchor_screen is not None else None
                         max_x = geo.left() + geo.width() - width if geo is not None else None
-                        tray_rect = tb_info.get_tray_rect()
+                        tray_rect = valid_rect(tb_info.get_tray_rect())
                         if tray_rect and max_x is not None:
                             tray_left = round(tray_rect[0] / dpi_scale)
                             tray_limit = tray_left - width - constants.layout.TRAY_EDGE_MIN_GAP_PX
-                            # Never below the anchored spot: a degenerate tray rect (a
-                            # just-restarted Explorer reports (0, 1032, 0, 1032) for seconds)
-                            # must not pull the widget left of its anchor.
+                            # Never below the anchored spot: a REAL tray rect whose limit lands
+                            # left of the anchor (a wide widget) must not pull the saved offset
+                            # below it - a drop at or right of the anchor keeps its offset (the
+                            # round-4 floor test covers this). A phantom rect is already gone
+                            # (valid_rect above).
                             max_x = min(max_x, max(tray_limit, anchor_spot))
                         if max_x is not None and anchor_spot + new_dx > max_x:
                             new_dx = max(0, max_x - anchor_spot)
