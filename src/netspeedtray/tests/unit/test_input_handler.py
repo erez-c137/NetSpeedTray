@@ -358,8 +358,6 @@ def test_widget_ends_a_lost_drag_on_deactivate_and_hide():
     w.hideEvent(QHideEvent())
     assert w.input_handler.end_lost_drag.call_count == 2
 
-if __name__ == '__main__':
-    unittest.main()
 
 
 class TestDragThreshold(unittest.TestCase):
@@ -408,3 +406,17 @@ class TestDragThreshold(unittest.TestCase):
         self.handler.handle_mouse_move(self._create_mouse_event(
             global_x=140, global_y=100, type=QEvent.Type.MouseMove))
         self.assertTrue(self.handler._is_dragging)
+
+    def test_a_click_with_a_wobble_is_a_click_and_saves_no_position(self):
+        """The #616 outcome: release after a sub-threshold wobble takes the click path."""
+        self.handler._on_single_click = MagicMock()
+        self._press_then_move(2, 1)
+        self.handler.handle_mouse_release(self._create_mouse_event(
+            global_x=152, global_y=151, type=QEvent.Type.MouseButtonRelease))
+        self.handler._on_single_click.assert_called_once()
+        self.mock_widget.update_config.assert_not_called()
+        self.assertFalse(self.mock_widget._dragging)
+
+
+if __name__ == '__main__':
+    unittest.main()
