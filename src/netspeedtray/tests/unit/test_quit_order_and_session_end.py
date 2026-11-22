@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from netspeedtray.core import monitor_thread
 from netspeedtray.views.widget import main as M
 from netspeedtray.views.widget.main import NetworkSpeedWidget
 
@@ -87,6 +88,55 @@ def test_cancelled_end_session_saves_nothing():
     m = _msg(_WM_ENDSESSION, 0, 0)
     NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", ctypes.addressof(m))
     fake._save_session_essentials.assert_not_called()
+
+
+def test_system_shutdown_blocks_helper_before_window_notification(monkeypatch):
+    worker = monitor_thread.StatsMonitorThread()
+    get_metrics = MagicMock(side_effect=[1, 0])
+    monkeypatch.setattr(ctypes.windll.user32, "GetSystemMetrics", get_metrics)
+    proc = MagicMock(returncode=0)
+    proc.communicate.return_value = ("sample", "")
+    popen = MagicMock(return_value=proc)
+    monkeypatch.setattr(monitor_thread.subprocess, "Popen", popen)
+
+    with pytest.raises(RuntimeError, match="session is ending"):
+        worker._run_child(["nvidia-smi"], timeout=1)
+    popen.assert_not_called()
+
+    assert worker._run_child(["nvidia-smi"], timeout=1) == "sample"
+    get_metrics.assert_called_with(0x2000)  # SM_SHUTTINGDOWN
+
+
+def test_session_query_stops_helper_before_save_and_cancel_resumes(monkeypatch):
+    worker = monitor_thread.StatsMonitorThread()
+    inflight = MagicMock()
+    inflight.poll.return_value = None
+    worker._child = inflight
+    proc = MagicMock(returncode=0)
+    proc.communicate.return_value = ("sample", "")
+    popen = MagicMock(return_value=proc)
+    monkeypatch.setattr(monitor_thread.subprocess, "Popen", popen)
+    monkeypatch.setattr(ctypes.windll.user32, "GetSystemMetrics", lambda _metric: 0)
+
+    fake = _session_fake()
+    fake.monitor_thread = worker
+
+    def assert_paused(_reason):
+        inflight.kill.assert_called_once_with()
+        with pytest.raises(RuntimeError, match="session is ending"):
+            worker._run_child(["nvidia-smi"], timeout=1)
+        popen.assert_not_called()
+
+    fake._save_session_essentials.side_effect = assert_paused
+    query = _msg(_WM_QUERYENDSESSION)
+    assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", ctypes.addressof(query)) == (False, 0)
+    fake._save_session_essentials.assert_called_once_with("query-end-session")
+    inflight.kill.assert_called_once_with()
+    popen.assert_not_called()
+
+    cancelled = _msg(_WM_ENDSESSION, 0)
+    assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", ctypes.addressof(cancelled)) == (False, 0)
+    assert worker._run_child(["nvidia-smi"], timeout=1) == "sample"
 
 
 def test_session_essentials_save_config_and_odometer_within_budget():

@@ -10,9 +10,11 @@ Offloading this I/O from the main UI thread ensures consistent 60+ FPS widget mo
 and prevents micro-stutters during system stack latency.
 """
 
+import ctypes
 import gc
 import logging
 import math
+import sys
 import threading
 import time
 from typing import Dict, Any, Optional, List, NamedTuple, Tuple
@@ -42,6 +44,8 @@ from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.network_identity_monitor import NetworkIdentityMonitor
 
 logger = logging.getLogger("NetSpeedTray.StatsMonitorThread")
+
+_SM_SHUTTINGDOWN = 0x2000
 
 # LibreHardwareMonitor identifier prefixes that scope a sensor to something that is NOT the CPU.
 # The CPU-temperature search falls back to matching sensor *names* (for boards that label the die
@@ -296,6 +300,7 @@ class StatsMonitorThread(QThread):
         # The helper process in flight, if any - stop() kills it (see _run_child).
         self._child: Optional[subprocess.Popen] = None
         self._child_lock = threading.Lock()
+        self._session_ending = False
         # nvidia-smi is a synchronous subprocess (up to NVIDIA_SMI_TIMEOUT_SEC). Temps/power
         # change slowly, so poll it on a slow sub-cadence and cache between calls - keeps the
         # per-second network readout off the subprocess critical path.
@@ -2407,11 +2412,17 @@ class StatsMonitorThread(QThread):
         # Not in the app's folder (the inherited CWD): a child sitting there blocks a portable
         # update from renaming the folder for as long as it lives (helpers.neutral_cwd).
         from netspeedtray.utils.helpers import neutral_cwd
+        cwd = neutral_cwd()
         with self._child_lock:
             if not self._is_running:
                 raise RuntimeError("stopping")
+            # Windows can begin shutdown before the widget receives WM_QUERYENDSESSION.
+            if self._session_ending or (
+                sys.platform == "win32" and ctypes.windll.user32.GetSystemMetrics(_SM_SHUTTINGDOWN)
+            ):
+                raise RuntimeError("Windows session is ending")
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                    stdin=subprocess.DEVNULL, encoding="utf-8", cwd=neutral_cwd(),
+                                    stdin=subprocess.DEVNULL, encoding="utf-8", cwd=cwd,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self._child = proc
         try:
@@ -2433,15 +2444,24 @@ class StatsMonitorThread(QThread):
             with self._child_lock:
                 self._child = None
 
+    def set_session_ending(self, ending: bool) -> None:
+        """Pause helper launches during session shutdown and resume if Windows cancels it."""
+        with self._child_lock:
+            self._session_ending = ending
+        if ending:
+            self._kill_child()
+
     def _kill_child(self) -> None:
         with self._child_lock:
             proc = self._child
-        if proc is not None and proc.poll() is None:
-            try:
+        if proc is None:
+            return
+        try:
+            if proc.poll() is None:
                 proc.kill()
-                self.logger.info("Stopped an in-flight helper process at quit.")
-            except OSError:
-                pass
+                self.logger.info("Stopped an in-flight hardware helper process.")
+        except OSError:
+            pass
 
     def stop(self) -> None:
         """Stops the monitoring loop: kills a helper process still running (nvidia-smi can take
