@@ -38,7 +38,7 @@ def mock_i18n():
     i18n.APP_USAGE_TAB_LABEL = "App Usage"
     i18n.SHOW_APP_ACTIVITY_MENU_ITEM = "Show App Usage"
     i18n.SHOW_MONITOR_MENU_ITEM = "Show Monitor"
-    i18n.CHECK_CONN_ACTION = "Check connection"   # 2.2.2 D7 menu item
+    i18n.CHECK_CONN_MENU_ITEM = "&Check connection"   # 2.2.2 D7 menu item (#619: its own key)
     i18n.PAUSE_MENU_ITEM = "Pause"
     i18n.RESUME_MENU_ITEM = "Resume"
     i18n.RESET_POSITION_MENU_ITEM = "Reset Position"

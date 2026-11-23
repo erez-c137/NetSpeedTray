@@ -109,9 +109,10 @@ class TrayIconManager(QObject):
                 monitor_action.triggered.connect(self.widget.open_monitor_window)
 
             # Check connection (2.2.2 D7): the on-demand router + internet check, until now only inside
-            # the Monitor. The sheet's own label (CHECK_CONN_ACTION), so no new string; hideable in Settings.
+            # the Monitor; hideable in Settings. Its own key with an Alt letter (#619): CHECK_CONN_ACTION
+            # also labels buttons, where an '&' would add a stray shortcut.
             self.check_connection_action = self.context_menu.addAction(
-                getattr(self.i18n, "CHECK_CONN_ACTION", "Check connection"))
+                getattr(self.i18n, "CHECK_CONN_MENU_ITEM", "&Check connection"))
             if hasattr(self.widget, 'open_connection_check'):
                 self.check_connection_action.triggered.connect(self.widget.open_connection_check)
 
