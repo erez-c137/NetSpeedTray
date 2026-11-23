@@ -75,6 +75,632 @@ ALSO
 
 ---
 
+## [2.2.1] - November 23, 2026
+
+The first patch after 2.2.0: the hover card lists every GPU, a hybrid laptop's NVIDIA GPU gets to
+sleep, and - as promised - the 0.5 s update rate is back as an option. RAM and VRAM can be shown on
+their own, the Wi-Fi name no longer needs Location access, you choose what the right-click menu
+shows, and the app checks for updates while it keeps running. A docked widget that Windows moves
+(Remote Desktop) goes back onto the taskbar, the app wakes far less often at idle, and in-app
+updates are checked harder: the installer against the release's checksums, a portable update file
+by file.
+
+> **Upgrading:** a few things will look different, all on purpose.
+>
+> - **On a PC with two or more GPUs, the hover card lists each one** - name, usage, temperature,
+>   power and memory - in place of the single GPU and VRAM rows. The taskbar still shows one GPU,
+>   exactly as before. Turn the list off in Settings → Hardware, under the GPU picker. ([#530])
+> - **On a hybrid (Optimus) laptop, GPU temperature and power read "—" while the NVIDIA GPU
+>   sleeps.** They come back once something - a game, a video, a CUDA job - wakes it. ([#500])
+> - **If RAM or VRAM was switched on while CPU or GPU monitoring was off** (possible in 2.1.x), the
+>   widget shows it after the update, and RAM history starts recording (with "Record hardware history"
+>   on, the default). ([#520])
+> - **In Stacked mode, a Display order position set to None hides that slot**, as a row
+>   layout always did. It used to be painted anyway. ([#520])
+> - **Update offers no longer open a window on their own.** What the startup check (and the new
+>   checks while the app runs) finds shows as a small notice with a "What's new" button. "Check
+>   for Updates" in the menu still opens the dialog. ([#508])
+> - **The Location explainer is gone**, because the Wi-Fi name no longer needs Location. Its
+>   "dismissed" setting is dropped from your settings file through the usual migration, which
+>   backs the file up first. ([#493])
+> - **The first Monitor open after the update takes a moment longer.** matplotlib 3.11 keeps its
+>   cache in `%LOCALAPPDATA%\matplotlib` now, so its font cache is rebuilt once. ([#519])
+> - **Going back to 2.2.0 with 0.5 s picked** puts the rate on 1 s; 2.1.7 keeps 0.5 s. ([#517])
+
+### Added
+
+- **Choose what the right-click menu shows.** Settings → General → Interaction → "Right-click menu
+  items": switch Show Monitor, Pause / Resume, Reset Position, Check for Updates or Support this
+  Project off (or on). Settings and Exit always stay. Pause / Resume was its own switch; it's now a
+  row in this list, still off by default. Nothing changes until you change it. ([#543]; idea from
+  [#526], thanks [@kamal63442])
+
+  *Under the hood: one new key, `context_menu_hidden_items` (stable ids, unknown ones dropped one at
+  a time, a non-list resets to `[]`; 2.2.0 keeps it as an unknown key). Hidden items are applied on
+  every menu open, on top of the existing rules (Reset Position only after a move, Check for Updates
+  under the IT policy), and separators collapse so none leads, trails or doubles - replacing the old
+  Pause/Reset special case - even when refreshing an item fails ([#565]). The switches reuse the menu's own labels minus the `&` marker, so the
+  only new strings are the section title and its note; `PAUSE_IN_MENU_LABEL` is removed.*
+
+- **"Idle" on the hover card for a hybrid laptop's NVIDIA GPU.** While NetSpeedTray lets the GPU
+  sleep ([#500]), its temperature and power read "—"; the row now says why, with a small "Idle" tag
+  and a tooltip. It shows only when those readings really are blank because of that - not with
+  LibreHardwareMonitor filling them in, not when nvidia-smi is failing, and not on desktops. In
+  Automatic the single GPU row mixes cards, so the tag shows there only when you picked the NVIDIA
+  GPU. The tag keeps its space, so the card doesn't change width when the GPU wakes. ([#542])
+
+- **The hover card lists every GPU on a PC with two or more.** Each card gets its own usage,
+  temperature, power and memory, read from its own sensors; the taskbar keeps showing the one you
+  picked, or Automatic. Identical cards are numbered "#1" / "#2" and never borrow each other's
+  sensors. The list only joins a hover card you already get - it never opens one on its own. On by
+  default, with a toggle beside the GPU picker in Settings → Hardware that shows only on multi-GPU
+  PCs; one GPU, nothing changes. ([#530]; [#236], thanks [@balciseri])
+
+  *Under the hood: built from what the poll already reads every tick - per-adapter busiest engine
+  (`per_adapter_engine_utilization()`, the same rule as the picked-card readout, so the max is
+  Automatic's figure) and per-adapter memory. The list adds no `GpuPollResult` field and no extra PDH read, and
+  the list never starts nvidia-smi: it reuses a recent cached reading only with exactly one NVIDIA
+  card. "On taskbar" marks a row only when a card is picked and the taskbar actually paints a GPU.
+  In Automatic with no sensor group, the iGPU row shows the same Intel RAPL PP1 power the taskbar
+  does, so one value appears in both places. Names are elided at 170 px with the number kept
+  visible, in the name's own face (no fallback-list font load for a Han GPU name). A failed GPU
+  poll keeps the last list; the INFO log line carries vendor id and kind, never names.
+  `gpu_automatic_golden.json` is unchanged.*
+
+- **A 0.5 s update rate, opt-in.** "Real-time (0.5s)" is a fifth position at the left end of the
+  Update rate slider, for a widget that refreshes twice a second, next to the default "Standard
+  (1s)". A line under the slider says what it costs: more CPU, and history is still saved once per
+  second. 1.2.4 had it and 1.2.6 dropped it. ([#517], [#533]; [#456], thanks
+  [@evandrosergiooliveira-cloud])
+
+  *Under the hood: `UpdateMode.PRESETS = (0.5, 1, 2, 5, 10)`; schema choices, the migration snap
+  and the resolver floor follow it, with no config version bump - a hand-edited sub-second value
+  now lands on 0.5 s instead of 1 s. At 0.5 s the mini graph and the Monitor's session view take one
+  point per wall-clock second (the plain average of that second's samples), so the graph keeps the
+  same window, the same 5000-point cap (about 83 min) and the same smoothing cost as at 1 s; the
+  numbers still update every 0.5 s. The spike filter's baseline always spans at least 20 s. History
+  is unchanged: `net_raw` merges intervals ending in the same second, so it's still about one row
+  per active interface per second. Two readings that would have been halved at 0.5 s are fixed
+  before they could ship - hardware coverage (`hw_raw` keeps one row per metric per second, so the
+  Stats sheet would have read 50%) and the "Above <throttle> for" time - both now count one row per
+  `max(poll, 1 s)`, including history still waiting for its 2.2 upgrade ([#538]). The Monitor window, LHM, nvidia-smi and link-stat cadences don't change. The
+  "Turn on temperatures" tip's wait for LibreHardwareMonitor is now time-based
+  (`NOT_DETECTED_GRACE_SEC = 4.0`, exactly what five polls gave at 1 s) instead of five polls, which
+  would have halved it at 0.5 s ([#532]).*
+
+- **RAM or VRAM on the widget without CPU or GPU monitoring.** Turn on just "Show RAM usage" and the
+  widget reads "RAM 9.2/16.0G" - Side-by-Side and Stacked, Auto-Cycle, the Small taskbar
+  and side taskbars, where it shows the percent used and the hover card has the details. Same for
+  VRAM, and the hover card and the metrics endpoint list them on their own too. ([#520])
+
+  *Under the hood: a hardware slot is now CPU-or-RAM and GPU-or-VRAM (`helpers.hardware_slots`); a
+  slot without its usage monitor paints a memory-only row whose width comes from the same fixed
+  reference string the layout reserves, so the widget never resizes when the first reading
+  arrives. A lone row sizes its label for its own word; stacked rows share the `VRAM ` cell so they
+  line up. Every layout that could already show memory paints byte-for-byte as before (render
+  guard over 102 layouts).*
+
+- **Line spacing between the upload and download rows**, in Settings → Appearance → Interface
+  layout. It reads "-4 … Default … +4": pixels tighter or looser than the default, which is
+  today's 1 px gap, pixel-identical to 2.2.0. On a docked horizontal taskbar a wider gap gives way
+  rather than letting the widget outgrow the bar, so the widget is never taller than with the
+  default; CPU/GPU-only modes don't move. ([#455], thanks [@pasharm]; [#533])
+
+  *Under the hood: the config still stores the gap in pixels, now -3..+5 (`LINE_SPACING_MIN/MAX` =
+  default ± `LINE_SPACING_OFFSET_RANGE`); each segment's value is default + offset. The pre-release
+  range was -4..+4 px with raw-pixel labels, where "0" looked like the default but "+1" was it; a
+  stored -4 px (main-branch builds only, #455 never shipped) resets to the default through the
+  validator. +5 px goes through the same docked-bar give-way, and its tests run at +5. The row wraps
+  (`Win11Segmented(wrap=True)`) only at the dialog's minimum width, so the localized "Default" no
+  longer sets the window's minimum width (en 769 → 647 px). The offsets are left-to-right isolated,
+  so Hebrew reads "+1", not "1+" ([#538]).*
+
+### Changed
+
+- **The Wi-Fi name no longer needs Location access.** It's read through Windows' connected-profile
+  API, which Microsoft recommends for this, and shows with Location off device-wide or with
+  desktop-app access off. The band display no longer touches the old query either. The "Color-coded" band choice now
+  reads "(2.4G / 5G)": a 6 GHz network can't be told apart by channel alone, and no version ever
+  showed a 6G tag. ([#493], thanks [@XYuki-cloud])
+
+  *Under the hood: `WlanConnectionProfileDetails.GetConnectedSsid` (WinRT) replaces the
+  `WlanQueryInterface(current_connection)` name query, with no fallback to it or to a Wi-Fi scan.
+  The name is cached between network-change notifications, with a 60 s recovery refresh and a
+  refresh when the band changes; the band still refreshes every 5 s, with a `WlanEnumInterfaces` +
+  channel-only fallback when WinRT isn't available. The worker sends the identity only when it
+  changes or after a resume.*
+
+- **RAM history is recorded whenever RAM is shown,** not only with CPU monitoring on. It still
+  follows "Record hardware history". VRAM is shown but not recorded. ([#520])
+- **Showing VRAM on its own is cheap.** It reads only the GPU memory counters: no GPU-load polling,
+  no sensor reads and never nvidia-smi. The total comes from nvidia-smi's cached value if it has
+  one, otherwise from Windows' adapter info - for AMD and Intel Arc too, so a side-bar "VRAM / NN%"
+  no longer reads N/A forever there. ([#520])
+- **Settings → Hardware no longer grays out RAM and VRAM** when CPU or GPU monitoring is off. The GPU
+  picker works with VRAM alone, "Show hardware only when hovering the widget" counts RAM and VRAM, "Record
+  hardware history" (Settings → Advanced) counts RAM (VRAM isn't recorded, so VRAM alone leaves it grayed), and "Show
+  RAM/VRAM labels" grays out when it would change nothing (a memory row on its own always shows its
+  label). ([#520], [#532])
+- **Grayed-out Hardware settings say what would turn them on.** The memory-labels switch with only
+  RAM on asks for CPU monitoring, not "CPU or GPU" (GPU wouldn't help); the hover-card switch names
+  CPU, GPU, RAM and VRAM, and "Record hardware history" names CPU, GPU, RAM and the battery power
+  switch in the hover card. ([#533])
+
+  *Under the hood: one reason per grayed state - Temperatures / Power keep the old "CPU or GPU" text
+  under the honest key `HARDWARE_NEEDS_CPU_OR_GPU_TOOLTIP`; the hover-card switch gets
+  `HARDWARE_NEEDS_ANY_MONITOR_TOOLTIP`; memory labels pick CPU, GPU, "CPU or GPU" or "RAM or VRAM" by
+  which memory readout is on (`HARDWARE_NEEDS_CPU_TOOLTIP` is back with its 2.2.0 text); the Record
+  card gets `RECORD_HARDWARE_HISTORY_NEEDS_MONITOR_SUB`. A test walks every grayed state and checks
+  that following the advice makes the card live. The Record card's state is decided in one place,
+  `SettingsDialog._sync_record_card`, plus `AdvancedPage.load_settings`; neither counts VRAM now.*
+
+- **The update-check switch is now "Check for updates automatically".** It also covers the checks
+  while the app runs, not only the one at startup. Same setting, same default. ([#533]; [#508])
+- **The 1-second update rate is called "Standard"**, not "Aggressive": it's the default and the
+  recommended rate. Nothing else about it changes. ([#533])
+
+  *Under the hood: `UpdateMode.AGGRESSIVE` → `UpdateMode.STANDARD`. Keys whose meaning changed were
+  renamed (`CHECK_FOR_UPDATES_AUTO_LABEL`, `UPDATE_MODE_STANDARD_LABEL`) so an old translation can't
+  survive with the wrong meaning. In Japanese, "Balanced (2s)" was 標準 ("standard"); it's バランス now,
+  and a test checks that no locale gives two presets the same name.*
+- **"Not now" on an update offer snoozes that version for 3 days**, across restarts. A newer
+  release, or a manual check, still shows. ([#508])
+- **With a VPN up, the router ping goes to your real router.** When several default routes exist,
+  the latency probe and Check connection use a connected physical adapter's route, so a full-tunnel
+  VPN no longer turns the "gateway" hop into one across the internet, where its loss would have
+  been blamed on your Wi-Fi. Check connection describes the adapter that route actually goes
+  through - a docked laptop with Ethernet and Wi-Fi on one router used to see the Wi-Fi's details.
+  With one default route, nothing changes. ([#486])
+- **WMI and COM load only when something needs them.** A default setup starts without them; the
+  router lookup reads Windows' route table instead. ([#486])
+
+  *Under the hood: `default_gateway_ip()` reads `GetIpForwardTable2` (IPv4 `0.0.0.0/0` via a router,
+  lowest route + interface metric, disconnected and on-link VPN routes skipped) - 0.33-0.43 ms
+  against 115-153 ms through WMI - and falls back to WMI only when the table can't be read.
+  `win32com.client` and `wmi` import on first use (`utils/com_utils.py`) on the COM-initialized
+  worker that needs them; `import_wmi()` releases `wmi`'s import-time COM object in that apartment,
+  which replaces the GUI-thread `preload_wmi()` and still keeps "Win32 exception occurred releasing
+  IUnknown" out of the exit. A desktop with no battery skips WMI in the battery poll.*
+
+### Fixed
+
+- **A hybrid laptop's NVIDIA GPU can sleep.** With GPU temperature or power on and no
+  LibreHardwareMonitor data, nvidia-smi ran every 5 s, and querying a sleeping Optimus GPU wakes
+  it, so it never slept - a battery drain. On a hybrid laptop nvidia-smi now runs only while the
+  GPU is already awake, and not even once at app start; the VRAM total comes from Windows until
+  then. Desktops and NVIDIA-only laptops keep the 5 s cadence. ([#500]; [#236])
+
+  *Under the hood: hybrid = an NVIDIA GPU plus another maker's (DXGI), a battery, a mobile
+  platform role (`PowerDeterminePlatformRoleEx`, so a desktop's USB UPS doesn't count) and no
+  display on the NVIDIA adapter's own outputs (`EnumOutputs`). Awake = its own PDH engine
+  utilization (which Task Manager reads too and never wakes a GPU) above 0 within max(15 s, 3
+  sample windows). A sample whose window holds our own nvidia-smi call is never counted, so our
+  own wake can't keep the gate open at any update rate. If utilization can't be read two polls in a
+  row, a hybrid fails open: every 5 s on AC, every 30 s on battery; a single failed read keeps the
+  last verdict without a new nvidia-smi call, so a one-off counter glitch can't wake the GPU
+  ([#566]). The hover list and the taskbar show the same "—" while it sleeps.*
+
+- **A failing nvidia-smi backs off** - 10 s, doubling, up to 300 s between tries - instead of
+  retrying every 5 s forever, on every PC. It's logged once per streak and once on recovery, and
+  the VRAM total falls back to Windows' figure instead of N/A. ([#500])
+- **An nvidia-smi `[N/A]` or out-of-range temperature or power clears the reading** instead of
+  leaving the last good value up for the rest of the session. ([#500])
+- **An NVIDIA eGPU unplugged mid-session takes its VRAM total with it**, instead of leaving it on
+  the remaining GPU's memory in Automatic. ([#500])
+- **A docked widget that Windows moved goes back onto the taskbar.** Connecting over Remote
+  Desktop (or any display change that keeps the same resolution) can make Windows move the window;
+  NetSpeedTray only ever compared against the spot it had placed it last, so it never moved it back.
+  It now checks where the widget really is - and leaves a widget you're dragging alone. ([#570];
+  [#314], thanks [@bobbergen])
+- **A CPU/GPU label color you picked is painted as picked on an accent-colored taskbar.** With
+  "Show accent color on Start and taskbar" on, the legibility guard swapped any color too faint
+  against the accent shade Windows reports for the text color - your custom label colors
+  included, so a red GPU label could turn white while the green CPU label stayed green. The shade
+  Windows reports can also be wrong (taskbar mods such as Windhawk repaint the bar). Custom label
+  colors now skip the guard; brand colors and the speed/arrow/graph colors keep it. When the
+  guard does swap one of your other colors, Settings now says so in a short note under those color
+  rows, and the preview strip shows the accent shade the colors are judged against instead of a
+  neutral gray. ([#556], [#558], [#559]; thanks [@Buuuush])
+- **A rare crash while drawing the widget is gone.** In side-by-side or cycle mode on a top or
+  bottom taskbar, a drawing error while the widget measured its right alignment left a painter open on
+  a freed image, which ends the process (also in the Settings preview). It is closed in every case now.
+  ([#564])
+- **The app hears about new releases while it keeps running.** It checked once, 5 s after launch,
+  so a PC that sleeps instead of restarting could run for weeks without seeing an update. It now
+  checks every 3 hours and a minute after waking from sleep - GitHub is still asked at most about
+  once a day, and the policy and the "Check for updates automatically" switch still apply. The offer waits while
+  a fullscreen app, a modal dialog or the lock screen is up, or while nobody has touched the PC for
+  2 minutes, so it can't time out unseen - and is dropped if automatic checks are turned off (or a
+  policy turns them off) before it shows. ([#508], [#538], [#541])
+- **The Monitor's "No traffic recorded" note no longer blames Pause.** It said the PC was off, idle
+  or paused, but NetSpeedTray's Pause only freezes the widget - recording carries on. It now says the
+  PC was off, asleep or idle, or NetSpeedTray wasn't running. ([#533]; raised in [#525], thanks
+  [@RainThings])
+
+  *Under the hood: `NET_GRAPH_NO_TRAFFIC` is split into `NET_GRAPH_NO_TRAFFIC_TITLE` (the old first
+  line, every translation kept) and `NET_GRAPH_NO_TRAFFIC_REASON`, joined in `renderer.py`. "PC off"
+  and "app closed" both leave no `app_sessions` row, so it stays one sentence rather than guessing.*
+
+- **"Up to date" and "check failed" boxes show only after "Check for Updates" in the menu.** A
+  manual check that found an update left them armed, and the next automatic check popped one up.
+  ([#508])
+- **With "Hide while app buttons cover the widget" off, the widget no longer sits on top of the app
+  buttons when another spot is clear.** On a left-aligned taskbar with the Widgets/weather button
+  beside the tray, turning the setting off also turned off the full-bar fallback, so a full bar
+  left the widget on the last app buttons or the "..." button. It now moves to the spot by the tray,
+  the same move it makes with the setting on, and is never hidden; it goes back once there's room.
+  When neither spot is clear - the tray spot would cover the weather text, or the buttons reach
+  both - it stays at its normal spot, as in 2.2.0. That is the common case on a full bar:
+  Windows shrinks the weather button to an icon first, and the tray spot would cover it. A widget that never learned where the Widgets
+  button is (the "covering the Widgets panel" notice already shown) no longer sits on the button
+  either. Nothing changes with the setting on, on centered taskbars, for a dragged widget, on side
+  taskbars, in Free Move, or on ExplorerPatcher / Windows 10 taskbars. ([#522])
+
+  *Under the hood: `_app_overlap_context()` returned "setting off" before anything else, which
+  detached the yield and with it the rc.3 fallback - a placement rule that never hides. With the
+  setting off, the context now carries `may_hide=False` while a second spot exists (or the fallback
+  holds the tray spot), and `_poll_probe` runs only the fallback judgment. It also attaches on a
+  primary, left-aligned bar with Widgets on before the Widgets box is known, since nothing else
+  probes that bar once the #200 nudge has been shown. A held widget rides out one reading with an
+  unknown weather-text extent; a flip of the setting is applied by whichever of the tick or a
+  landed probe sees it first, so there's no hide/show/hide blink. Elsewhere the yield stays
+  detached and probe-free.*
+
+- **The Stats sheet's "Above <throttle> for ..." is right on windows over 6 hours.** It counted each
+  per-minute or per-hour average as one poll, so a day above the limit read about 24 min. Each point
+  now counts for its full length. It's still an estimate there: a bucket counts when its average is
+  above the limit. ([#523])
+- **Hebrew: the Monitor's adapter and time-range buttons show their dropdown arrow clear of the
+  label**, which used to cover it. ([#521]; [#495])
+- **Less memory with Chinese or emoji names:** an app-row tooltip in Hebrew or Bengali, the GPU
+  picker with a Chinese GPU name, and an emoji Wi-Fi name in the hover card no longer load every
+  installed font. The GPU picker is also no wider than its longest entry. ([#521]; [#495])
+
+  *Under the hood: each fell back to Qt's search of every installed family (852 font files mapped).
+  The GPU popup's rows without a `FontRole` drew in the box's font, which follows the picked item's
+  face, so a CJK pick laid "Auto" out in YaHei; every item now gets its own face and the width is
+  measured per item (267 → 200 px). Emoji outside the BMP go through `font_runs`, Segoe UI Emoji for
+  the emoji only. Qt mirrors the menu indicator in RTL but not the QSS padding;
+  `su.menu_button_padding()` mirrors it. A Hebrew Wi-Fi name with an emoji still takes Qt's full
+  search.*
+
+- **Less CPU on multi-GPU PCs and hybrid laptops.** The GPU usage figures were worked out from
+  Windows' counters up to three times per update (taskbar, hover list, Optimus check); now once.
+  The Optimus check is skipped when GPU temperature and power are both off. ([#537])
+- **No more WMI probing every second on PCs without LibreHardwareMonitor.** With temperatures on
+  and no LibreHardwareMonitor or OpenHardwareMonitor found, both were looked for on every update
+  (every NVIDIA desktop without LHM). After the first 4 s it now looks every 30 s. A source that
+  was working and drops out is retried on every update for a few seconds, so a hiccup recovers at
+  once, then every 30 s too - a closed LibreHardwareMonitor is found again within 30 s of coming
+  back. ([#537], [#567])
+- **Small notices (update offer, data cap alerts) open on the widget's own monitor.** On a monitor
+  left of or above the main one, or next to a left-side taskbar, they jumped to the main monitor's
+  edge. ([#538])
+- **Update cleanup keeps every failure record.** Several failures for one install collapsed into
+  copies of the newest, which could drop the record that protects a backup from a failed restore.
+  ([#538])
+
+- **The widget no longer sits on the taskbar's Desktop or Links toolbars** (Windows 10 and
+  Windows 10-style taskbars). 2.2.0 already moved it left of a toolbar, but lined it up with the
+  toolbar's buttons, not its title, and missed a toolbar collapsed to its title and "»". A widget
+  you dragged also jumped a toolbar's width after the drop; it now stays where you put it. Windows
+  11's own taskbar has no toolbars and is unchanged. ([#539]; [#324], thanks [@Achaean])
+
+  *Under the hood: the toolbar area starts where the task band (`MSTaskSwWClass`) ends; a gap of
+  more than `TOOLBAR_BAND_MIN_GAP_PX` between it and the `ReBarWindow32` end counts as a collapsed
+  toolbar, but only when `RB_GETBANDCOUNT` (`SendMessageTimeout`, 200 ms, no pointers) reports more
+  than one band. The toolbar rule applies to the default spot only - drag offsets are tray-relative,
+  as `input_handler` saves them.*
+
+- **No one-second blip in GPU usage after a settings change.** Rebuilding the GPU counters (on a
+  Settings save, on resume, or when the Monitor opens in VRAM-only mode) made the first reading
+  cover almost no time. That reading is now skipped: the widget keeps its last value for one
+  more update. ([#542])
+- **Automatic update checks survive a clock that was set ahead and back.** A last-check time in
+  the future (more than 5 minutes) stopped automatic checks until real time caught up. ([#541])
+- **The Trend line never pokes above the top of the graph.** On narrow graphs a lone spike could
+  sit a hair above the auto-fit. ([#541])
+
+- **Fewer wake-ups at idle, for battery.** NetSpeedTray's background threads woke about 13 times a
+  second just to check whether there was work; now each waits once per update. (The process still
+  does its normal work each second, so a context-switch counter won't read "1/s".) Same
+  readings, same timing; quitting is faster too. ([#549])
+
+  *Under the hood: `StatsMonitorThread` slept its period in 0.1 s slices; it now does one
+  `threading.Event` wait per period that `stop()` ends at once (stop 68 ms -> 2 ms). `DatabaseWorker`'s
+  idle `queue.get` blocks until a task or the stop sentinel instead of timing out every 0.5 s; the
+  0.5 s tick (`DB_IDLE_TICK_SEC`) stays only while a "Delete all history" compaction retry is owed
+  or a stop is draining. Every write already arrives as a queued task, so nothing depended on the
+  tick. The metrics endpoint (off by default) still polls; a follow-up.*
+
+- **No "NetSpeedTray overlaps the Widgets panel" notice when NetSpeedTray moved the widget there
+  itself.** When your app buttons push the widget to the spot by the tray, the one-time notice could
+  pop up as if you had dragged it onto the weather button. It's now only for a widget you dragged
+  onto the weather text, judged on the text itself rather than the whole button. ([#552])
+
+- **Light traffic no longer reads "0.0 Mbps" with "Always show megabytes" on** (the default). Anything that
+  rounds to zero at your decimal places now reads **<0.1** (or <1 / <0.01) - "some, but less than the
+  smallest step" - and only real silence reads 0.0. Background traffic looked like the widget had stopped,
+  and with bytes and 0 decimals even a video stream read "0 MB/s". The unit never changes, no extra digits
+  are added, and the side-taskbar compact readout is unchanged. ([#578]; [#556], thanks [@Buuuush]; vote
+  on the default in [#577])
+- **The Monitor's connection drops are now honest.** Short drops were averaged away, so the Overview could
+  say "steady" through real outages - and with the internet check on, internet-side drops were never
+  counted at all. Drops are now read from the detail data, a drop needs at least two lost probe cycles in
+  a row (about 6 s; single blips don't count), the internet check decides when it's on, an older "last"
+  drop shows its date, and red now means "in the last 24 hours" (older is amber). The count covers the
+  last ~30 days, where per-minute detail exists. ([#587])
+- **The Monitor's Overview is light again, and its small graphs show the whole range.** It re-read and
+  re-added up the last day of data several times every 6 s - a steady 6-17 % of one CPU core while it was
+  open, even on Month or All. It now refreshes long ranges every 90 s (still at once when you change the
+  range, switch back to the window or reconnect), skips the read when nothing changed, and reads only what
+  the cards show: under 1 % of a core. The small graphs drew only their last 120 points, so "24 hours"
+  showed about the last 2 hours; they now span the whole range, gaps (a sleeping laptop) stay gaps, and the
+  peak never reads below the live speed. ([#594], [#596])
+- **License texts ship with the app.** LICENSE.txt (GPLv3) and THIRD-PARTY-NOTICES.txt - every bundled
+  component's license, plus where to get the source of the GPL/LGPL parts - now sit next to
+  NetSpeedTray.exe, in both the installer and the portable zip. The release build checks they are
+  installed and removed again on uninstall. ([#588])
+- **A new update rate applies at once.** Moving the slider from a slow rate to a fast one used to wait
+  out the old period first - up to 10 s. ([#567])
+- **Enter in Settings saves again.** With the keyboard on a switch or a box, Enter pressed "Export support
+  bundle" instead of Save. Enter on a focused Cancel or Export still presses that button. ([#605])
+- **One GPU is listed once.** On some new Intel laptops (an Arc B390 here), Windows reports the same GPU
+  three times, and the hover card listed "#1, #2, #3" - two of them always at 0%. Copies that Windows
+  keeps no performance data for are now dropped; two identical real cards still show as two. ([#612]; [#609],
+  thanks [@bober233])
+- **A click no longer moves the widget.** If the mouse moved even a pixel during a click, it counted as a drag:
+  the widget shifted and remembered the new spot. A drag now starts only once the pointer really moves.
+  ([#618]; [#616], thanks [@RunningDead89])
+### Removed
+
+- **The Location explainer** and its "just show the band" choice. Windows hands the connected Wi-Fi
+  name to the app without Location now, so there's nothing left to explain. ([#493])
+
+### Security
+
+- **The installer the in-app updater downloads is held and checked until it runs.** It's kept open
+  read-only from the signature check until Setup starts (nothing else can replace, rename or delete
+  it in between), and its SHA-256 must match the release's `checksums.txt` - so it's tied to this
+  exact release, not only to the signing certificate. A missing or mismatched entry sends you to the
+  download page instead. ([#553], thanks [@kamal63442])
+
+- **Portable updates check every file, not just NetSpeedTray.exe.** The signed exe carries a
+  fingerprint of every bundled file, and an update with any missing, extra or changed file is
+  refused: the download is deleted, nothing is staged and the current version keeps running, and
+  that version isn't offered again for 3 days ("Check for Updates" still shows it). The desktop.ini
+  and Thumbs.db that Explorer drops into a folder don't count, and are never copied over your own.
+  Full protection starts with updates *from* 2.2.1; the update to 2.2.1 itself gets the second
+  check below. ([#524], [#538], [#541])
+
+  *Under the hood: the build hashes every file of the onedir folder (SHA-256) and embeds the list in
+  `NetSpeedTray.exe` as an `RT_RCDATA` resource (`NST_MANIFEST`, format v1) before SignPath signs
+  it, so the existing signature covers it. After the signature check the updater reads it from the
+  new exe as data and requires an exact match; an exe without one is refused. This closes the gap
+  #430 left: someone able to replace both the zip and `checksums.txt` on a release could keep the
+  genuine signed exe and swap a `.pyd`. PyInstaller appends its archive to the exe, which a plain
+  resource update silently drops, so the embed step cuts it off, updates the bare PE and appends it
+  back byte for byte. CI verifies the signed zip against its manifest before the installer is
+  built. The applier also re-checks the staged copy right before the swap, so a DLL quarantined in
+  between no longer swaps in a broken app - and that copy is no longer offered for a manual copy.*
+
+### Localization
+
+- **Bengali:** native wording for the accent-color note on Settings > Appearance. Thanks [@Askeleid]. ([#603])
+- **Bengali: fixed numbers use Bengali digits** - the retention options ("২ বছর"), Usage history's
+  months and years, the billing-day note and the monitor list ("মনিটর ১"). Live speeds, amounts,
+  percentages, temperatures and clocks stay Western, and so do versions, ports, addresses and the
+  2.4G / 5G band, as the translator asked. ([#521]; [#477], thanks [@Askeleid])
+- **The Monitor graphs draw Bengali** in Nirmala UI, with dates in Bengali digits, now that
+  matplotlib 3.11 joins Bengali letters. They were English before because the letters came out
+  unjoined. Axis values and clock times stay Western, and a PC without a Bengali font (Nirmala UI,
+  Vrinda or Shonar Bangla) keeps the English graphs. ([#521], [#519]; [#457], thanks [@Askeleid])
+
+  *Under the hood: `mpl_fonts.matplotlib_shapes_text()` reads `matplotlib.ft2font.__libraqm_version__`;
+  with libraqm `mpl_unshaped_locales()` is empty and the graph font list gets a `"bn"` entry. Date
+  ticks, the "History starts" note and the hover readout all format through
+  `time_axis.calendar_strftime`, in the graph's own language only.*
+
+- Every new or reworded string is in all 17 languages, machine-drafted from each language's
+  existing wording and listed in TRANSLATORS.md for native review - "Real-time (0.5s)" and "Standard
+  (1s)" with each language's own decimal separator. Corrections are very welcome in [#364].
+  ([#517], [#533])
+- Bengali's line-spacing strings are no longer English. ([#533])
+- **Bengali native review** of the line-spacing, update-rate and GPU idle strings. ([#560], thanks [@Askeleid])
+- **Japanese:** "Balanced (2s)" is now バランス, so it no longer shares 標準 with the new "Standard
+  (1s)". ([#533])
+- **Hungarian native review** of the 2.2.1 strings. ([#536], [#557], [#563], thanks [@cscsanaki])
+- **Japanese:** punctuation and spacing tidied across the app. ([#535], thanks [@coolvitto])
+
+### Developer notes
+
+- The startup tests use an in-memory registry: they used to write throwaway values into the real `HKCU\...\Run` and AppCompatFlags keys of whatever PC ran the suite. ([#606])
+- **NetSpeedTray now notes when it was too busy to respond.** If its window thread stalls for 0.25 s or more,
+  one line goes to the log (rate-limited), and a stall of about 3 s also writes every thread's stack to
+  NetSpeedTray_Crash.log - both are in the Support Bundle, with paths and usernames scrubbed (now also when
+  they contain non-English letters). Because the widget shares input with the taskbar, a busy moment can
+  delay taskbar right-clicks; this is how we'll find the cause of [#218]. Sleep, sign-out and app start are
+  never counted. ([#598])
+
+- Code scanning's one open warning is gone: the "unreadable LibreHardwareMonitor password" warn-once
+  set is keyed by the stored DPAPI blob itself instead of a SHA-256 of it. ([#572])
+- About 1,500 lines of dead code removed (the old graph exporters, unused style helpers, peak
+  markers), one shared `helpers.tr()` for the per-class translation lookups, and one
+  `_set_hw_metric()` helper behind the per-metric `update_*` methods. ([#555], [#561], [#562],
+  thanks [@kamal63442])
+
+- The release workflow checks the UNSIGNED portable zip against its bundle manifest
+  (`verify-manifest.py --tamper-test`) right after the build, so a zipping problem fails before the
+  first SignPath approval is spent. ([#564])
+
+- **pytest-timeout** (300 s per test, thread method) is a backstop in `pytest.ini`, and loop
+  tests cap their fakes so a regression fails in seconds - a draft test that spun forever once
+  grew to 28 GB on the maintainer's PC. Dependabot now groups the four `winrt-*` packages, majors
+  included, into one PR. ([#549], [#550])
+- **CI runs the unit tests in parallel** (`-n auto`): the main lane went from about 10 to 5.5
+  minutes. Getting there flushed out four order-dependent tests (module state left by an earlier
+  test: the layout probe's "probing" gen, font_release's shut-down flag, a fake date, a modal sheet
+  left open), now reset per test. The release run and `safe-merge.sh` stay serial on purpose, so
+  every tag is still tested in one fixed order. ([#544])
+- **The build fails if the Wi-Fi name's winrt modules are missing**, like the OpenSSL and
+  truststore guards: a venv without the winrt packages only logged the missing imports and shipped
+  an exe that never showed the network name. ([#540])
+
+- **Dependencies, by hand on Windows:** matplotlib 3.11.2, numpy 2.5.4, PyInstaller 6.22.3,
+  pywin32 312, fonttools 4.68.0, truststore 0.10.5, python-bidi 0.6.12, contourpy 1.4.0,
+  kiwisolver 1.5.1 (off an rc), pyparsing 3.3.3, plus the test tooling. **PyQt6 is held at 6.10.2**
+  (Qt 6.10.2, sip 13.11.0), what 2.2.0 already shipped: Qt 6.11 costs about 2.5 MB at idle (its font
+  database lists 543 families against 323), and Qt 6.12 measures the widget's Segoe UI Variable
+  text 4 px wider ("888.8 Mbps" 64 px instead of 60), which drops a 32 px side bar a tier.
+  python-dateutil stays on 2.9 (3.0 rewrote `dateutil.tz` and pulls in `tzdata`). Compiled on
+  Windows so the four `sys_platform == "win32"` pins (pywin32, wmi, pefile, pywin32-ctypes) stay;
+  the compile commands and the Qt hold are written at the top of `requirements.in`, and Dependabot
+  ignores PyQt6 / PyQt6-Qt6 6.11+ and PyQt6-sip. Replaces Dependabot [#459], [#469] and [#513].
+  The bundle grows by about 1.5 MB, mostly libraqm inside matplotlib's `ft2font.pyd`. ([#519])
+
+  *Under the hood: matplotlib 3.11 lays text out with libraqm and runs the bidi algorithm itself, so
+  `mpl_fonts.shape_rtl()`'s python-bidi pre-reversal would have drawn every Hebrew graph label
+  backwards. `shape_rtl()` passes the text through unchanged when `matplotlib_does_bidi()` is true;
+  all four graph composites and 591 of 618 he_IL strings lay out identically (the 27 that differ
+  never reach matplotlib). Every existing test passed with the labels reversed - they compare
+  strings, not glyphs - so a new test lays the text out through matplotlib and checks the glyph
+  order.*
+
+- New dependencies: `winrt-runtime`, `winrt-Windows.Foundation`, `winrt-Windows.Foundation.Collections`
+  and `winrt-Windows.Networking.Connectivity` 3.2.1, Windows-only markers, bundled by the spec.
+  ([#493])
+- `build.bat` embeds the file manifest right after PyInstaller, in local and CI mode alike, and
+  fails the build on any embed error; the spec fails if `bundle_manifest` isn't bundled.
+  `build/ci/use-signed-exe.ps1` runs `build/ci/verify-manifest.py <signed zip> --require-signed`
+  between the two SignPath approvals; `release.yml` and the approvals are unchanged.
+  `verify-manifest.py --tamper-test` proves on a scratch copy that a changed byte, an extra
+  `_internal\version.dll` and a deleted file are each refused. Every future build must keep
+  embedding a v1 manifest (DEPLOYING.md). ([#524])
+- **LHM going away mid-session logs one INFO line, and one when it's back** ("is back after N s"),
+  instead of nothing (web server) or a DEBUG line plus a fresh "connected to" on every reconnect
+  (WMI). Outages that start within 10 minutes of the last one are folded and counted; one that never
+  ends is reported once the quiet window passes. ([#523])
+- Tests: the month-of-sleep clock-guard test runs a quarter of the passes (0.43 s → 0.17 s; 94 s →
+  24 s with `NST_TEST_REAL_FSYNC=1`) and now proves every pass prunes; 55 per-module QApplication
+  fixtures are gone in favor of conftest's session app; the kill tests say what timing they assume.
+  ([#523])
+- **[privacy.md](privacy.md), [DEPLOYING.md](DEPLOYING.md) and [DATABASE.md](DATABASE.md) describe
+  2.2.1.** privacy.md and DEPLOYING.md: update checks 5 s after start, every 3 h and a minute after
+  waking, GitHub asked only when the last successful check is over 24 h old; the presence checks
+  behind a deferred offer run locally and store nothing; "Not now" saves a 3-day snooze in the
+  settings file; the router ping prefers a connected physical adapter's route. DATABASE.md: `net_raw`
+  and `hw_raw` keep at most one row per second (same-second intervals merge; gauges keep the
+  second's first sample, the error/drop counts add up), `app_sessions.poll_ms` is the rate when the
+  session started (500-10000), and `ram` is recorded on its own switch. ([#532])
+- The monitor thread's end-of-run cleanup (network-identity watcher, GPU counters, the
+  LibreHardwareMonitor connection, COM last) runs in `finally`, each step on its own, so an error
+  escaping the poll loop or one failing step no longer skips the rest. ([#568])
+- A usage-history test that failed in the first minute after midnight runs on a pinned midday
+  clock. ([#569])
+- Two tests that failed once on CI are steadier: the Qt-lifetime control case pauses automatic garbage
+  collection so it can't run on the main thread mid-test, and the history golden test's day-resolution
+  sanity floor allows the lower day count CI saw at 00:01 UTC. ([#581])
+- The other Qt lifetime test now checks its own window's registry entry instead of the global count -
+  processing deferred deletes also freed windows an earlier test on the same worker had left behind. ([#586])
+- The golden history test runs on a frozen clock in a pinned time zone instead of #581's lowered floor: it read
+  the wall clock in three places, so a run at UTC midnight compared one day bucket fewer (940 rows). It now
+  asserts exact counts at five times of day, and pytest's own timer stays real. ([#589])
+- Tests: 8,923 passed, 45 skipped - the full suite on the release commit.
+
+[#236]: https://github.com/erez-c137/NetSpeedTray/issues/236
+[#364]: https://github.com/erez-c137/NetSpeedTray/issues/364
+[#324]: https://github.com/erez-c137/NetSpeedTray/issues/324
+[#456]: https://github.com/erez-c137/NetSpeedTray/issues/456
+[#455]: https://github.com/erez-c137/NetSpeedTray/pull/455
+[#457]: https://github.com/erez-c137/NetSpeedTray/pull/457
+[#459]: https://github.com/erez-c137/NetSpeedTray/pull/459
+[#469]: https://github.com/erez-c137/NetSpeedTray/pull/469
+[#477]: https://github.com/erez-c137/NetSpeedTray/pull/477
+[#486]: https://github.com/erez-c137/NetSpeedTray/pull/486
+[#493]: https://github.com/erez-c137/NetSpeedTray/pull/493
+[#495]: https://github.com/erez-c137/NetSpeedTray/pull/495
+[#500]: https://github.com/erez-c137/NetSpeedTray/pull/500
+[#508]: https://github.com/erez-c137/NetSpeedTray/pull/508
+[#513]: https://github.com/erez-c137/NetSpeedTray/pull/513
+[#517]: https://github.com/erez-c137/NetSpeedTray/pull/517
+[#519]: https://github.com/erez-c137/NetSpeedTray/pull/519
+[#520]: https://github.com/erez-c137/NetSpeedTray/pull/520
+[#521]: https://github.com/erez-c137/NetSpeedTray/pull/521
+[#522]: https://github.com/erez-c137/NetSpeedTray/pull/522
+[#523]: https://github.com/erez-c137/NetSpeedTray/pull/523
+[#524]: https://github.com/erez-c137/NetSpeedTray/pull/524
+[#525]: https://github.com/erez-c137/NetSpeedTray/pull/525
+[#530]: https://github.com/erez-c137/NetSpeedTray/pull/530
+[#532]: https://github.com/erez-c137/NetSpeedTray/pull/532
+[#533]: https://github.com/erez-c137/NetSpeedTray/pull/533
+[#535]: https://github.com/erez-c137/NetSpeedTray/pull/535
+[#536]: https://github.com/erez-c137/NetSpeedTray/pull/536
+[#537]: https://github.com/erez-c137/NetSpeedTray/pull/537
+[#538]: https://github.com/erez-c137/NetSpeedTray/pull/538
+[#539]: https://github.com/erez-c137/NetSpeedTray/pull/539
+[#540]: https://github.com/erez-c137/NetSpeedTray/pull/540
+[#541]: https://github.com/erez-c137/NetSpeedTray/pull/541
+[#542]: https://github.com/erez-c137/NetSpeedTray/pull/542
+[#526]: https://github.com/erez-c137/NetSpeedTray/issues/526
+[#543]: https://github.com/erez-c137/NetSpeedTray/pull/543
+[#544]: https://github.com/erez-c137/NetSpeedTray/pull/544
+[#549]: https://github.com/erez-c137/NetSpeedTray/pull/549
+[#550]: https://github.com/erez-c137/NetSpeedTray/pull/550
+[#552]: https://github.com/erez-c137/NetSpeedTray/pull/552
+[#556]: https://github.com/erez-c137/NetSpeedTray/issues/556
+[#557]: https://github.com/erez-c137/NetSpeedTray/pull/557
+[#558]: https://github.com/erez-c137/NetSpeedTray/pull/558
+[#559]: https://github.com/erez-c137/NetSpeedTray/pull/559
+[#560]: https://github.com/erez-c137/NetSpeedTray/pull/560
+[#564]: https://github.com/erez-c137/NetSpeedTray/pull/564
+[#565]: https://github.com/erez-c137/NetSpeedTray/pull/565
+[#566]: https://github.com/erez-c137/NetSpeedTray/pull/566
+[#567]: https://github.com/erez-c137/NetSpeedTray/pull/567
+[#553]: https://github.com/erez-c137/NetSpeedTray/pull/553
+[#555]: https://github.com/erez-c137/NetSpeedTray/pull/555
+[#561]: https://github.com/erez-c137/NetSpeedTray/pull/561
+[#562]: https://github.com/erez-c137/NetSpeedTray/pull/562
+[#563]: https://github.com/erez-c137/NetSpeedTray/pull/563
+[#568]: https://github.com/erez-c137/NetSpeedTray/pull/568
+[#569]: https://github.com/erez-c137/NetSpeedTray/pull/569
+[#570]: https://github.com/erez-c137/NetSpeedTray/pull/570
+[#577]: https://github.com/erez-c137/NetSpeedTray/issues/577
+[#578]: https://github.com/erez-c137/NetSpeedTray/pull/578
+[#581]: https://github.com/erez-c137/NetSpeedTray/pull/581
+[#586]: https://github.com/erez-c137/NetSpeedTray/pull/586
+[#589]: https://github.com/erez-c137/NetSpeedTray/pull/589
+[#587]: https://github.com/erez-c137/NetSpeedTray/pull/587
+[#594]: https://github.com/erez-c137/NetSpeedTray/pull/594
+[#596]: https://github.com/erez-c137/NetSpeedTray/pull/596
+[#598]: https://github.com/erez-c137/NetSpeedTray/pull/598
+[#603]: https://github.com/erez-c137/NetSpeedTray/pull/603
+[#605]: https://github.com/erez-c137/NetSpeedTray/pull/605
+[#606]: https://github.com/erez-c137/NetSpeedTray/pull/606
+[#609]: https://github.com/erez-c137/NetSpeedTray/issues/609
+[#612]: https://github.com/erez-c137/NetSpeedTray/pull/612
+[#616]: https://github.com/erez-c137/NetSpeedTray/issues/616
+[#618]: https://github.com/erez-c137/NetSpeedTray/pull/618
+[#218]: https://github.com/erez-c137/NetSpeedTray/issues/218
+[#588]: https://github.com/erez-c137/NetSpeedTray/pull/588
+[#572]: https://github.com/erez-c137/NetSpeedTray/pull/572
+[#314]: https://github.com/erez-c137/NetSpeedTray/issues/314
+[@Achaean]: https://github.com/Achaean
+[@bobbergen]: https://github.com/bobbergen
+[@Buuuush]: https://github.com/Buuuush
+[@Askeleid]: https://github.com/Askeleid
+[@balciseri]: https://github.com/balciseri
+[@coolvitto]: https://github.com/coolvitto
+[@cscsanaki]: https://github.com/cscsanaki
+[@evandrosergiooliveira-cloud]: https://github.com/evandrosergiooliveira-cloud
+[@kamal63442]: https://github.com/kamal63442
+[@pasharm]: https://github.com/pasharm
+[@RainThings]: https://github.com/RainThings
+[@XYuki-cloud]: https://github.com/XYuki-cloud
+[@bober233]: https://github.com/bober233
+[@RunningDead89]: https://github.com/RunningDead89
+
+---
+
 ## [2.2.1-beta.2] - November 18, 2026
 
 *A beta, for testers. It's a manual download from the release page - the in-app updater, WinGet
