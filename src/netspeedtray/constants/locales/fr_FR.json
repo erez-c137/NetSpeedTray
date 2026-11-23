@@ -420,7 +420,7 @@
     "MONITOR_TAB_OVERVIEW": "Vue d'ensemble",
     "MONITOR_TAB_NETWORK": "Réseau",
     "MONITOR_TAB_HARDWARE": "Matériel",
-    "SHOW_MONITOR_MENU_ITEM": "Afficher le Mo&niteur",
+    "SHOW_MONITOR_MENU_ITEM": "&Afficher le Moniteur",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
     "VRAM_SHARED_LABEL": "VRAM (partagée)",

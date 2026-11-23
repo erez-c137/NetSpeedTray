@@ -261,7 +261,7 @@ def test_menu_offers_check_connection_after_monitor(qt_owned):
     i18n = I18nStrings("en_US")
     m, widget = _menu(qt_owned, i18n, {})
     shown = _shown(m)
-    assert shown == [i18n.SETTINGS_MENU_ITEM, i18n.SHOW_MONITOR_MENU_ITEM, i18n.CHECK_CONN_ACTION,
+    assert shown == [i18n.SETTINGS_MENU_ITEM, i18n.SHOW_MONITOR_MENU_ITEM, i18n.CHECK_CONN_MENU_ITEM,
                      i18n.CHECK_FOR_UPDATES_MENU_ITEM, i18n.SUPPORT_MENU_ITEM, i18n.EXIT_MENU_ITEM]
     assert len(shown) <= 6        # the 2.2.1 default menu had 5 items: at most one more
     m.check_connection_action.trigger()
@@ -272,7 +272,7 @@ def test_check_connection_can_be_hidden(qt_owned):
     i18n = I18nStrings("en_US")
     assert D.CONTEXT_MENU_ITEM_CHECK_CONNECTION in D.CONTEXT_MENU_HIDEABLE_ITEMS
     m, _ = _menu(qt_owned, i18n, {"context_menu_hidden_items": [D.CONTEXT_MENU_ITEM_CHECK_CONNECTION]})
-    assert i18n.CHECK_CONN_ACTION not in _shown(m)
+    assert i18n.CHECK_CONN_MENU_ITEM not in _shown(m)
 
 
 def test_settings_lists_check_connection_in_menu_order(qt_owned):
