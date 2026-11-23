@@ -2387,7 +2387,10 @@ class NetworkSpeedWidget(QWidget):
                     ending = msg.message == _WM_QUERYENDSESSION or bool(msg.wParam)
                     monitor = getattr(self, "monitor_thread", None)
                     if monitor is not None:
-                        monitor.set_session_ending(ending)
+                        try:
+                            monitor.set_session_ending(ending)
+                        except Exception as e:
+                            self.logger.debug("Could not update monitor session state: %s", e)
                     if not ending:
                         return False, 0
                     # Logoff / shutdown / restart. The normal quit path (closeEvent -> cleanup) never
