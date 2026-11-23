@@ -37,6 +37,7 @@ class InputHandler(QObject):
         
         # State
         self._drag_start_pos: Optional[QPoint] = None
+        self._press_global: Optional[QPoint] = None  # where the left press landed (global), for the drag threshold
         self._is_dragging: bool = False
 
         # Click-to-pin the hover card (side-taskbar design §2). A single left click used to do
@@ -64,7 +65,8 @@ class InputHandler(QObject):
     def handle_mouse_press(self, event: QMouseEvent) -> None:
         """Handles mouse press start (left = drag; middle = configurable click action)."""
         if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_start_pos = event.globalPosition().toPoint() - self.widget.pos()
+            self._press_global = event.globalPosition().toPoint()
+            self._drag_start_pos = self._press_global - self.widget.pos()
             self._is_dragging = False # Waiting for move to confirm drag
             self._press_from_mouse = self._is_real_mouse(event)
             # Qt sends a double-click's 2nd press as MouseButtonDblClick, never as a press: a real
@@ -89,11 +91,16 @@ class InputHandler(QObject):
             if self._is_dragging:
                 self.end_lost_drag("a move arrived with the left button up")
             return
-        if not self._drag_start_pos:
+        if self._drag_start_pos is None:  # QPoint(0, 0) - a press on the top-left pixel - is falsy
             return
 
-        # Check for minimum drag distance to prevent accidental moves (Fix for sticky Free Move)
-        if (event.globalPosition().toPoint() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
+        # A click whose mouse wobbles a pixel or two stays a click (#616): the drag starts only once
+        # the cursor has left the press point by the system drag distance. Both sides are GLOBAL
+        # positions - _drag_start_pos is the press offset inside the widget, a different space.
+        # Only the start is gated: mid-drag, every move follows the cursor.
+        if not self._is_dragging and self._press_global is not None and (
+                (event.globalPosition().toPoint() - self._press_global).manhattanLength()
+                < QApplication.startDragDistance()):
             return
 
         # Start dragging if we haven't already. A hover card left up would stay at the old spot while
