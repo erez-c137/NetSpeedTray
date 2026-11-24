@@ -1795,6 +1795,57 @@ def get_taskbar_height() -> int:
  
           
 
+def is_autohide_enabled(taskbar_hwnd: int) -> bool:
+    """True when the taskbar ``taskbar_hwnd`` has auto-hide on (SHAppBarMessage ABM_GETSTATE)."""
+    abd = APPBARDATA()
+    abd.cbSize = ctypes.sizeof(abd)
+    abd.hWnd = taskbar_hwnd
+    state_flags = windll.shell32.SHAppBarMessage(constants.shell.api.ABM_GETSTATE, byref(abd))
+    return bool(state_flags & constants.shell.api.ABS_AUTOHIDE)
+
+
+def autohide_bar_offset(bar_rect: Tuple[int, int, int, int],
+                        monitor_rect: Tuple[int, int, int, int],
+                        edge: constants.TaskbarEdge) -> int:
+    """How far (physical px, >= 0) an auto-hide bar has slid outward from sitting flush on its edge of
+    ``monitor_rect``: 0 while it is fully out, about its thickness once it is hidden."""
+    e = constants.taskbar.edge
+    if edge == e.BOTTOM:
+        return max(0, bar_rect[3] - monitor_rect[3])
+    if edge == e.TOP:
+        return max(0, monitor_rect[1] - bar_rect[1])
+    if edge == e.LEFT:
+        return max(0, monitor_rect[0] - bar_rect[0])
+    if edge == e.RIGHT:
+        return max(0, bar_rect[2] - monitor_rect[2])
+    return 0
+
+
+def autohide_bar_hidden(bar_rect: Tuple[int, int, int, int],
+                        monitor_rect: Tuple[int, int, int, int],
+                        edge: constants.TaskbarEdge,
+                        tolerance: int = constants.taskbar.taskbar.AUTOHIDE_TOLERANCE) -> bool:
+    """True once an auto-hide bar has slid (all but a few px) off its edge of ``monitor_rect``."""
+    e = constants.taskbar.edge
+    if edge == e.BOTTOM:
+        return bar_rect[1] >= monitor_rect[3] - tolerance
+    if edge == e.TOP:
+        return bar_rect[3] <= monitor_rect[1] + tolerance
+    if edge == e.LEFT:
+        return bar_rect[2] <= monitor_rect[0] + tolerance
+    if edge == e.RIGHT:
+        return bar_rect[0] >= monitor_rect[2] - tolerance
+    return False
+
+
+def autohide_bar_fully_shown(bar_rect: Tuple[int, int, int, int],
+                             monitor_rect: Tuple[int, int, int, int],
+                             edge: constants.TaskbarEdge,
+                             tolerance: int = constants.taskbar.taskbar.AUTOHIDE_TOLERANCE) -> bool:
+    """True when an auto-hide bar sits flush on its edge of ``monitor_rect`` (neither hidden nor sliding)."""
+    return autohide_bar_offset(bar_rect, monitor_rect, edge) <= tolerance
+
+
 def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
     """
     Checks if the taskbar is in a visible state based on its own properties.
@@ -1817,13 +1868,7 @@ def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
             return False
 
         # CHECK 2: Is it an auto-hiding taskbar that is currently hidden?
-        abd = APPBARDATA()
-        abd.cbSize = ctypes.sizeof(abd)
-        abd.hWnd = taskbar_info.hwnd
-        state_flags = windll.shell32.SHAppBarMessage(constants.shell.api.ABM_GETSTATE, byref(abd))
-        auto_hide_enabled = bool(state_flags & constants.shell.api.ABS_AUTOHIDE)
-
-        if auto_hide_enabled:
+        if is_autohide_enabled(taskbar_info.hwnd):
             screen = taskbar_info.get_screen()
             if not screen: return False
 

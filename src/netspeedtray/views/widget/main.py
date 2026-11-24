@@ -683,6 +683,7 @@ class NetworkSpeedWidget(QWidget):
             else:
                 # If we successfully found a real taskbar, reset the counter.
                 self._taskbar_lost_count = 0
+                self._sync_autohide_hook(taskbar_info)
 
             if hwnd == 0:
                 hwnd = win32gui.GetForegroundWindow()
@@ -743,6 +744,21 @@ class NetworkSpeedWidget(QWidget):
                                       "hiding" if fs_covered else "showing", latch.reason,
                                       _window_log_desc(latch.probe_hwnd))
 
+            if not free_float_active:
+                # Auto-hide ride-along: a widget hidden only because its bar slid away may ride back in
+                # with the bar; one hidden for any other reason (fullscreen, #24 yield) may not.
+                if taskbar_shown:
+                    self._autohide_hid_widget = False
+                elif self.isVisible():
+                    self._autohide_hid_widget = True
+
+            sliding = getattr(self, "_autohide_sliding", False) is True
+            if sliding:
+                # The bar is mid-slide and the widget is riding along with it (_on_taskbar_moved):
+                # neither re-place it at the docked spot nor flip its visibility under it.
+                self._ensure_win32_topmost()
+                return
+
             if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)
 
@@ -760,6 +776,9 @@ class NetworkSpeedWidget(QWidget):
                     # Side bars: the icon alignment and the bounded "apps near the widget" re-check.
                     self.position_manager.side_bar_tick()
                 
+                # Where the auto-hide ride-along starts from and returns to.
+                self._autohide_dock_pos = self.pos()
+
                 # Always re-assert topmost status when visible to prevent falling behind taskbar (#77)
                 self._ensure_win32_topmost()
 
@@ -777,6 +796,99 @@ class NetworkSpeedWidget(QWidget):
                  self.logger.warning("Hiding widget as a last resort after sustained detection failure.")
                  self.setVisible(False)
 
+
+    # --- Auto-hide taskbar tracking -------------------------------------------------------------
+    # The 1 s state watcher alone left the widget floating over the desktop for up to a second after
+    # an auto-hide taskbar slid away. A LOCATIONCHANGE hook on the taskbar window reports the slide as
+    # it happens, so the widget hides the moment the bar starts to leave and comes back once it is out.
+
+    def _sync_autohide_hook(self, taskbar_info) -> None:
+        """(Re)attach the taskbar-move hook to ``taskbar_info``'s bar (new bar after an Explorer
+        restart or a monitor switch) and remember the info the fast check measures against."""
+        hwnd = int(getattr(taskbar_info, "hwnd", 0) or 0)
+        self._autohide_taskbar_info = taskbar_info if hwnd else None
+        if hwnd == getattr(self, "_autohide_hook_hwnd", 0):
+            return
+        self._stop_autohide_hook()
+        if not hwnd:
+            return
+        try:
+            from netspeedtray.utils.win_event_hook import (
+                EVENT_OBJECT_LOCATIONCHANGE, OBJID_WINDOW, WinEventHook,
+            )
+            hook = WinEventHook(EVENT_OBJECT_LOCATIONCHANGE, hwnd_to_watch=hwnd,
+                                source_hwnd_filter=hwnd, skip_own_process=True,
+                                object_id_filter=OBJID_WINDOW)
+            hook.event_triggered.connect(self._on_taskbar_moved)
+            hook.start()
+            self._autohide_hook = hook
+            self._autohide_hook_hwnd = hwnd
+        except Exception as e:
+            self.logger.warning("Auto-hide taskbar hook unavailable: %s", e)
+
+    def _stop_autohide_hook(self) -> None:
+        hook = getattr(self, "_autohide_hook", None)
+        self._autohide_hook = None
+        self._autohide_hook_hwnd = 0
+        if hook is not None:
+            try:
+                hook.stop()
+            except Exception as e:
+                self.logger.debug("Stopping the auto-hide taskbar hook failed: %s", e)
+
+    def _on_taskbar_moved(self, _hwnd: int = 0) -> None:
+        """Fast path for an auto-hide bar sliding: the widget rides along with the bar (offset from
+        its docked spot by as much as the bar has slid), hides once the bar is gone, and runs the
+        full refresh (fullscreen gate, position) once the bar is fully back out."""
+        info = getattr(self, "_autohide_taskbar_info", None)
+        if info is None or self._is_context_menu_visible or self._dragging:
+            return
+        try:
+            from netspeedtray.utils.taskbar_utils import (
+                autohide_bar_hidden, autohide_bar_offset, is_autohide_enabled,
+            )
+            mon = info.monitor_rect
+            if not mon or not win32gui.IsWindow(info.hwnd) or not is_autohide_enabled(info.hwnd):
+                return
+            rect = tuple(win32gui.GetWindowRect(info.hwnd))
+            edge = info.get_edge_position()
+            hidden = autohide_bar_hidden(rect, mon, edge)
+            offset = autohide_bar_offset(rect, mon, edge)
+        except Exception:
+            return
+        dock = getattr(self, "_autohide_dock_pos", None)
+
+        if hidden:
+            self._autohide_sliding = False
+            if self.isVisible():
+                self._autohide_hid_widget = True
+                self.setVisible(False)
+                if dock is not None:
+                    self.move(dock)   # parked at its docked spot for the next full refresh
+            return
+
+        if offset <= constants.taskbar.taskbar.AUTOHIDE_TOLERANCE:
+            # Fully out: back to the exact docked spot, then let the full gate decide the rest.
+            was_sliding = getattr(self, "_autohide_sliding", False)
+            self._autohide_sliding = False
+            if was_sliding and dock is not None:
+                self.move(dock)
+            if not self.isVisible():
+                self._execute_refresh()
+            return
+
+        # Sliding (out or in): ride along with the bar.
+        if dock is None or not (self.isVisible() or getattr(self, "_autohide_hid_widget", False)):
+            return
+        e = constants.taskbar.edge
+        step = int(round(offset / max(info.dpi_scale, 0.1)))
+        dx, dy = {e.BOTTOM: (0, step), e.TOP: (0, -step),
+                  e.LEFT: (-step, 0), e.RIGHT: (step, 0)}.get(edge, (0, 0))
+        self._autohide_sliding = True
+        self.move(dock.x() + dx, dock.y() + dy)
+        if not self.isVisible():
+            self.setVisible(True)
+            self._ensure_win32_topmost()
 
     def _delayed_initial_show(self) -> None:
         """Triggers the initial authoritative visibility check."""
@@ -3657,6 +3769,7 @@ class NetworkSpeedWidget(QWidget):
                 self.system_event_handler.stop()
             elif getattr(self, 'foreground_hook', None):
                 self.foreground_hook.stop()
+            self._stop_autohide_hook()
 
         def _position_manager() -> None:
             if getattr(self, 'position_manager', None):
