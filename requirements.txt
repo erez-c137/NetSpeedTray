@@ -16,7 +16,7 @@ kiwisolver==1.5.1
     # via matplotlib
 matplotlib==3.11.2
     # via -r requirements.in
-numpy==2.5.4
+numpy==2.5.5
     # via
     #   -r requirements.in
     #   contourpy
