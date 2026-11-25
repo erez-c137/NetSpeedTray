@@ -629,7 +629,10 @@ class HardwarePage(QWidget):
         self.gpu_adapter.clear()
         self.gpu_adapter.addItem(self.i18n.GPU_ADAPTER_AUTO, userData=constants.gpu.ADAPTER_AUTO)
         names = []
-        real = gpu_adapters.hardware_adapters(gpu_adapters.enumerate_adapters() or [])
+        # Phantom duplicates of one GPU (#609) dropped by the PDH set the GPU poll last saw - none
+        # dropped before it has seen one, so the switch below may show until then.
+        real = gpu_adapters.hardware_adapters(gpu_adapters.collapse_phantom_duplicates(
+            gpu_adapters.enumerate_adapters() or [], gpu_adapters.last_pdh_luids()))
         for a in real:
             name = a.name.strip()
             if name and name.casefold() not in {n.casefold() for n in names}:

@@ -88,6 +88,14 @@ def _no_real_disable_tips_policy(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_shared_pdh_luids(monkeypatch):
+    """Every GPU poll records the PDH adapter LUIDs it saw in gpu_adapters (#609, for Settings); one
+    test's set must never collapse another test's adapters."""
+    from netspeedtray.core import gpu_adapters
+    monkeypatch.setattr(gpu_adapters, "_last_pdh_luids", None)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_update_marker(tmp_path, monkeypatch):
     """No test may read or write the real %APPDATA%/NetSpeedTray/staged_update.json or stage into
     the real %LOCALAPPDATA%/NetSpeedTray/updates (#260): ``apply_update`` records its outcome

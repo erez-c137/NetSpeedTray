@@ -8,8 +8,9 @@ so Settings reported ON and the app never started. The reporter fixed it by enab
 - Turning it ON in Settings is an explicit request and must clear Task Manager's disable.
 - The launch-time sync must NOT silently undo a Task Manager disable - it only warns.
 
-winreg is fully faked (test_startup_run_value.FakeReg): no test touches the real HKCU Run or
-StartupApproved keys (combined review C2 follow-up - these used real values under a throwaway name).
+winreg is fully faked (fake_winreg.FakeReg): no test touches the real HKCU Run or StartupApproved
+keys. These used real values under a throwaway name; a crash mid-test or a parallel run could leave
+junk there, next to the owner's real NetSpeedTray value.
 """
 import logging
 import sys
@@ -21,7 +22,9 @@ import pytest
 from netspeedtray import constants
 from netspeedtray.core import startup_manager as sm
 from netspeedtray.core.startup_manager import StartupManager, get_startup_approved_state
-from netspeedtray.tests.unit.test_startup_run_value import FakeKey, FakeReg
+from netspeedtray.tests.unit import fake_winreg
+
+pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows registry")
 
 _RUN = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _APPROVED = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
@@ -36,18 +39,14 @@ def _set(path, name, kind, value):
 
 
 def _get(path, name):
-    entry = _REG.store.get((path, name))
-    return entry[0] if entry else None
+    return _REG.get(path, name)
 
 
 @pytest.fixture
 def mgr(monkeypatch):
-    """A StartupManager over a fake registry (every winreg call startup_manager makes)."""
+    """A StartupManager over a fake registry (every winreg call goes to a dict)."""
     global _REG
-    _REG = FakeReg()
-    for n in ("OpenKey", "CloseKey", "QueryValueEx", "SetValueEx", "DeleteValue"):
-        monkeypatch.setattr(sm.winreg, n, getattr(_REG, n))
-    monkeypatch.setattr(sm.winreg, "CreateKey", lambda hive, path: FakeKey(path), raising=False)
+    _REG = fake_winreg.install(monkeypatch)
     with patch.object(constants.app, "APP_NAME", _NAME):
         yield StartupManager()
 

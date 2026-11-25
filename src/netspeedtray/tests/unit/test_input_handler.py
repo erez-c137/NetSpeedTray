@@ -161,7 +161,7 @@ class TestInputHandler(unittest.TestCase):
         self.mock_widget._hide_usage_hover_card = MagicMock()
         self.handler.handle_mouse_press(self._create_mouse_event(global_x=150, global_y=150))
         # Below the drag distance: not a drag.
-        self.handler.handle_mouse_move(self._create_mouse_event(global_x=51, global_y=50))
+        self.handler.handle_mouse_move(self._create_mouse_event(global_x=151, global_y=150))
         self.mock_widget._hide_usage_hover_card.assert_not_called()
 
     def test_mouse_release_ends_drag(self):
@@ -357,6 +357,66 @@ def test_widget_ends_a_lost_drag_on_deactivate_and_hide():
     w.input_handler.end_lost_drag.assert_called_once()
     w.hideEvent(QHideEvent())
     assert w.input_handler.end_lost_drag.call_count == 2
+
+
+
+class TestDragThreshold(unittest.TestCase):
+    """#616: a click whose mouse wobbles a pixel or two must stay a click. The threshold once compared
+    the cursor's global position with the press OFFSET inside the widget (a different coordinate
+    space), so it never held anything back and every wobble saved a dragged position."""
+
+    setUpClass = classmethod(TestInputHandler.setUpClass.__func__)
+    setUp = TestInputHandler.setUp
+    _create_mouse_event = TestInputHandler._create_mouse_event
+
+    def _press_then_move(self, dx, dy):
+        self.handler.handle_mouse_press(self._create_mouse_event(global_x=150, global_y=150))
+        self.handler.handle_mouse_move(self._create_mouse_event(
+            global_x=150 + dx, global_y=150 + dy, type=QEvent.Type.MouseMove))
+
+    def test_a_wobble_under_the_drag_distance_does_not_move_the_widget(self):
+        d = QApplication.startDragDistance()
+        self.assertGreater(d, 1)
+        self._press_then_move(1, 0)
+        self.assertFalse(self.handler._is_dragging)
+        self.assertFalse(self.mock_widget._dragging)
+        self.mock_widget.move.assert_not_called()
+        self._press_then_move(0, d - 1)
+        self.assertFalse(self.handler._is_dragging)
+        self.mock_widget.move.assert_not_called()
+
+    def test_a_move_past_the_drag_distance_starts_the_drag(self):
+        self._press_then_move(QApplication.startDragDistance() + 2, 0)
+        self.assertTrue(self.handler._is_dragging)
+        self.mock_widget.move.assert_called_once()
+
+    def test_once_dragging_small_moves_keep_following_the_cursor(self):
+        """The threshold gates the START only: back near the press point mid-drag still moves."""
+        self.mock_position_manager.constrain_drag.side_effect = lambda p: p
+        self._press_then_move(QApplication.startDragDistance() + 5, 0)
+        self.handler.handle_mouse_move(self._create_mouse_event(
+            global_x=151, global_y=150, type=QEvent.Type.MouseMove))
+        self.assertEqual(self.mock_widget.move.call_count, 2)
+        self.assertEqual(self.mock_widget.move.call_args[0][0], QPoint(101, 100))
+
+    def test_a_press_on_the_top_left_pixel_can_still_drag(self):
+        """The press offset is QPoint(0, 0) there, which is falsy - it once read as 'no press'."""
+        self.handler.handle_mouse_press(self._create_mouse_event(global_x=100, global_y=100))
+        self.assertEqual(self.handler._drag_start_pos, QPoint(0, 0))
+        self.handler.handle_mouse_move(self._create_mouse_event(
+            global_x=140, global_y=100, type=QEvent.Type.MouseMove))
+        self.assertTrue(self.handler._is_dragging)
+
+    def test_a_click_with_a_wobble_is_a_click_and_saves_no_position(self):
+        """The #616 outcome: release after a sub-threshold wobble takes the click path."""
+        self.handler._on_single_click = MagicMock()
+        self._press_then_move(2, 1)
+        self.handler.handle_mouse_release(self._create_mouse_event(
+            global_x=152, global_y=151, type=QEvent.Type.MouseButtonRelease))
+        self.handler._on_single_click.assert_called_once()
+        self.mock_widget.update_config.assert_not_called()
+        self.assertFalse(self.mock_widget._dragging)
+
 
 if __name__ == '__main__':
     unittest.main()

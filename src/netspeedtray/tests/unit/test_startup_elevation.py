@@ -5,8 +5,9 @@ the unflagged control did, even with UAC set to elevate without prompting). Noth
 because the app never starts, so a launch that DID happen must say it, and the support bundle must
 carry the flags.
 
-winreg is fully faked (test_startup_run_value.FakeReg): nothing touches the real registry - not the
-compatibility flags, and never the Run key (combined review C2 follow-up).
+winreg is fully faked (fake_winreg.FakeReg): nothing touches the real registry - not the
+compatibility flags, and not the Run or Task Manager StartupApproved keys (the launch sync reads the
+latter, so the owner's real Task Manager state could change these tests' warnings).
 """
 import logging
 import sys
@@ -16,7 +17,10 @@ import pytest
 
 from netspeedtray.core import startup_manager
 from netspeedtray.core.startup_manager import StartupManager, get_compat_layers
-from netspeedtray.tests.unit.test_startup_run_value import FakeReg
+from netspeedtray.tests.unit import fake_winreg
+
+_LAYERS = startup_manager._COMPAT_LAYERS_KEY
+_FLAGGED = r"C:\nst-test-308\flagged\NetSpeedTray.exe"
 
 _LAYERS = startup_manager._COMPAT_LAYERS_KEY
 _FLAGGED = r"C:\nst-test-308\flagged\NetSpeedTray.exe"
@@ -24,10 +28,7 @@ _FLAGGED = r"C:\nst-test-308\flagged\NetSpeedTray.exe"
 
 @pytest.fixture(autouse=True)
 def fake_registry(monkeypatch):
-    reg = FakeReg()
-    for n in ("OpenKey", "CloseKey", "QueryValueEx", "SetValueEx", "DeleteValue"):
-        monkeypatch.setattr(startup_manager.winreg, n, getattr(reg, n))
-    return reg
+    return fake_winreg.install(monkeypatch)
 
 
 @pytest.fixture
