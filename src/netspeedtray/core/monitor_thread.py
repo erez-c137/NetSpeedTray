@@ -10,9 +10,11 @@ Offloading this I/O from the main UI thread ensures consistent 60+ FPS widget mo
 and prevents micro-stutters during system stack latency.
 """
 
+import ctypes
 import gc
 import logging
 import math
+import sys
 import threading
 import time
 from typing import Dict, Any, Optional, List, NamedTuple, Tuple
@@ -42,6 +44,17 @@ from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.network_identity_monitor import NetworkIdentityMonitor
 
 logger = logging.getLogger("NetSpeedTray.StatsMonitorThread")
+
+_SM_SHUTTINGDOWN = 0x2000
+
+
+class _SessionEnding(RuntimeError):
+    """A helper launch skipped or a running helper stopped for Windows shutdown."""
+
+    def __init__(self, *, child_started: bool = False) -> None:
+        super().__init__("Windows session is ending")
+        self.child_started = child_started
+
 
 # LibreHardwareMonitor identifier prefixes that scope a sensor to something that is NOT the CPU.
 # The CPU-temperature search falls back to matching sensor *names* (for boards that label the die
@@ -296,6 +309,8 @@ class StatsMonitorThread(QThread):
         # The helper process in flight, if any - stop() kills it (see _run_child).
         self._child: Optional[subprocess.Popen] = None
         self._child_lock = threading.Lock()
+        self._session_ending = False
+        self._child_stopped_for_session = False
         # nvidia-smi is a synchronous subprocess (up to NVIDIA_SMI_TIMEOUT_SEC). Temps/power
         # change slowly, so poll it on a slow sub-cadence and cache between calls - keeps the
         # per-second network readout off the subprocess critical path.
@@ -1317,6 +1332,12 @@ class StatsMonitorThread(QThread):
         g = constants.gpu
         try:
             output = self._run_child(argv, constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC)
+        except _SessionEnding as e:
+            # A killed helper may still have woken a hybrid GPU. Preserve that timing signal
+            # without starting a failure backoff, and leave the timestamp alone for a skip.
+            if e.child_started:
+                self._nvidia_smi_ran_at = time.monotonic()
+            raise
         except Exception as e:
             now = time.monotonic()
             self._nvidia_smi_ran_at = now
@@ -2403,17 +2424,24 @@ class StatsMonitorThread(QThread):
     def _run_child(self, argv, timeout: float) -> str:
         """Run a short-lived helper (nvidia-smi) and return its stdout, like check_output - but the
         process is held where ``stop()`` can kill it, so a quit never waits out (or orphans) a slow
-        one. Raises on a non-zero exit, a timeout (the child is killed), or a kill from stop()."""
+        one. Raises on a non-zero exit, a timeout (the child is killed), or session shutdown."""
         # Not in the app's folder (the inherited CWD): a child sitting there blocks a portable
         # update from renaming the folder for as long as it lives (helpers.neutral_cwd).
         from netspeedtray.utils.helpers import neutral_cwd
+        cwd = neutral_cwd()
         with self._child_lock:
             if not self._is_running:
                 raise RuntimeError("stopping")
+            # Windows can begin shutdown before the widget receives WM_QUERYENDSESSION.
+            if self._session_ending or (
+                sys.platform == "win32" and ctypes.windll.user32.GetSystemMetrics(_SM_SHUTTINGDOWN)
+            ):
+                raise _SessionEnding()
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                    stdin=subprocess.DEVNULL, encoding="utf-8", cwd=neutral_cwd(),
+                                    stdin=subprocess.DEVNULL, encoding="utf-8", cwd=cwd,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self._child = proc
+            self._child_stopped_for_session = False
         try:
             try:
                 out, _ = proc.communicate(timeout=timeout)
@@ -2426,29 +2454,52 @@ class StatsMonitorThread(QThread):
                 except subprocess.TimeoutExpired:
                     pass
                 raise
-            if proc.returncode != 0:
-                raise subprocess.CalledProcessError(proc.returncode, argv, out)
-            return out
+        except (OSError, subprocess.SubprocessError) as e:
+            process_error = e
+        else:
+            process_error = None
         finally:
             with self._child_lock:
+                stopped_for_session = self._child_stopped_for_session
                 self._child = None
+        # Session cancellation may already have cleared _session_ending while we were
+        # reading the child. Use the reason recorded for this process.
+        if stopped_for_session:
+            raise _SessionEnding(child_started=True) from process_error
+        if process_error is not None:
+            raise process_error
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, argv, out)
+        return out
 
-    def _kill_child(self) -> None:
+    def set_session_ending(self, ending: bool) -> None:
+        """Pause helper launches during session shutdown and resume if Windows cancels it."""
         with self._child_lock:
-            proc = self._child
-        if proc is not None and proc.poll() is None:
-            try:
+            self._session_ending = ending
+            if ending:
+                self._kill_child(for_session_end=True)
+
+    def _kill_child(self, *, for_session_end: bool = False) -> None:
+        """Stop the active helper while holding _child_lock."""
+        proc = self._child
+        if proc is None:
+            return
+        try:
+            if proc.poll() is None:
                 proc.kill()
-                self.logger.info("Stopped an in-flight helper process at quit.")
-            except OSError:
-                pass
+                if for_session_end:
+                    self._child_stopped_for_session = True
+                self.logger.info("Stopped an in-flight hardware helper process.")
+        except OSError:
+            pass
 
     def stop(self) -> None:
         """Stops the monitoring loop: kills a helper process still running (nvidia-smi can take
         1.5 s, longer cold), waits a bounded time, and hands a thread that is still inside an
         uninterruptible call (WMI) to the thread reaper rather than letting quit abort on it."""
         self._is_running = False
-        self._kill_child()
+        with self._child_lock:
+            self._kill_child()
         self.wait(constants.timeouts.MONITOR_THREAD_STOP_WAIT_MS)
         from netspeedtray.core import thread_reaper
         if not thread_reaper.outlived(self, "The stats monitor thread"):
