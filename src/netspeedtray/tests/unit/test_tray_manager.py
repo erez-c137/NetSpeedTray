@@ -40,6 +40,8 @@ def mock_i18n():
     i18n.SHOW_MONITOR_MENU_ITEM = "Show Monitor"
     i18n.CHECK_CONN_MENU_ITEM = "&Check connection"   # 2.2.2 D7 menu item (#619: its own key)
     i18n.PAUSE_MENU_ITEM = "Pause"
+    i18n.LOCK_POSITION_MENU_ITEM = "&Lock position"      # 2.2.2 (#616)
+    i18n.USAGE_HISTORY_MENU_ITEM = "Usage &history"      # 2.2.2 (#619), opt-in
     i18n.RESUME_MENU_ITEM = "Resume"
     i18n.RESET_POSITION_MENU_ITEM = "Reset Position"
     i18n.CHECK_FOR_UPDATES_MENU_ITEM = "Check for Updates"
@@ -145,6 +147,11 @@ def test_tour_removed_and_pause_is_opt_in(mock_widget, mock_i18n, q_app):
 
     manager._refresh_dynamic_items()
     assert manager.pause_action is not None and not manager.pause_action.isVisible()
+    # 2.2.2 (#616): Lock position shares the group and shows by default, so its divider stays...
+    assert manager.lock_position_action.isVisible() and manager.pause_separator.isVisible()
+    # ...and with Lock hidden too, the empty group's divider goes.
+    mock_widget.config = {"context_menu_hidden_items": ["lock_position"]}
+    manager._refresh_dynamic_items()
     assert not manager.pause_separator.isVisible()
 
     mock_widget.config = {"pause_in_menu": True}

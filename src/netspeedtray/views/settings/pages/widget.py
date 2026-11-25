@@ -22,6 +22,7 @@ from netspeedtray.utils.helpers import fixed_digits
 from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 from netspeedtray.views.settings.pages.mini_graph_section import MiniGraphSection
+from netspeedtray.views.settings.pages.general import strip_mnemonic
 
 
 class WidgetPage(QWidget):
@@ -110,6 +111,15 @@ class WidgetPage(QWidget):
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.FREE_MOVE_LABEL, control=self.free_move))
+
+        # Lock position (#616): the same switch as the right-click menu's checkable item. Right under
+        # Free Move - the other "how dragging behaves" control. Docking still follows the taskbar.
+        self.position_locked = Win11Toggle(label_text="")
+        self.position_locked.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(
+            strip_mnemonic(getattr(self.i18n, "LOCK_POSITION_MENU_ITEM", "&Lock position")),
+            description=getattr(self.i18n, "LOCK_POSITION_DESC", ""),
+            control=self.position_locked))
 
         # #188: float the widget on a preferred monitor that has no taskbar of its own.
         self.free_float = Win11Toggle(label_text="")
@@ -374,6 +384,8 @@ class WidgetPage(QWidget):
         self.show_on_all_taskbars.setChecked(
             config.get("show_on_all_taskbars", constants.config.defaults.DEFAULT_SHOW_ON_ALL_TASKBARS))
         self.free_move.setChecked(config.get("free_move", False))
+        self.position_locked.setChecked(bool(config.get(
+            "position_locked", constants.config.defaults.DEFAULT_POSITION_LOCKED)))
         self.free_float.setChecked(config.get("free_float", True))
         self._sync_monitor_note()
         self.keep_visible_fullscreen.setChecked(
@@ -395,6 +407,7 @@ class WidgetPage(QWidget):
             "preferred_monitor": self.preferred_monitor_combo.currentData(),
             "show_on_all_taskbars": self.show_on_all_taskbars.isChecked(),
             "free_move": self.free_move.isChecked(),
+            "position_locked": self.position_locked.isChecked(),
             "free_float": self.free_float.isChecked(),
             "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
             "hide_when_apps_cover": self.hide_when_apps_cover.isChecked(),

@@ -2683,6 +2683,15 @@ class NetworkSpeedWidget(QWidget):
         if not sip.isdeleted(panel):
             panel.close()
 
+    def open_usage_history(self) -> None:
+        """Right-click > Usage history (#619, opt-in): the Monitor usage card's per-day / month / year
+        sheet, through the card's own opener - parentless, so it is a window of its own."""
+        try:
+            from netspeedtray.views.monitor import usage_history_sheet
+            usage_history_sheet.open_usage_history(self, self.config, self.i18n)
+        except Exception as e:
+            self.logger.error("Opening usage history failed: %s", e, exc_info=True)
+
     def open_connection_check(self) -> None:
         """The Check connection sheet (the Monitor's Overview/Network headers open the same one), here
         for the "running" panel - parentless, so it is a window of its own."""

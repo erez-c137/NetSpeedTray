@@ -573,7 +573,9 @@ def test_reset_menu_item_shows_once_moved_and_triggers_the_reset():
     class W(QWidget):
         def __init__(self):
             super().__init__()
-            self.config = {}
+            # Lock position (2.2.2, #616) shares Reset's group and shows by default; hidden here so the
+            # group's divider tracks Reset alone.
+            self.config = {"context_menu_hidden_items": ["lock_position"]}
             self.moved = False
             self.reset_to_default_position = MagicMock()
 

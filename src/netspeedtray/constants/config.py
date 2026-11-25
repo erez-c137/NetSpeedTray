@@ -179,6 +179,10 @@ class ConfigConstants:
     DEFAULT_DECIMAL_PLACES: Final[int] = 1
     DEFAULT_TEXT_ALIGNMENT: Final[str] = "center"
     DEFAULT_FREE_MOVE: Final[bool] = False
+    # Lock position (#616): a left-button drag never moves the widget, in any mode (Free Move too).
+    # Clicks, double-clicks, the hover card and the menu still work; automatic docking still runs.
+    # Off by default - nothing changes until the user picks it.
+    DEFAULT_POSITION_LOCKED: Final[bool] = False
     # When the preferred monitor has NO taskbar of its own (e.g. the Corsair Xeneon Edge, or a
     # secondary display with "show taskbar on all displays" off), float the widget on THAT display
     # instead of falling back to the primary taskbar. On by default so the accessory-display case
@@ -236,17 +240,25 @@ class ConfigConstants:
     # 2.2.2 D7: the Check connection sheet, until then reachable only from inside the Monitor (and the
     # Start-menu panel). Shown by default - one item more than 2.2.1's default menu.
     CONTEXT_MENU_ITEM_CHECK_CONNECTION: Final[str] = "check_connection"
+    # 2.2.2 (#616): the checkable Lock position item - shown by default (users are told it is in the
+    # right-click menu); its STATE, `position_locked`, defaults to unlocked.
+    CONTEXT_MENU_ITEM_LOCK_POSITION: Final[str] = "lock_position"
     CONTEXT_MENU_ITEM_RESET_POSITION: Final[str] = "reset_position"
     CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES: Final[str] = "check_for_updates"
     CONTEXT_MENU_ITEM_SUPPORT: Final[str] = "support"
     CONTEXT_MENU_HIDEABLE_ITEMS: Final[List[str]] = [
         CONTEXT_MENU_ITEM_MONITOR,
         CONTEXT_MENU_ITEM_CHECK_CONNECTION,
+        CONTEXT_MENU_ITEM_LOCK_POSITION,
         CONTEXT_MENU_ITEM_RESET_POSITION,
         CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES,
         CONTEXT_MENU_ITEM_SUPPORT,
     ]
     DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS: Final[List[str]] = []
+    # 2.2.2 (#619): Usage history (the Monitor usage card's per-day / month / year sheet) in the
+    # right-click menu. Opt-in with its own key, like Pause (`pause_in_menu`): a hidden-items id would
+    # show it to every existing user, whose saved hidden list is already [].
+    DEFAULT_USAGE_HISTORY_IN_MENU: Final[bool] = False
 
     # --- CPU/GPU Monitoring ---
     DEFAULT_MONITOR_CPU_ENABLED: Final[bool] = False
@@ -331,6 +343,7 @@ class ConfigConstants:
         "power_display_enabled": False,    # opt-in: the hover card's battery rows (live draw / projected)
         "show_hover_tips": True,           # the hover card's right-click/double-click gesture hint
         "pause_in_menu": False,            # opt-in: surface Pause/Resume in the right-click menu
+        "usage_history_in_menu": DEFAULT_USAGE_HISTORY_IN_MENU,  # opt-in: Usage history in the menu (#619)
         "context_menu_hidden_items": list(DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS),  # ids from CONTEXT_MENU_HIDEABLE_ITEMS
         "dark_mode": DEFAULT_DARK_MODE,
         "history_period": data.history_period.DEFAULT_PERIOD,
@@ -343,6 +356,7 @@ class ConfigConstants:
         "decimal_places": DEFAULT_DECIMAL_PLACES,
         "text_alignment": DEFAULT_TEXT_ALIGNMENT,
         "free_move": DEFAULT_FREE_MOVE,
+        "position_locked": DEFAULT_POSITION_LOCKED,   # #616: dragging never moves the widget
         "free_float": DEFAULT_FREE_FLOAT,
         "double_click_action": DEFAULT_DOUBLE_CLICK_ACTION,
         "middle_click_action": DEFAULT_MIDDLE_CLICK_ACTION,
@@ -534,6 +548,7 @@ class ConfigConstants:
         "power_display_enabled": {"type": bool, "default": False},
         "show_hover_tips": {"type": bool, "default": True},
         "pause_in_menu": {"type": bool, "default": False},
+        "usage_history_in_menu": {"type": bool, "default": DEFAULT_USAGE_HISTORY_IN_MENU},
         # "item_choices": unknown ids (incl. "settings"/"exit", which always show) are dropped one by
         # one and duplicates collapsed - a bad entry never costs the user the rest of the list. The default
         # is its own list (as in DEFAULT_CONFIG), never the shared constant.
@@ -557,6 +572,7 @@ class ConfigConstants:
         "arrow_up_symbol": {"type": str, "default": ""},
         "arrow_down_symbol": {"type": str, "default": ""},
         "free_move": {"type": bool, "default": DEFAULT_FREE_MOVE},
+        "position_locked": {"type": bool, "default": DEFAULT_POSITION_LOCKED},
         "free_float": {"type": bool, "default": DEFAULT_FREE_FLOAT},
         "double_click_action": {"type": str, "default": DEFAULT_DOUBLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},
         "middle_click_action": {"type": str, "default": DEFAULT_MIDDLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},

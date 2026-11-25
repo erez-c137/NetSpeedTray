@@ -103,6 +103,14 @@ class InputHandler(QObject):
                 < QApplication.startDragDistance()):
             return
 
+        # Lock position (#616): past the threshold a locked widget never starts a drag, in any mode (Free
+        # Move too). The press is dropped, so its release is neither a drop nor a click - an attempted drag
+        # does nothing. A sub-threshold click, a double-click and the right-click menu are untouched.
+        if not self._is_dragging and self._position_locked():
+            self._drag_start_pos = None
+            self._press_global = None
+            return
+
         # Start dragging if we haven't already. A hover card left up would stay at the old spot while
         # the widget moves away (or under it), so dismiss it - and any pending show - as the drag begins.
         if not self._is_dragging:
@@ -122,6 +130,14 @@ class InputHandler(QObject):
         # Apply move
         self.widget.move(final_pos)
         event.accept()
+
+    def _position_locked(self) -> bool:
+        """`position_locked` (#616); a missing or unreadable config reads as unlocked."""
+        try:
+            config = getattr(self.widget, "config", None) or {}
+            return bool(config.get("position_locked", constants.config.defaults.DEFAULT_POSITION_LOCKED))
+        except Exception:
+            return False
 
     def _dismiss_hover_card(self) -> None:
         self._click_timer.stop()

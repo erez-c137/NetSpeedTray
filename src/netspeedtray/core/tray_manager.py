@@ -46,6 +46,8 @@ class TrayIconManager(QObject):
         self.reset_position_action: Optional[QAction] = None
         self.update_action: Optional[QAction] = None
         self.monitor_action: Optional[QAction] = None
+        self.usage_history_action: Optional[QAction] = None
+        self.lock_position_action: Optional[QAction] = None
         self.support_action: Optional[QAction] = None
         # [(QAction, Segoe-Fluent-codepoint)] - icons are (re)tinted to the text color on each open.
         self._menu_icon_actions: list = []
@@ -108,6 +110,13 @@ class TrayIconManager(QObject):
             if hasattr(self.widget, 'open_monitor_window'):
                 monitor_action.triggered.connect(self.widget.open_monitor_window)
 
+            # Usage history (2.2.2, #619): the Monitor usage card's per-day / month / year sheet. Opt-in
+            # (`usage_history_in_menu`, default off), so the default menu is unchanged; refreshed on open.
+            self.usage_history_action = self.context_menu.addAction(
+                getattr(self.i18n, "USAGE_HISTORY_MENU_ITEM", "Usage &history"))
+            if hasattr(self.widget, 'open_usage_history'):
+                self.usage_history_action.triggered.connect(self.widget.open_usage_history)
+
             # Check connection (2.2.2 D7): the on-demand router + internet check, until now only inside
             # the Monitor; hideable in Settings. Its own key with an Alt letter (#619): CHECK_CONN_ACTION
             # also labels buttons, where an '&' would add a stray shortcut.
@@ -123,6 +132,15 @@ class TrayIconManager(QObject):
             # pair's visibility is refreshed on every open in _refresh_dynamic_items. ---
             self.pause_action = self.context_menu.addAction(self.i18n.PAUSE_MENU_ITEM)
             self.pause_action.triggered.connect(self._toggle_pause)
+            # Lock position (2.2.2, #616): checkable; when on, a drag never moves the widget (the input
+            # handler reads `position_locked`). Shown by default, hideable in Settings; its check state is
+            # re-read from the config on every open, so a change made in Settings shows here too. No glyph
+            # of its own: an icon takes the check column and hides the state, so - as in native Win11
+            # menus - the column shows a checkmark when locked and stays empty when not.
+            self.lock_position_action = self.context_menu.addAction(
+                getattr(self.i18n, "LOCK_POSITION_MENU_ITEM", "&Lock position"))
+            self.lock_position_action.setCheckable(True)
+            self.lock_position_action.triggered.connect(self._toggle_position_lock)
             # Reset position - shown only once the widget sits where the user dragged it (or a saved
             # free-move spot), so the default menu stays calm; refreshed on every open.
             self.reset_position_action = self.context_menu.addAction(self.i18n.RESET_POSITION_MENU_ITEM)
@@ -159,6 +177,7 @@ class TrayIconManager(QObject):
             self._menu_icon_actions = [
                 (settings_action, 0xE713),    # Settings (gear)
                 (monitor_action, 0xE9D9),     # Monitor (chart)
+                (self.usage_history_action, 0xE81C),  # Usage history (history clock)
                 (self.check_connection_action, 0xE774),  # Check connection (globe, as on the running panel)
                 (self.pause_action, 0xE769),  # Pause (→ play when paused)
                 (self.reset_position_action, 0xE72C),  # Reset position (refresh)
@@ -188,6 +207,14 @@ class TrayIconManager(QObject):
                 self.widget.pause()
         except Exception as e:
             self.logger.error("Error toggling pause: %s", e, exc_info=True)
+
+    def _toggle_position_lock(self, checked: bool = False) -> None:
+        """Right-click > Lock position: persist the new state (`position_locked`)."""
+        try:
+            self.widget.update_config({"position_locked": bool(checked)})
+            self.logger.info("Widget position %s from the menu.", "locked" if checked else "unlocked")
+        except Exception as e:
+            self.logger.error("Error toggling the position lock: %s", e, exc_info=True)
 
     def _apply_menu_style(self) -> None:
         """Style the context menu to fit Windows 11: a dark, rounded card with generous padding,
@@ -252,6 +279,16 @@ class TrayIconManager(QObject):
             hidden = self._hidden_menu_items()
             if getattr(self, "monitor_action", None) is not None:
                 self.monitor_action.setVisible(ids.CONTEXT_MENU_ITEM_MONITOR not in hidden)
+            config = getattr(self.widget, "config", {}) or {}
+            if getattr(self, "usage_history_action", None) is not None:
+                self.usage_history_action.setVisible(bool(config.get(
+                    "usage_history_in_menu", constants.config.defaults.DEFAULT_USAGE_HISTORY_IN_MENU)))
+            if getattr(self, "lock_position_action", None) is not None:
+                self.lock_position_action.setVisible(ids.CONTEXT_MENU_ITEM_LOCK_POSITION not in hidden)
+                locked = bool(config.get("position_locked", constants.config.defaults.DEFAULT_POSITION_LOCKED))
+                self.lock_position_action.setChecked(locked)
+                self.lock_position_action.setIcon(
+                    su.fluent_icon(0xE73E, 16, su.semantic_colors()['text_primary']) if locked else QIcon())
             if getattr(self, "check_connection_action", None) is not None:
                 self.check_connection_action.setVisible(ids.CONTEXT_MENU_ITEM_CHECK_CONNECTION not in hidden)
             if getattr(self, "support_action", None) is not None:
