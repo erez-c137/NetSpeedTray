@@ -4,8 +4,8 @@ Lock position (#616) and the optional Usage history menu item (#619), both 2.2.2
 * Lock position: a user with a wrist brace kept moving the widget by accident. `position_locked`
   (default False) stops a left-button drag from ever starting - in every mode, Free Move included -
   while a click, a double-click, the hover card and the right-click menu keep working. It is a
-  checkable right-click item (shown by default, hideable like the others) and a switch in
-  Settings > Widget > Placement.
+  switch in Settings > Widget > Placement and an opt-in checkable right-click item
+  (`lock_position_in_menu`, default False - owner: the default menu stays exactly as in 2.2.1).
 * Usage history: an opt-in right-click item (`usage_history_in_menu`, default False) that opens the
   same per-day / month / year sheet as the Monitor's usage card - one shared opener, not a copy.
 """
@@ -49,18 +49,20 @@ def test_usage_item_defaults_off():
     assert _cm()._validate_config({})["usage_history_in_menu"] is False
 
 
-@pytest.mark.parametrize("key", ["position_locked", "usage_history_in_menu"])
+@pytest.mark.parametrize("key", ["position_locked", "usage_history_in_menu", "lock_position_in_menu"])
 def test_schema_keeps_true_and_resets_a_non_bool(key):
     assert _cm()._validate_config({key: True})[key] is True
     assert _cm()._validate_config({key: "yes"})[key] is False
 
 
-def test_lock_item_is_hideable_and_nothing_new_hidden_by_default():
-    assert D.CONTEXT_MENU_ITEM_LOCK_POSITION == "lock_position"
-    assert D.CONTEXT_MENU_ITEM_LOCK_POSITION in D.CONTEXT_MENU_HIDEABLE_ITEMS
+def test_both_menu_items_are_opt_in_with_their_own_keys():
+    assert D.DEFAULT_LOCK_POSITION_IN_MENU is False
+    assert D.DEFAULT_CONFIG["lock_position_in_menu"] is False
+    assert _cm()._validate_config({})["lock_position_in_menu"] is False
+    # Own opt-in keys, like Pause - never hidden-items ids (an id shows to every existing user, whose
+    # saved hidden list is already []).
     assert D.DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS == []
-    # Usage history keeps its own opt-in key, like Pause - never a hidden-items id.
-    assert "usage_history" not in D.CONTEXT_MENU_HIDEABLE_ITEMS
+    assert not {"lock_position", "usage_history"} & set(D.CONTEXT_MENU_HIDEABLE_ITEMS)
 
 
 # -------------------------------------------------------------------------------------------- input
@@ -159,6 +161,7 @@ def _menu(qt_owned, i18n, config, moved=False):
     widget.has_custom_position = lambda: moved
     widget.fully_exit_application = lambda: None
     widget.update_config = MagicMock(side_effect=lambda u, *a, **k: config.update(u))
+    widget.set_position_locked = MagicMock(side_effect=lambda on: config.update(position_locked=on))
     widget.open_usage_history = MagicMock()
     with patch("os.path.exists", return_value=False):
         manager = TrayIconManager(widget, i18n)
@@ -176,23 +179,31 @@ def _shown(manager):
     return ["-" if a.isSeparator() else a.text() for a in manager.context_menu.actions() if a.isVisible()]
 
 
-def test_lock_item_shown_by_default_unchecked(qt_owned, i18n):
+def test_lock_item_hidden_by_default(qt_owned, i18n):
     m = _menu(qt_owned, i18n, {})
+    assert not m.lock_position_action.isVisible()
+    assert i18n.LOCK_POSITION_MENU_ITEM not in _shown(m)
+
+
+def test_lock_item_shown_when_enabled_unchecked(qt_owned, i18n):
+    m = _menu(qt_owned, i18n, {"lock_position_in_menu": True}, moved=True)
     a = m.lock_position_action
     assert a.text() == i18n.LOCK_POSITION_MENU_ITEM
     assert a.isCheckable() and a.isVisible() and not a.isChecked()
+    shown = _shown(m)
+    assert shown.index(i18n.LOCK_POSITION_MENU_ITEM) + 1 == shown.index(i18n.RESET_POSITION_MENU_ITEM)
 
 
 def test_lock_item_toggles_and_persists(qt_owned, i18n):
-    config = {}
+    config = {"lock_position_in_menu": True}
     m = _menu(qt_owned, i18n, config)
     m.lock_position_action.trigger()
-    m.widget.update_config.assert_called_with({"position_locked": True})
+    m.widget.set_position_locked.assert_called_with(True)
     assert config["position_locked"] is True
     _refresh(m)
     assert m.lock_position_action.isChecked()
     m.lock_position_action.trigger()
-    m.widget.update_config.assert_called_with({"position_locked": False})
+    m.widget.set_position_locked.assert_called_with(False)
 
 
 def test_lock_item_reflects_config_on_open(qt_owned, i18n):
@@ -204,29 +215,29 @@ def test_lock_item_reflects_config_on_open(qt_owned, i18n):
     assert m.lock_position_action.isChecked()
 
 
-def test_lock_item_can_be_hidden(qt_owned, i18n):
-    m = _menu(qt_owned, i18n, {"context_menu_hidden_items": ["lock_position"]})
-    assert not m.lock_position_action.isVisible()
-
-
 def test_usage_item_hidden_by_default(qt_owned, i18n):
     m = _menu(qt_owned, i18n, {})
     assert not m.usage_history_action.isVisible()
     assert i18n.USAGE_HISTORY_MENU_ITEM not in _shown(m)
 
 
-def test_usage_item_shown_when_enabled_and_opens_the_sheet(qt_owned, i18n):
+def test_usage_item_shown_when_enabled_and_opens_the_sheet(qtbot, qt_owned, i18n):
     m = _menu(qt_owned, i18n, {"usage_history_in_menu": True})
     shown = _shown(m)
     assert shown.index(i18n.USAGE_HISTORY_MENU_ITEM) == shown.index(i18n.SHOW_MONITOR_MENU_ITEM) + 1
     m.usage_history_action.trigger()
+    qtbot.waitUntil(lambda: m.widget.open_usage_history.called, timeout=1000)   # after the menu loop
     m.widget.open_usage_history.assert_called_once()
 
 
-def test_default_menu_only_gains_the_lock_item(qt_owned, i18n):
-    m = _menu(qt_owned, i18n, {}, moved=False)
+@pytest.mark.parametrize("config", [{}, {"context_menu_hidden_items": []}], ids=["fresh", "existing"])
+@pytest.mark.parametrize("moved", [False, True])
+def test_default_menu_is_unchanged(qt_owned, i18n, config, moved):
+    """Owner, 2026-11-25: neither new item is in the default menu - a fresh config, or an existing one
+    with its saved (empty) hidden list."""
+    m = _menu(qt_owned, i18n, dict(config), moved=moved)
     assert _shown(m) == [i18n.SETTINGS_MENU_ITEM, i18n.SHOW_MONITOR_MENU_ITEM, i18n.CHECK_CONN_MENU_ITEM, "-",
-                         i18n.LOCK_POSITION_MENU_ITEM, "-",
+                         *([i18n.RESET_POSITION_MENU_ITEM, "-"] if moved else []),
                          i18n.CHECK_FOR_UPDATES_MENU_ITEM, i18n.SUPPORT_MENU_ITEM, "-",
                          i18n.EXIT_MENU_ITEM]
 
@@ -287,8 +298,9 @@ def test_settings_menu_list_has_both_rows_in_menu_order(general, i18n):
     rows = [c._title_label.text() for c in general.context_menu_items.findChildren(SettingCard)]
     assert rows == ["Show Monitor", "Usage history", "Check connection", i18n.CLICK_ACTION_PAUSE_LABEL,
                     "Lock position", "Reset position", "Check for updates", "Support this project"]
-    assert "lock_position" in general.context_menu_toggles
+    assert "lock_position" not in general.context_menu_toggles   # own opt-in keys, not hidden-items ids
     assert general.context_menu_items.isAncestorOf(general.usage_history_in_menu)
+    assert general.context_menu_items.isAncestorOf(general.lock_position_in_menu)
 
 
 def test_settings_usage_row_defaults_off_and_round_trips(general):
@@ -300,10 +312,13 @@ def test_settings_usage_row_defaults_off_and_round_trips(general):
     assert general.get_settings()["usage_history_in_menu"] is True
 
 
-def test_settings_lock_row_round_trips_hidden(general):
-    general.load_settings({"context_menu_hidden_items": ["lock_position"]}, is_startup_enabled=False)
-    assert not general.context_menu_toggles["lock_position"].isChecked()
-    assert general.get_settings()["context_menu_hidden_items"] == ["lock_position"]
+def test_settings_lock_row_defaults_off_and_round_trips(general):
+    general.load_settings({}, is_startup_enabled=False)
+    assert general.lock_position_in_menu.isChecked() is False
+    assert general.get_settings()["lock_position_in_menu"] is False
+    general.load_settings({"lock_position_in_menu": True}, is_startup_enabled=False)
+    assert general.get_settings()["lock_position_in_menu"] is True
+    assert general.get_settings()["context_menu_hidden_items"] == []
 
 
 @pytest.fixture
@@ -326,10 +341,109 @@ def test_widget_page_lock_switch_sits_after_free_move_and_round_trips(widget_pag
 def test_lock_item_shows_its_state_in_the_check_column(qt_owned, i18n):
     """An icon takes the check column and hid the state (seen on a render): the item has no glyph of its
     own - a checkmark glyph when locked, nothing when not."""
-    config = {}
+    config = {"lock_position_in_menu": True}
     m = _menu(qt_owned, i18n, config)
     assert m.lock_position_action.icon().isNull()
     assert all(a is not m.lock_position_action for a, _cp in m._menu_icon_actions)
     config["position_locked"] = True
     _refresh(m)
     assert not m.lock_position_action.icon().isNull()
+
+
+# ------------------------------------------- review F1: the menu toggle while Settings is open
+
+def _lock_main(cfg):
+    from netspeedtray.tests.unit.test_integration_222 import _Main
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+
+    class Main(_Main):
+        set_position_locked = NetworkSpeedWidget.set_position_locked
+    return Main(cfg)
+
+
+def _toggle_from_menu(main, on):
+    """TrayIconManager's slot, unbound, over the harness widget (not a QObject)."""
+    fake = MagicMock()
+    fake.widget = main
+    TrayIconManager._toggle_position_lock(fake, on)
+
+
+@pytest.fixture
+def _no_boxes(monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+    for name in ("critical", "information", "warning"):
+        monkeypatch.setattr(QMessageBox, name, lambda *a, **k: None)
+
+
+@pytest.mark.parametrize("widget_page_built", [False, True])
+@pytest.mark.parametrize("close", ["preview_then_save", "cancel"])
+def test_menu_lock_with_settings_open_never_saves_the_preview_and_survives_the_dialog(
+        qtbot, _no_boxes, widget_page_built, close):
+    from netspeedtray.tests.unit.test_integration_222 import _open_settings, _preview_font_edit
+    main = _lock_main(dict(D.DEFAULT_CONFIG, position_locked=False, font_size=9))
+    dlg = _open_settings(qtbot, main, build_network_page=False)
+    if widget_page_built:
+        dlg._ensure_page("widget")
+    _preview_font_edit(dlg, main)
+    _toggle_from_menu(main, True)
+    written = main.saved[-1]
+    assert written["position_locked"] is True and written["font_size"] == 9   # (a) never the preview
+    assert main.config["position_locked"] is True                              # applies at once
+    if widget_page_built:
+        assert dlg._built_pages["widget"].position_locked.isChecked()        # the open page shows it
+    if close == "preview_then_save":
+        dlg._emit_settings_changed_throttled()                                  # (b) a later preview...
+        assert main.config["position_locked"] is True
+        dlg._save_and_close()                                                   # ...and Save
+        assert main.saved[-1]["position_locked"] is True
+    else:
+        dlg.reject()                                                            # (c) Cancel
+        assert main.saved[-1]["position_locked"] is True
+        assert main.config["font_size"] == 9
+    assert main.config["position_locked"] is True
+
+
+def test_menu_lock_without_settings_saves_through_save_config_keys():
+    main = _lock_main(dict(D.DEFAULT_CONFIG, position_locked=False))
+    _toggle_from_menu(main, True)
+    assert main.config["position_locked"] is True and main.saved[-1]["position_locked"] is True
+    _toggle_from_menu(main, False)
+    assert main.config["position_locked"] is False and main.saved[-1]["position_locked"] is False
+
+
+# ------------------------------------------------- review F2: sheets open after the menu loop ends
+
+@pytest.mark.parametrize("action_attr, opener", [("usage_history_action", "open_usage_history"),
+                                                 ("check_connection_action", "open_connection_check")])
+def test_sheet_items_open_after_the_menu_closes(qtbot, qt_owned, i18n, action_attr, opener):
+    """Action slots run inside QMenu.exec, while _is_context_menu_visible is True - the refresh, the
+    burial recovery, the hover card and the mirrors all stand down for as long as a modal sheet opened
+    there stays up. The sheet must open once the menu loop has ended."""
+    from PyQt6.QtCore import QPoint
+    widget = qt_owned(QWidget())
+    widget.config = {"usage_history_in_menu": True}
+    widget.has_custom_position = lambda: False
+    widget.fully_exit_application = lambda: None
+    widget._is_context_menu_visible = False
+    seen = []
+    setattr(widget, opener, lambda: seen.append(widget._is_context_menu_visible))
+    with patch("os.path.exists", return_value=False):
+        m = TrayIconManager(widget, i18n)
+        m.initialize()
+    m._calculate_menu_position = lambda anchor=None: QPoint(0, 0)
+    m.context_menu.exec = lambda *_a: getattr(m, action_attr).trigger()
+    with patch("netspeedtray.core.update_checker.update_check_disabled_by_policy", return_value=False):
+        m.show_context_menu()
+    assert seen == []                     # not inside the menu loop
+    qtbot.waitUntil(lambda: seen != [], timeout=1000)
+    assert seen == [False]
+
+
+def test_a_blocked_drag_dismisses_the_hover_card(handler):
+    h, w = handler
+    w.config = {"position_locked": True}
+    w._hover_card_timer = MagicMock()
+    w._hide_usage_hover_card = MagicMock()
+    _drag(h)
+    w._hover_card_timer.stop.assert_called()
+    w._hide_usage_hover_card.assert_called()

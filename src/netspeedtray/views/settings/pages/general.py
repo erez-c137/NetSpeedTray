@@ -170,19 +170,24 @@ class GeneralPage(QWidget):
         self.context_menu_items.expandedChanged.connect(lambda _on: self.layout_changed.emit())
         self.pause_in_menu = Win11Toggle(label_text="")
         self.pause_in_menu.toggled.connect(self.on_change)
-        # Usage history (2.2.2, #619) is opt-in the same way: its own key, `usage_history_in_menu`.
+        # Usage history (#619) and Lock position (#616), 2.2.2, are opt-in the same way: their own keys,
+        # `usage_history_in_menu` / `lock_position_in_menu`, default off.
         self.usage_history_in_menu = Win11Toggle(label_text="")
         self.usage_history_in_menu.toggled.connect(self.on_change)
+        self.lock_position_in_menu = Win11Toggle(label_text="")
+        self.lock_position_in_menu.toggled.connect(self.on_change)
         self.context_menu_toggles: Dict[str, Win11Toggle] = {}
         _PAUSE = object()   # the Pause / Resume row: its own key, not a hidden-items id
         _USAGE = object()   # the Usage history row: likewise
-        own_key_rows = {_PAUSE: self.pause_in_menu, _USAGE: self.usage_history_in_menu}
+        _LOCK = object()    # the Lock position row: likewise
+        own_key_rows = {_PAUSE: self.pause_in_menu, _USAGE: self.usage_history_in_menu,
+                        _LOCK: self.lock_position_in_menu}
         for item_id, label_key, fallback in (
                 (defaults.CONTEXT_MENU_ITEM_MONITOR, "SHOW_MONITOR_MENU_ITEM", "Show Monitor"),
                 (_USAGE, "USAGE_HISTORY_MENU_ITEM", "Usage &history"),
                 (defaults.CONTEXT_MENU_ITEM_CHECK_CONNECTION, "CHECK_CONN_ACTION", "Check connection"),
                 (_PAUSE, "CLICK_ACTION_PAUSE_LABEL", "Pause / Resume"),
-                (defaults.CONTEXT_MENU_ITEM_LOCK_POSITION, "LOCK_POSITION_MENU_ITEM", "&Lock position"),
+                (_LOCK, "LOCK_POSITION_MENU_ITEM", "&Lock position"),
                 (defaults.CONTEXT_MENU_ITEM_RESET_POSITION, "RESET_POSITION_MENU_ITEM", "Reset p&osition"),
                 (defaults.CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES, "CHECK_FOR_UPDATES_MENU_ITEM", "Check for &Updates"),
                 (defaults.CONTEXT_MENU_ITEM_SUPPORT, "SUPPORT_MENU_ITEM", "Support this Pro&ject")):
@@ -258,6 +263,8 @@ class GeneralPage(QWidget):
         self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
         self.usage_history_in_menu.setChecked(bool(config.get(
             "usage_history_in_menu", defaults.DEFAULT_USAGE_HISTORY_IN_MENU)))
+        self.lock_position_in_menu.setChecked(bool(config.get(
+            "lock_position_in_menu", defaults.DEFAULT_LOCK_POSITION_IN_MENU)))
         hidden = config.get("context_menu_hidden_items",
                             constants.config.defaults.DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS)
         if not isinstance(hidden, (list, tuple)):
@@ -305,6 +312,7 @@ class GeneralPage(QWidget):
             "middle_click_action": self.middle_click_action.currentData(),
             "pause_in_menu": self.pause_in_menu.isChecked(),
             "usage_history_in_menu": self.usage_history_in_menu.isChecked(),
+            "lock_position_in_menu": self.lock_position_in_menu.isChecked(),
             # In the order of CONTEXT_MENU_HIDEABLE_ITEMS, so an unchanged page saves an equal list.
             "context_menu_hidden_items": [item_id for item_id, toggle in self.context_menu_toggles.items()
                                           if not toggle.isChecked()],

@@ -107,6 +107,7 @@ class InputHandler(QObject):
         # Move too). The press is dropped, so its release is neither a drop nor a click - an attempted drag
         # does nothing. A sub-threshold click, a double-click and the right-click menu are untouched.
         if not self._is_dragging and self._position_locked():
+            self._dismiss_hover_card()   # as a real drag start does: a pending card must not pop up mid-gesture
             self._drag_start_pos = None
             self._press_global = None
             return

@@ -48,10 +48,9 @@ def _shown(manager):
 
 def test_default_menu(qt_owned, i18n):
     m = _menu(qt_owned, i18n, {})
-    # 2.2.2 D7 added Check connection after Show Monitor, and #616 Lock position before Reset position
-    # (Usage history, #619, is opt-in and not in the default menu).
+    # 2.2.2 D7 added Check connection after Show Monitor (the one item the default menu gained).
     assert _shown(m) == [i18n.SETTINGS_MENU_ITEM, i18n.SHOW_MONITOR_MENU_ITEM, i18n.CHECK_CONN_MENU_ITEM, "-",
-                         i18n.LOCK_POSITION_MENU_ITEM, i18n.RESET_POSITION_MENU_ITEM, "-",
+                         i18n.RESET_POSITION_MENU_ITEM, "-",
                          i18n.CHECK_FOR_UPDATES_MENU_ITEM, i18n.SUPPORT_MENU_ITEM, "-",
                          i18n.EXIT_MENU_ITEM]
 

@@ -610,7 +610,7 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray חופף ללוח הווידג'טים",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray יושב מעל לוח הווידג'טים/מזג האוויר של Windows בשורת המשימות שלך. אפשר לגרור אותו לכל מקום שתרצה - הוא יזכור את המיקום. (הודעה זו לא תוצג שוב.)",
     "RESET_POSITION_MENU_ITEM": "&איפוס מיקום",
-    "LOCK_POSITION_MENU_ITEM": "נעל מי&קום",
+    "LOCK_POSITION_MENU_ITEM": "נעילת מי&קום",
     "LOCK_POSITION_DESC": "גרירה לא תזיז את היישומון. לחיצות ממשיכות לעבוד.",
     "USAGE_HISTORY_MENU_ITEM": "הי&סטוריית שימוש",
     "SIDE_BAR_NO_ROOM_TITLE": "אין מקום פנוי בשורת המשימות",

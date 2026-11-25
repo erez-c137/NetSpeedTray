@@ -147,11 +147,6 @@ def test_tour_removed_and_pause_is_opt_in(mock_widget, mock_i18n, q_app):
 
     manager._refresh_dynamic_items()
     assert manager.pause_action is not None and not manager.pause_action.isVisible()
-    # 2.2.2 (#616): Lock position shares the group and shows by default, so its divider stays...
-    assert manager.lock_position_action.isVisible() and manager.pause_separator.isVisible()
-    # ...and with Lock hidden too, the empty group's divider goes.
-    mock_widget.config = {"context_menu_hidden_items": ["lock_position"]}
-    manager._refresh_dynamic_items()
     assert not manager.pause_separator.isVisible()
 
     mock_widget.config = {"pause_in_menu": True}

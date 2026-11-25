@@ -257,17 +257,16 @@ def _shown(manager):
     return [a.text() for a in manager.context_menu.actions() if a.isVisible() and not a.isSeparator()]
 
 
-def test_menu_offers_check_connection_after_monitor(qt_owned):
+def test_menu_offers_check_connection_after_monitor(qtbot, qt_owned):
     i18n = I18nStrings("en_US")
     m, widget = _menu(qt_owned, i18n, {})
     shown = _shown(m)
     assert shown == [i18n.SETTINGS_MENU_ITEM, i18n.SHOW_MONITOR_MENU_ITEM, i18n.CHECK_CONN_MENU_ITEM,
-                     i18n.LOCK_POSITION_MENU_ITEM,
                      i18n.CHECK_FOR_UPDATES_MENU_ITEM, i18n.SUPPORT_MENU_ITEM, i18n.EXIT_MENU_ITEM]
-    # The 2.2.1 default menu had 5 items; 2.2.2 adds Check connection (D7) and Lock position (#616, the
-    # owner's call: findable where users are told it is). Usage history (#619) is opt-in.
-    assert len(shown) <= 7
+    assert len(shown) <= 6        # the 2.2.1 default menu had 5 items: at most one more
     m.check_connection_action.trigger()
+    # Opens once the menu loop has ended (review F2 on #626), not inside the action slot.
+    qtbot.waitUntil(lambda: widget.open_connection_check.called, timeout=1000)
     widget.open_connection_check.assert_called_once()
 
 
