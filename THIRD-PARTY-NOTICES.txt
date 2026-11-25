@@ -13,7 +13,7 @@ them with your own build of a compatible Qt version. The LGPL-3.0 adds permissio
 GPL-3.0, whose full text is LICENSE.txt.
 
 Source code (GPLv3 section 6(d)) - the Corresponding Source of this build:
-* NetSpeedTray 2.2.1-beta.1: https://github.com/erez-c137/NetSpeedTray/tree/v2.2.1-beta.1 (the tagged release)
+* NetSpeedTray 2.2.1: https://github.com/erez-c137/NetSpeedTray/tree/v2.2.1 (the tagged release)
 * Qt 6.10.2: https://download.qt.io/archive/qt/6.10/6.10.2/single/ (per module: .../6.10.2/submodules/)
 * PyQt6 6.10.2: https://files.pythonhosted.org/packages/source/P/PyQt6/pyqt6-6.10.2.tar.gz
 * python-bidi 0.6.12: https://files.pythonhosted.org/packages/source/p/python-bidi/python_bidi-0.6.12.tar.gz
@@ -39,7 +39,7 @@ Summary
 * matplotlib 3.11.2
     Licence: Matplotlib License (PSF-based); bundled fonts: see their section
     https://matplotlib.org
-* numpy 2.5.4
+* numpy 2.5.5
     Licence: BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 (bundles OpenBLAS, BSD-3-Clause)
     https://numpy.org
 * packaging 26.3
@@ -1956,7 +1956,7 @@ License:
 
 
 ====================================================================================================
-numpy 2.5.4
+numpy 2.5.5
 Licence: BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 (bundles OpenBLAS, BSD-3-Clause)
 Home: https://numpy.org
 ====================================================================================================
