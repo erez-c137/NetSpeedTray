@@ -512,6 +512,13 @@ def main() -> int:
         logger.error("Headless export errored: %s", e, exc_info=True)
         return 1
 
+    # Child processes inherit this mode. Keep loader failures from opening a system dialog
+    # if Windows starts shutting down between the GPU helper's status check and its launch.
+    from ctypes import windll
+    SEM_FAILCRITICALERRORS = 0x0001
+    kernel32 = windll.kernel32
+    kernel32.SetErrorMode(kernel32.GetErrorMode() | SEM_FAILCRITICALERRORS)
+
     # The QApplication must be created before any UI elements.
     app = QApplication(sys.argv)
 

@@ -2492,7 +2492,16 @@ class NetworkSpeedWidget(QWidget):
                     lparam = int(msg.lParam or 0)   # the launch monitor's centre (D3), 0 = none
                     QTimer.singleShot(0, lambda: self.handle_activate_request(wparam, lparam))
                     return True, 0
-                if msg.message == _WM_QUERYENDSESSION or (msg.message == _WM_ENDSESSION and msg.wParam):
+                if msg.message in (_WM_QUERYENDSESSION, _WM_ENDSESSION):
+                    ending = msg.message == _WM_QUERYENDSESSION or bool(msg.wParam)
+                    monitor = getattr(self, "monitor_thread", None)
+                    if monitor is not None:
+                        try:
+                            monitor.set_session_ending(ending)
+                        except Exception as e:
+                            self.logger.debug("Could not update monitor session state: %s", e)
+                    if not ending:
+                        return False, 0
                     # Logoff / shutdown / restart. The normal quit path (closeEvent -> cleanup) never
                     # runs: Windows terminates us soon after WM_ENDSESSION returns, so the essential
                     # saves happen HERE, synchronously, inside its ~5 s budget. Observe only - Qt
