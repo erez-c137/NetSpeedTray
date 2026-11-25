@@ -29,7 +29,7 @@ from collections import deque
 from functools import partial
 from typing import Any, Deque, Dict, List, Optional
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QObject, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
@@ -1561,32 +1561,11 @@ class OverviewTab(QWidget):
                 sheet.deleteLater()
 
     def _open_usage_history(self) -> None:
-        """The usage card's "Usage by day" link - the per-day / month / year table (#334)."""
+        """The usage card's "Usage by day" link - the per-day / month / year table (#334). The widget's
+        right-click "Usage history" item (#619) opens the same sheet through the same opener."""
+        from netspeedtray.views.monitor.usage_history_sheet import open_usage_history
         mw = self._main_widget
-        ws = getattr(mw, "widget_state", None)
-        if ws is None:
-            return
-        from netspeedtray.views.monitor.usage_history_sheet import UsageHistorySheet
-
-        def period_ceiling():
-            # The usage card's own rule with a cap set: its period row IS the odometer, and Today never
-            # reads above it. (period start, (up, down)), else None.
-            cap_set = getattr(mw, "_usage_cap_set", None)
-            if cap_set is None or not cap_set():
-                return None
-            return date.fromisoformat(ws.get_usage_period_key()), tuple(ws.get_usage_this_period())
-
-        sheet = None
-        try:
-            sheet = UsageHistorySheet(ws, getattr(mw, "config", None) or self._config, self._i18n,
-                                      period_ceiling=period_ceiling,
-                                      parent=self.window())
-            sheet.exec()
-        except Exception as e:
-            self.logger.error("Could not open usage history: %s", e, exc_info=True)
-        finally:
-            if sheet is not None and not sip.isdeleted(sheet):   # as _open_detail
-                sheet.deleteLater()
+        open_usage_history(mw, getattr(mw, "config", None) or self._config, self._i18n, parent=self.window())
 
     def _open_connection_check(self) -> None:
         """The hero's "Check connection" action - the one-shot report sheet (2.2 D3)."""

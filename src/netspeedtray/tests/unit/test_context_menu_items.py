@@ -101,7 +101,7 @@ def test_separators_never_lead_trail_or_double(qt_owned, i18n, hidden, pause, mo
     assert all(not (a == "-" and b == "-") for a, b in zip(shown, shown[1:])), shown
     # And each group that has an item keeps its divider: the count is (non-empty groups - 1).
     groups = [[i18n.SETTINGS_MENU_ITEM, i18n.SHOW_MONITOR_MENU_ITEM],
-              [i18n.PAUSE_MENU_ITEM, i18n.RESET_POSITION_MENU_ITEM],
+              [i18n.PAUSE_MENU_ITEM, i18n.LOCK_POSITION_MENU_ITEM, i18n.RESET_POSITION_MENU_ITEM],
               [i18n.CHECK_FOR_UPDATES_MENU_ITEM, i18n.SUPPORT_MENU_ITEM],
               [i18n.EXIT_MENU_ITEM]]
     non_empty = sum(1 for g in groups if any(t in shown for t in g))
@@ -212,8 +212,8 @@ def test_pause_row_sits_in_the_list_after_show_monitor(page, i18n):
     from netspeedtray.utils.components import SettingCard
     assert page.context_menu_items.isAncestorOf(page.pause_in_menu)
     rows = [c._title_label.text() for c in page.context_menu_items.findChildren(SettingCard)]
-    assert rows == ["Show Monitor", "Check connection", i18n.CLICK_ACTION_PAUSE_LABEL, "Reset position",
-                    "Check for updates", "Support this project"]
+    assert rows == ["Show Monitor", "Usage history", "Check connection", i18n.CLICK_ACTION_PAUSE_LABEL,
+                    "Lock position", "Reset position", "Check for updates", "Support this project"]
     assert "pause" not in page.context_menu_toggles   # its own key, not a hidden-items id
     titles = [c._title_label.text() for c in page.findChildren(SettingCard)]
     assert "Add Pause/Resume to the right-click menu" not in titles

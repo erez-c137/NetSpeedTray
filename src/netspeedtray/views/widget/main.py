@@ -2692,6 +2692,15 @@ class NetworkSpeedWidget(QWidget):
         if not sip.isdeleted(panel):
             panel.close()
 
+    def open_usage_history(self) -> None:
+        """Right-click > Usage history (#619, opt-in): the Monitor usage card's per-day / month / year
+        sheet, through the card's own opener - parentless, so it is a window of its own."""
+        try:
+            from netspeedtray.views.monitor import usage_history_sheet
+            usage_history_sheet.open_usage_history(self, self.config, self.i18n)
+        except Exception as e:
+            self.logger.error("Opening usage history failed: %s", e, exc_info=True)
+
     def open_connection_check(self) -> None:
         """The Check connection sheet (the Monitor's Overview/Network headers open the same one), here
         for the "running" panel - parentless, so it is a window of its own."""
@@ -3054,6 +3063,30 @@ class NetworkSpeedWidget(QWidget):
             self.config_controller.config_manager.save({**baseline, **live_state, **updates})
         except Exception as e:
             self.logger.error("Could not save %s: %s", sorted(updates), e, exc_info=True)
+
+    def set_position_locked(self, locked: bool) -> None:
+        """Right-click > Lock position (#616). Saved through save_config_keys, like the internet check's
+        Turn on: with Settings open the file gets its baseline plus this key (never its unsaved preview
+        edits), and both of the dialog's snapshots take the key, so a later preview, Save or Cancel
+        keeps it. An open Settings shows the switch to match - only if its Widget page was built (a
+        built-later page loads the updated snapshot)."""
+        locked = bool(locked)
+        self.save_config_keys({"position_locked": locked})
+        dialog = getattr(self, "settings_dialog", None)
+        if dialog is None:
+            return
+        try:
+            built = getattr(dialog, "_built_pages", None)
+            page = built.get("widget") if isinstance(built, dict) else None
+            switch = getattr(page, "position_locked", None) if page is not None else None
+            if switch is not None:
+                was_blocked = switch.blockSignals(True)     # no preview of its own: it is already saved
+                try:
+                    switch.setChecked(locked)
+                finally:
+                    switch.blockSignals(was_blocked)
+        except Exception as e:
+            self.logger.debug("Open Settings not synced to the position lock: %s", e)
 
     def turn_on_internet_check(self) -> None:
         """The "Also check your internet?" confirm's Turn on (2.2.2 D5) - only ever called from that

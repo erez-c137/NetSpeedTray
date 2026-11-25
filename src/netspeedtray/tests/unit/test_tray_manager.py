@@ -40,6 +40,8 @@ def mock_i18n():
     i18n.SHOW_MONITOR_MENU_ITEM = "Show Monitor"
     i18n.CHECK_CONN_MENU_ITEM = "&Check connection"   # 2.2.2 D7 menu item (#619: its own key)
     i18n.PAUSE_MENU_ITEM = "Pause"
+    i18n.LOCK_POSITION_MENU_ITEM = "&Lock position"      # 2.2.2 (#616)
+    i18n.USAGE_HISTORY_MENU_ITEM = "Usage &history"      # 2.2.2 (#619), opt-in
     i18n.RESUME_MENU_ITEM = "Resume"
     i18n.RESET_POSITION_MENU_ITEM = "Reset Position"
     i18n.CHECK_FOR_UPDATES_MENU_ITEM = "Check for Updates"

@@ -26,9 +26,11 @@ _LOCALES = Path(__file__).parents[3] / "netspeedtray" / "constants" / "locales"
 _TRAY_MENU_KEYS = [
     "SETTINGS_MENU_ITEM",
     "SHOW_MONITOR_MENU_ITEM",
+    "USAGE_HISTORY_MENU_ITEM",    # 2.2.2 (#619), opt-in
     "CHECK_CONN_MENU_ITEM",       # 2.2.2 D7; its own key - CHECK_CONN_ACTION also labels buttons
     "PAUSE_MENU_ITEM",
     "RESUME_MENU_ITEM",
+    "LOCK_POSITION_MENU_ITEM",    # 2.2.2 (#616), checkable
     "RESET_POSITION_MENU_ITEM",
     "CHECK_FOR_UPDATES_MENU_ITEM",
     "SUPPORT_MENU_ITEM",

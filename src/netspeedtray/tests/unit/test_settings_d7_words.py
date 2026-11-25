@@ -257,7 +257,7 @@ def _shown(manager):
     return [a.text() for a in manager.context_menu.actions() if a.isVisible() and not a.isSeparator()]
 
 
-def test_menu_offers_check_connection_after_monitor(qt_owned):
+def test_menu_offers_check_connection_after_monitor(qtbot, qt_owned):
     i18n = I18nStrings("en_US")
     m, widget = _menu(qt_owned, i18n, {})
     shown = _shown(m)
@@ -265,6 +265,8 @@ def test_menu_offers_check_connection_after_monitor(qt_owned):
                      i18n.CHECK_FOR_UPDATES_MENU_ITEM, i18n.SUPPORT_MENU_ITEM, i18n.EXIT_MENU_ITEM]
     assert len(shown) <= 6        # the 2.2.1 default menu had 5 items: at most one more
     m.check_connection_action.trigger()
+    # Opens once the menu loop has ended (review F2 on #626), not inside the action slot.
+    qtbot.waitUntil(lambda: widget.open_connection_check.called, timeout=1000)
     widget.open_connection_check.assert_called_once()
 
 
@@ -279,7 +281,8 @@ def test_settings_lists_check_connection_in_menu_order(qt_owned):
     from netspeedtray.views.settings.pages.general import GeneralPage
     page = qt_owned(GeneralPage(I18nStrings("en_US"), MagicMock()))
     rows = [c._title_label.text() for c in page.context_menu_items.findChildren(SettingCard)]
-    assert rows[:3] == ["Show Monitor", "Check connection", "Pause / Resume"]
+    # Usage history (#619, opt-in) sits between Show Monitor and Check connection, as in the menu.
+    assert rows[:4] == ["Show Monitor", "Usage history", "Check connection", "Pause / Resume"]
     page.load_settings({"context_menu_hidden_items": ["check_connection"]}, is_startup_enabled=False)
     assert not page.context_menu_toggles["check_connection"].isChecked()
     assert page.get_settings()["context_menu_hidden_items"] == ["check_connection"]
