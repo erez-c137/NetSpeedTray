@@ -10,10 +10,6 @@ build==1.6.1
     # via pip-tools
 click==8.5.1
     # via pip-tools
-colorama==0.4.6
-    # via
-    #   build
-    #   pytest
 contourpy==1.4.0
     # via matplotlib
 coverage[toml]==7.17.2
@@ -49,10 +45,6 @@ packaging==26.3
     #   wheel
 parameterized==0.9.0
     # via -r dev-requirements.in
-pefile==2024.8.26 ; sys_platform == "win32"
-    # via
-    #   -r dev-requirements.in
-    #   pyinstaller
 pillow==13.0.0
     # via
     #   -r dev-requirements.in
@@ -114,14 +106,6 @@ python-dateutil==2.9.0.post0
     #   -r requirements.in
     #   freezegun
     #   matplotlib
-pywin32==312 ; sys_platform == "win32"
-    # via
-    #   -r requirements.in
-    #   wmi
-pywin32-ctypes==0.2.3 ; sys_platform == "win32"
-    # via
-    #   -r dev-requirements.in
-    #   pyinstaller
 six==1.17.0
     # via python-dateutil
 truststore==0.10.5
@@ -134,20 +118,7 @@ wheel==0.48.0
     # via
     #   -r dev-requirements.in
     #   pip-tools
-winrt-runtime==3.2.1 ; sys_platform == "win32"
-    # via
-    #   -r requirements.in
-    #   winrt-windows-foundation
-    #   winrt-windows-foundation-collections
-    #   winrt-windows-networking-connectivity
-winrt-windows-foundation==3.2.1 ; sys_platform == "win32"
-    # via -r requirements.in
-winrt-windows-foundation-collections==3.2.1 ; sys_platform == "win32"
-    # via -r requirements.in
-winrt-windows-networking-connectivity==3.2.1 ; sys_platform == "win32"
-    # via -r requirements.in
-wmi==1.5.1 ; sys_platform == "win32"
-    # via -r requirements.in
+winrt-runtime==4.2.0
 
 # The following packages are considered to be unsafe in a requirements file:
 # pip
