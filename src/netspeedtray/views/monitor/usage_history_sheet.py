@@ -193,7 +193,7 @@ class UsageHistorySheet(QDialog):
             return self._tr(
                 "USAGE_HISTORY_FOOTNOTE_AUTO",
                 "Recorded while NetSpeedTray was running, for all physical adapters. Your data-cap count "
-                "can differ: in Auto mode it counts only the adapter in use, and it also counts traffic "
+                "can differ: with Network adapters set to Automatic it counts only the adapter in use, and it also counts traffic "
                 "while the app was closed.")
         return self._tr(
             "USAGE_HISTORY_FOOTNOTE",
@@ -455,3 +455,34 @@ class UsageHistorySheet(QDialog):
 
     def _tr(self, key: str, default: str) -> str:
         return _tr(self._i18n, key, default)
+
+
+def open_usage_history(main_widget, config: Optional[Dict[str, Any]], i18n, parent=None) -> None:
+    """Open the sheet modally - the one entry point the Overview's usage card ("Usage by day") and the
+    widget's right-click "Usage history" item (#619) share. ``parent`` None (the menu) makes it a window
+    of its own. No-op without a widget state."""
+    ws = getattr(main_widget, "widget_state", None)
+    if ws is None:
+        return
+
+    def period_ceiling():
+        # The usage card's own rule with a cap set: its period row IS the odometer, and Today never
+        # reads above it. (period start, (up, down)), else None.
+        cap_set = getattr(main_widget, "_usage_cap_set", None)
+        if cap_set is None or not cap_set():
+            return None
+        return date.fromisoformat(ws.get_usage_period_key()), tuple(ws.get_usage_this_period())
+
+    sheet = None
+    try:
+        sheet = UsageHistorySheet(ws, config if config is not None else {}, i18n,
+                                  period_ceiling=period_ceiling, parent=parent)
+        sheet.exec()
+    except Exception as e:
+        logging.getLogger("NetSpeedTray.UsageHistorySheet").error(
+            "Could not open usage history: %s", e, exc_info=True)
+    finally:
+        # Parented to the Monitor window, an opened sheet would otherwise stay alive as its child until
+        # the Monitor closed; quitting mid-exec() can already have deleted it (the Stats-detail rule).
+        if sheet is not None and not sip.isdeleted(sheet):
+            sheet.deleteLater()

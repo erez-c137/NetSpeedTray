@@ -86,6 +86,35 @@ fl = Flyout(i18n.DB_UPGRADE_DONE_FLYOUT_TITLE, i18n.DB_UPGRADE_DONE_FLYOUT_BODY,
 fl.adjustSize()
 fl.grab()                                                       # a notice flyout, drawn
 
+# 2.2.2's new surfaces (combined review): the "running" panel with live speeds and a connection line
+# (its arrows: Nirmala UI has no ↓ ↑; its RTL speeds: Segoe UI has no bidi isolates), the first-run tip,
+# what's new, the internet check's confirm (D5), the temperature setup (D6) and the support card (D8).
+import types
+from netspeedtray.core.latency_probe import HOP_GATEWAY
+from netspeedtray.views.running_panel import RunningPanel
+mw = types.SimpleNamespace(config=cfg, download_speed=88.6, upload_speed=3.2, is_paused=False,
+                           isVisible=lambda: True, latency_headline_hop=HOP_GATEWAY, latency_headline_ms=3.0,
+                           latency_loss=0.0, latency_link_lost=False, _app_is_quitting=lambda: False)
+panel = RunningPanel(mw, i18n, version="2.2.2-beta.1")
+panel.refresh_status(); panel.adjustSize(); panel.grab()
+fl = Flyout(i18n.FIRST_RUN_TIP_TITLE, i18n.FIRST_RUN_TIP_BODY, action_text=i18n.CLICK_ACTION_OPEN_MONITOR_LABEL,
+            secondary_text=i18n.WELCOME_2_0_GOT_IT_BUTTON, close_text=i18n.CLOSE_BUTTON, auto_dismiss_ms=0,
+            focusable=True)
+fl.adjustSize(); fl.grab()
+fl = Flyout(i18n.WHATS_NEW_TITLE.format(version="2.2.2"), i18n.WHATS_NEW_2_2_2,
+            action_text=i18n.WELCOME_2_0_WHATS_NEW_BUTTON, secondary_text=i18n.WELCOME_2_0_GOT_IT_BUTTON,
+            close_text=i18n.CLOSE_BUTTON, auto_dismiss_ms=0, focusable=True, action_style="neutral")
+fl.adjustSize(); fl.grab()
+from netspeedtray.views.monitor import internet_offer as _io
+_tip = _io.InternetOfferTip(i18n)
+_tip.confirm.set_host("1.1.1.1"); _tip.adjustSize(); _tip.grab()
+from netspeedtray.views.temp_onboarding_dialog import TempOnboardingDialog
+dlg = TempOnboardingDialog(i18n, None, lhm_port=8085, focus_step=2, status_provider=lambda: "server_off")
+dlg.adjustSize(); dlg.grab()
+from netspeedtray.views.monitor.support_card import SupportCard
+sc = SupportCard(i18n, None, show_rate=True)
+sc.adjustSize(); sc.grab()
+
 for t in sys.argv[2:]:                                          # Wi-Fi names, drawn as the widget draws them
     p = QPainter(img); p.setFont(r.font); fr.draw_text(p, 4, 20, t, user=True); p.end()
 
@@ -248,6 +277,14 @@ sheet._state = "running"
 sheet._refresh()
 sheet.adjustSize()
 sheet.grab()
+# The internet check's confirm, opened (2.2.2 D5): the sheet's inline one and the Overview's tip, with
+# the configured server - its text ("1.1.1.1 (Cloudflare)", embedded LTR in an RTL UI) adds no face.
+from netspeedtray.views.monitor import internet_offer as _io
+_host = cfg.get("latency_public_host", "1.1.1.1")
+_inline = _io.InternetCheckConfirm(i18n, framed=True)
+_inline.set_host(_host); _inline.set_ends_offer(True); _inline.adjustSize(); _inline.grab()
+_tip = _io.InternetOfferTip(i18n)
+_tip.confirm.set_host(_host); _tip.adjustSize(); _tip.grab()
 if system_text:
     # The Monitor's other system text, drawn: the adapter menu + its button showing a picked adapter,
     # a process name in the Network and Hardware lists and the detail panel, an adapter driver's name in

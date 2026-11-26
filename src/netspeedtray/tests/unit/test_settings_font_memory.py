@@ -332,6 +332,7 @@ def test_a_page_is_built_and_loaded_on_first_visit(qt_owned):
 
 def test_open_to_the_network_page(host):
     host.open_data_usage_settings = NetworkSpeedWidget.open_data_usage_settings.__get__(host)
+    host.open_settings = NetworkSpeedWidget.open_settings.__get__(host)   # the router it delegates to (D4)
     host.open_data_usage_settings()
     dlg = host.settings_dialog
     assert dlg.stack.currentIndex() == dlg.PAGE_NETWORK

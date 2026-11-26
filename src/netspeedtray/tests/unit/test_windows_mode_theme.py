@@ -193,6 +193,10 @@ def _fake_dialog(opened_with=None, page_returns=None):
     # The dialog surface these paths use since the RC Settings fixes: pages via _pages() (pages that
     # failed to load are skipped, C1), and Cancel -> reject() -> _revert_live_preview() (Esc too, S1).
     fake._pages = types.MethodType(SettingsDialog._pages, fake)
+    # 2.2.2 (#592 M1): what Save / Cancel / the preview send is filtered by _for_widget.
+    fake._for_widget = types.MethodType(SettingsDialog._for_widget, fake)
+    # integration 2.2.2: _for_widget's key set is shared with save_config_keys (#597 x #592).
+    fake.unowned_app_state_keys = types.MethodType(SettingsDialog.unowned_app_state_keys, fake)
     fake._update_timer = MagicMock()
     fake.reject = lambda: SettingsDialog._revert_live_preview(fake)
     return fake

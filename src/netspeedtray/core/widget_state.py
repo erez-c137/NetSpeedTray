@@ -1139,6 +1139,13 @@ class WidgetState(QObject):
             return {s: [] for s in stat_types}
         return self.history_reader.loss_history(stat_types, start_time, end_time)
 
+    def get_metric_coverage(self, stat_type: str, start_time: datetime, end_time: datetime):
+        """(rows, first row's time) of one loss series over the window (``HistoryReader.metric_coverage``)
+        - the internet line's "checking…" / "steady since" gate. (0, None) without a database."""
+        if not hasattr(self, 'db_worker') or not self.db_worker:
+            return 0, None
+        return self.history_reader.metric_coverage(stat_type, start_time, end_time)
+
     # --- pro-stats: tier-aware honest window summaries (exact ≤24h raw, avg+max beyond) ----------
     # The SQL lives in core/db/history_reader.py (V7HistoryReader.summarize_*).
 

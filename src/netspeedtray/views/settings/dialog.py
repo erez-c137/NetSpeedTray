@@ -60,7 +60,7 @@ class SettingsDialog(QDialog):
     # Must stay in sync with the sidebar order in _setup_ui; test_settings_pages guards it so a
     # future page reshuffle trips a red test instead of silently opening the wrong page.
     PAGE_HARDWARE: int = 3
-    PAGE_NETWORK: int = 4   # Network Interfaces - hosts the "Data usage" / data-cap section
+    PAGE_NETWORK: int = 4   # Network (was "Network interfaces") - hosts the "Data usage" / data-cap section
 
     # Reset all (Advanced). Settings no page shows - legacy / hand-edited / Monitor-flyout display
     # options - that Reset all still returns to factory, as 2.1.7 did:
@@ -82,7 +82,9 @@ class SettingsDialog(QDialog):
         "monitor_active_tab", "history_period", "history_period_slider_value", "history_period_chosen",
         "paused", "last_update_check", "skipped_version", "update_snooze", "usage_alert_state",
         "start_with_windows", "pin_hint_shown_count", "side_bar_no_room_notice_shown", "app_overlap_notice_shown",
-        "app_overlap_drop_offset", "second_launch_notice_shown",
+        "app_overlap_drop_offset", "second_launch_notice_shown", "internet_offer_declines",
+        "first_run_tip_shown", "last_seen_version", "first_seen_at", "support_prompt_shown",
+        "cpu_sensor_source_last", "gpu_sensor_source_last",
     )
 
     def __init__(
@@ -113,6 +115,8 @@ class SettingsDialog(QDialog):
         self.startup_enabled_initial_state = is_startup_enabled
 
         self._ui_setup_done = False
+        # The last deep link's landing: (anchor_key, outlined widgets) - open_page (D4).
+        self._last_anchor: tuple = (None, [])
         self._closing_via_save = False   # Save's accept() is under way (closeEvent must not revert)
         
         # Timer for throttling live setting updates
@@ -421,7 +425,9 @@ class SettingsDialog(QDialog):
         if name == "appearance":
             return AppearancePage(self.i18n, s, self._open_font_dialog, self._open_color_dialog)
         if name == "hardware":
-            return HardwarePage(self.i18n, s, self._open_color_dialog, lhm_status_provider=self._lhm_status)
+            return HardwarePage(self.i18n, s, self._open_color_dialog, lhm_status_provider=self._lhm_status,
+                                temp_setup_callback=self._open_temp_setup,
+                                sensor_source_provider=self._sensor_sources)
         if name == "interfaces":
             return InterfacesPage(self.i18n, self.available_interfaces, s,
                                   primary_interface=self.primary_interface)
@@ -644,6 +650,128 @@ class SettingsDialog(QDialog):
         except Exception as e:
             self.logger.debug("navigate_to_page(%s) failed: %s", index, e)
 
+    # --- Deep links (2.2.2 D4): a page + the control to land on ------------------------------------------
+    # Page ids are the stable internal names (_PAGE_NAMES), not the sidebar labels, so a renamed page
+    # ("Network interfaces" -> "Network", D7) keeps every link working. "network" is the user-facing alias.
+    _PAGE_ALIASES = {"network": "interfaces"}
+
+    def page_index(self, page) -> int:
+        """Sidebar index for ``page`` - an index, or a page id ("hardware", "network", ...). -1 if unknown."""
+        if isinstance(page, int):
+            return page if 0 <= page < len(self._PAGE_NAMES) else -1
+        name = self._PAGE_ALIASES.get(str(page), str(page))
+        return self._PAGE_NAMES.index(name) if name in self._PAGE_NAMES else -1
+
+    def open_page(self, page, anchor_key: Optional[str] = None) -> bool:
+        """Show ``page`` and, with ``anchor_key``, scroll to, outline and focus the control(s) the page
+        names for it (each page's ``anchor_widgets(key)``). A collapsed expander on the way is opened -
+        unless its header is the feature's own on/off switch: opening it would turn that feature ON,
+        and a deep link never changes a setting, so the header is the landing spot then. Returns True
+        when the anchor was found (the page is shown either way)."""
+        index = self.page_index(page)
+        if index < 0:
+            self.logger.debug("open_page: unknown page %r", page)
+            return False
+        self.navigate_to_page(index)
+        self._last_anchor = (None, [])
+        if not anchor_key:
+            return False
+        try:
+            built = self._ensure_page(self._PAGE_NAMES[index])
+            finder = getattr(built, "anchor_widgets", None)
+            controls = [w for w in (finder(anchor_key) if finder else []) if w is not None]
+        except Exception as e:
+            self.logger.debug("open_page: anchor %r on %r failed: %s", anchor_key, page, e)
+            controls = []
+        if not controls:
+            self.logger.debug("open_page: no anchor %r on page %r", anchor_key, page)
+            return False
+        targets = []
+        for control in controls:
+            target = self._anchor_target(control)
+            if target not in targets:
+                targets.append(target)
+        self._last_anchor = (anchor_key, targets)
+        scroll = self._page_scrolls[index]
+        from netspeedtray.utils.components import flash_highlight
+        # One calm landing mark, on the first card only (the CPU switch, for "hardware_monitoring"): a
+        # tint on every card of a group read as three focus rings at once (UX review). The rest of the
+        # group sits right below it.
+        flash_highlight(targets[0])
+        self._focus_anchor(targets[0], controls[0])
+        self._scroll_to_anchor(scroll, targets[0])
+        # Once more after the layout settles: a page built just now (or an expander just opened) has no
+        # final geometry until the event loop has run. The timer is the dialog's child, so a dialog
+        # closed (and destroyed) first takes it along.
+        settle = QTimer(self)
+        settle.setSingleShot(True)
+        settle.timeout.connect(lambda s=scroll, t=targets[0]: self._scroll_to_anchor(s, t))
+        settle.timeout.connect(settle.deleteLater)
+        settle.start(0)
+        return True
+
+    @staticmethod
+    def _anchor_target(control: QWidget) -> QWidget:
+        """What to outline for ``control``: its setting card, or the header of an expander anchor.
+
+        Collapsed expanders on the way - ``control`` itself included - are opened, so the control is on
+        screen. Except one whose header is the feature's own on/off switch: its body shows only while
+        the feature is ON, so opening it would change a setting. Then the outermost such header is the
+        landing spot, and nothing is opened."""
+        from netspeedtray.utils.components import SettingExpander
+        chain = []
+        node = control
+        while node is not None:
+            if isinstance(node, SettingExpander):
+                chain.append(node)
+            node = node.parentWidget()
+        switched_off = [e for e in chain if e.hasHeaderToggle() and not e.isExpanded()]
+        if switched_off:
+            return switched_off[-1].header()
+        for expander in chain:
+            if not expander.isExpanded():
+                expander.setExpanded(True)
+        node = control
+        while node is not None:
+            if node.objectName() in ("settingCard", "expanderHeader"):
+                return node
+            if isinstance(node, SettingExpander):
+                return node.header()
+            node = node.parentWidget()
+        return control
+
+    @staticmethod
+    def _focus_anchor(target: QWidget, control: QWidget) -> None:
+        """Keyboard focus on the control (a screen reader announces the setting it landed on); the
+        target's first Tab stop when the control itself is hidden, disabled or takes no focus; and when
+        the whole card is disabled (a grayed switch), its nearest enabled container - the page - so focus
+        leaves the sidebar and the next Tab goes into the page, at the card."""
+        tab = Qt.FocusPolicy.TabFocus.value
+        for w in [control] + control.findChildren(QWidget) + [target] + target.findChildren(QWidget):
+            if (w.focusPolicy().value & tab) and w.isVisibleTo(w.window()) and w.isEnabled():
+                w.setFocus(Qt.FocusReason.OtherFocusReason)
+                # a switch shows its keyboard focus ring now (the window may not be active yet)
+                node = w
+                while node is not None and not hasattr(node, "show_keyboard_focus"):
+                    node = node.parentWidget()
+                if node is not None:
+                    node.show_keyboard_focus()
+                return
+        node = target
+        while node is not None and not node.isEnabled():
+            node = node.parentWidget()
+        if node is not None:
+            node.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _scroll_to_anchor(self, scroll: QScrollArea, target: QWidget) -> None:
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(scroll) or sip.isdeleted(target):
+                return
+            scroll.ensureWidgetVisible(target, 0, constants.styles.SPACE_L)
+        except Exception as e:
+            self.logger.debug("scroll to anchor failed: %s", e)
+
     def _adjust_size_and_reposition(self) -> None:
         """Ensures dialog stays within screen bounds after layout changes."""
         screen = self.screen()
@@ -671,7 +799,7 @@ class SettingsDialog(QDialog):
             return
         current_settings = self.get_settings()
         self._update_preview(current_settings)
-        self.settings_changed.emit(current_settings)
+        self.settings_changed.emit(self._for_widget(current_settings))
         # The emit applied the settings synchronously (incl. starting/stopping the metrics endpoint),
         # so the endpoint's status now describes what the user just chose.
         self._refresh_metrics_status()
@@ -681,6 +809,35 @@ class SettingsDialog(QDialog):
         mt = getattr(self.parent_widget, "monitor_thread", None)
         status, port = getattr(mt, "lhm_status", None), getattr(mt, "lhm_port", None)
         return (status, port) if isinstance(status, str) and isinstance(port, int) else None
+
+    def _sensor_sources(self):
+        """(cpu, gpu): can anything supply each device's temperature / power? (#609, the widget's
+        verdicts; None = not known yet) - for Settings > Hardware's "no sensor source" bar."""
+        w = self.parent_widget
+        return tuple(v if isinstance(v, bool) else None
+                     for v in (getattr(w, "cpu_sensor_source", None), getattr(w, "gpu_sensor_source", None)))
+
+    def _open_temp_setup(self, step: int = 1) -> None:
+        """Settings > Hardware's "How to set it up" / "How to turn it on" (D6): the temperature setup
+        dialog, modal over Settings, at ``step``, for the port in the page's field. No "Don't remind me"
+        box here - the user asked for it."""
+        try:
+            from netspeedtray.views.temp_onboarding_dialog import TempOnboardingDialog
+            page = getattr(self, "hardware_page", None)
+            port = int(page.lhm_port.value()) if page is not None else constants.lhm.HTTP_PORT
+            TempOnboardingDialog(self.i18n, self, lhm_port=port, focus_step=step, show_remind=False,
+                                 status_provider=self._lhm_status_for_setup).exec()
+        except Exception as e:
+            self.logger.error("Could not open the temperature setup: %s", e, exc_info=True)
+
+    def _lhm_status_for_setup(self):
+        """The LHM status the setup dialog follows live (D6): only when it describes the port in the
+        Hardware page's field."""
+        result = self._lhm_status()
+        page = getattr(self, "hardware_page", None)
+        if not result or page is None or result[1] != int(page.lhm_port.value()):
+            return None
+        return result[0]
 
     def _refresh_metrics_status(self) -> None:
         """Show the local metrics endpoint's live status (listening / port in use) under its address."""
@@ -767,6 +924,28 @@ class SettingsDialog(QDialog):
         # Only BUILT pages: an unbuilt one never left its loaded state, so its keys are self.config's
         # (get_settings starts from that copy) - never a constructor's defaults.
         return [built[name] for name in self._PAGE_NAMES if name in built and name not in failed]
+
+    def _for_widget(self, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """What Save, Cancel and the live preview send to the widget: ``settings`` WITHOUT the app-state
+        keys (RESET_ALL_KEEPS) that no page owns. The dialog's snapshots are from when it opened, and
+        the app keeps writing its state meanwhile - a one-time notice shown while Settings is open
+        (first_run_tip_shown, last_seen_version), a nudge, update bookkeeping, a drag of the widget.
+        Sending the snapshot back would undo those (2.2.2 D1/D2 review M1). Keys a page shows (e.g.
+        start_with_windows) still go through: they are the user's edit."""
+        keeps = self.unowned_app_state_keys()
+        return {k: v for k, v in settings.items() if k not in keeps}
+
+    def unowned_app_state_keys(self) -> set:
+        """The app-state keys (RESET_ALL_KEEPS) no built page owns - the ones whose truth is the LIVE
+        config while this dialog is open, never its snapshots. Shared by _for_widget and the main
+        widget's save_config_keys (integration 2.2.2: #592's save filter x #597's Monitor saves)."""
+        owned = set()
+        for page in self._pages():
+            try:
+                owned |= set(page.get_settings())
+            except Exception:
+                continue
+        return set(SettingsDialog.RESET_ALL_KEEPS) - owned
 
     def _build_all_pages(self) -> None:
         for name in self._PAGE_NAMES:
@@ -1138,7 +1317,7 @@ class SettingsDialog(QDialog):
 
             # Apply settings to the main widget/application
             if hasattr(self.parent_widget, 'handle_settings_changed'):
-                self.parent_widget.handle_settings_changed(final_settings, save_to_disk=True)
+                self.parent_widget.handle_settings_changed(self._for_widget(final_settings), save_to_disk=True)
             self._refresh_metrics_status()
             
             # Determine startup change
@@ -1183,7 +1362,8 @@ class SettingsDialog(QDialog):
         if hasattr(self.parent_widget, 'handle_settings_changed'):
             # The pre-dialog config as it was: the theme never wrote into it (or into the live config),
             # so after a Windows Light/Dark flip it still paints the right theme's colours.
-            self.parent_widget.handle_settings_changed(self.original_config, save_to_disk=False)
+            self.parent_widget.handle_settings_changed(self._for_widget(self.original_config),
+                                                       save_to_disk=False)
         # Save the position AFTER the revert: handle_settings_changed merges
         # original_config back into the live config, which would otherwise clobber
         # settings_window_pos with the value from when the dialog opened.

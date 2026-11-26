@@ -100,10 +100,10 @@ class GeneralPage(QWidget):
                                      description=self.i18n.UPDATE_INTERVAL_DESCRIPTION,
                                      control=self.update_rate))
 
-        # --- Behavior ---
+        # --- Startup and updates (2.2.2 D7: was "Behavior", a header three pages shared) ---
         # NOTE (2.0 IA): free-move, keep-visible-in-fullscreen and tray-offset moved to the new Widget
         # page (they're about the on-taskbar widget, not the app). General keeps app-level behavior.
-        layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
+        layout.addWidget(section_header(self.i18n.STARTUP_UPDATES_GROUP_TITLE))
         self.start_with_windows = Win11Toggle(label_text="")
         self.start_with_windows.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.START_WITH_WINDOWS_LABEL, control=self.start_with_windows))
@@ -123,7 +123,7 @@ class GeneralPage(QWidget):
         layout.addWidget(self._updates_card)
         self._apply_update_policy_lock()
 
-        # (Preferred Monitor moved to the Widget page's Behavior section, 2.2 IA pass: it decides which
+        # (Preferred Monitor moved to the Widget page's Placement section, 2.2 IA pass: it decides which
         # taskbar the widget docks to, and its dependent "Float on a display without a taskbar" is there.)
 
         # --- Interaction (community PR #165, @rami123) ---
@@ -170,16 +170,29 @@ class GeneralPage(QWidget):
         self.context_menu_items.expandedChanged.connect(lambda _on: self.layout_changed.emit())
         self.pause_in_menu = Win11Toggle(label_text="")
         self.pause_in_menu.toggled.connect(self.on_change)
+        # Usage history (#619) and Lock position (#616), 2.2.2, are opt-in the same way: their own keys,
+        # `usage_history_in_menu` / `lock_position_in_menu`, default off.
+        self.usage_history_in_menu = Win11Toggle(label_text="")
+        self.usage_history_in_menu.toggled.connect(self.on_change)
+        self.lock_position_in_menu = Win11Toggle(label_text="")
+        self.lock_position_in_menu.toggled.connect(self.on_change)
         self.context_menu_toggles: Dict[str, Win11Toggle] = {}
         _PAUSE = object()   # the Pause / Resume row: its own key, not a hidden-items id
+        _USAGE = object()   # the Usage history row: likewise
+        _LOCK = object()    # the Lock position row: likewise
+        own_key_rows = {_PAUSE: self.pause_in_menu, _USAGE: self.usage_history_in_menu,
+                        _LOCK: self.lock_position_in_menu}
         for item_id, label_key, fallback in (
                 (defaults.CONTEXT_MENU_ITEM_MONITOR, "SHOW_MONITOR_MENU_ITEM", "Show Monitor"),
+                (_USAGE, "USAGE_HISTORY_MENU_ITEM", "Usage &history"),
+                (defaults.CONTEXT_MENU_ITEM_CHECK_CONNECTION, "CHECK_CONN_ACTION", "Check connection"),
                 (_PAUSE, "CLICK_ACTION_PAUSE_LABEL", "Pause / Resume"),
-                (defaults.CONTEXT_MENU_ITEM_RESET_POSITION, "RESET_POSITION_MENU_ITEM", "Reset P&osition"),
+                (_LOCK, "LOCK_POSITION_MENU_ITEM", "&Lock position"),
+                (defaults.CONTEXT_MENU_ITEM_RESET_POSITION, "RESET_POSITION_MENU_ITEM", "Reset p&osition"),
                 (defaults.CONTEXT_MENU_ITEM_CHECK_FOR_UPDATES, "CHECK_FOR_UPDATES_MENU_ITEM", "Check for &Updates"),
                 (defaults.CONTEXT_MENU_ITEM_SUPPORT, "SUPPORT_MENU_ITEM", "Support this Pro&ject")):
-            if item_id is _PAUSE:
-                toggle = self.pause_in_menu
+            if item_id in own_key_rows:
+                toggle = own_key_rows[item_id]
             else:
                 toggle = Win11Toggle(label_text="", initial_state=True)
                 toggle.toggled.connect(self.on_change)
@@ -248,6 +261,10 @@ class GeneralPage(QWidget):
         self._select_click_action(
             self.middle_click_action, config.get("middle_click_action", defaults.DEFAULT_MIDDLE_CLICK_ACTION))
         self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
+        self.usage_history_in_menu.setChecked(bool(config.get(
+            "usage_history_in_menu", defaults.DEFAULT_USAGE_HISTORY_IN_MENU)))
+        self.lock_position_in_menu.setChecked(bool(config.get(
+            "lock_position_in_menu", defaults.DEFAULT_LOCK_POSITION_IN_MENU)))
         hidden = config.get("context_menu_hidden_items",
                             constants.config.defaults.DEFAULT_CONTEXT_MENU_HIDDEN_ITEMS)
         if not isinstance(hidden, (list, tuple)):
@@ -294,6 +311,8 @@ class GeneralPage(QWidget):
             "double_click_action": self.double_click_action.currentData(),
             "middle_click_action": self.middle_click_action.currentData(),
             "pause_in_menu": self.pause_in_menu.isChecked(),
+            "usage_history_in_menu": self.usage_history_in_menu.isChecked(),
+            "lock_position_in_menu": self.lock_position_in_menu.isChecked(),
             # In the order of CONTEXT_MENU_HIDEABLE_ITEMS, so an unchanged page saves an equal list.
             "context_menu_hidden_items": [item_id for item_id, toggle in self.context_menu_toggles.items()
                                           if not toggle.isChecked()],

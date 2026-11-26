@@ -407,11 +407,20 @@ class StatsDetailSheet(QDialog):
             (self._tr("STAT_CELL_P99", "99th pct"), fmt(summ.p99) if summ.exact else "-"),
             (self._tr("STAT_CELL_MIN", "Min"), fmt(summ.min) if summ.exact else "-"),
         ]
+        # Plain-words tooltips for the percentiles (2.2.2 D7), by cell index. Neutral about
+        # direction: the same cells show speeds (higher is better) and ping times (lower is better).
+        # None on a dashed-out cell ("-", a rolled-up period): there is no figure to explain.
+        tips = {
+            3: self._tr("STAT_CELL_P95_TOOLTIP",
+                        "95% of readings were at or below this; the other 5% were above it."),
+            4: self._tr("STAT_CELL_P99_TOOLTIP",
+                        "99% of readings were at or below this; the other 1% were above it."),
+        } if summ.exact else {}
         grid = QGridLayout()
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
         for i, (cap, val) in enumerate(cells):
-            grid.addWidget(self._stat_cell(cap, val, c), i // 3, i % 3)
+            grid.addWidget(self._stat_cell(cap, val, c, tips.get(i)), i // 3, i % 3)
         box.addLayout(grid)
 
         # Plain-text copy buffer for this block.
@@ -432,9 +441,12 @@ class StatsDetailSheet(QDialog):
             box.addWidget(ctx)
         return card
 
-    def _stat_cell(self, caption: str, value: str, c: Dict[str, str]) -> QFrame:
+    def _stat_cell(self, caption: str, value: str, c: Dict[str, str], tip: Optional[str] = None) -> QFrame:
         cell = QFrame()
         cell.setObjectName("statCell")
+        if tip:
+            cell.setToolTip(tip)
+            cell.setAccessibleDescription(tip)
         cell.setStyleSheet(f"QFrame#statCell {{ background: {c['subtle_fill']}; border-radius: 6px; }}")
         v = QVBoxLayout(cell)
         v.setContentsMargins(12, 8, 12, 8)
@@ -516,9 +528,12 @@ class StatsDetailSheet(QDialog):
                     # ("below the N Mbps plan") does not survive translation: Spanish and French
                     # were left with a dangling noun, and Russian said "тариф" twice. A template
                     # lets each language put the number and the noun where they belong.
+                    # {unit}: the locale's own megabit unit (Mbit/s, Мбит/с...); plan speeds are
+                    # always stored in decimal megabits per second (2.2.2 D7).
                     extra = self._tr(
-                        'STATS_DETAIL_BELOW_PLAN_TEMPLATE', '{pct}% of time below the {plan} Mbps plan'
-                    ).format(pct=f"{below:.0f}", plan=f"{plan:.0f}")
+                        'STATS_DETAIL_BELOW_PLAN_TEMPLATE', '{pct}% of time below the {plan} {unit} plan'
+                    ).format(pct=f"{below:.0f}", plan=f"{plan:.0f}",
+                             unit=self._tr("MBITS_UNIT", "Mbps"))
                     text = f"{text}   ·   {extra}" if text else extra
 
         if not text:

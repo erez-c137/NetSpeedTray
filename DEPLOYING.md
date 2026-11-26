@@ -87,9 +87,26 @@ Read the database only read-only while the app runs. Schema, queries and how to 
 ## Start with Windows
 
 The app writes its own startup entry: the value `NetSpeedTray` under
-`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, pointing at the running exe. It's on by default
-(**Start with Windows** in Settings → General) and is rewritten if the exe moves. Setup never creates it.
-Turning the app off in Task Manager's Startup tab also stops it.
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Since 2.2.2 its exact format is
+
+```
+"C:\Program Files\NetSpeedTray\NetSpeedTray.exe" --autostart
+```
+
+(the running exe, quoted, then `--autostart`, which tells a second launch at sign-in apart from a user
+opening the app). It's on by default (**Start with Windows** in Settings → General). Setup never
+creates it. Turning the app off in Task Manager's Startup tab also stops it, and the app never undoes
+that on its own.
+
+- At each launch the app rewrites the value only when it names **this** exe in another format (an
+  older build's `"...\NetSpeedTray.exe"` without `--autostart`, other quoting), or names an exe that no
+  longer exists (the app moved). So a value IT pushed in the old format is rewritten once, at the
+  next launch, to the format above. A Group Policy Preferences **Replace** item should use the new
+  format, or it and the app keep rewriting each other.
+- A value that names a **different** NetSpeedTray exe that still exists (an installed copy while a
+  portable one runs, or the other way round) is left alone and logged. Only turning **Start with
+  Windows** off and on in that copy's Settings takes the entry over (also logged).
+- With **Start with Windows** off, the app removes a value that names its own exe, in either format.
 
 ## Updates
 
@@ -131,13 +148,91 @@ Turning the app off in Task Manager's Startup tab also stops it.
   and the release page opens.
 - **Pinning a version:** turn the check off as above and deploy the version you want.
 
+## First-run tip, "what's new" and the one-time support card
+
+Since 2.2.2 the app shows, at most once each, a small card beside the widget:
+
+- **First-run tip** - on a new install's first launch, pointing at the widget: point to it for
+  details, double-click for the Monitor (or the configured double-click action), right-click for the
+  menu and Settings. Buttons: **Open Monitor** / **Got it**. Doing any of those three - or opening the
+  Monitor or Settings from the "NetSpeedTray is running" panel - also counts as an answer, even before
+  the tip has shown (it then never shows).
+- **What's new** - on the first launch of a newer final release: one sentence, with **What's new**
+  (opens that version's GitHub release page in the browser) and **Got it**. Prereleases never show it;
+  a beta tester sees it once, on the final. Not on a downgrade, never on the same launch as the tip.
+
+Neither takes the keyboard from the app in front (unless a screen reader is running, so it can be
+read), times out or repeats. Each waits while the widget is hidden and (retried every 30 s) while a
+fullscreen app or a modal dialog is up, Settings is open, another NetSpeedTray notice or the hover card
+is showing, the "NetSpeedTray is running" panel (opened from Start) is open, the session is locked or
+idle for 2 minutes, or the session signed in less than 2 minutes ago. A card already up steps aside for
+a fullscreen app (even with **Keep visible in fullscreen**), a modal dialog, the running panel or another
+notice, and comes back after. One one-time moment per session: a session that already showed the
+support card or the temperature setup (below) leaves the tip / "what's new" for the next launch. Nothing is sent anywhere; the release page opens only if the user clicks. The
+state is two settings in `NetSpeedTray_Config.json`: `first_run_tip_shown` and `last_seen_version`.
+
+**The one-time "rate / star / support" card (2.2.2):** about a month (30 days) after a user first runs
+2.2.2 or newer - counted from that run, never from older history - the next time they open the Monitor,
+one inline card at the top of the Monitor says once: "A month with NetSpeedTray - It's free and always
+will be. If it's earned its spot on your taskbar, a star helps others find it." with **Star on
+GitHub**, a **Support the project** link (the app's Support dialog) and a close button. A Microsoft
+Store install also gets **Rate it in the Store** (the Store only accepts ratings from people who have
+the app in their Store library; Setup records a Store install when the Store runs it with `/STORE`, as
+`InstalledFrom` = `Store` under `HKLM\SOFTWARE\NetSpeedTray` - active once the Store submission passes
+that switch). It never appears at launch (not in the app's first 2 minutes, nor in the 2 minutes after
+sign-in), over a fullscreen app, with a modal dialog or Settings open, while another NetSpeedTray
+card or the running panel is showing (not a panel that is closing because its Monitor row was used),
+or in a session that showed - or still owes - the first-run tip, "what's new" or the temperature setup. Any action - or about 4.5 seconds on screen while the Monitor is the active window -
+ends it for good; nothing in the app changes whichever was chosen, nothing is recorded about the
+choice, and nothing is sent anywhere (a link opens only on a click). The state is `first_seen_at`
+(UTC) and `support_prompt_shown` in the config; Settings > Reset all keeps both. A PC clock set before
+November 2026 never starts or advances the wait. The same `DisableTips` policy below turns it off.
+
+**Two unprompted suggestions (2.2.2):** the Monitor offers the internet check beside a "Router" health
+line ("Also check your internet", a small confirm that says what leaves the PC; the Check connection
+sheet has the same offer inline, or a "Turn on in Settings" link when the latency probe is off), until
+the user turns it on or declines it twice. And the temperature setup dialog opens on its own at most
+once ever - when temperatures or power are turned on but no sensor reads - behind the same gates as the
+cards above; afterwards only from Settings > Hardware.
+
+- **Turning all of them off for everyone:** set the policy value
+  `HKLM\SOFTWARE\Policies\NetSpeedTray DisableTips` (a DWORD; any nonzero value turns them off; the same
+  value under `HKCU\SOFTWARE\Policies\NetSpeedTray` is honored too, OR-ed, like `DisableUpdateCheck`).
+  It covers everything above: the first-run tip, "what's new", the rate / star / support card, the
+  Monitor's "Also check your internet" offer (the Overview link and its confirm, and the Check
+  connection sheet's "Check your internet all the time" / "Turn on in Settings" link), and the
+  temperature setup that opens on its own. It is read again each time one would show, so a policy
+  pushed while the app runs applies without a restart. The app still records the version, so lifting
+  the policy later never brings back a stale tip or "what's new". (The support card and the temperature
+  setup are not used up by the policy: lifted, each can still show once, if it still applies.) Facts
+  stay - the health line still says "Router" or "Internet", and the Check connection sheet keeps its
+  one-off "Include the internet this time" tick - and both features stay in Settings (Settings >
+  Network's internet check, Settings > Hardware's temperature setup link). A Store or silent install
+  is not "managed" by itself: set the policy.
+
+  ```
+  reg add "HKLM\SOFTWARE\Policies\NetSpeedTray" /v DisableTips /t REG_DWORD /d 1 /f
+  ```
+- **Per user, without a policy:** pre-seed the config with `"first_run_ever": false,
+  "first_run_v2_seen": true, "first_run_tip_shown": true` and `"last_seen_version": "<the version you
+  deploy>"` before the first launch, plus `"support_prompt_shown": true` for the rate / star / support
+  card, `"internet_offer_declines": 2` for the internet offer, and `"temp_onboarding_dismissed": true`
+  for the temperature setup. Pre-seeding does not hide the Check connection sheet's "Turn on in
+  Settings" link, shown while the latency check is off; only the policy hides it.
+
+**Launching NetSpeedTray while it runs (2.2.2):** the widget comes back; a launch the user made - a
+Start menu, taskbar or desktop shortcut, or an exe double-clicked in Explorer - also opens the small
+"NetSpeedTray is running" panel. An autostart (the Run key, which since 2.2.2 carries `--autostart`, or
+a Startup-folder shortcut), the updater's relaunch, and any other start (Task Scheduler, a script) never
+open it.
+
 ## Network activity
 
 | What | Destination | When | Default | Turn off |
 |---|---|---|---|---|
 | Update check | HTTPS to `api.github.com` | At most once per 24 h (looked for at start, every 3 h and after a wake; a failed check is retried), and from the right-click menu | On | Settings → General → Check for updates automatically, or the policy above |
 | Update download | HTTPS to `github.com` release assets (redirects to GitHub's download CDN), plus a certificate revocation check to the certificate authority | Only when a user clicks Download | - | The policy or the toggle above (no check, no offer) |
-| Latency check | ICMP echo to the default gateway (a connected physical adapter's, when there are several) | Four every 3 s (about 1.3/s), 12-byte payload `netspeedtray` | On | Settings → Network Interfaces → Connection latency |
+| Latency check | ICMP echo to the default gateway (a connected physical adapter's, when there are several) | Four every 3 s (about 1.3/s), 12-byte payload `netspeedtray` | On | Settings → Network → Connection latency |
 | Internet latency | ICMP echo to `1.1.1.1` (or the host you set) | Same rate, in addition | **Off** | Same card |
 | DNS lookup | Your normal DNS server | Once per burst (every 3 s), only if the internet host is a *name* | Off | Use an IP address |
 | Check connection | 20 pings, 200 ms apart, to the gateway (and the internet host if enabled or ticked) | Only when a user clicks it, even while the latency check is off | - | - |

@@ -247,6 +247,12 @@ class I18nStrings:
         
         return value
 
+    def has_key(self, name: str) -> bool:
+        """True when ``name`` is a string in en_US.json (the fallback every language reads), without
+        the missing-key error ``__getattr__`` logs - for keys built at runtime, like a release's
+        ``WHATS_NEW_<major>_<minor>_<patch>`` (core/startup_notices)."""
+        return isinstance(self._fallback_strings.get(name), str)
+
     @property
     def is_rtl(self) -> bool:
         """True when the active language is right-to-left - drives QApplication.setLayoutDirection."""

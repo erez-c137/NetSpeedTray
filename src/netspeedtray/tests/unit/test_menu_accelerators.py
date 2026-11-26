@@ -26,8 +26,11 @@ _LOCALES = Path(__file__).parents[3] / "netspeedtray" / "constants" / "locales"
 _TRAY_MENU_KEYS = [
     "SETTINGS_MENU_ITEM",
     "SHOW_MONITOR_MENU_ITEM",
+    "USAGE_HISTORY_MENU_ITEM",    # 2.2.2 (#619), opt-in
+    "CHECK_CONN_MENU_ITEM",       # 2.2.2 D7; its own key - CHECK_CONN_ACTION also labels buttons
     "PAUSE_MENU_ITEM",
     "RESUME_MENU_ITEM",
+    "LOCK_POSITION_MENU_ITEM",    # 2.2.2 (#616), checkable
     "RESET_POSITION_MENU_ITEM",
     "CHECK_FOR_UPDATES_MENU_ITEM",
     "SUPPORT_MENU_ITEM",
@@ -107,3 +110,13 @@ def test_english_is_covered_too():
     assert (_LOCALES / "en_US.json").exists()
     accels = _accelerators(json.loads((_LOCALES / "en_US.json").read_text(encoding="utf-8")))
     assert len(set(accels.values())) == len(accels)
+
+
+@pytest.mark.parametrize("path", _locale_files(), ids=lambda p: p.stem)
+def test_every_tray_menu_item_has_an_accelerator(path):
+    """#619: "Show Monitor" was the one item with no Alt key, in every locale (and the 2.2.2 "Check
+    connection" item joined it). A keyboard user could reach every other item by its letter."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    accels = _accelerators(data)
+    missing = [f"{k}={data.get(k)!r}" for k in _TRAY_MENU_KEYS if k not in accels]
+    assert not missing, f"{path.stem}: tray-menu items with no Alt key - " + "; ".join(missing)

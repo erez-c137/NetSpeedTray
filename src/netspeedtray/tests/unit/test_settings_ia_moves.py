@@ -103,7 +103,7 @@ def test_appearance_tab_order_follows_the_new_section_order(dlg):
 
 def test_mini_graph_is_the_last_section_on_the_widget_page(dlg):
     i = dlg.i18n
-    order = [i.WIDGET_DISPLAY_MODE_LABEL, i.WIDGET_DISPLAY_ORDER_LABEL, i.BEHAVIOR_GROUP_TITLE,
+    order = [i.WIDGET_DISPLAY_MODE_LABEL, i.WIDGET_DISPLAY_ORDER_LABEL, i.PLACEMENT_GROUP_TITLE,
              i.MINI_GRAPH_SECTION_TITLE]
     assert _headers(_page(dlg, 1), set(order)) == order
     top = [w for w in (dlg.widget_page.layout().itemAt(k).widget()
@@ -205,7 +205,7 @@ def test_graph_style_change_updates_the_live_preview(dlg, qtbot):
     assert dlg.get_settings()["graph_style"] == other
 
 
-# --- change 4: Preferred Monitor -> Widget > Behavior ----------------------------------------------
+# --- change 4: Preferred Monitor -> Widget > Placement and visibility (was "Behavior") ------------
 
 def test_preferred_monitor_is_on_widget_page_above_free_float(dlg):
     w = dlg.widget_page
@@ -217,7 +217,7 @@ def test_preferred_monitor_is_on_widget_page_above_free_float(dlg):
                                                w.keep_visible_fullscreen)]
     assert cards == sorted(cards)
     assert flat.index(next(x for x in flat if isinstance(x, QLabel)
-                           and x.text() == dlg.i18n.BEHAVIOR_GROUP_TITLE)) == cards[0] - 1
+                           and x.text() == dlg.i18n.PLACEMENT_GROUP_TITLE)) == cards[0] - 1
 
 
 def test_preferred_monitor_saves_and_loads_the_same_key(dlg):
@@ -275,8 +275,10 @@ def test_hardware_appearance_header_and_throttle_position(dlg):
     assert len(header) == 1
     throttle = flat.index(_card_of(h.throttle_temp))
     assert flat.index(_card_of(h.show_temps)) < flat.index(note) < throttle
-    # The LHM connection expander (rc.2 G2/G3) sits with the LHM hint, between the note and throttle.
-    assert flat.index(h.lhm_web_server_hint) < flat.index(h.lhm_connection_section) < throttle
+    # The LHM connection expander (rc.2 G2/G3) sits under the note's setup link (D6), before throttle;
+    # the "web server is off" notice (D6) sits right above the note.
+    assert flat.index(h.lhm_server_off_notice) < flat.index(note) < flat.index(h.temps_setup_link)
+    assert flat.index(h.temps_setup_link) < flat.index(h.lhm_connection_section) < throttle
     assert throttle + 1 == flat.index(header[0])
     after = [flat.index(_card_of(h.label_style)), flat.index(_card_of(h.label_color)),
              flat.index(h.label_colors_container),
@@ -297,14 +299,15 @@ def test_hardware_tab_order(dlg):
     assert pos == sorted(pos)
 
 
-# --- change 6: Network order + plan speed collapsed --------------------------------------------------
+# --- change 6: Network order + plan speed collapsed (2.2.2 D7: the adapter list moved last) ------------
 
 def test_network_section_order_and_plan_collapsed(dlg):
     n = dlg.interfaces_page
     top = [n.layout().itemAt(k).widget() for k in range(n.layout().count())]
-    assert top.index(n.datacap) < top.index(n.connection) < top.index(n.identity)
+    mode_card = n.auto_interface_radio.parentWidget()
+    assert top.index(n.datacap) < top.index(n.connection) < top.index(n.identity) < top.index(mode_card)
     assert n.connection._plan.isExpanded() is False
-    pos = _focus_positions(dlg, [n.auto_interface_radio, n.datacap, n.connection, n.identity])
+    pos = _focus_positions(dlg, [n.datacap, n.connection, n.identity, n.auto_interface_radio])
     assert pos == sorted(pos)
 
 
@@ -360,7 +363,7 @@ def test_interaction_order_on_general(dlg):
     cards += [flat.index(_card_of(c)) for c in (g.show_usage_hover, g.power_display, g.show_hover_tips)]
     assert cards == list(range(header + 1, header + 7))
     assert cards[-1] == len(flat) - 1
-    assert _headers(_page(dlg, 0), {i.UPDATE_RATE_GROUP_TITLE, i.BEHAVIOR_GROUP_TITLE, i.INTERACTION_GROUP_TITLE})         == [i.UPDATE_RATE_GROUP_TITLE, i.BEHAVIOR_GROUP_TITLE, i.INTERACTION_GROUP_TITLE]
+    assert _headers(_page(dlg, 0), {i.UPDATE_RATE_GROUP_TITLE, i.STARTUP_UPDATES_GROUP_TITLE, i.INTERACTION_GROUP_TITLE})         == [i.UPDATE_RATE_GROUP_TITLE, i.STARTUP_UPDATES_GROUP_TITLE, i.INTERACTION_GROUP_TITLE]
 
 
 def test_general_tab_order(dlg):
@@ -372,12 +375,12 @@ def test_general_tab_order(dlg):
 
 
 def test_advanced_keeps_its_low_frequency_sections(dlg):
-    """Advanced > Behavior keeps reduce-motion + keep-on-top (two cards, so no fold is needed)."""
+    """Advanced > Motion and windows (was "Behavior") keeps reduce-motion + keep-on-top (two cards)."""
     a, i = dlg.advanced_page, dlg.i18n
     flat = _flatten(a.layout())
-    order = [i.ADVANCED_DATA_GROUP, i.BEHAVIOR_GROUP_TITLE, i.INTEGRATIONS_GROUP, i.ADVANCED_RESET_GROUP]
+    order = [i.ADVANCED_DATA_GROUP, i.WINDOWS_MOTION_GROUP_TITLE, i.INTEGRATIONS_GROUP, i.ADVANCED_RESET_GROUP]
     assert _headers(_page(dlg, 5), set(order)) == order
-    beh = flat.index(next(x for x in flat if isinstance(x, QLabel) and x.text() == i.BEHAVIOR_GROUP_TITLE))
+    beh = flat.index(next(x for x in flat if isinstance(x, QLabel) and x.text() == i.WINDOWS_MOTION_GROUP_TITLE))
     assert [flat.index(_card_of(a.reduce_motion)), flat.index(_card_of(a.keep_windows_on_top))] == [beh + 1, beh + 2]
     pos = _focus_positions(dlg, [a.keep_data, a.record_hardware, a.delete_history_btn, a.reduce_motion,
                                  a.keep_windows_on_top, a.metrics_enabled, a.reset_page_btn, a.reset_all_btn])

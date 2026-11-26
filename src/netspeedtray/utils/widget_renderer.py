@@ -1491,7 +1491,9 @@ class WidgetRenderer:
                            layout_mode: str = 'vertical', x_offset: int = 0, fixed_width: Optional[int] = None,
                            cpu_power: Optional[float] = None, gpu_power: Optional[float] = None,
                            y_offset: int = 0, memory_below: bool = False,
-                           ram_only: bool = False, vram_only: bool = False) -> None:
+                           ram_only: bool = False, vram_only: bool = False,
+                           cpu_sensor_source: Optional[bool] = None,
+                           gpu_sensor_source: Optional[bool] = None) -> None:
         """Draws CPU and/or GPU utilization statistics with optional temperature, power, and memory.
 
         y_offset: top of the band (`height` tall) the rows are centered in (see draw_network_speeds).
@@ -1500,7 +1502,10 @@ class WidgetRenderer:
         ram_only / vram_only: RAM (VRAM) is on with CPU (GPU) monitoring off (2.2.1) - pass
             ``cpu_usage`` (``gpu_usage``) None and the memory in ``ram_info`` (``vram_info``): that
             slot paints one memory-only row, "RAM 9.2/16.0G" - its label always drawn (a bare number
-            would not say what it is), no percent, no temperature/power suffix, N/A until measured."""
+            would not say what it is), no percent, no temperature/power suffix, N/A until measured.
+        cpu_sensor_source / gpu_sensor_source (#609): False = nothing can supply that device's
+            temperature / power - its row has no suffix (not a permanent "(N/A)"), and when no row
+            has one the suffix column is not reserved. None / True: as before."""
         try:
             order = getattr(config, 'widget_display_order', ["network", "cpu", "gpu"])
             cpu_idx = order.index("cpu") if "cpu" in order else 999
@@ -1510,13 +1515,15 @@ class WidgetRenderer:
 
             items = []
             if cpu_usage is not None:
-                items.append((cpu_idx, ('CPU', cpu_usage, cpu_temp, ram_info, cpu_color, cpu_power)))
+                items.append((cpu_idx, ('CPU', cpu_usage, cpu_temp, ram_info, cpu_color, cpu_power,
+                                        cpu_sensor_source)))
             elif ram_only and ram_info is not None:
-                items.append((cpu_idx, ('RAM', None, None, ram_info, cpu_color, None)))
+                items.append((cpu_idx, ('RAM', None, None, ram_info, cpu_color, None, None)))
             if gpu_usage is not None:
-                items.append((gpu_idx, ('GPU', gpu_usage, gpu_temp, vram_info, gpu_color, gpu_power)))
+                items.append((gpu_idx, ('GPU', gpu_usage, gpu_temp, vram_info, gpu_color, gpu_power,
+                                        gpu_sensor_source)))
             elif vram_only and vram_info is not None:
-                items.append((gpu_idx, ('VRAM', None, None, vram_info, gpu_color, None)))
+                items.append((gpu_idx, ('VRAM', None, None, vram_info, gpu_color, None, None)))
 
             items.sort(key=lambda x: x[0])
             enabled_stats = [x[1] for x in items]
@@ -1548,7 +1555,7 @@ class WidgetRenderer:
             # CONSTANT as values cross digit boundaries - so the whole readout stops sliding and never
             # clips. Worst-case column widths are computed once and are identical for every row.
             rows = []
-            for (label, val, temp, mem_info, color_hex, power) in enabled_stats:
+            for (label, val, temp, mem_info, color_hex, power, source) in enabled_stats:
                 mem_only = label in MEMORY_ONLY_LABELS
                 mem_text, total = "", 0.0
                 if mem_info and mem_info[0] is not None:
@@ -1570,7 +1577,8 @@ class WidgetRenderer:
                 rows.append({'label': label, 'color': color_hex, 'total': total, 'mem_only': mem_only,
                              'pct': '' if mem_only else self._fmt_hw_percent(val),
                              'suffix': '' if mem_only else self._build_hw_suffix(
-                                 temp, power, show_temps, show_power, temp_unit),
+                                 temp, power, show_temps, show_power, temp_unit, source_available=source),
+                             'source': source,
                              'mem': mem_text, 'mem_label': mem_label if mem_text else ''})
             stat_rows = [r for r in rows if not r['mem_only']]
 
@@ -1581,7 +1589,11 @@ class WidgetRenderer:
             else:
                 label_col = 14
             pct_col = self.metrics.horizontalAdvance("100%")   # the >3d percent is already a fixed 4-char field
-            suffix_ref = hw_suffix_reference(show_temps, show_power, temp_unit)
+            # The column is reserved while any CPU/GPU row may carry a suffix: it goes only when no row's
+            # device has a temperature / power source (#609) - the layout gives the same width back.
+            any_source = (False if stat_rows and all(r['source'] is False and not r['suffix'] for r in stat_rows)
+                          else None)
+            suffix_ref = hw_suffix_reference(show_temps, show_power, temp_unit, any_source)
             suffix_col = (sp + self.metrics.horizontalAdvance(suffix_ref)) if suffix_ref else 0
 
             any_mem = any(r['mem'] for r in stat_rows)       # memory beside / under a CPU/GPU row
@@ -1777,11 +1789,15 @@ class WidgetRenderer:
 
     def _build_hw_suffix(self, temp: Optional[float], power: Optional[float],
                         show_temps: bool, show_power: bool,
-                        unit: str = constants.config.defaults.DEFAULT_TEMPERATURE_UNIT) -> str:
+                        unit: str = constants.config.defaults.DEFAULT_TEMPERATURE_UNIT,
+                        source_available: Optional[bool] = None) -> str:
         """Builds a parenthetical suffix string from available hardware extras.
 
         Examples: "(43°C, 7.8W)", "(109°F)", "(7.8W)", "(N/A)", or "" if nothing enabled.
         ``temp`` is Celsius; ``unit`` is the display unit (rc.2 F8).
+        ``source_available`` (#609): False - nothing can supply this device's temperature / power (an
+        Intel / AMD GPU without LibreHardwareMonitor) - gives "" instead of a "(N/A)" that would never
+        fill; a reading, should one arrive anyway, still shows. None (unknown) / True: "(N/A)" as before.
         """
         if not show_temps and not show_power:
             return ""
@@ -1815,7 +1831,7 @@ class WidgetRenderer:
                 parts.append(None)
 
         if not has_any_data:
-            return f"({self.i18n.DEFAULT_TEXT})"
+            return "" if source_available is False else f"({self.i18n.DEFAULT_TEXT})"
 
         # Filter out None placeholders (partial data is fine - just show what we have)
         valid_parts = [p for p in parts if p is not None]

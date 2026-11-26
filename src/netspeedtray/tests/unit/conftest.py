@@ -77,6 +77,17 @@ def qt_owned(q_app):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_disable_tips_policy(monkeypatch):
+    """Never read the machine's real ``DisableTips`` policy (HKLM/HKCU): since 2.2.2 it also hides the
+    Monitor's internet offer and the automatic temperature setup, so a PC (or CI runner) with the policy
+    set would fail every test of those. Patches the reader ``startup_notices`` imported by name, not
+    ``tips_disabled_by_policy`` itself: a test's own policy fixture still overrides this, and
+    test_startup_notices' ``fake_policy`` puts the real reader back over a faked winreg."""
+    from netspeedtray.core import startup_notices
+    monkeypatch.setattr(startup_notices, "policy_value_set", lambda name: False)
+
+
+@pytest.fixture(autouse=True)
 def _no_shared_pdh_luids(monkeypatch):
     """Every GPU poll records the PDH adapter LUIDs it saw in gpu_adapters (#609, for Settings); one
     test's set must never collapse another test's adapters."""

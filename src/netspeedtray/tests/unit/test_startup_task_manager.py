@@ -20,6 +20,7 @@ from unittest.mock import patch
 import pytest
 
 from netspeedtray import constants
+from netspeedtray.core import startup_manager as sm
 from netspeedtray.core.startup_manager import StartupManager, get_startup_approved_state
 from netspeedtray.tests.unit import fake_winreg
 
