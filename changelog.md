@@ -75,6 +75,218 @@ ALSO
 
 ---
 
+## [2.2.2-beta.1] - November 26, 2026
+
+*A beta, for testers. It's a manual download from the release page - the in-app updater, WinGet
+and the Store never offer prereleases.*
+
+The first beta of 2.2.2, the "discoverable" release: NetSpeedTray teaches itself in the first minute, opening it from Start
+shows a small panel instead of nothing, and notices that used to say "go to Settings" now take you
+there - or do it in one click. The Monitor says "Router" when it only checks your router, the
+temperature setup matches today's LibreHardwareMonitor, and Settings uses clearer names.
+
+> **Upgrading:** a few things will look different, all on purpose.
+>
+> - **The Monitor's health line says "Router: ..."** where it said "Connection: ...". With the internet
+>   check off (the default) it only ever measured your router; with it on, it says "Internet: ...".
+>   ([#597])
+> - **A one-time "what's new" card** shows on the first launch of 2.2.2 after an update, and never again.
+>   ([#592])
+> - **The right-click menu has a new "Check connection" item**, after Show Monitor. It shows even if you
+>   hid the other optional items, because it's new: hide it in Settings → General → Right-click menu
+>   items. ([#602])
+> - **Settings → Network interfaces is now Settings → Network**, with Data usage first and Network
+>   adapters (was "Monitoring mode") last. Nothing you set changes. ([#602])
+> - **The temperature setup no longer opens after every launch.** It opens on its own at most once,
+>   ever; after that it's in Settings → Hardware. ([#593], [#600])
+> - **The "Start with Windows" entry gains `--autostart`**: `"<path>\NetSpeedTray.exe" --autostart`. An
+>   older value for the same exe is rewritten once, at the next launch. If you push the value with Group
+>   Policy, use the new format - see [DEPLOYING.md](DEPLOYING.md). ([#600])
+>
+### Added
+
+- **Opening NetSpeedTray from Start while it runs shows a small "NetSpeedTray is running" panel.** It
+  used to only bring the widget back, so the most common way to "open" an app showed nothing you could
+  use - and with no tray icon, a keyboard user had no way to Settings. The panel has the version (with a
+  Beta badge on prereleases) and an inline **Check for updates**, the live speeds and your router's
+  state, rows for **Monitor**, **Settings** and **Check connection**, and **Exit NetSpeedTray**. Full
+  keyboard, Narrator, High Contrast and right-to-left support. ([#591], [#600])
+
+  *Under the hood: the panel opens only on positive evidence that you asked - a Start, taskbar or desktop
+  shortcut, or an exe double-clicked in Explorer. The Run key (now `--autostart`), a Startup-folder
+  shortcut, the updater's relaunch and anything else (a script, Task Scheduler) only bring the widget
+  back. The second process calls `AllowSetForegroundWindow` for the running one, and the panel opens on
+  the monitor you launched from. If one of our dialogs is already up, that dialog comes forward instead.*
+
+- **A first-run tip.** A new install's first launch shows one small card pointing at the widget: point to
+  the speeds for details, double-click to open the Monitor, right-click for the menu and Settings, with
+  **Open Monitor** and **Got it**. The double-click line follows your double-click setting. Doing any of
+  those gestures answers it too. It waits for a quiet moment - never during sign-in, over a full-screen
+  app, a dialog, Settings, the hover card or another card - shows once, and never steals focus unless a
+  screen reader is running, so Narrator reads it. ([#592], [#600])
+- **"What's new" after an update.** The first launch of a newer final release shows one card with that
+  release's summary and a link to its release page. Prereleases never show it, so a tester going through
+  the betas sees 2.2.2's card once, on the final. ([#592])
+- **Notices that used to say "go to Settings" now take you there.** The Monitor's empty Hardware graph
+  ("CPU, GPU and RAM usage are off." / "Record hardware history is off.") and the Check connection sheet
+  get a **Turn on in Settings** link that opens the right page, outlines the setting and puts keyboard
+  focus on its switch. A link never changes a setting by itself. The Usage tile's "Set a monthly limit"
+  and "Usage by day" links got the same look. ([#590])
+- **Turn on the internet check in one click.** Beside the Monitor's "Router" line, **Also check your
+  internet** opens a small confirm that says exactly what leaves your PC - "Pings 1.1.1.1 (Cloudflare) 4
+  times every 3 seconds, about 9 MB a day. Cloudflare sees your IP address, as any website does. Nothing
+  else leaves your PC." - with **Turn on** / **Not now**. The figure is computed from what the probe
+  really sends. After two "Not now"s it's never offered again; closing the confirm isn't a decline. The
+  Check connection sheet has the same offer inline ("Check your internet all the time"). It still starts
+  **off**, and turning it on from the Monitor while Settings is open survives Settings' Save and Cancel.
+  ([#597], [#600])
+- **Check connection in the right-click menu**, with a switch to hide it. ([#602])
+- **Lock position.** A switch in Settings → Widget → Placement, under Free move: while it's on, dragging
+  never moves the widget, however the mouse slips; clicks, double-clicks, the hover card and the menu all
+  still work. It's **off** unless you turn it on, and it can go in the right-click menu too (Settings →
+  General → Right-click menu items). ([#626]; from [#616], thanks [@RunningDead89])
+- **Usage history in the right-click menu**, optional: turn it on in Settings → General → Right-click menu
+  items and it opens the usage-by-day/month/year window straight from the widget. The default menu doesn't
+  change. ([#626]; from [#619], thanks [@gov1113])
+- **A one-time "A month with NetSpeedTray" card in the Monitor**, about 30 days after your first 2.2.2
+  run: a star on GitHub or the Support dialog, or dismiss it. It only shows when you open the Monitor -
+  never on launch, over a full-screen app, beside another card or with Settings open - once, ever, and
+  nothing in the app changes whichever you pick. Only "shown" is saved, never which button. ([#601])
+- **Explanations where a figure needs one.** The 95th/99th percentile cells in the Statistics sheet and
+  the 95th percentile and jitter cells in Check connection have tooltips, the Overview's Most connections
+  says it's ranked by open connections, not speed, and the CPU, GPU and RAM usage switches say they also
+  keep their history in the Monitor. ([#602])
+
+### Changed
+
+- **The Monitor says what it measured: "Router: steady / N drops", or "Internet: ..."** once the internet
+  check is on. Before, an ISP outage with your Wi-Fi up still read "Connection: steady". A freshly turned-on
+  internet check reads "Internet: checking…" until it has replies, then "steady since HH:MM" when it
+  started inside the range - never a month of "steady" from an hour of data. Settings calls the option
+  **Also check your internet** (it said "true internet latency", as if the router figure were false), and
+  the server list names the provider ("1.1.1.1 (Cloudflare)"). ([#597], [#600])
+- **The temperature setup works with today's LibreHardwareMonitor.** Our onboarding said temperatures
+  "appear automatically" once LHM runs, but LHM 0.9.5+ is read over its web server, which is **off by
+  default** - so anyone following it got blank temperatures. The setup is now two numbered steps that
+  match LHM's real menus (download and open it; Options → Remote Web Server → **Run**), ticked off live
+  while the dialog is open. When LHM is running with its web server off, Settings → Hardware says so,
+  with a **How to turn it on** link. The dialog opens on its own at most once, ever, and only at a quiet
+  moment. ([#593], [#600])
+
+  *Under the hood: after a failed connect to the LHM port, `LhmHttpClient` checks the process list for
+  `LibreHardwareMonitor.exe` (no admin, no network, once per 30 s back-off). A server that accepted and
+  went silent is never "off".*
+
+- **Clearer words in Settings.** The three "Behavior" sections are **Startup and updates**, **Placement
+  and visibility** and **Motion and windows**; "Monitor CPU utilization" is **Show CPU usage**;
+  "Network identity" is **Wi-Fi band and name**; "Interface layout" is **Speed text layout**; "Auto
+  (primary interface)" is **Automatic (the adapter you're using now)**. The Network page leads with
+  Data usage and keeps Network adapters last, so choosing adapters no longer pushes everything down.
+  ([#602])
+- **One moment per session.** The first-run tip, "what's new", the support card and the temperature
+  setup never stack up: at most one of them shows per launch, and every other card (update offer, notices,
+  data-cap alerts) wins over them. ([#600])
+- **For IT admins:** a new `DisableTips` policy (`HKLM` or `HKCU\SOFTWARE\Policies\NetSpeedTray`, nonzero
+  DWORD) turns off everything 2.2.2 shows unprompted: the first-run tip, "what's new", the support card,
+  the Monitor's internet-check offer and the temperature setup that opens on its own. It's re-read each
+  time one would show. Facts stay (the "Router"/"Internet" line), and both features stay in Settings.
+  [DEPLOYING.md](DEPLOYING.md) has the per-user pre-seed and the new Run-key format. ([#592], [#608])
+
+### Fixed
+
+- **No more permanent "(N/A)" after the GPU (or CPU) percentage.** With temperatures and power on - the
+  default - an Intel or AMD GPU without LibreHardwareMonitor showed `GPU x% (N/A)` forever, because nothing
+  could ever fill it. The suffix now only shows while a source exists and hasn't answered yet, and the
+  widget doesn't keep room for it. A reading always shows. ([#611]; part of [#609], thanks [@bober233])
+
+  *Under the hood: the monitor thread reports per device whether anything can supply temperature or power
+  (LHM/OHM, nvidia-smi, RAPL), held for 60 s so one LHM blip doesn't flap the suffix; the layout re-lays
+  out only when that verdict flips, never per reading.*
+
+- **No more empty space beside a lone CPU or GPU readout.** When CPU or GPU is the only hardware readout in its
+  spot - Auto-Cycle, Side by side with only one of them on, or CPU + GPU with one side off - its RAM/VRAM is drawn
+  under the percentage, but the widget still kept room for it beside it. The widget is now only as wide as what
+  it shows: about 40-60 px narrower at the default size, more with larger fonts or temperatures on. Side by side
+  (not stacked) no longer cuts off the end of the RAM/VRAM value, and text labels no longer clip "GPU 100%" by a
+  pixel. ([#614])
+- **A portable copy no longer takes over an installed copy's "Start with Windows".** Any copy that started
+  rewrote the Run value to point at itself. Now it only rewrites a value that names itself (or an exe
+  that's gone); Settings' own switch can still take it over on purpose. ([#600])
+- **The advertised plan speed and the "below plan" line use your language's unit** ("Mbit/s" in German
+  and French, "Мбит/с" in Russian) instead of a hard-coded "Mbps". The stored value is unchanged. ([#602])
+- **Every right-click menu item has an Alt-key letter.** "Show Monitor" was the one item without one, in
+  every language, and the new "Check connection" item had none either: now Alt+M and Alt+C (or the nearest
+  free letter in your language). ([#620]; from [#619], thanks [@gov1113])
+- **"Show on all taskbars" copies stay put while Start or Search is open on their display.** Windows 11
+  hides a secondary display's taskbar from the usual window list while Start is open there, so that copy
+  vanished until Start closed, and a widget set to a secondary display (Preferred monitor) jumped to the main
+  display or floated. Secondary taskbars are now found the way the main one always was. ([#629])
+- **No more `nvidia-smi.exe` error popups at shutdown.** With GPU temperature and power on, shutting Windows
+  down could pop up a string of `nvidia-smi.exe` "application was unable to start correctly" (0xc0000142)
+  errors - one every few seconds. NetSpeedTray now stops starting nvidia-smi as soon as Windows begins to
+  shut down or sign out, stops one that's running, and resumes if the shutdown is cancelled - without the
+  usual back-off, so temperatures don't stay blank afterwards. ([#617], thanks [@cancanf])
+
+- **Every Tab stop in the Monitor has a name.** The Overview page and the Network and Hardware lists read
+  as just "group" in Narrator. ([#600])
+
+### Localization
+
+- Every new string is in all 17 languages, as drafts based on each language's existing wording.
+  Native-speaker corrections are very welcome in [#364].
+- Hungarian: the 2.2.2 strings reviewed by a native speaker. ([#610], thanks [@cscsanaki])
+- Hebrew: the new strings use the masculine singular, like the rest of the Hebrew UI, and
+  LibreHardwareMonitor is "התוכנה" (feminine) everywhere. ([#607])
+- LibreHardwareMonitor's menu names stay in English in every language, because that's what its menus
+  say. ([#593])
+
+### Developer notes
+
+- 2.2.2 was built as seven reviewed PRs merged onto one integration branch ([#600]), then a combined
+  code / UX / i18n review and two live rounds on a VM. Those found and fixed, before release, a crash
+  whenever a card first showed (`Flyout.nativeEvent` returned `super()`'s `(False, None)`; it now returns
+  `(False, 0)`), an "Internet: checking…" that never resolved on the v8 database (coverage now has its
+  own read, `HistoryReader.metric_coverage`), and the running panel loading every installed font in
+  Hebrew and Bengali.
+- numpy 2.5.5 and pip-tools 7.7.0, bumped by hand ([#625]): Dependabot's pip PRs recompile the lock files
+  on Linux, which drops every `sys_platform == "win32"` pin (pywin32, wmi, pefile, winrt-*), so they are
+  closed and redone by hand. `THIRD-PARTY-NOTICES.txt` is regenerated with every pin bump
+  (`test_licence_notices` fails otherwise).
+- `test_font_files_per_language` now also opens the panel, the tip, "what's new", the internet confirm,
+  the temperature setup and the support card. The startup tests use a fake registry, so no test touches
+  the real Run key.
+- Tests: 9,856 passed, 45 skipped - the full suite on the release commit (8,923 in 2.2.1).
+
+[#364]: https://github.com/erez-c137/NetSpeedTray/issues/364
+[#590]: https://github.com/erez-c137/NetSpeedTray/pull/590
+[#591]: https://github.com/erez-c137/NetSpeedTray/pull/591
+[#592]: https://github.com/erez-c137/NetSpeedTray/pull/592
+[#593]: https://github.com/erez-c137/NetSpeedTray/pull/593
+[#597]: https://github.com/erez-c137/NetSpeedTray/pull/597
+[#600]: https://github.com/erez-c137/NetSpeedTray/pull/600
+[#601]: https://github.com/erez-c137/NetSpeedTray/pull/601
+[#602]: https://github.com/erez-c137/NetSpeedTray/pull/602
+[#607]: https://github.com/erez-c137/NetSpeedTray/pull/607
+[#608]: https://github.com/erez-c137/NetSpeedTray/pull/608
+[#609]: https://github.com/erez-c137/NetSpeedTray/issues/609
+[#610]: https://github.com/erez-c137/NetSpeedTray/pull/610
+[#611]: https://github.com/erez-c137/NetSpeedTray/pull/611
+[#614]: https://github.com/erez-c137/NetSpeedTray/pull/614
+[#619]: https://github.com/erez-c137/NetSpeedTray/discussions/619
+[#616]: https://github.com/erez-c137/NetSpeedTray/issues/616
+[#617]: https://github.com/erez-c137/NetSpeedTray/pull/617
+[#620]: https://github.com/erez-c137/NetSpeedTray/pull/620
+[#625]: https://github.com/erez-c137/NetSpeedTray/pull/625
+[#626]: https://github.com/erez-c137/NetSpeedTray/pull/626
+[#629]: https://github.com/erez-c137/NetSpeedTray/pull/629
+[@gov1113]: https://github.com/gov1113
+[@bober233]: https://github.com/bober233
+[@cscsanaki]: https://github.com/cscsanaki
+[@RunningDead89]: https://github.com/RunningDead89
+[@cancanf]: https://github.com/cancanf
+
+---
+
 ## [2.2.1] - November 23, 2026
 
 The first patch after 2.2.0: the hover card lists every GPU, a hybrid laptop's NVIDIA GPU gets to
