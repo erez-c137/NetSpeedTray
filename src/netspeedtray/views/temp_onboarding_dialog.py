@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PyQt6.QtCore import QRectF, Qt, QTimer
+from PyQt6.QtCore import QCoreApplication, QEvent, QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QStyle,
@@ -363,7 +363,7 @@ class TempOnboardingDialog(QDialog):
         self.details_lines = []
         for line in lines:
             self.details.contentLayout().addLayout(self._bullet(line, c))
-        self.details.expandedChanged.connect(lambda _on: self.adjustSize())
+        self.details.expandedChanged.connect(lambda _on: self._fit_height())
         layout.addWidget(self.details)
 
         foot = QHBoxLayout()
@@ -474,6 +474,44 @@ class TempOnboardingDialog(QDialog):
             step.badge.set_fill(c["badge"] if current or done else c["muted"])
         self.connected_label.setVisible(connected)
         self.close_button.set_accent(connected)
+        self._fit_height()
+
+    # -- sizing ---------------------------------------------------------------------------------------
+    def _height_for_contents(self, width: int) -> int:
+        """The height every wrapped label needs at ``width`` - the layout's height-for-width."""
+        lay = self.layout()
+        # A nested change (More details' content showing / hiding) reaches this layout only through
+        # posted LayoutRequests: deliver them now rather than measure the old contents.
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+        lay.invalidate()
+        lay.activate()
+        return lay.totalHeightForWidth(width) if lay.hasHeightForWidth() else lay.totalSizeHint().height()
+
+    def _fit_height(self) -> None:
+        """Fit the window to its contents after they change (a step ticks, "Temperatures are on."
+        appears, More details opens or closes).
+
+        A top-level window does not follow its layout's height-for-width: Qt keeps the window's size
+        and its minimum is the layout's minimumSize(), in which a word-wrapped QLabel counts as one
+        short line. So when "Temperatures are on." appeared, the layout squeezed the wrapped step
+        labels instead of growing the window, and step 1 lost its last line. The minimum height is
+        therefore the height-for-width at the current width (kept current by resizeEvent too), and
+        the window snaps to it here."""
+        if self.layout() is None:
+            return
+        need = self._height_for_contents(self.width())
+        self.setMinimumHeight(need)
+        if self.isVisible() and self.height() != need:
+            self.resize(self.width(), need)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # Narrowing the window wraps the text onto more lines: never let it get shorter than that.
+        lay = self.layout()
+        if lay is not None and event.size().width() != event.oldSize().width():
+            need = self._height_for_contents(event.size().width())
+            if need != self.minimumHeight():
+                self.setMinimumHeight(need)
 
     # -- actions --------------------------------------------------------------------------------------
     def _get_lhm(self) -> None:
