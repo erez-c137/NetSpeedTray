@@ -217,6 +217,10 @@ temperature setup matches today's LibreHardwareMonitor, and Settings uses cleare
 - **Every right-click menu item has an Alt-key letter.** "Show Monitor" was the one item without one, in
   every language, and the new "Check connection" item had none either: now Alt+M and Alt+C (or the nearest
   free letter in your language). ([#620]; from [#619], thanks [@gov1113])
+- **"Show on all taskbars" copies stay put while Start or Search is open on their display.** Windows 11
+  hides a secondary display's taskbar from the usual window list while Start is open there, so that copy
+  vanished until Start closed, and a widget set to a secondary display (Preferred monitor) jumped to the main
+  display or floated. Secondary taskbars are now found the way the main one always was. ([#629])
 - **No more `nvidia-smi.exe` error popups at shutdown.** With GPU temperature and power on, shutting Windows
   down could pop up a string of `nvidia-smi.exe` "application was unable to start correctly" (0xc0000142)
   errors - one every few seconds. NetSpeedTray now stops starting nvidia-smi as soon as Windows begins to
@@ -251,7 +255,7 @@ temperature setup matches today's LibreHardwareMonitor, and Settings uses cleare
 - `test_font_files_per_language` now also opens the panel, the tip, "what's new", the internet confirm,
   the temperature setup and the support card. The startup tests use a fake registry, so no test touches
   the real Run key.
-- Tests: 9,744 passed, 45 skipped - the full suite on the release commit (8,923 in 2.2.1).
+- Tests: 9,856 passed, 45 skipped - the full suite on the release commit (8,923 in 2.2.1).
 
 [#364]: https://github.com/erez-c137/NetSpeedTray/issues/364
 [#590]: https://github.com/erez-c137/NetSpeedTray/pull/590
@@ -274,6 +278,7 @@ temperature setup matches today's LibreHardwareMonitor, and Settings uses cleare
 [#620]: https://github.com/erez-c137/NetSpeedTray/pull/620
 [#625]: https://github.com/erez-c137/NetSpeedTray/pull/625
 [#626]: https://github.com/erez-c137/NetSpeedTray/pull/626
+[#629]: https://github.com/erez-c137/NetSpeedTray/pull/629
 [@gov1113]: https://github.com/gov1113
 [@bober233]: https://github.com/bober233
 [@cscsanaki]: https://github.com/cscsanaki
