@@ -24,6 +24,9 @@ class TaskbarConstants:
     # ... 6 = darkest, 7 = complement) Windows paints the taskbar with. Verified on build 26300 in the VM
     # (utils/taskbar_appearance; legibility "L", 5a).
     ACCENT_TASKBAR_PALETTE_INDEX: Final[int] = 5
+    # get_all_taskbar_info's FindWindowEx walk for Shell_SecondaryTrayWnd (#629): at most this many
+    # steps - far more bars than displays anyone has, and a stuck walk (or a mock) must end.
+    SECONDARY_TASKBAR_FIND_CAP: Final[int] = 16
 
     def __init__(self) -> None:
         self.validate()
@@ -34,6 +37,7 @@ class TaskbarConstants:
         if self.PADDING < 0: raise ValueError("PADDING must be non-negative")
         if self.DPI_DEFAULT <= 0: raise ValueError("DPI_DEFAULT must be positive")
         if self.VISIBILITY_SAFETY_TIMER_MS <= 0: raise ValueError("VISIBILITY_SAFETY_TIMER_MS must be positive")
+        if self.SECONDARY_TASKBAR_FIND_CAP <= 0: raise ValueError("SECONDARY_TASKBAR_FIND_CAP must be positive")
 
 class PositionConstants:
     """Constants for widget positioning calculations."""
