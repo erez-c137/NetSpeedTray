@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import collections.abc
 import logging
-import time
 from collections import Counter
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
@@ -329,15 +328,6 @@ class MirrorWidget(QWidget):
         except Exception as e:
             self.logger.error("[%s] refresh failed: %s", self._tag, e, exc_info=True)
 
-    def hide_while_bar_absent(self) -> None:
-        """MirrorManager._hold_absent: our taskbar is missing and no longer the bar we sat on - hide
-        (no Win32 work on a dead window) until it comes back or the hold runs out."""
-        if self.dead or self._retired:
-            return
-        if self.isVisible():
-            self.setVisible(False)
-        self.position_manager.note_on_top_unverified()
-
     def retire(self) -> None:
         """Being destroyed: a refresh queued by a yield flip must not re-show it from a stale bar."""
         self._retired = True
@@ -534,34 +524,6 @@ def _mirror_latch(mirror: Any) -> FullscreenLatch:
     return latch
 
 
-_TASKBAR_CLASSES = ("Shell_TrayWnd", "Shell_SecondaryTrayWnd")
-
-
-def _absent_bar_state(hwnd: int, rect: Any) -> str:
-    """Why a mirror's taskbar is missing from this tick's enumeration - asked of the taskbar window
-    itself, not of EnumWindows:
-
-    - "gone": the window no longer exists (or is no taskbar): display unplugged, "Show my taskbar on
-      all displays" off, Explorer restarted. The mirror is dropped as before.
-    - "same": still a visible taskbar window with the rect the mirror was placed on. Start (or Search)
-      is open on that display: Windows 11 then leaves that display's Shell_SecondaryTrayWnd out of
-      EnumWindows for as long as it is open (same HWND, top-level, visible, same rect - FindWindowEx
-      still finds it; 26H2 VM probe, 2026-11-26). The mirror stays as it is, as the main widget does.
-    - "changed": it exists but is hidden, collapsed or moved - not a bar to sit on right now.
-    """
-    try:
-        if not hwnd or not win32gui.IsWindow(hwnd) or win32gui.GetClassName(hwnd) not in _TASKBAR_CLASSES:
-            return "gone"
-        if not win32gui.IsWindowVisible(hwnd):
-            return "changed"
-        live = tuple(win32gui.GetWindowRect(hwnd))
-        if live[2] <= live[0] or live[3] <= live[1]:
-            return "changed"
-        return "same" if rect is not None and live == tuple(rect) else "changed"
-    except Exception:
-        return "gone"
-
-
 def _fullscreen_monitor(hwnd: int) -> int:
     """The HMONITOR a true-fullscreen ``hwnd`` covers (window rect == monitor rect), else 0. The
     cheap test SystemEventHandler._is_fullscreen_obstruction starts with; no taskbar query."""
@@ -586,18 +548,14 @@ class MirrorManager(QObject):
                  taskbars_provider: Optional[Callable[[], List[Any]]] = None,
                  mirror_factory: Optional[Callable[[Any], Any]] = None,
                  foreground_provider: Optional[Callable[[], int]] = None,
-                 window_class: Optional[Callable[[int], str]] = None,
-                 absent_bar_state: Optional[Callable[[int, Any], str]] = None) -> None:
+                 window_class: Optional[Callable[[int], str]] = None) -> None:
         super().__init__(main if isinstance(main, QObject) else None)
         self._main = main
         self._taskbars = taskbars_provider or taskbar_utils.get_all_taskbar_info
         self._factory = mirror_factory or (lambda tb: MirrorWidget(main, tb))
         self._foreground = foreground_provider or win32gui.GetForegroundWindow
         self._window_class = window_class or _window_class
-        self._absent_bar_state = absent_bar_state or _absent_bar_state
         self.mirrors: Dict[Any, Any] = {}   # monitor key (see _key) -> mirror
-        # monitor key -> when its taskbar first went missing from the enumeration (_hold_absent).
-        self._absent_since: Dict[Any, float] = {}
         self._connections: List[Tuple[Any, Callable]] = []
         self._shut = False
         self._last_fs_monitor = 0
@@ -704,7 +662,6 @@ class MirrorManager(QObject):
         candidates = [tb for tb in taskbars if int(getattr(tb, "hwnd", 0) or 0)]
         # Two taskbars labelled with ONE Qt screen = a display is being added or removed and Qt's
         # screen list is behind: leave those monitors alone this tick (no create, no destroy).
-        enumerated = {int(tb.hwnd) for tb in candidates}
         names = Counter(tb.screen_name for tb in candidates)
         targets: Dict[Any, Any] = {}
         held = set()
@@ -728,12 +685,6 @@ class MirrorManager(QObject):
             if key in held and not getattr(mirror, "dead", False):
                 continue
             tb = targets.get(key)
-            # Held only while its bar is missing from the enumeration - a bar that IS enumerated but
-            # is no target any more (the main widget moved onto it) drops its mirror as before.
-            if (tb is None and int(mirror.taskbar_hwnd) not in enumerated
-                    and self._hold_absent(key, mirror)):
-                continue
-            self._absent_since.pop(key, None)
             if (tb is None or int(tb.hwnd) != int(mirror.taskbar_hwnd)
                     or tb.screen_name != mirror.screen_name or getattr(mirror, "dead", False)):
                 self._destroy(key)
@@ -751,40 +702,7 @@ class MirrorManager(QObject):
             self._fs_timer.stop()
         return targets
 
-    def _hold_absent(self, key: Any, mirror: Any) -> bool:
-        """True to keep a mirror whose taskbar is missing from this tick's enumeration.
-
-        The enumeration is not proof the bar is gone: Start open on a secondary display hides that
-        display's taskbar from EnumWindows (see _absent_bar_state), and the mirror was destroyed and
-        rebuilt around every Start menu. Asked of the taskbar window itself:
-        "same" - kept as it is (no refresh; it is repainted), however long Start stays open;
-        "changed" - hidden, and kept for up to TASKBAR_ABSENT_HOLD_MS (the main widget's
-        taskbar-absent hold) in case the bar comes back; "gone" - dropped now, as before.
-        A display being removed still retires its mirror at once (_on_screen_removed)."""
-        if getattr(mirror, "dead", False):
-            return False
-        rect = getattr(getattr(mirror, "_tb", None), "rect", None)
-        state = self._absent_bar_state(int(getattr(mirror, "taskbar_hwnd", 0) or 0), rect)
-        if state == "gone":
-            return False
-        now = time.monotonic()
-        since = self._absent_since.get(key)
-        if since is None:
-            since = self._absent_since[key] = now
-            logger.debug("Taskbar of the mirror on %s is not enumerated (%s) - holding the mirror.",
-                         stable_pseudonym(getattr(mirror, "screen_name", key), "DISPLAY"), state)
-        if state == "same":
-            return True
-        if (now - since) * 1000.0 < constants.timeouts.TASKBAR_ABSENT_HOLD_MS:
-            hide = getattr(mirror, "hide_while_bar_absent", None)
-            (hide if callable(hide) else mirror.hide)()
-            return True
-        logger.info("Taskbar of the mirror on %s still missing after %.0fs - removing the mirror.",
-                    stable_pseudonym(getattr(mirror, "screen_name", key), "DISPLAY"), now - since)
-        return False
-
     def _destroy(self, key: Any) -> None:
-        self._absent_since.pop(key, None)
         mirror = self.mirrors.pop(key, None)
         if mirror is None:
             return

@@ -74,15 +74,12 @@ def _classes(hwnd):
     return "Shell_TrayWnd" if hwnd in PRIMARY_HWNDS else "Shell_SecondaryTrayWnd"
 
 
-def _manager(taskbars, main_dock=(100, "PRIMARY"), fg=0, window_class=_classes, bar_state=None):
-    """``holder["bar_state"]`` answers MirrorManager's live check of a taskbar that dropped out of the
-    enumeration: "gone" (default - the window no longer exists), "same" or "changed"."""
+def _manager(taskbars, main_dock=(100, "PRIMARY"), fg=0, window_class=_classes):
     main = SimpleNamespace(docked_taskbar=lambda: main_dock)
-    holder = {"taskbars": taskbars, "bar_state": bar_state or "gone"}
+    holder = {"taskbars": taskbars}
     mgr = MirrorManager(main, taskbars_provider=lambda: holder["taskbars"],
                         mirror_factory=_FakeMirror, foreground_provider=lambda: fg,
-                        window_class=window_class,
-                        absent_bar_state=lambda hwnd, rect: holder["bar_state"])
+                        window_class=window_class)
     return mgr, holder
 
 
@@ -223,136 +220,6 @@ class TestReconcile:
         mgr._on_screen_removed(SimpleNamespace(name=lambda: "B"))
         assert b.detached and b.deleted and "B" not in mgr.mirrors
         mgr.shutdown()
-
-    # Start (or Search) open on a SECONDARY display: Windows 11 (26H2 VM, 2026-11-26) drops that
-    # display's Shell_SecondaryTrayWnd from EnumWindows for as long as Start is open - same HWND, still
-    # a visible top-level window with the same rect (FindWindowEx still finds it). The mirror was
-    # destroyed on the first tick and rebuilt when Start closed.
-    def test_start_open_on_its_display_keeps_the_mirror(self):
-        bars = [_tb(100, "PRIMARY", True), _tb(200, "B")]
-        mgr, holder = _manager(bars, bar_state="same")
-        mgr.tick()
-        b = mgr.mirrors["B"]
-        holder["taskbars"] = [bars[0]]          # Start open on B: B's bar is not enumerated
-        for _ in range(5):
-            mgr.tick()
-        assert mgr.mirrors.get("B") is b
-        assert not b.deleted and not b.detached and not b.hidden   # left exactly as it was
-        holder["taskbars"] = bars               # Start closed
-        mgr.tick()
-        assert mgr.mirrors["B"] is b and not b.deleted
-        assert b.refreshed[-1] == (bars[1], 0)
-        mgr.shutdown()
-
-    def test_start_open_longer_than_the_hold_still_keeps_the_mirror(self, monkeypatch):
-        clock = [1000.0]
-        monkeypatch.setattr(mirror_mod.time, "monotonic", lambda: clock[0])
-        bars = [_tb(100, "PRIMARY", True), _tb(200, "B")]
-        mgr, holder = _manager(bars, bar_state="same")
-        mgr.tick()
-        b = mgr.mirrors["B"]
-        holder["taskbars"] = [bars[0]]
-        mgr.tick()
-        clock[0] += constants.timeouts.TASKBAR_ABSENT_HOLD_MS / 1000.0 * 4
-        mgr.tick()
-        assert mgr.mirrors.get("B") is b and not b.deleted
-        mgr.shutdown()
-
-    def test_bar_destroyed_while_missing_removes_the_mirror_at_once(self):
-        """A taskbar that is really gone (display unplugged, 'Show my taskbar on all displays' off,
-        Explorer restart) still drops its mirror on the first tick it is missing."""
-        bars = [_tb(100, "PRIMARY", True), _tb(200, "B")]
-        mgr, holder = _manager(bars, bar_state="gone")
-        mgr.tick()
-        b = mgr.mirrors["B"]
-        holder["taskbars"] = [bars[0]]
-        mgr.tick()
-        assert "B" not in mgr.mirrors and b.deleted
-        mgr.shutdown()
-
-    def test_changed_missing_bar_hides_the_mirror_then_drops_it_after_the_hold(self, monkeypatch):
-        """Missing AND no longer the bar it was (hidden, collapsed, moved): hidden at once, kept for
-        TASKBAR_ABSENT_HOLD_MS like the main widget's taskbar-absent hold, then dropped."""
-        clock = [1000.0]
-        monkeypatch.setattr(mirror_mod.time, "monotonic", lambda: clock[0])
-        bars = [_tb(100, "PRIMARY", True), _tb(200, "B")]
-        mgr, holder = _manager(bars, bar_state="changed")
-        mgr.tick()
-        b = mgr.mirrors["B"]
-        holder["taskbars"] = [bars[0]]
-        mgr.tick()
-        assert mgr.mirrors.get("B") is b and b.hidden and not b.deleted
-        clock[0] += constants.timeouts.TASKBAR_ABSENT_HOLD_MS / 1000.0 - 1
-        mgr.tick()
-        assert mgr.mirrors.get("B") is b and not b.deleted
-        clock[0] += 2
-        mgr.tick()
-        assert "B" not in mgr.mirrors and b.deleted
-        mgr.shutdown()
-
-    def test_a_held_mirror_back_on_its_bar_starts_a_fresh_hold_next_time(self, monkeypatch):
-        clock = [1000.0]
-        monkeypatch.setattr(mirror_mod.time, "monotonic", lambda: clock[0])
-        bars = [_tb(100, "PRIMARY", True), _tb(200, "B")]
-        mgr, holder = _manager(bars, bar_state="changed")
-        mgr.tick()
-        b = mgr.mirrors["B"]
-        holder["taskbars"] = [bars[0]]
-        mgr.tick()
-        clock[0] += constants.timeouts.TASKBAR_ABSENT_HOLD_MS / 1000.0 - 1
-        holder["taskbars"] = bars
-        mgr.tick()                                    # back: the absence is over
-        holder["taskbars"] = [bars[0]]
-        clock[0] += 2
-        mgr.tick()                                    # a NEW absence, not the old one's 16th second
-        assert mgr.mirrors.get("B") is b and not b.deleted
-        mgr.shutdown()
-
-    def test_main_moving_onto_an_enumerated_bar_still_drops_its_mirror(self):
-        """Only a bar MISSING from the enumeration is held: a live bar that is no longer a target
-        because the main widget moved onto it (Preferred Monitor changed) loses its mirror at once."""
-        bars = [_tb(100, "PRIMARY", True), _tb(200, "B")]
-        main = {"dock": (100, "PRIMARY")}
-        mgr = MirrorManager(SimpleNamespace(docked_taskbar=lambda: main["dock"]),
-                            taskbars_provider=lambda: bars, mirror_factory=_FakeMirror,
-                            foreground_provider=lambda: 0, window_class=_classes,
-                            absent_bar_state=lambda hwnd, rect: "same")
-        mgr.tick()
-        b = mgr.mirrors["B"]
-        main["dock"] = (200, "B")
-        mgr.tick()
-        assert b.deleted and "B" not in mgr.mirrors and sorted(mgr.mirrors) == ["PRIMARY"]
-        mgr.shutdown()
-
-    def test_display_removed_while_held_still_retires_the_mirror(self):
-        bars = [_tb(100, "PRIMARY", True), _tb(200, "B")]
-        mgr, holder = _manager(bars, bar_state="same")
-        mgr.tick()
-        b = mgr.mirrors["B"]
-        holder["taskbars"] = [bars[0]]
-        mgr.tick()
-        assert mgr.mirrors.get("B") is b
-        mgr._staggered_ticks = lambda: None
-        mgr._on_screen_removed(SimpleNamespace(name=lambda: "B"))
-        assert "B" not in mgr.mirrors and b.deleted
-        mgr.shutdown()
-
-    @pytest.mark.parametrize("alive, cls, visible, live_rect, expected", [
-        (False, "Shell_SecondaryTrayWnd", True, (1920, 1032, 3840, 1080), "gone"),
-        (True, "Progman", True, (1920, 1032, 3840, 1080), "gone"),           # HWND reused by another
-        (True, "Shell_SecondaryTrayWnd", True, (1920, 1032, 3840, 1080), "same"),   # Start open
-        (True, "Shell_SecondaryTrayWnd", False, (1920, 1032, 3840, 1080), "changed"),
-        (True, "Shell_SecondaryTrayWnd", True, (1920, 1080, 1920, 1080), "changed"),  # collapsed
-        (True, "Shell_SecondaryTrayWnd", True, (1920, 0, 3840, 48), "changed"),       # moved
-    ])
-    def test_absent_bar_state_asks_the_window_itself(self, monkeypatch, alive, cls, visible,
-                                                     live_rect, expected):
-        w = mirror_mod.win32gui
-        monkeypatch.setattr(w, "IsWindow", lambda h: alive)
-        monkeypatch.setattr(w, "GetClassName", lambda h: cls)
-        monkeypatch.setattr(w, "IsWindowVisible", lambda h: visible)
-        monkeypatch.setattr(w, "GetWindowRect", lambda h: live_rect)
-        assert mirror_mod._absent_bar_state(200, (1920, 1032, 3840, 1080)) == expected
 
     def test_tick_after_shutdown_is_a_noop(self):
         calls = []
