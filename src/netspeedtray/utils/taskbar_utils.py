@@ -1583,23 +1583,54 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
             return None
 
     # --- Main execution block of get_all_taskbar_info ---
+    seen: set = set()
+
+    def add(hwnd: int) -> None:
+        if hwnd in seen:
+            return
+        seen.add(hwnd)
+        taskbar_info = process_taskbar(hwnd)
+        if taskbar_info:
+            taskbars.append(taskbar_info)
+
     try:
         primary_hwnd = win32gui.FindWindow("Shell_TrayWnd", None)
         if primary_hwnd:
-            taskbar_info = process_taskbar(primary_hwnd)
-            if taskbar_info:
-                taskbars.append(taskbar_info)
+            add(primary_hwnd)
 
         def enum_callback(hwnd: int, _: Any) -> bool:
-            if hwnd != primary_hwnd:
-                taskbar_info = process_taskbar(hwnd)
-                if taskbar_info:
-                    taskbars.append(taskbar_info)
+            add(hwnd)
             return True
 
         win32gui.EnumWindows(enum_callback, None)
     except Exception as e:
         logger.error(f"Failed during taskbar enumeration: {e}", exc_info=True)
+
+    # Start / Search open on a SECONDARY display takes that display's Shell_SecondaryTrayWnd out of
+    # EnumWindows for as long as it is open - same HWND, top-level, visible, uncloaked, same rect (Win11
+    # 26H2 VM probe, 2026-11-26) - while FindWindowEx still finds it. Without this walk the bar was
+    # "gone": its mirror was torn down and rebuilt, and a widget preferring that display fell back to
+    # the primary / free-float (#629). The primary never had this: it is found with FindWindow above.
+    # Own try: a failed walk keeps the EnumWindows results. Bounded: stops on 0, a repeat, or the cap.
+    try:
+        prev = 0
+        for _ in range(constants.taskbar.taskbar.SECONDARY_TASKBAR_FIND_CAP):
+            hwnd = win32gui.FindWindowEx(0, prev, "Shell_SecondaryTrayWnd", None)
+            if not hwnd or hwnd == prev:
+                break
+            prev = hwnd
+            if hwnd in seen:
+                continue
+            if dwm.is_cloaked(hwnd):
+                seen.add(hwnd)
+                continue
+            before = len(taskbars)
+            add(hwnd)
+            if len(taskbars) > before:
+                logger.debug("Taskbar HWND %s found by FindWindowEx only (not in EnumWindows - Start or "
+                             "Search open on its display?).", hwnd)
+    except Exception as e:
+        logger.debug("Secondary taskbar FindWindowEx walk failed: %s", e)
 
     if not taskbars:
         logger.warning("No taskbars found. Returning fallback.")

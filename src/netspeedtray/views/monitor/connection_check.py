@@ -67,6 +67,16 @@ _DETAIL_ROWS = [
     ("ipv6", "CHECK_CONN_DETAILS_IPV6", "IPv6 address", False),
     ("dns", "CHECK_CONN_DETAILS_DNS", "DNS servers", True),
 ]
+# Plain-words tooltips for the two figures people ask about (2.2.2 D7): field -> (i18n key, English
+# fallback). Every figure here is a ping time, so the p95 text can say "this fast or faster" (the
+# Statistics sheet's p95 text stays neutral: it also shows speeds, where higher is better).
+_CELL_TIPS = {
+    "p95_ms": ("CHECK_CONN_P95_TOOLTIP",
+               "95% of replies came back this fast or faster; the slowest 5% took longer."),
+    "jitter_ms": ("CHECK_CONN_JITTER_TOOLTIP",
+                  "How much the ping time varies from one reply to the next. Lower is steadier - it matters "
+                  "most for calls and games."),
+}
 # Stat cells per hop, in grid order: (field, i18n key, English fallback).
 _CELLS = [
     ("sent", "CHECK_CONN_SENT", "Sent"),
@@ -192,6 +202,10 @@ class _HopCard(QFrame):
         self.values: Dict[str, QLabel] = {}
         for i, (field, key, default) in enumerate(_CELLS):
             cell, val = self._cell(_tr(i18n, key, default))
+            if field in _CELL_TIPS:
+                tip = _tr(i18n, *_CELL_TIPS[field])
+                cell.setToolTip(tip)
+                cell.setAccessibleDescription(tip)
             self.values[field] = val
             grid.addWidget(cell, i // 3, i % 3)
         box.addLayout(grid)
@@ -301,8 +315,20 @@ class ConnectionCheckSheet(QDialog):
 
     def __init__(self, config: Dict[str, Any], i18n, gateway_ip: Optional[str] = None,
                  app_version: str = "", autostart: bool = True, parent=None,
-                 gateway_answered: bool = False) -> None:
+                 gateway_answered: bool = False, offer_settings_link: bool = False,
+                 internet_offer=None) -> None:
         super().__init__(parent)
+        # D5: with an InternetOffer (open_connection_check, from the main widget) the notice asks INLINE -
+        # "Watch the internet all the time" opens a confirm in the sheet, so its figures stay on screen.
+        # The Settings trip below stays only for when the latency probe itself is off (the internet
+        # ping rides on it, and its switch is in Settings) or no offer can be made at all.
+        self._internet_offer = internet_offer
+        # D4: the "measure the internet all the time?" notice, offered only when the caller can open
+        # Settings (open_connection_check, with the widget's router). Its click closes the sheet and
+        # leaves the trip in settings_request; the caller routes once exec() has returned - routing from
+        # inside the sheet's own event loop let the Monitor's re-activation bury Settings.
+        self._offer_settings_link = bool(offer_settings_link)
+        self.settings_request: Optional[Tuple[str, str]] = None
         self._config = config
         self._i18n = i18n
         self._app_version = app_version
@@ -365,23 +391,45 @@ class ConnectionCheckSheet(QDialog):
         root.addWidget(self._sentence)
 
         # The one-off internet tick - offered only while the public probe is off in Settings.
+        from netspeedtray.views.monitor import internet_offer as IO
         self._public_on = bool(config.get("latency_public_enabled", False))
         host = str(config.get("latency_public_host", "1.1.1.1") or "1.1.1.1")
         self._tick = QCheckBox()   # the host is the user's (an internationalized name): text in its face
-        su.set_text_in_face(self._tick, self._tr("CHECK_CONN_INCLUDE_INTERNET",
-                                                 "Also check the internet (sends pings to {host})").format(host=host))
+        su.set_text_in_face(self._tick, self._tr(
+            "CHECK_CONN_INCLUDE_INTERNET", "Include the internet this time (pings {host})").format(
+            host=IO.include_once_target(host)))
         self._tick.setChecked(False)
         self._tick.toggled.connect(self._on_tick)
-        self._hint = QLabel(self._tr(
-            "CHECK_CONN_HINT", "To measure the internet all the time, turn on “{setting}” in Settings."
-        ).format(setting=self._tr("CONN_PUBLIC_LABEL", "Also measure true internet latency")))
-        self._hint.setFont(su.font(tokens.TYPE_CAPTION))
-        self._hint.setWordWrap(True)
-        self._hint.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        # "Check your internet all the time" with a one-click way there. D5: a compact inline confirm
+        # (the same confirm as the Overview's tip), so the sheet's figures stay on screen; D4's Settings
+        # trip only when the latency probe itself is off (the internet ping rides on it).
+        from netspeedtray.utils.components import NoticeLink
+        offer = internet_offer
+        latency_on = bool(config.get("latency_enabled", True))
+        self._inline_offer = offer is not None and latency_on and offer.available()
+        if self._inline_offer:
+            self._hint = NoticeLink(
+                "", self._tr("INTERNET_CHECK_ALWAYS", "Check your internet all the time"),
+                self._open_internet_confirm, stacked=True, surface=_sheet_surface)
+        else:
+            self._hint = NoticeLink(
+                self._tr("CHECK_CONN_ALWAYS_NOTICE", "Check your internet all the time?"),
+                self._tr("NOTICE_TURN_ON_IN_SETTINGS", "Turn on in Settings"),
+                self._open_internet_setting, stacked=True, surface=_sheet_surface)   # narrow sheet: no side-by-side wrap
+        # Built empty: its text is set when it opens (a typed host in another script loads its face then).
+        self._internet_confirm = IO.InternetCheckConfirm(i18n, framed=True)
+        self._internet_confirm.setVisible(False)
+        self._internet_confirm.turn_on_clicked.connect(self._internet_turn_on)
+        self._internet_confirm.not_now_clicked.connect(self._internet_not_now)
         root.addWidget(self._tick)
         root.addWidget(self._hint)
+        root.addWidget(self._internet_confirm)
         self._tick.setVisible(not self._public_on)
-        self._hint.setVisible(not self._public_on)
+        # The Settings trip only where no inline offer applies: a declined offer (Not now) stays gone, and
+        # DisableTips hides it like the inline offer (the one-off tick above stays: the user asked).
+        settings_trip = (self._offer_settings_link and (offer is None or not latency_on)
+                         and not IO.offers_disabled_by_policy())
+        self._hint.setVisible(not self._public_on and (self._inline_offer or settings_trip))
 
         root.addSpacing(2)
         row = QHBoxLayout()
@@ -460,6 +508,56 @@ class ConnectionCheckSheet(QDialog):
             self.stop_check()
         else:
             self.start_check()
+
+    def _open_internet_setting(self) -> None:
+        """The notice's action: close this (modal) sheet - Settings could not be used behind it - and
+        ask for Settings at the internet-check switch (open_connection_check opens it after exec()).
+        Only the click opens it; nothing is turned on."""
+        if not self._offer_settings_link:
+            return
+        self.settings_request = ("network", "latency_public_enabled")
+        self.reject()
+
+    def _set_run_accent(self, accent: bool) -> None:
+        """One accent button per surface: "Check again" steps down while the confirm's Turn on is up."""
+        self._run_btn.setStyleSheet(su.button_style(accent=accent))
+
+    def _open_internet_confirm(self) -> None:
+        offer = self._internet_offer
+        if offer is None or not offer.available():
+            return
+        keyboard = self._hint.button().hasFocus()   # the link takes Tab focus only: focused = keyboard
+        self._internet_confirm.set_host(offer.host())
+        self._internet_confirm.set_ends_offer(offer.ends_offer())
+        self._hint.hide()
+        self._internet_confirm.show()
+        self._set_run_accent(False)
+        if keyboard:
+            self._internet_confirm.focus_first()
+
+    def _internet_turn_on(self) -> None:
+        """Turn on: the check runs all the time now, so the one-off tick goes (the next "Check again"
+        includes the internet); the figures on screen stay. The confirm becomes one quiet "is on" line,
+        focused for Narrator."""
+        offer = self._internet_offer
+        if offer is not None and offer.turn_on():
+            self._public_on = True
+            self._tick.setVisible(False)
+            self._internet_confirm.show_done()
+            self._internet_confirm.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            self._internet_confirm.setFocus(Qt.FocusReason.OtherFocusReason)
+        else:
+            self._internet_confirm.hide()
+        self._set_run_accent(True)
+
+    def _internet_not_now(self) -> None:
+        if self._internet_offer is not None:
+            self._internet_offer.decline()
+        self._internet_confirm.hide()
+        self._hint.hide()
+        self._set_run_accent(True)
+        target = self._tick if self._tick.isVisibleTo(self) else self._run_btn
+        target.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _on_tick(self, checked: bool) -> None:
         self._include_internet = bool(checked)
@@ -707,7 +805,8 @@ def make_check_button(i18n) -> QToolButton:
     c = su.semantic_colors()
     btn = QToolButton()
     btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-    btn.setIcon(su.fluent_icon(0xE9D9, 16, c['text_secondary']))   # Fluent "Diagnostic"
+    # Fluent "Globe" - the right-click menu's and the running panel's Check connection glyph (U2).
+    btn.setIcon(su.fluent_icon(tokens.GLYPH_GLOBE, 16, c['text_secondary']))
     btn.setText(_tr(i18n, "CHECK_CONN_ACTION", "Check connection"))
     btn.setToolTip(_tr(i18n, "CHECK_CONN_ACTION_TIP",
                        "Ping your router 20 times (and the internet, if you choose) and show what came back"))
@@ -722,6 +821,12 @@ def make_check_button(i18n) -> QToolButton:
     return btn
 
 
+def _sheet_surface() -> str:
+    """The Check connection sheet's background (dialog_style's QDialog colour) - NoticeLink measures its
+    link contrast against it."""
+    return tokens.DIALOG_SIDEBAR_BG_DARK if su.is_dark_mode() else tokens.DIALOG_SIDEBAR_BG_LIGHT
+
+
 def open_connection_check(main_widget, config: Dict[str, Any], i18n, parent=None) -> None:
     """Open the sheet modally - the one entry point the Overview hero and the Network header share.
     The router address comes from the standing probe when it has one (no second WMI lookup)."""
@@ -733,9 +838,19 @@ def open_connection_check(main_widget, config: Dict[str, Any], i18n, parent=None
     except Exception:
         __version__ = ""
     try:
+        router = getattr(main_widget, "open_settings", None)
+        router = router if callable(router) else None
+        from netspeedtray.views.monitor.internet_offer import offer_for
         sheet = ConnectionCheckSheet(config, i18n, gateway_ip=gateway, app_version=__version__,
-                                     parent=parent, gateway_answered=answered)
+                                     parent=parent, gateway_answered=answered,
+                                     offer_settings_link=router is not None,
+                                     internet_offer=offer_for(main_widget, config))
         sheet.exec()
+        # After the modal loop has ended and the sheet is gone: Settings opens on top (D4).
+        request = getattr(sheet, "settings_request", None)   # a Python attribute: safe after close
     except Exception as e:
         logging.getLogger("NetSpeedTray.ConnectionCheck").error(
             "Could not open the connection check: %s", e, exc_info=True)
+        return
+    if request and router is not None:
+        router(*request)

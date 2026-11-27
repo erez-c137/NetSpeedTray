@@ -1016,3 +1016,153 @@ def test_a_superseded_request_that_never_lands_times_out(layout, clock):
     assert tbu.taskbar_layout_snapshot(A)[2] is True
     clock.now += tbu.LAYOUT_PROBE_TIMEOUT_S + 1
     assert tbu.taskbar_layout_snapshot(A)[2] is False
+
+
+# --- Start / Search open on a secondary display (#629) -----------------------------------------------
+# VM probe, Win11 26H2 build 26300 (2026-11-26): while Start (or Search) is open on a secondary display,
+# that display's Shell_SecondaryTrayWnd drops out of EnumWindows - same HWND, still top-level, visible,
+# uncloaked, same rect - and FindWindowEx(0, prev, "Shell_SecondaryTrayWnd", None) still finds it.
+# EnumWindows was the only way secondary bars were found, so every mirror on that display was torn
+# down and rebuilt, and a widget preferring that display fell back to the primary / free-float.
+
+def _start_open_on_secondary(monkeypatch, *, extra_hwnds=(SECONDARY_HWND,), enum_both=False):
+    """_fake_win32, then: EnumWindows yields only the primary (unless ``enum_both``) and a top-level
+    FindWindowEx walk for Shell_SecondaryTrayWnd yields ``extra_hwnds`` in order, then 0."""
+    _fake_win32(monkeypatch)
+    gui = tbu.win32gui
+    if not enum_both:
+        gui.EnumWindows.side_effect = lambda cb, extra: [cb(h, extra) for h in (PRIMARY_HWND,)]
+    walk = list(extra_hwnds)
+
+    def find_window_ex(parent, after, cls, name):
+        if parent == PRIMARY_HWND and cls == "TrayNotifyWnd":
+            return TRAY_HWND
+        if not parent and cls == "Shell_SecondaryTrayWnd":
+            if not after:
+                return walk[0] if walk else 0
+            i = walk.index(after) if after in walk else len(walk)
+            return walk[i + 1] if i + 1 < len(walk) else 0
+        return 0
+    gui.FindWindowEx.side_effect = find_window_ex
+    monkeypatch.setattr(tbu.dwm, "is_cloaked", lambda h: False)
+    return gui
+
+
+def test_a_secondary_bar_hidden_from_enumwindows_is_found_by_findwindowex(monkeypatch):
+    _mixed_dpi_screens(monkeypatch)
+    _start_open_on_secondary(monkeypatch)
+    bars = _bars_by_hwnd()
+    assert SECONDARY_HWND in bars
+    assert bars[SECONDARY_HWND].screen_name == D2 and bars[SECONDARY_HWND].is_primary is False
+
+
+def test_the_preferred_secondary_stays_docked_while_start_is_open_there(monkeypatch):
+    _mixed_dpi_screens(monkeypatch)
+    _start_open_on_secondary(monkeypatch)
+    assert tbu.get_taskbar_info(D2).hwnd == SECONDARY_HWND
+    assert tbu.get_free_float_screen(D2) is None
+
+
+def test_a_bar_found_both_ways_is_listed_once_in_the_usual_order(monkeypatch):
+    _mixed_dpi_screens(monkeypatch)
+    _start_open_on_secondary(monkeypatch, enum_both=True)
+    processed = []
+    real_ready = tbu._taskbar_window_is_ready
+    monkeypatch.setattr(tbu, "_taskbar_window_is_ready",
+                        lambda h, c: processed.append(h) or real_ready(h, c))
+    bars = tbu.get_all_taskbar_info()
+    assert [tb.hwnd for tb in bars] == [PRIMARY_HWND, SECONDARY_HWND]
+    assert processed == [PRIMARY_HWND, SECONDARY_HWND]   # each HWND processed once
+
+
+@pytest.mark.parametrize("what", ["cloaked", "invisible", "empty_rect"])
+def test_a_findwindowex_only_bar_still_passes_every_filter(monkeypatch, what):
+    _mixed_dpi_screens(monkeypatch)
+    gui = _start_open_on_secondary(monkeypatch)
+    if what == "cloaked":
+        monkeypatch.setattr(tbu.dwm, "is_cloaked", lambda h: h == SECONDARY_HWND)
+    elif what == "invisible":
+        gui.IsWindowVisible.side_effect = lambda h: h != SECONDARY_HWND
+    else:
+        rects = {PRIMARY_HWND: PRIMARY_BAR, SECONDARY_HWND: (0, 0, 3840, 0)}
+        gui.GetWindowRect.side_effect = lambda h: rects.get(h, (0, 0, 0, 0))
+    assert [tb.hwnd for tb in tbu.get_all_taskbar_info()] == [PRIMARY_HWND]
+
+
+def test_a_findwindowex_that_repeats_one_hwnd_terminates(monkeypatch):
+    _mixed_dpi_screens(monkeypatch)
+    gui = _start_open_on_secondary(monkeypatch)
+    calls = []
+
+    def stuck(parent, after, cls, name):
+        if parent == PRIMARY_HWND and cls == "TrayNotifyWnd":
+            return TRAY_HWND
+        if not parent and cls == "Shell_SecondaryTrayWnd":
+            calls.append(after)
+            return SECONDARY_HWND
+        return 0
+    gui.FindWindowEx.side_effect = stuck
+    assert [tb.hwnd for tb in tbu.get_all_taskbar_info()] == [PRIMARY_HWND, SECONDARY_HWND]
+    assert len(calls) <= constants.taskbar.taskbar.SECONDARY_TASKBAR_FIND_CAP
+
+
+def test_a_findwindowex_walk_is_capped(monkeypatch):
+    _mixed_dpi_screens(monkeypatch)
+    gui = _start_open_on_secondary(monkeypatch)
+    calls = []
+
+    def endless(parent, after, cls, name):
+        if parent == PRIMARY_HWND and cls == "TrayNotifyWnd":
+            return TRAY_HWND
+        if not parent and cls == "Shell_SecondaryTrayWnd":
+            calls.append(after)
+            return 0x90000 + len(calls)          # never 0, never repeated
+        return 0
+    gui.FindWindowEx.side_effect = endless
+    tbu.get_all_taskbar_info()
+    assert len(calls) == constants.taskbar.taskbar.SECONDARY_TASKBAR_FIND_CAP
+
+
+def test_a_failing_findwindowex_walk_keeps_the_enumwindows_bars(monkeypatch):
+    _mixed_dpi_screens(monkeypatch)
+    gui = _start_open_on_secondary(monkeypatch, enum_both=True)
+
+    def boom(parent, after, cls, name):
+        if not parent and cls == "Shell_SecondaryTrayWnd":
+            raise RuntimeError("walk failed")
+        return TRAY_HWND if (parent == PRIMARY_HWND and cls == "TrayNotifyWnd") else 0
+    gui.FindWindowEx.side_effect = boom
+    assert [tb.hwnd for tb in tbu.get_all_taskbar_info()] == [PRIMARY_HWND, SECONDARY_HWND]
+
+
+def test_the_mirror_on_a_display_with_start_open_is_not_rebuilt(monkeypatch):
+    """The live symptom: with the real enumeration, Start opening on display 2 must not tear its
+    mirror down (the log showed 'Mirror created' on every Start close)."""
+    from types import SimpleNamespace
+    from netspeedtray.views.widget.mirror import MirrorManager
+    _mixed_dpi_screens(monkeypatch)
+    _fake_win32(monkeypatch)
+    monkeypatch.setattr(tbu.dwm, "is_cloaked", lambda h: False)
+    created = []
+
+    class Mirror:
+        def __init__(self, tb):
+            self.taskbar_hwnd, self.screen_name, self.dead = tb.hwnd, tb.screen_name, False
+            self.deleted = False
+            created.append(self)
+        def refresh(self, tb, fg): pass
+        def detach_owner(self): pass
+        def hide(self): pass
+        def deleteLater(self): self.deleted = True
+        def isVisible(self): return True
+
+    mgr = MirrorManager(SimpleNamespace(docked_taskbar=lambda: (PRIMARY_HWND, D1)),
+                        mirror_factory=Mirror, foreground_provider=lambda: 0,
+                        window_class=lambda h: {PRIMARY_HWND: "Shell_TrayWnd"}.get(h, "Shell_SecondaryTrayWnd"))
+    mgr.tick()
+    assert len(created) == 1
+    _start_open_on_secondary(monkeypatch)        # Start opens on display 2
+    for _ in range(3):
+        mgr.tick()
+    assert len(created) == 1 and not created[0].deleted
+    mgr.shutdown()

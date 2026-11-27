@@ -21,9 +21,9 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
-from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 
 from netspeedtray.utils import styles as su   # matplotlib-free; OK at module scope under the firewall
@@ -149,6 +149,176 @@ def hardware_history_off_reasons(config: Dict[str, Any]) -> Dict[str, Optional[s
             out[role] = "record"
     return out
 
+class HistoryOffNotice(QObject):
+    """The Hardware chart's "history is off" note as a real NoticeLink over the canvas (2.2.2 D4).
+
+    It used to be text drawn into the chart ("Turn on CPU or GPU monitoring in Settings → Hardware");
+    now the renderer only reports WHICH note applies - GraphRenderer.history_off_notice, a
+    (reason, role) pair - and this puts a notice with a "Turn on in Settings" button centred on the
+    canvas, landing on the switch that fills THIS view:
+      - ("monitor", None): the combined views - CPU, GPU and RAM monitoring (Hardware page);
+      - ("monitor", "cpu" / "gpu"): the toggle layout's single-stat view - that one switch;
+      - ("record", any): Advanced > Record hardware history.
+    Qt-only (no matplotlib)."""
+
+    _MONITOR_TEXT = {
+        # Named after the Hardware page's switches ("Show CPU usage", 2.2.2 D7).
+        None: ("HW_HISTORY_MONITOR_OFF_NOTICE", "CPU, GPU and RAM usage are off."),
+        "cpu": ("HW_HISTORY_CPU_OFF_NOTICE", "CPU usage is off."),
+        "gpu": ("HW_HISTORY_GPU_OFF_NOTICE", "GPU usage is off."),
+    }
+    _MONITOR_ANCHOR = {None: "hardware_monitoring", "cpu": "monitor_cpu_enabled", "gpu": "monitor_gpu_enabled"}
+    _RECORD_TEXT = ("HW_HISTORY_RECORD_OFF_NOTICE", "Record hardware history is off.")
+
+    def __init__(self, i18n, open_settings, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._i18n = i18n
+        self._open_settings = open_settings   # (page, anchor_key) -> None; the widget's router
+        self._widget = None
+        self._canvas: Optional[QWidget] = None
+        self._kind: Optional[Tuple[str, Optional[str]]] = None
+        self._area = None   # () -> (left, top, right, bottom) canvas fractions: the plot area
+
+    @classmethod
+    def normalize(cls, notice) -> Optional[Tuple[str, Optional[str]]]:
+        """``history_off_notice`` as (reason, role), or None when there is no note to show."""
+        if isinstance(notice, str):
+            notice = (notice, None)
+        if not isinstance(notice, tuple) or len(notice) != 2:
+            return None
+        reason, role = notice
+        if reason == "record":
+            return reason, role
+        if reason == "monitor":
+            return reason, role if role in cls._MONITOR_TEXT else None
+        return None
+
+    @classmethod
+    def target(cls, kind) -> Optional[Tuple[str, str]]:
+        """(page, anchor_key) the note's button opens Settings at."""
+        kind = cls.normalize(kind)
+        if kind is None:
+            return None
+        if kind[0] == "record":
+            return "advanced", "record_hardware_history"
+        return "hardware", cls._MONITOR_ANCHOR[kind[1]]
+
+    @property
+    def kind(self) -> Optional[Tuple[str, Optional[str]]]:
+        return self._kind
+
+    @property
+    def widget(self):
+        return self._widget
+
+    @staticmethod
+    def _alive(obj) -> bool:
+        from PyQt6 import sip
+        return obj is not None and not sip.isdeleted(obj)
+
+    def _detach(self) -> None:
+        if self._alive(self._canvas):
+            self._canvas.removeEventFilter(self)
+        self._canvas = None
+
+    def sync(self, canvas: Optional[QWidget], notice, area=None) -> None:
+        """Show the note for ``notice`` over ``canvas``, or hide it (None). The text and the action are
+        re-applied only when the note changes - this runs after every render, live updates included.
+        ``area`` (GraphRenderer.plot_area_fraction) is where it is centred: the plot, not the canvas
+        with its axis margins."""
+        self._area = area
+        kind = self.normalize(notice)
+        if kind is None or not self._alive(canvas):
+            self._kind = None
+            if self._alive(self._widget):
+                self._widget.hide()
+            self._detach()
+            return
+        from netspeedtray.utils.components import NoticeLink
+        from netspeedtray.constants.styles import styles as tokens
+        created = not self._alive(self._widget)
+        if created:
+            self._widget = NoticeLink("", "", None, stacked=True, centered=True,
+                                      font_token=tokens.TYPE_BODY, surface=_graph_surface, parent=canvas)
+            self._canvas = None
+        moved = self._canvas is not canvas
+        if moved:
+            self._detach()
+            if self._widget.parentWidget() is not canvas:
+                self._widget.setParent(canvas)
+            canvas.installEventFilter(self)
+            self._canvas = canvas
+            # A child created now would sit at the END of the window's Tab chain; put the button right
+            # after the chart, where it is on screen.
+            self._order_after(canvas)
+        if created or moved or kind != self._kind:
+            self._apply(kind)
+        self._kind = kind
+        if self._widget.isHidden():
+            self._place()
+            self._widget.show()
+            self._widget.raise_()
+
+    def _order_after(self, canvas: QWidget) -> None:
+        """Tab order: the button right after the chart - after the canvas when it takes focus, else
+        after the last Tab stop before it (the embedded matplotlib canvas takes none, and Qt ignores
+        setTabOrder from a widget that isn't a Tab stop)."""
+        button = self._widget.button()
+        tab = Qt.FocusPolicy.TabFocus.value
+        anchor = canvas
+        while anchor is not None and not (anchor.focusPolicy().value & tab):
+            anchor = anchor.previousInFocusChain()   # the chain is a ring: it comes back round
+            if anchor is canvas or anchor is button:
+                return   # no Tab stop before the chart: the natural order is the only one
+        if anchor is not None:
+            QWidget.setTabOrder(anchor, button)
+
+    def _apply(self, kind) -> None:
+        from netspeedtray.utils.helpers import tr
+        key, default = self._RECORD_TEXT if kind[0] == "record" else self._MONITOR_TEXT[kind[1]]
+        self._widget.set_text(tr(self._i18n, key, default))
+        self._widget.set_action_text(tr(self._i18n, "NOTICE_TURN_ON_IN_SETTINGS", "Turn on in Settings"))
+        page, anchor = self.target(kind)
+        router = self._open_settings
+        self._widget.set_on_click(lambda: router(page, anchor) if router is not None else None)
+        self._place()
+
+    def _place(self) -> None:
+        w, canvas = self._widget, self._canvas
+        if not (self._alive(w) and self._alive(canvas)):
+            return
+        from netspeedtray.constants.styles import styles as tokens
+        cw, ch = canvas.width(), canvas.height()
+        left, top, right, bottom = 0, 0, cw, ch
+        try:
+            frac = self._area() if callable(self._area) else None
+        except Exception:
+            frac = None
+        if frac:
+            left, top, right, bottom = (round(frac[0] * cw), round(frac[1] * ch),
+                                        round(frac[2] * cw), round(frac[3] * ch))
+        width = max(tokens.NOTICE_OVERLAY_MIN_WIDTH,
+                    min(right - left - 2 * tokens.SPACE_L, tokens.NOTICE_OVERLAY_MAX_WIDTH))
+        w.setFixedWidth(width)
+        height = w.heightForWidth(width) if w.hasHeightForWidth() else -1
+        if height <= 0:
+            height = w.sizeHint().height()
+        w.setFixedSize(width, height)
+        cx, cy = (left + right) // 2, (top + bottom) // 2
+        w.move(max(0, cx - width // 2), max(0, cy - height // 2))
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self._canvas and event.type() == QEvent.Type.Resize and self._kind is not None:
+            self._place()
+        return False
+
+
+def _graph_surface() -> str:
+    """The chart background the history-off notice sits on (contrast is measured against it)."""
+    from netspeedtray.constants.styles import styles as tokens
+    return tokens.GRAPH_BG_DARK if su.is_dark_mode() else tokens.GRAPH_BG_LIGHT
+
+
 class GraphHost(QObject):
     """One shared, lazily-loaded graph engine + canvas for the Monitor's chart tabs."""
 
@@ -205,6 +375,7 @@ class GraphHost(QObject):
         self._thread: Optional[QThread] = None
         self._thread_ident: Optional[int] = None   # the worker thread's get_ident(), set as it starts
         self._canvas_container: Optional[QWidget] = None
+        self._history_notice: Optional[HistoryOffNotice] = None   # D4, built with the renderer
 
     # ------------------------------------------------------------------ lazy load
 
@@ -225,6 +396,8 @@ class GraphHost(QObject):
         # surface themes that way, and config['dark_mode'] is never synced to the OS (it stays at its
         # default), so reading it rendered a dark graph inside a light Monitor on a light-mode PC.
         self.renderer.apply_theme(su.is_dark_mode())
+        # "Hardware history is off" is a notice with a Settings button over the canvas, not chart text.
+        self._history_notice = HistoryOffNotice(self.i18n, self._route_settings, parent=self)
 
         # Worker on its own QThread.
         self._thread = QThread()
@@ -253,6 +426,21 @@ class GraphHost(QObject):
 
         self._loaded = True
 
+    def _route_settings(self, page, anchor_key=None) -> None:
+        """The widget's settings router (NetworkSpeedWidget.open_settings)."""
+        router = getattr(self._main_widget, "open_settings", None)
+        if callable(router):
+            router(page, anchor_key)
+
+    def _sync_history_notice(self) -> None:
+        """Show / hide the history-off notice after a render (none on the network graph)."""
+        notice = self._history_notice
+        if notice is None or self.renderer is None:
+            return
+        kind = None if self._current_stat == "network" else getattr(self.renderer, "history_off_notice", None)
+        notice.sync(getattr(self.renderer, "canvas", None), kind,
+                    area=getattr(self.renderer, "plot_area_fraction", None))
+
     def _set_thread_ident(self, ident: int) -> None:
         self._thread_ident = ident   # runs on the worker thread (started, DirectConnection)
 
@@ -269,6 +457,8 @@ class GraphHost(QObject):
         canvas.setParent(None)
         plot_slot_layout.addWidget(canvas)
         canvas.show()
+        if stat_type == "network" and self._history_notice is not None:
+            self._history_notice.sync(canvas, None)   # never a hardware note over the network graph
         self.update_graph(show_loading=True)
         # Anchor the dedup floor: ignore any in-flight result requested before this (maybe-different)
         # stat, so an old single-stat reply can't paint the newly-activated tab.
@@ -505,6 +695,7 @@ class GraphHost(QObject):
             self.renderer.render(data, start, end, period_key,
                                  boot_time=self._cached_boot_time, stat_type=self._current_stat,
                                  hw_styles=styles)
+            self._sync_history_notice()
             # Surface the worker's period totals to the Network header. For ranged periods these are
             # machine-wide (interface filter None sums every NIC); for SESSION they reflect the active
             # interface mode (auto/selected/...), mirroring the standalone graph's session aggregation.
@@ -621,4 +812,5 @@ class GraphHost(QObject):
         self.renderer = None
         self.coordinator = None
         self._hover = None
+        self._history_notice = None   # its widget was a child of the canvas, deleted with it
         self._canvas_container = None

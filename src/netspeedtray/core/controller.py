@@ -254,6 +254,17 @@ class StatsController(QObject):
                     self.view.gpu_present = True
                 except Exception:
                     pass
+            # Whether anything can supply each device's temperature / power (#609) - BEFORE the
+            # readings below, so the repaint they trigger already knows to drop a "(N/A)" that no
+            # source could ever fill. No key this poll: the widget keeps its last verdict.
+            if self.view is not None and hasattr(self.view, 'update_sensor_source'):
+                for device in ('cpu', 'gpu'):
+                    key = f'{device}_sensor_source'
+                    if key in stats:
+                        try:
+                            self.view.update_sensor_source(device, bool(stats[key]))
+                        except Exception as e:
+                            self.logger.debug("update_sensor_source(%s) failed: %s", device, e)
             # Forward temp/power whenever the thread reported the key, even if the
             # value is None (sensor unavailable this poll). Emitting None lets the
             # widget clear a stale reading to "(N/A)" rather than freezing the last

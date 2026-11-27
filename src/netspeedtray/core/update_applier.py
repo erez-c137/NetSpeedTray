@@ -940,13 +940,17 @@ def sweep_old_backups(install_dir: str, keep_newer_than_sec: float = 60.0) -> in
 
 
 def relaunch(exe: str) -> bool:
-    """Start the updated app detached, so this process can exit immediately."""
+    """Start the updated app detached, so this process can exit immediately. ``--relaunch`` marks the
+    start as automatic: should the previous instance somehow still hold the mutex, the second-launch
+    path brings its widget back without opening the "running" panel (2.2.2 D3)."""
     try:
+        from netspeedtray.core.shutdown_channel import RELAUNCH_FLAG
         flags = 0
         if os.name == "nt":
             flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
                      | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
-        subprocess.Popen([exe], cwd=os.path.dirname(exe), creationflags=flags, close_fds=True)
+        subprocess.Popen([exe, RELAUNCH_FLAG], cwd=os.path.dirname(exe), creationflags=flags,
+                         close_fds=True)
         logger.info("Relaunched %s.", exe)
         return True
     except Exception:

@@ -19,7 +19,8 @@ from netspeedtray.core import startup_manager
 from netspeedtray.core.startup_manager import StartupManager, get_compat_layers
 from netspeedtray.tests.unit import fake_winreg
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows registry")
+_LAYERS = startup_manager._COMPAT_LAYERS_KEY
+_FLAGGED = r"C:\nst-test-308\flagged\NetSpeedTray.exe"
 
 _LAYERS = startup_manager._COMPAT_LAYERS_KEY
 _FLAGGED = r"C:\nst-test-308\flagged\NetSpeedTray.exe"
@@ -48,7 +49,7 @@ def _sync(exe, should_be_enabled, caplog):
     mgr = StartupManager()
     with patch.object(sys, "frozen", True, create=True), \
          patch.object(sys, "executable", exe), \
-         patch.object(mgr, "_check_startup_registry", return_value=should_be_enabled), \
+         patch.object(mgr, "_run_value_state", return_value="exact" if should_be_enabled else "missing"), \
          patch.object(mgr, "_set_startup_registry") as set_reg, \
          caplog.at_level(logging.WARNING):
         mgr.synchronize_startup_task(should_be_enabled)

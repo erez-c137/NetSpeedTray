@@ -45,6 +45,13 @@ EXIT_ERROR = 2
 
 SHUTDOWN_FLAG = "--shutdown"
 TIMEOUT_FLAG = "--timeout"
+# Added by the updater's relaunch (update_applier.relaunch): this start is not the user asking for a
+# window. Ignored by a first instance (and by builds before 2.2.2, which ignore unknown arguments).
+RELAUNCH_FLAG = "--relaunch"
+# Written into the Run-key value (core/startup_manager, 2.2.2 combined review C2): the Run key's start
+# is an autostart whenever it runs. Explorer starts Run-key entries, so without it the start looks
+# exactly like a double-clicked exe. Ignored by a first instance and by builds that don't know it.
+AUTOSTART_FLAG = "--autostart"
 
 _MSGFLT_ALLOW = 1
 _SYNCHRONIZE = 0x00100000
@@ -75,6 +82,9 @@ try:
     _ChangeWindowMessageFilterEx.restype = wintypes.BOOL
 except AttributeError:  # pre-Windows 7
     _ChangeWindowMessageFilterEx = None
+_AllowSetForegroundWindow = _user32.AllowSetForegroundWindow
+_AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+_AllowSetForegroundWindow.restype = wintypes.BOOL
 
 _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
 _kernel32.OpenProcess.restype = wintypes.HANDLE
@@ -82,6 +92,8 @@ _kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
 _kernel32.WaitForSingleObject.restype = wintypes.DWORD
 _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 _kernel32.CloseHandle.restype = wintypes.BOOL
+_kernel32.GetStartupInfoW.argtypes = [ctypes.c_void_p]
+_kernel32.GetStartupInfoW.restype = None
 
 _message_id: Optional[int] = None
 _activate_id: Optional[int] = None
@@ -136,8 +148,234 @@ def _window_pid(hwnd: int) -> int:
     return int(pid.value)
 
 
-def _post(hwnd: int, message: int, wparam: int = 0) -> bool:
-    return bool(_user32.PostMessageW(hwnd, message, wparam, 0))
+def _post(hwnd: int, message: int, wparam: int = 0, lparam: int = 0) -> bool:
+    return bool(_user32.PostMessageW(hwnd, message, wparam, lparam))
+
+
+def _allow_foreground(pid: int) -> bool:
+    """Let ``pid`` take the foreground (D3). Only a process that may set the foreground itself can pass
+    the right on - a launch from Start or Explorer can; without it the running app's panel would open
+    behind the window the user was in, with a flashing taskbar button instead of focus."""
+    return bool(_AllowSetForegroundWindow(pid))
+
+
+class _STARTUPINFOW(ctypes.Structure):
+    _fields_ = [
+        ("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR), ("lpDesktop", wintypes.LPWSTR),
+        ("lpTitle", wintypes.LPWSTR), ("dwX", wintypes.DWORD), ("dwY", wintypes.DWORD),
+        ("dwXSize", wintypes.DWORD), ("dwYSize", wintypes.DWORD), ("dwXCountChars", wintypes.DWORD),
+        ("dwYCountChars", wintypes.DWORD), ("dwFillAttribute", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD), ("wShowWindow", wintypes.WORD), ("cbReserved2", wintypes.WORD),
+        ("lpReserved2", ctypes.c_void_p), ("hStdInput", wintypes.HANDLE),
+        ("hStdOutput", wintypes.HANDLE), ("hStdError", wintypes.HANDLE),
+    ]
+
+
+class _MONITORINFOEXW(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                ("dwFlags", wintypes.DWORD), ("szDevice", wintypes.WCHAR * 32)]
+
+
+_STARTF_USESTDHANDLES = 0x00000100
+_STARTF_TITLEISLINKNAME = 0x00000800
+_MONITOR_DEFAULTTONULL = 0
+_user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+_user32.GetMonitorInfoW.restype = wintypes.BOOL
+_user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+_user32.MonitorFromPoint.restype = wintypes.HANDLE
+
+
+def _startup_info() -> _STARTUPINFOW:
+    si = _STARTUPINFOW()
+    si.cb = ctypes.sizeof(_STARTUPINFOW)
+    _kernel32.GetStartupInfoW(ctypes.byref(si))
+    return si
+
+
+def _startup_link_name() -> Optional[str]:
+    """The shortcut (.lnk) this process was started from, or None. The shell says so in STARTUPINFO
+    (STARTF_TITLEISLINKNAME, lpTitle = the .lnk path) for a Start-menu entry, a taskbar pin, a desktop
+    or Startup-folder shortcut; a Run-key start, a scheduled task or a double-clicked exe has none
+    (proven with a real .lnk launched through Explorer, in and outside a folder named Startup)."""
+    si = _startup_info()
+    if not (si.dwFlags & _STARTF_TITLEISLINKNAME) or not si.lpTitle:
+        return None
+    return str(si.lpTitle)
+
+
+def _monitor_info(hmonitor) -> Optional[_MONITORINFOEXW]:
+    mi = _MONITORINFOEXW()
+    mi.cbSize = ctypes.sizeof(_MONITORINFOEXW)
+    if not hmonitor or not _user32.GetMonitorInfoW(hmonitor, ctypes.byref(mi)):
+        return None
+    return mi
+
+
+def _startup_monitor_center() -> Optional[Tuple[int, int]]:
+    """The centre (physical px) of the monitor the shell launched us on, or None. ShellExecuteEx passes
+    its hMonitor in STARTUPINFO.hStdOutput when no std handles are set (SEE_MASK_HMONITOR - what the
+    Start menu and the taskbar use); the handle is trusted only once GetMonitorInfoW accepts it."""
+    si = _startup_info()
+    if si.dwFlags & _STARTF_USESTDHANDLES or not si.hStdOutput:
+        return None
+    mi = _monitor_info(si.hStdOutput)
+    if mi is None:
+        return None
+    r = mi.rcMonitor
+    return (r.left + r.right) // 2, (r.top + r.bottom) // 2
+
+
+def pack_point(x: int, y: int) -> int:
+    """A screen point as an activate lParam (signed 16-bit halves, like MAKELPARAM). 0 = no hint - no
+    monitor is ever centred on (0, 0)."""
+    return ((int(y) & 0xFFFF) << 16) | (int(x) & 0xFFFF)
+
+
+def unpack_point(lparam: int) -> Optional[Tuple[int, int]]:
+    lparam = int(lparam or 0) & 0xFFFFFFFF
+    if not lparam:
+        return None
+    x, y = lparam & 0xFFFF, (lparam >> 16) & 0xFFFF
+    return (x - 0x10000 if x & 0x8000 else x), (y - 0x10000 if y & 0x8000 else y)
+
+
+def monitor_device_at(x: int, y: int) -> Optional[str]:
+    """The device name of the monitor at a physical screen point (what QScreen.name() reports on
+    Windows, e.g. \\\\.\\DISPLAY2), or None."""
+    try:
+        hmon = _user32.MonitorFromPoint(wintypes.POINT(int(x), int(y)), _MONITOR_DEFAULTTONULL)
+        mi = _monitor_info(hmon)
+        return str(mi.szDevice) if mi is not None else None
+    except Exception as e:
+        logger.debug("MonitorFromPoint(%s, %s) failed: %s", x, y, e)
+        return None
+
+
+def _startup_folders() -> List[str]:
+    """Exactly this user's and the all-users Startup folders (FOLDERID_Startup /
+    FOLDERID_CommonStartup); a folder that can't be read is left out."""
+    out: List[str] = []
+    try:
+        from win32com.shell import shell, shellcon
+    except Exception as e:
+        logger.debug("win32com.shell unavailable: %s", e)
+        return out
+    for fid in (shellcon.FOLDERID_Startup, shellcon.FOLDERID_CommonStartup):
+        try:
+            path = shell.SHGetKnownFolderPath(fid)
+            if path:
+                out.append(str(path))
+        except Exception as e:
+            logger.debug("Startup known folder unreadable: %s", e)
+    return out
+
+
+def _link_target(link: str) -> Optional[str]:
+    """The path a .lnk points at (IShellLink, in-process, no network), or None when it can't be read."""
+    try:
+        import pythoncom
+        from win32com.shell import shell
+        try:
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
+        sl = pythoncom.CoCreateInstance(shell.CLSID_ShellLink, None, pythoncom.CLSCTX_INPROC_SERVER,
+                                        shell.IID_IShellLink)
+        sl.QueryInterface(pythoncom.IID_IPersistFile).Load(link)
+        target = sl.GetPath(shell.SLGP_RAWPATH)[0]
+        return str(target) if target else None
+    except Exception as e:
+        logger.debug("Could not read the shortcut's target: %s", e)
+        return None
+
+
+def _is_this_app(target: str) -> bool:
+    """The shortcut starts NetSpeedTray: this very exe, or any NetSpeedTray.exe (a portable copy reached
+    through an older Start entry is still the user asking for the app)."""
+    target = os.path.expandvars(target)
+    try:
+        if os.path.exists(target) and os.path.samefile(target, sys.executable):
+            return True
+    except OSError:
+        pass
+    return os.path.basename(target).lower() == APP_EXE_NAME.lower()
+
+
+APP_EXE_NAME = "NetSpeedTray.exe"
+
+
+_LINK_USER, _LINK_STARTUP = "user", "startup"
+
+
+def _shortcut_kind() -> Optional[str]:
+    """How the shortcut this process was started from counts: _LINK_USER for a shortcut to NetSpeedTray
+    OUTSIDE the Startup folders (the Start menu, a taskbar pin, the desktop: the user asked, whenever
+    that was), _LINK_STARTUP for one in exactly this user's or the all-users Startup folder (an
+    autostart, whenever it runs). None on any doubt - no shortcut, the Startup folders unreadable, a
+    target that can't be read or is another program (a launcher's shortcut)."""
+    try:
+        link = _startup_link_name()
+        if not link or not link.lower().endswith(".lnk"):
+            return None
+        startup = {os.path.normcase(os.path.normpath(f)) for f in _startup_folders() if f}
+        if not startup:
+            return None
+        folder = os.path.normcase(os.path.normpath(os.path.dirname(link)))
+        if folder in startup:
+            return _LINK_STARTUP
+        target = _link_target(link)
+        return _LINK_USER if target and _is_this_app(target) else None
+    except Exception as e:
+        logger.debug("Could not read how this process was started: %s", e)
+        return None
+
+
+def launched_from_user_shortcut() -> bool:
+    """True when this process was started from a shortcut to NetSpeedTray outside the Startup folders
+    (``_shortcut_kind``)."""
+    return _shortcut_kind() == _LINK_USER
+
+
+def _launched_by_explorer() -> bool:
+    """This process's parent is explorer.exe - a double-clicked exe (or the Run key, which carries
+    AUTOSTART_FLAG). False on any doubt, including a parent pid reused by a newer process."""
+    try:
+        import psutil
+        me = psutil.Process()
+        parent = me.parent()
+        if parent is None or parent.create_time() > me.create_time():
+            return False
+        return parent.name().lower() == "explorer.exe"
+    except Exception as e:
+        logger.debug("Could not read the parent process: %s", e)
+        return False
+
+
+def activation_kind(argv: Optional[Sequence[str]] = None) -> int:
+    """The wParam a second launch sends (constants.app.ACTIVATE_WPARAM_*). The "running" panel opens
+    only on positive evidence that the user asked (combined review C2):
+
+    - the updater's relaunch (RELAUNCH_FLAG) -> RELAUNCH;
+    - the Run key's start (AUTOSTART_FLAG) or a Startup-folder shortcut -> SIGN_IN_DUPLICATE, at any
+      time after sign-in (an autostart on a slow disk can run minutes in);
+    - a shortcut to NetSpeedTray outside the Startup folders -> USER, even right after sign-in;
+    - within SIGN_IN_DUPLICATE_WINDOW_S of sign-in -> SIGN_IN_DUPLICATE (#373);
+    - started by Explorer (a double-clicked exe) -> USER;
+    - anything else (Task Scheduler, a script, a launcher) -> BACKGROUND: the widget comes back, no
+      window opens."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    if RELAUNCH_FLAG in args:
+        return constants.app.ACTIVATE_WPARAM_RELAUNCH
+    if AUTOSTART_FLAG in args:
+        return constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE
+    link = _shortcut_kind()
+    if link == _LINK_USER:
+        return constants.app.ACTIVATE_WPARAM_USER
+    if link == _LINK_STARTUP or is_sign_in_duplicate():
+        return constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE
+    if _launched_by_explorer():
+        return constants.app.ACTIVATE_WPARAM_USER
+    return constants.app.ACTIVATE_WPARAM_BACKGROUND
 
 
 def _wait_for_exit(pid: int, hwnd: int, timeout: float) -> bool:
@@ -316,6 +554,16 @@ def _session_seconds_since_logon() -> Optional[float]:
         free(buf)
 
 
+def session_seconds_since_logon() -> Optional[float]:
+    """Seconds since this session signed in, or None when it can't be told - never raises. Used by
+    the one-time notices (2.2.2 D1/D2) to stay out of the sign-in rush."""
+    try:
+        return _session_seconds_since_logon()
+    except Exception as e:
+        logger.debug("Could not read the session's logon time: %s", e)
+        return None
+
+
 def is_sign_in_duplicate() -> bool:
     """A second launch's own verdict (#373): True when this session signed in less than
     SIGN_IN_DUPLICATE_WINDOW_S ago - a duplicate autostart, not the user asking for the widget. Any
@@ -330,7 +578,7 @@ def is_sign_in_duplicate() -> bool:
         return False
 
 
-def request_activate() -> bool:
+def request_activate(argv: Optional[Sequence[str]] = None) -> bool:
     """
     A second launch (the per-user instance mutex is taken, #234): ask THIS user's running widget to show
     itself again - un-hide, re-dock, re-seat above the taskbar, back to its docked spot if off-screen -
@@ -339,9 +587,13 @@ def request_activate() -> bool:
     mutex; one whose owner can't be told (an elevated instance of ours, or no listing at all) is
     asked anyway - it can only become visible.
 
-    The wParam says who is asking (#373): ACTIVATE_WPARAM_SIGN_IN_DUPLICATE when this process starts
-    within SIGN_IN_DUPLICATE_WINDOW_S of the session's sign-in (``is_sign_in_duplicate``), else
-    ACTIVATE_WPARAM_USER.
+    The wParam says who is asking (``activation_kind``): ACTIVATE_WPARAM_RELAUNCH for the updater's
+    relaunch (``--relaunch`` in ``argv``, default sys.argv); SIGN_IN_DUPLICATE for an autostart (the
+    Run key's ``--autostart``, a Startup-folder shortcut) or any start within SIGN_IN_DUPLICATE_WINDOW_S
+    of sign-in (#373); USER for a shortcut outside the Startup folders (even right after sign-in) or an
+    exe Explorer started; else BACKGROUND (``activation_kind``). A USER request opens
+    the "running" panel, so the running process is first allowed to take the foreground
+    (``_allow_foreground``) - a failure there only costs focus, never the post.
 
     True if a running instance was signalled. Never waits: the second process exits right after.
     """
@@ -357,14 +609,32 @@ def request_activate() -> bool:
     if not targets:
         logger.info("Second launch: no running widget of this user on this desktop to bring back.")
         return False
-    duplicate = is_sign_in_duplicate()
-    wparam = (constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE if duplicate
-              else constants.app.ACTIVATE_WPARAM_USER)
+    wparam = activation_kind(argv)
+    why = {constants.app.ACTIVATE_WPARAM_SIGN_IN_DUPLICATE: " (an autostart)",
+           constants.app.ACTIVATE_WPARAM_RELAUNCH: " (the updater's relaunch)",
+           constants.app.ACTIVATE_WPARAM_BACKGROUND: " (not the user: no window)"}.get(wparam, "")
+    # lParam: the centre of the monitor the shell launched us on (a Start menu or a pin on a secondary
+    # taskbar), so the panel opens there; 0 = no hint. Only a user request opens a window.
+    lparam = 0
+    if wparam == constants.app.ACTIVATE_WPARAM_USER:
+        try:
+            centre = _startup_monitor_center()
+            if centre is not None:
+                lparam = pack_point(*centre)
+        except Exception as e:
+            logger.debug("No launch monitor hint: %s", e)
     sent = False
     for hwnd, pid in targets:
-        if _post(hwnd, msg, wparam):
-            logger.info("Second launch: asked the running widget (pid %s) to show itself%s.", pid,
-                        " (a duplicate start at sign-in)" if duplicate else "")
+        if wparam == constants.app.ACTIVATE_WPARAM_USER:
+            try:
+                if not _allow_foreground(pid):
+                    logger.debug("AllowSetForegroundWindow(%s) refused (err %s).", pid,
+                                 ctypes.get_last_error())
+            except Exception as e:
+                logger.debug("AllowSetForegroundWindow(%s) failed: %s", pid, e)
+        posted = _post(hwnd, msg, wparam, lparam) if lparam else _post(hwnd, msg, wparam)
+        if posted:
+            logger.info("Second launch: asked the running widget (pid %s) to show itself%s.", pid, why)
             sent = True
         else:
             logger.warning("Second launch: PostMessage to HWND %s (pid %s) failed (err %s).",

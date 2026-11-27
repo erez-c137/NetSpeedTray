@@ -129,6 +129,19 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 ; start-with-Windows is ON by default, we delete the value on UNINSTALL only, so removing the app never
 ; leaves a dead Run entry pointing at a deleted exe. (uninsdeletevalue does nothing at install time.)
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "{#MyAppName}"; Flags: uninsdeletevalue
+; ...and Task Manager's own on/off record for that entry (Startup apps). Windows writes it, not us, and
+; never removes it with the Run value: an uninstall left it behind (2.2.2-beta.1 VM check), an orphan
+; that Task Manager keeps and that would turn a later reinstall's start-with-Windows off if the user had
+; once disabled it there. Uninstall only, like the line above.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"; ValueType: none; ValueName: "{#MyAppName}"; Flags: uninsdeletevalue
+; 2.2.2 D8: a Microsoft Store install. The Store runs this same Setup silently with its payload's
+; installerParameters; when they carry /STORE (deferred - the payload is changed in the owner's Partner
+; Center session; the API caps the parameters at 40 characters) Setup records it here, and the app
+; then offers "Rate it in the Store" - the Store only lets users who have the app in their library
+; rate it. Written only with /STORE and never cleared by a later non-Store upgrade (the in-app
+; updater, winget): the user still owns it in the Store. Removed on uninstall. Must match
+; constants.app.INSTALL_SOURCE_REGISTRY_KEY / INSTALL_SOURCE_VALUE / INSTALL_SOURCE_STORE.
+Root: HKLM; Subkey: "Software\{#MyAppName}"; ValueType: string; ValueName: "InstalledFrom"; ValueData: "Store"; Flags: uninsdeletevalue uninsdeletekeyifempty; Check: IsStoreInstall
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
@@ -585,6 +598,21 @@ begin
   begin
     Log('All NetSpeedTray processes closed');
   end;
+end;
+
+// 2.2.2 D8: Setup was started by the Microsoft Store (its installerParameters carry /STORE). Inno
+// ignores switches it does not know, so the bare /STORE reaches only this check.
+function IsStoreInstall(): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/STORE') = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
 end;
 
 function InitializeSetup(): Boolean;

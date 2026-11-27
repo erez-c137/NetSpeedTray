@@ -189,6 +189,17 @@ class MirrorWidget(QWidget):
     def vram_total(self) -> Optional[float]:
         return getattr(self._main, "vram_total", None)
 
+    # #609: no temperature / power source -> no suffix column (WidgetLayoutManager._hw_suffix_widths).
+    @property
+    def cpu_sensor_source(self) -> Optional[bool]:
+        value = getattr(self._main, "cpu_sensor_source", None)
+        return value if isinstance(value, bool) else None
+
+    @property
+    def gpu_sensor_source(self) -> Optional[bool]:
+        value = getattr(self._main, "gpu_sensor_source", None)
+        return value if isinstance(value, bool) else None
+
     def _identity_reserve_px(self, fm) -> int:
         return self._main._identity_reserve_px(fm)
 
@@ -213,10 +224,15 @@ class MirrorWidget(QWidget):
             return "horizontal"
 
     def _main_identity_signature(self) -> object:
+        """What of the main widget's live state sizes a mirror: the identity-badge reserve, and which
+        devices have no temperature / power source (#609 - their suffix column goes). A change re-sizes
+        the mirror on its next tick (_resize_if_needed), so it neither keeps a dead column nor clips
+        a suffix that came back."""
         try:
-            return self._main._identity_reserve_signature()
+            ident = self._main._identity_reserve_signature()
         except Exception:
-            return None
+            ident = None
+        return (ident, self.cpu_sensor_source is False, self.gpu_sensor_source is False)
 
     def _hwnd(self) -> int:
         """Our native window, or 0 when none exists yet. Never creates one (internalWinId)."""

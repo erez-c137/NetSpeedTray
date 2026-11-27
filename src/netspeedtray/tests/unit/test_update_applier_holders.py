@@ -317,14 +317,13 @@ def test_neutral_cwd_falls_back_past_an_empty_or_bogus_systemroot(tmp_path, monk
         assert got and os.path.isdir(got) and got.lower().endswith("system32")
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="cmd.exe")
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows system working directory")
 def test_the_hardware_helper_child_does_not_inherit_the_app_folder(tmp_path, monkeypatch):
     """nvidia-smi is run through StatsMonitorThread._run_child; a real child reports its CWD."""
-    import threading
     from netspeedtray.core.monitor_thread import StatsMonitorThread
     from netspeedtray.utils import helpers
+
     monkeypatch.chdir(tmp_path)                               # stand-in for the app folder
-    fake = SimpleNamespace(_child_lock=threading.Lock(), _is_running=True, _child=None)
-    out = StatsMonitorThread._run_child(fake, [os.environ.get("ComSpec", "cmd.exe"), "/c", "cd"],
-                                        10.0)
+    monitor = StatsMonitorThread()
+    out = monitor._run_child([sys.executable, "-c", "import os; print(os.getcwd())"], 10.0)
     assert os.path.normcase(out.strip()) == os.path.normcase(helpers.neutral_cwd())

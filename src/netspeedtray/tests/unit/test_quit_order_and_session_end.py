@@ -10,11 +10,13 @@ Quit ordering and Windows session end (2.2.0-beta.1 lifecycle review, findings 1
   inside Windows' budget, since the normal quit path never gets to run at logoff.
 """
 import ctypes
+import subprocess
 import types
 from unittest.mock import MagicMock
 
 import pytest
 
+from netspeedtray.core import monitor_thread
 from netspeedtray.views.widget import main as M
 from netspeedtray.views.widget.main import NetworkSpeedWidget
 
@@ -87,6 +89,107 @@ def test_cancelled_end_session_saves_nothing():
     m = _msg(_WM_ENDSESSION, 0, 0)
     NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", ctypes.addressof(m))
     fake._save_session_essentials.assert_not_called()
+
+
+def test_query_end_session_saves_even_if_the_monitor_cannot_pause():
+    fake = _session_fake()
+    fake.monitor_thread = MagicMock()
+    fake.monitor_thread.set_session_ending.side_effect = RuntimeError("pause failed")
+    query = _msg(_WM_QUERYENDSESSION)
+
+    assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", ctypes.addressof(query)) == (False, 0)
+    fake._save_session_essentials.assert_called_once_with("query-end-session")
+
+
+def test_system_shutdown_blocks_helper_before_window_notification(monkeypatch):
+    worker = monitor_thread.StatsMonitorThread()
+    get_metrics = MagicMock(side_effect=[1, 0])
+    monkeypatch.setattr(ctypes.windll.user32, "GetSystemMetrics", get_metrics)
+    proc = MagicMock(returncode=0)
+    proc.communicate.return_value = ("sample", "")
+    popen = MagicMock(return_value=proc)
+    monkeypatch.setattr(monitor_thread.subprocess, "Popen", popen)
+
+    with pytest.raises(RuntimeError, match="session is ending"):
+        worker._query_nvidia_smi(["nvidia-smi"])
+    popen.assert_not_called()
+    assert worker._nvidia_fail_streak == 0
+    assert worker._nvidia_retry_at == 0
+    assert worker._nvidia_smi_ran_at is None
+
+    assert worker._query_nvidia_smi(["nvidia-smi"]) == "sample"
+    get_metrics.assert_called_with(0x2000)  # SM_SHUTTINGDOWN
+
+
+def test_session_query_stops_helper_before_save_and_cancel_resumes(monkeypatch):
+    worker = monitor_thread.StatsMonitorThread()
+    inflight = MagicMock()
+    inflight.poll.return_value = None
+    worker._child = inflight
+    proc = MagicMock(returncode=0)
+    proc.communicate.return_value = ("sample", "")
+    popen = MagicMock(return_value=proc)
+    monkeypatch.setattr(monitor_thread.subprocess, "Popen", popen)
+    monkeypatch.setattr(ctypes.windll.user32, "GetSystemMetrics", lambda _metric: 0)
+
+    fake = _session_fake()
+    fake.monitor_thread = worker
+
+    def assert_paused(_reason):
+        inflight.kill.assert_called_once_with()
+        with pytest.raises(RuntimeError, match="session is ending"):
+            worker._query_nvidia_smi(["nvidia-smi"])
+        popen.assert_not_called()
+
+    fake._save_session_essentials.side_effect = assert_paused
+    query = _msg(_WM_QUERYENDSESSION)
+    assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", ctypes.addressof(query)) == (False, 0)
+    fake._save_session_essentials.assert_called_once_with("query-end-session")
+    inflight.kill.assert_called_once_with()
+    popen.assert_not_called()
+
+    cancelled = _msg(_WM_ENDSESSION, 0)
+    assert NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", ctypes.addressof(cancelled)) == (False, 0)
+    assert worker._nvidia_fail_streak == 0
+    assert worker._nvidia_retry_at == 0
+    assert worker._query_nvidia_smi(["nvidia-smi"]) == "sample"
+
+
+@pytest.mark.parametrize("times_out", [False, True])
+def test_query_killed_during_shutdown_does_not_back_off_after_cancel(monkeypatch, times_out):
+    worker = monitor_thread.StatsMonitorThread()
+    fake = _session_fake()
+    fake.monitor_thread = worker
+    inflight = MagicMock(returncode=1)
+    inflight.poll.return_value = None
+    query = _msg(_WM_QUERYENDSESSION)
+    cancelled = _msg(_WM_ENDSESSION, 0)
+    argv = ["nvidia-smi"]
+
+    def interrupt_query(timeout):
+        NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", ctypes.addressof(query))
+        inflight.kill.assert_called_once_with()
+        # Windows can cancel shutdown before communicate() sees that the child ended.
+        NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", ctypes.addressof(cancelled))
+        inflight.communicate.side_effect = None
+        if times_out:
+            raise subprocess.TimeoutExpired(argv, timeout)
+        return "", ""
+
+    inflight.communicate.side_effect = interrupt_query
+    inflight.communicate.return_value = ("", "")
+    next_proc = MagicMock(returncode=0)
+    next_proc.communicate.return_value = ("sample", "")
+    monkeypatch.setattr(monitor_thread.subprocess, "Popen", MagicMock(side_effect=[inflight, next_proc]))
+    monkeypatch.setattr(ctypes.windll.user32, "GetSystemMetrics", lambda _metric: 0)
+
+    with pytest.raises(RuntimeError, match="session is ending"):
+        worker._query_nvidia_smi(argv)
+
+    assert worker._nvidia_fail_streak == 0
+    assert worker._nvidia_retry_at == 0
+    assert worker._nvidia_smi_ran_at is not None
+    assert worker._query_nvidia_smi(argv) == "sample"
 
 
 def test_session_essentials_save_config_and_odometer_within_budget():

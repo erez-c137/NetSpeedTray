@@ -527,29 +527,18 @@ class UsageTile(QFrame):
         self._cap_text.setVisible(False)
         self._cap_note.setVisible(False)
 
-        # When no cap is set, a discoverable one-click hint to configure one (Settings → Network).
-        hint = self._tr("USAGE_SET_LIMIT_HINT", "Set a monthly limit")
-        self._cap_hint = QLabel(f"<a href='#' style='color:{c['accent']}; text-decoration:none;'>{su.ui_html(hint + ' →')}</a>")
-        self._cap_hint.setAccessibleName(f"{hint} →")
-        self._cap_hint.setFont(su.font(tokens.TYPE_CAPTION))
-        self._cap_hint.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._cap_hint.setStyleSheet("background: transparent;")
-        # Reachable + activatable by keyboard (Tab to it, Enter to fire), not mouse-only.
-        self._cap_hint.setTextInteractionFlags(
-            Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
-        self._cap_hint.setAccessibleName(hint)
-        self._cap_hint.linkActivated.connect(lambda _: self.set_cap_requested.emit())
-        # #334: the per-day / month / year table, always offered (with or without a cap).
-        hist = self._tr("USAGE_HISTORY_LINK", "Usage by day")
-        self._history_link = QLabel(f"<a href='#' style='color:{c['accent']}; text-decoration:none;'>{su.ui_html(hist + ' →')}</a>")
-        self._history_link.setAccessibleName(f"{hist} →")
-        self._history_link.setFont(su.font(tokens.TYPE_CAPTION))
-        self._history_link.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._history_link.setStyleSheet("background: transparent;")
-        self._history_link.setTextInteractionFlags(
-            Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
-        self._history_link.setAccessibleName(hist)
-        self._history_link.linkActivated.connect(lambda _: self.usage_history_requested.emit())
+        # When no cap is set, a discoverable one-click hint to configure one (Settings → Network), and
+        # #334's per-day / month / year table, always offered. Both are NoticeLinks (2.2.2 D4): real
+        # buttons (Tab, Enter / Space, UIA Invoke), contrast-checked, underlined in High Contrast, the
+        # chevron pointing the reading way - the same link as every other "go there" in the app.
+        from netspeedtray.utils.components import NoticeLink
+
+        def surface() -> str:   # the tile's faint fill over the Monitor's window colour
+            return tokens.DIALOG_SIDEBAR_BG_DARK if su.is_dark_mode() else tokens.DIALOG_SIDEBAR_BG_LIGHT
+        self._cap_hint = NoticeLink("", self._tr("USAGE_SET_LIMIT_HINT", "Set a monthly limit"),
+                                    self.set_cap_requested.emit, surface=surface)
+        self._history_link = NoticeLink("", self._tr("USAGE_HISTORY_LINK", "Usage by day"),
+                                        self.usage_history_requested.emit, surface=surface)
         links = QHBoxLayout()
         links.setContentsMargins(0, 0, 0, 0)
         links.setSpacing(12)

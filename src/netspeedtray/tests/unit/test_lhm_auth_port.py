@@ -476,12 +476,11 @@ def test_the_status_line_is_only_touched_on_a_change(page, monkeypatch):
     assert len(calls) == 2
 
 
-def test_the_port_spin_box_is_bounded_and_drives_the_hint(page):
+def test_the_port_spin_box_is_bounded(page):
     page.load_settings(dict(constants.config.defaults.DEFAULT_CONFIG, lhm_port=99999))
     assert page.lhm_port.value() == 8085
     assert (page.lhm_port.minimum(), page.lhm_port.maximum()) == (1, 65535)
     page.lhm_port.setValue(18085)
-    assert "18085" in page.lhm_web_server_hint.text()
     assert page.get_settings()["lhm_port"] == 18085
 
 
@@ -531,23 +530,25 @@ def _locale(code):
 
 
 @pytest.mark.parametrize("code", sorted(constants.I18nStrings.LANGUAGE_MAP))
-def test_every_locale_gives_the_new_lhm_advice(code):
-    hint = _locale(code)["LHM_WEB_SERVER_HINT"]
-    assert "Options → Remote Web Server" in hint     # LHM's own menu stays in English
-    assert "127.0.0.1" in hint                       # pick loopback once LHM offers it
-    assert hint.count("{port}") == 2                 # the server's port, and the firewall port
-    hint.format(port=8085)
+def test_every_locale_gives_the_lhm_advice(code):
+    """The web-server advice (G1) now lives in the setup dialog: step 2 + "More details" (2.2.2 D6)."""
+    data = _locale(code)
+    step2, port = data["TEMP_ONBOARDING_STEP_2_DESC"], data["TEMP_ONBOARDING_STEP_2_PORT"]
+    details = data["TEMP_ONBOARDING_DETAILS"]
+    assert "Options → Remote Web Server → Run" in step2   # LHM's own menu stays in English
+    assert "{port}" in port and "{port}" in details        # the server's port, and the firewall port
+    port.format(port=8085), details.format(port=8085)
 
 
 def test_the_english_advice_no_longer_says_to_turn_authentication_off():
-    hint = _locale("en_US")["LHM_WEB_SERVER_HINT"].lower()
-    assert "authentication off" not in hint and "leave its authentication" not in hint
-    assert "firewall" in hint and "user name and password" in hint
-    assert "re-enter it in lhm after each lhm restart" in hint   # review L5: the 0.9.6 re-hash
+    details = _locale("en_US")["TEMP_ONBOARDING_DETAILS"].lower()
+    assert "authentication off" not in details and "leave its authentication" not in details
+    assert "firewall" in details and "user name and password" in details
 
 
 @pytest.mark.parametrize("code", sorted(constants.I18nStrings.LANGUAGE_MAP))
-def test_every_locale_warns_about_re_entering_the_password_after_an_lhm_restart(code):
+def test_every_locale_explains_a_rejected_password_after_an_lhm_restart(code):
+    """The 0.9.6 re-hash warning lives in the status line that appears when it bites (review L5)."""
     data = _locale(code)
-    assert "0.9.6" in data["LHM_WEB_SERVER_HINT"].rsplit("127.0.0.1", 1)[1]   # in the closing part
+    assert "0.9.6" in data["LHM_STATUS_AUTH_FAILED"] or "v0.9.6" in data["LHM_STATUS_AUTH_FAILED"]
     assert data["LHM_PASSWORD_UNREADABLE"]
