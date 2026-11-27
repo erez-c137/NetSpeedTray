@@ -77,6 +77,10 @@ class TimeoutConstants:
     # for the 1s state-watcher tick (a visible ~1s lag). Cheap: short-circuits
     # before any taskbar query unless the foreground window is actually fullscreen.
     FULLSCREEN_POLL_INTERVAL_MS: Final[int] = 250
+    # An auto-hide taskbar slide reports a LOCATIONCHANGE every frame for ~200 ms. A slide with no
+    # event for this long lost its last one (auto-hide turned off mid-slide, Explorer restarting):
+    # the refresh tick cancels it and puts the widget back on its docked spot (#135).
+    AUTOHIDE_SLIDE_STUCK_MS: Final[int] = 600
     # Bound on waiting for the elevated update shell to have created the installer, before the
     # launch guards are dropped anyway (update_installer.launch_installer).
     UPDATE_GUARD_WAIT_MS: Final[int] = 10_000
