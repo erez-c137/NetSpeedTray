@@ -129,6 +129,11 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 ; start-with-Windows is ON by default, we delete the value on UNINSTALL only, so removing the app never
 ; leaves a dead Run entry pointing at a deleted exe. (uninsdeletevalue does nothing at install time.)
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "{#MyAppName}"; Flags: uninsdeletevalue
+; ...and Task Manager's own on/off record for that entry (Startup apps). Windows writes it, not us, and
+; never removes it with the Run value: an uninstall left it behind (2.2.2-beta.1 VM check), an orphan
+; that Task Manager keeps and that would turn a later reinstall's start-with-Windows off if the user had
+; once disabled it there. Uninstall only, like the line above.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"; ValueType: none; ValueName: "{#MyAppName}"; Flags: uninsdeletevalue
 ; 2.2.2 D8: a Microsoft Store install. The Store runs this same Setup silently with its payload's
 ; installerParameters; when they carry /STORE (deferred - the payload is changed in the owner's Partner
 ; Center session; the API caps the parameters at 40 characters) Setup records it here, and the app

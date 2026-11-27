@@ -304,3 +304,19 @@ def test_the_embed_step_writes_a_v1_manifest(tmp_path):
     assert m["v"] == 1, "the build must keep writing format v1 (add a second resource for v2)"
     assert bm.RESOURCE_NAME == "NST_MANIFEST" and bm.RESOURCE_TYPE == 10
     assert bm.parse(raw)["v"] == 1, "and the reader must keep accepting v1"
+
+
+def test_uninstall_removes_both_startup_values():
+    r"""Uninstall removes the HKCU Run value AND Task Manager's StartupApproved\Run entry for the app.
+
+    Only the Run value was removed, so an uninstall left `StartupApproved\Run\NetSpeedTray` behind (found
+    on the 2.2.2-beta.1 VM uninstall check): an orphan that Task Manager keeps, and that silently turns a
+    later reinstall's start-with-Windows off if the user had once disabled it there."""
+    iss = _read("build", "setup.iss")
+    lines = [ln for ln in iss.splitlines() if ln.strip().startswith("Root: HKCU;")]
+    for subkey in (r"Software\Microsoft\Windows\CurrentVersion\Run",
+                   r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"):
+        hit = [ln for ln in lines if f'Subkey: "{subkey}";' in ln]
+        assert hit, f"no [Registry] entry for {subkey}"
+        assert any('ValueName: "{#MyAppName}"' in ln and "uninsdeletevalue" in ln and "ValueType: none" in ln
+                   for ln in hit), f"{subkey}: the app's value must be deleted on uninstall only"
